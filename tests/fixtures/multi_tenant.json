@@ -1,0 +1,39 @@
+{
+  "users": [
+    {
+      "userId": "usr_alice",
+      "verifiedSubject": "idp|alice-fictional",
+      "tenantIds": ["tnt_aurora"],
+      "roles": ["member"]
+    },
+    {
+      "userId": "usr_bob",
+      "verifiedSubject": "idp|bob-fictional",
+      "tenantIds": ["tnt_borealis"],
+      "roles": ["member"]
+    }
+  ],
+  "matters": [
+    {
+      "matterId": "mat_sundial",
+      "tenantId": "tnt_aurora",
+      "name": "Project Sundial",
+      "authorizedUserIds": ["usr_alice"],
+      "status": "active"
+    },
+    {
+      "matterId": "mat_glacier",
+      "tenantId": "tnt_borealis",
+      "name": "Project Glacier",
+      "authorizedUserIds": ["usr_bob"],
+      "status": "active"
+    },
+    {
+      "matterId": "mat_archived",
+      "tenantId": "tnt_aurora",
+      "name": "Archived Fictional Matter",
+      "authorizedUserIds": ["usr_alice"],
+      "status": "archived"
+    }
+  ]
+}
