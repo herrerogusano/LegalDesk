@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 01 managed AgentCore Harness and least-privilege role
+
+Parameters:
+  ModelId:
+    Type: String
+    Default: eu.anthropic.claude-sonnet-4-6
+    AllowedValues:
+      - eu.anthropic.claude-sonnet-4-6
+
+Resources:
+  HarnessExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LegalDeskBedrockAgentCoreHarnessPhase01
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskHarnessPhase01
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokePinnedEuropeanModel
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                  - arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-north-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-2::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-sonnet-4-6
+              - Sid: PullManagedHarnessImage
+                Effect: Allow
+                Action: ecr-public:GetAuthorizationToken
+                Resource: "*"
+              - Sid: GetEcrPublicBearerToken
+                Effect: Allow
+                Action: sts:GetServiceBearerToken
+                Resource: "*"
+              - Sid: CreateRuntimeLogGroup
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogStreams
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+              - Sid: DescribeRuntimeLogGroups
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+              - Sid: WriteRuntimeLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "01"
+
+  MinimalHarness:
+    Type: AWS::BedrockAgentCore::Harness
+    Properties:
+      HarnessName: LegalDeskPhase01
+      ExecutionRoleArn: !GetAtt HarnessExecutionRole.Arn
+      Model:
+        BedrockModelConfig:
+          ModelId: !Ref ModelId
+          ApiFormat: converse_stream
+          MaxTokens: 256
+          Temperature: 0
+          TopP: 0.9
+      SystemPrompt:
+        - Text: >-
+            You are the minimal LegalDesk portfolio agent. Reply briefly and
+            never provide legal advice. This phase has no documents or tools.
+      # A non-matching allowlist disables the built-in shell/file tools that
+      # Harness otherwise exposes by default.
+      AllowedTools:
+        - phase01_no_tools
+      Memory:
+        Disabled: {}
+      MaxIterations: 1
+      MaxTokens: 256
+      TimeoutSeconds: 120
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "01"
+
+Outputs:
+  HarnessArn:
+    Value: !GetAtt MinimalHarness.Arn
+  HarnessId:
+    Value: !GetAtt MinimalHarness.HarnessId
+  RuntimeArn:
+    Value: !GetAtt MinimalHarness.Environment.AgentCoreRuntimeEnvironment.AgentRuntimeArn
+  ExecutionRoleArn:
+    Value: !GetAtt HarnessExecutionRole.Arn
