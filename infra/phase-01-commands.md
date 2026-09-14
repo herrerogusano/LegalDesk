@@ -16,6 +16,9 @@ aws cloudformation validate-template `
 Creates an IAM role plus a managed AgentCore Harness/underlying Runtime. Harness
 and model invocations can incur usage charges.
 
+Before invoking an Anthropic model for the first time in an AWS account, submit
+the Bedrock Anthropic use-case details form and allow AWS time to apply it.
+
 ```powershell
 aws cloudformation deploy `
   --region eu-west-1 `
@@ -36,7 +39,9 @@ python agent/scripts/invoke_harness.py `
 ```
 
 Use a fresh UUID for the second call to demonstrate session isolation. Do not
-put model, prompt, tool, or skill overrides under browser control.
+put model, prompt, tool, or skill overrides under browser control. The script
+prints the session ID before opening the event stream so failed attempts remain
+auditable.
 
 ## Teardown
 

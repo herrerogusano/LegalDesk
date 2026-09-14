@@ -79,7 +79,6 @@ Resources:
           ApiFormat: converse_stream
           MaxTokens: 256
           Temperature: 0
-          TopP: 0.9
       SystemPrompt:
         - Text: >-
             You are the minimal LegalDesk portfolio agent. Reply briefly and

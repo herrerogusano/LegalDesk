@@ -24,6 +24,15 @@ class FakeHarnessClient:
         return {"stream": self.events}
 
 
+class EventStreamError(Exception):
+    pass
+
+
+class FailingEventStream:
+    def __iter__(self):
+        raise EventStreamError("stream rejected")
+
+
 class AgentCorePhase01Tests(unittest.TestCase):
     def test_local_health_and_invoke(self) -> None:
         agent = LocalAgent()
@@ -62,6 +71,12 @@ class AgentCorePhase01Tests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessInvocationError, "rejected"):
             HarnessInvoker(client, "arn:test").invoke("hello")
 
+    def test_botocore_event_stream_error_is_wrapped(self) -> None:
+        client = FakeHarnessClient()
+        client.events = FailingEventStream()
+        with self.assertRaisesRegex(HarnessInvocationError, "stream rejected"):
+            HarnessInvoker(client, "arn:test").invoke("hello")
+
     def test_template_excludes_future_phase_services_and_wildcard_actions(self) -> None:
         template = (ROOT / "infra" / "cloudformation" / "phase-01-harness.yaml").read_text(
             encoding="utf-8"
@@ -71,6 +86,8 @@ class AgentCorePhase01Tests(unittest.TestCase):
         self.assertNotIn('Action: "*"', template)
         self.assertNotIn("Action: '*'", template)
         self.assertIn("phase01_no_tools", template)
+        self.assertIn("Temperature:", template)
+        self.assertNotIn("TopP:", template)
 
 
 if __name__ == "__main__":

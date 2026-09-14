@@ -81,7 +81,12 @@ class HarnessInvoker:
             runtimeSessionId=effective_session_id,
             messages=[{"role": "user", "content": [{"text": message.strip()}]}],
         )
-        return InvokeResult(
-            session_id=effective_session_id,
-            text=_text_from_events(response["stream"]),
-        )
+        try:
+            text = _text_from_events(response["stream"])
+        except HarnessInvocationError:
+            raise
+        except Exception as exc:
+            if exc.__class__.__name__ != "EventStreamError":
+                raise
+            raise HarnessInvocationError(str(exc)) from exc
+        return InvokeResult(session_id=effective_session_id, text=text)
