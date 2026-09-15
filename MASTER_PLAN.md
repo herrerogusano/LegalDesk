@@ -94,7 +94,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 ## Estado
 
 - [x] Phase 00
-- [ ] Phase 01
+- [x] Phase 01
 - [ ] Phase 02
 - [ ] Phase 03
 - [ ] Phase 04

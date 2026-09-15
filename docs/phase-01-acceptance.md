@@ -13,10 +13,11 @@ CloudFormation `ValidateTemplate` API in `eu-west-1`.
 | No S3/KB/Gateway/Memory dependency | Template and policy regression test | Ready locally |
 | IAM avoids unnecessary wildcard permissions | Scoped model/log ARNs and documented unavoidable wildcards | Ready locally |
 | Harness vs Runtime documented | `docs/agentcore-harness-runtime.md` | Complete |
-| Agent responds to real invocation | Agreement now available; final smoke call still required | Pending approval |
+| Agent responds to real invocation | Final smoke call returned the exact required response; temporary Marketplace policy was removed and verified absent | Complete |
 
-Phase 01 is not complete until one real smoke invocation passes and teardown
-behavior is confirmed or the intentionally retained resource is documented.
+Phase 01 is complete: one real smoke invocation passed and temporary IAM
+teardown behavior was confirmed. The intentionally retained Harness/Runtime
+resource is documented below because it is the phase output.
 
 ## Verification completed
 
@@ -67,7 +68,8 @@ No permanent `aws-marketplace` permissions were added to the Harness execution
 role. AWS requires the first invoking principal to complete the Marketplace
 subscription even after the account-level agreement becomes available.
 
-The proposed remediation is a separately approved, temporary policy granting:
+With explicit user authorization, the execution role received one temporary
+inline policy named `LegalDeskMarketplaceActivationTemporary`, granting:
 
 - `aws-marketplace:ViewSubscriptions` on `*`;
 - `aws-marketplace:Subscribe` on `*`, conditioned to product
@@ -75,15 +77,29 @@ The proposed remediation is a separately approved, temporary policy granting:
 - `aws-marketplace:Unsubscribe` on `*`, as required by the documented Bedrock
   model-access prerequisite.
 
-AWS Marketplace does not support resource ARNs for these actions. After one
-successful activation/invocation, all three permissions must be removed from
-the execution role without cancelling the model subscription. The only
-remaining criterion is one successful, separately authorized smoke invocation.
+AWS Marketplace does not support resource ARNs for these actions. The policy
+was added once, used for the activation invocation, then deleted in a
+`finally` block. A subsequent `ListRolePolicies` check confirmed the policy is
+absent; the model subscription remains active.
+
+## Final smoke invocation on 2026-09-15
+
+The one authorized final smoke invocation was executed through
+`agent/scripts/invoke_harness.py` using the deployed Harness ARN and the
+prompt `Reply with exactly: LegalDesk Phase 01 ready`.
+
+- Session ID: `554241d7-4c55-4944-9124-adfec00fbeb3`.
+- Process exit code: `0`.
+- Response: `LegalDesk Phase 01 ready`.
+- Invocation count in this operation: exactly one; no retry was performed.
+- Temporary policy: added and read back successfully; deleted successfully;
+  verified absent afterward.
+- No other model was invoked.
 
 ## Resources and potential cost
 
-The IAM role and managed Harness/underlying Runtime remain deployed for the
-pending final smoke call. The failed attempts may have produced short Runtime
-session/log usage; no successful model output tokens were generated. Harness
-itself has no separate charge, but underlying AgentCore capabilities and
-Bedrock usage may be billed.
+The IAM role and managed Harness/underlying Runtime remain deployed as the
+Phase 01 output. The final successful invocation and prior failed attempts may
+produce Runtime/session/log usage and Bedrock model charges. Harness itself has
+no separate charge, but underlying AgentCore capabilities and Bedrock usage
+may be billed. The temporary IAM policy is not retained.
