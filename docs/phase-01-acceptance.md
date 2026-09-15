@@ -13,7 +13,7 @@ CloudFormation `ValidateTemplate` API in `eu-west-1`.
 | No S3/KB/Gateway/Memory dependency | Template and policy regression test | Ready locally |
 | IAM avoids unnecessary wildcard permissions | Scoped model/log ARNs and documented unavoidable wildcards | Ready locally |
 | Harness vs Runtime documented | `docs/agentcore-harness-runtime.md` | Complete |
-| Agent responds to real invocation | AWS rejected inference until Anthropic use-case details are submitted | Blocked externally |
+| Agent responds to real invocation | Agreement now available; final smoke call still required | Pending approval |
 
 Phase 01 is not complete until one real smoke invocation passes and teardown
 behavior is confirmed or the intentionally retained resource is documented.
@@ -22,7 +22,7 @@ behavior is confirmed or the intentionally retained resource is documented.
 
 ```text
 python -m unittest discover -s tests -v
-Ran 11 tests — OK
+Ran 12 tests — OK
 
 aws cloudformation validate-template ...
 Valid; requires CAPABILITY_NAMED_IAM
@@ -46,15 +46,28 @@ Three authorized smoke attempts were consumed across two approval rounds:
    still rejected inference with the same message. The model reports
    `agreementAvailability = NOT_AVAILABLE`; no retry was made.
 
-The remaining acceptance blocker is the Anthropic Marketplace agreement, not
-an application or infrastructure failure. The Harness execution role currently
-has no `aws-marketplace` permissions; adding them could accept/activate a
-commercial model agreement and therefore requires explicit approval.
+At the time of the third attempt, the remaining blocker was the Anthropic
+Marketplace agreement rather than an application or infrastructure failure.
+
+## Anthropic agreement on 2026-09-15
+
+With explicit user authorization, the account administrator accepted the single
+available agreement offer for `anthropic.claude-sonnet-4-6`. The operation was
+performed once and did not invoke a model. A supervisor read-back confirmed:
+
+- agreement: `AVAILABLE`;
+- authorization: `AUTHORIZED`;
+- entitlement: `AVAILABLE`;
+- region: `AVAILABLE`.
+
+No permanent `aws-marketplace` permissions were added to the Harness execution
+role. The only remaining criterion is one successful, separately authorized
+smoke invocation.
 
 ## Resources and potential cost
 
-The IAM role and managed Harness/underlying Runtime remain deployed so the
-pending smoke call can be retried after account enablement. The failed attempts
-may have produced short Runtime session/log usage; no successful model output
-tokens were generated. Harness itself has no separate charge, but underlying
-AgentCore capabilities and Bedrock usage may be billed.
+The IAM role and managed Harness/underlying Runtime remain deployed for the
+pending final smoke call. The failed attempts may have produced short Runtime
+session/log usage; no successful model output tokens were generated. Harness
+itself has no separate charge, but underlying AgentCore capabilities and
+Bedrock usage may be billed.
