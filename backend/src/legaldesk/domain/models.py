@@ -20,11 +20,21 @@ class MatterStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-class IngestionStatus(StrEnum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    READY = "ready"
-    FAILED = "failed"
+class DocumentStatus(StrEnum):
+    """Lifecycle states owned by the document pipeline.
+
+    Values are intentionally explicit because they are exposed to callers and
+    persisted in metadata.  Indexing is implemented by a later phase.
+    """
+
+    UPLOADED = "UPLOADED"
+    PENDING_INGESTION = "PENDING_INGESTION"
+    INDEXED = "INDEXED"
+    FAILED = "FAILED"
+
+
+# Kept as a compatibility name for callers that used the Phase 00 draft.
+IngestionStatus = DocumentStatus
 
 
 class ReviewTaskStatus(StrEnum):
@@ -61,7 +71,15 @@ class Document:
     jurisdiction: str
     document_date: str
     confidentiality: str
-    ingestion_status: IngestionStatus = IngestionStatus.PENDING
+    status: DocumentStatus = DocumentStatus.UPLOADED
+    file_size_bytes: int = 0
+    uploaded_at: datetime = field(default_factory=utc_now)
+
+    @property
+    def ingestion_status(self) -> DocumentStatus:
+        """Compatibility view for the pre-Phase-02 field name."""
+
+        return self.status
 
 
 @dataclass(frozen=True, slots=True)
