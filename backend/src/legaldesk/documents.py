@@ -9,10 +9,11 @@ metadata.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import PurePath
 from typing import Any, Callable, Mapping, Protocol, Sequence
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from .authorization import (
@@ -29,6 +30,8 @@ ALLOWED_MEDIA_TYPES = frozenset({"application/pdf", "text/plain"})
 ALLOWED_CONFIDENTIALITY = frozenset({"public-fictional", "fictional-internal"})
 MAX_FILENAME_LENGTH = 255
 MAX_METADATA_TEXT_LENGTH = 256
+MIN_PRESIGNED_URL_EXPIRES_SECONDS = 60
+MAX_PRESIGNED_URL_EXPIRES_SECONDS = 900
 
 
 class DocumentError(Exception):
@@ -44,7 +47,7 @@ class DocumentStorageError(DocumentError):
 
 
 class DocumentMetadataError(DocumentError):
-    """Metadata persistence failed after object storage completed."""
+    """Metadata persistence failed during the upload lifecycle."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +56,8 @@ class UploadRequest:
 
     filename: str
     media_type: str
-    body: bytes
+    body: bytes | None = None
+    file_size_bytes: int | None = None
     jurisdiction: str = "fictional"
     document_date: str = "2099-01-01"
     confidentiality: str = "fictional-internal"
@@ -71,6 +75,17 @@ class ObjectStorage(Protocol):
 
     def delete_object(self, *, key: str) -> None: ...
 
+    def generate_presigned_put_url(
+        self,
+        *,
+        key: str,
+        media_type: str,
+        metadata: Mapping[str, str],
+        expires_in: int,
+    ) -> str: ...
+
+    def head_object(self, *, key: str) -> Mapping[str, Any]: ...
+
 
 class DocumentMetadataRepository(Protocol):
     def save(self, document: Document) -> None: ...
@@ -78,6 +93,10 @@ class DocumentMetadataRepository(Protocol):
     def update_status(
         self, *, tenant_id: str, matter_id: str, document_id: str, status: DocumentStatus
     ) -> Document: ...
+
+    def get_for_scope(
+        self, *, tenant_id: str, matter_id: str, document_id: str
+    ) -> Document | None: ...
 
     def list_for_scope(self, *, tenant_id: str, matter_id: str) -> Sequence[Document]: ...
 
@@ -111,10 +130,32 @@ def _validate_text(value: str, field_name: str) -> None:
 
 
 def validate_upload(request: UploadRequest) -> None:
+    validate_upload_metadata(request)
     if not isinstance(request.body, bytes):
         raise DocumentValidationError("body must be bytes")
     if not request.body or len(request.body) > MAX_DOCUMENT_BYTES:
         raise DocumentValidationError("body size is outside the allowed limit")
+    if request.media_type == "application/pdf" and not request.body.startswith(b"%PDF-"):
+        raise DocumentValidationError("PDF body has an invalid signature")
+    if request.media_type == "text/plain":
+        try:
+            request.body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DocumentValidationError("text body must be valid UTF-8") from exc
+
+
+def validate_upload_metadata(request: UploadRequest) -> None:
+    """Validate presignable metadata without requiring the document body."""
+
+    if request.body is not None and not isinstance(request.body, bytes):
+        raise DocumentValidationError("body must be bytes")
+    if request.file_size_bytes is None or (
+        not isinstance(request.file_size_bytes, int)
+        or isinstance(request.file_size_bytes, bool)
+        or request.file_size_bytes <= 0
+        or request.file_size_bytes > MAX_DOCUMENT_BYTES
+    ):
+        raise DocumentValidationError("file_size_bytes is outside the allowed limit")
     if request.media_type not in ALLOWED_MEDIA_TYPES:
         raise DocumentValidationError("media_type is not allowed")
     if (
@@ -130,13 +171,6 @@ def validate_upload(request: UploadRequest) -> None:
     expected_suffix = {"application/pdf": ".pdf", "text/plain": ".txt"}[request.media_type]
     if suffix != expected_suffix:
         raise DocumentValidationError("filename extension does not match media_type")
-    if request.media_type == "application/pdf" and not request.body.startswith(b"%PDF-"):
-        raise DocumentValidationError("PDF body has an invalid signature")
-    if request.media_type == "text/plain":
-        try:
-            request.body.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise DocumentValidationError("text body must be valid UTF-8") from exc
     _validate_text(request.jurisdiction, "jurisdiction")
     _validate_text(request.document_date, "document_date")
     try:
@@ -160,6 +194,42 @@ def _safe_metadata(document: Document) -> dict[str, str]:
     }
 
 
+def _upload_headers(document: Document) -> dict[str, str]:
+    """Headers required by the signed PUT request."""
+
+    return {
+        "Content-Type": document.media_type,
+        "x-amz-meta-tenant-id": document.tenant_id,
+        "x-amz-meta-matter-id": document.matter_id,
+        "x-amz-meta-document-id": document.document_id,
+        "x-amz-server-side-encryption": "AES256",
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class UploadAuthorization:
+    """Server-owned document details and the URL for the client's PUT."""
+
+    document: Document
+    upload_url: str
+    method: str = "PUT"
+    headers: Mapping[str, str] = field(default_factory=dict)
+
+    @property
+    def document_id(self) -> str:
+        return self.document.document_id
+
+    @property
+    def s3_key(self) -> str:
+        return self.document.s3_key
+
+    @property
+    def presigned_url(self) -> str:
+        """Descriptive alias used by HTTP adapters."""
+
+        return self.upload_url
+
+
 @dataclass(slots=True)
 class DocumentPipeline:
     authorization_store: AuthorizationStore
@@ -168,19 +238,16 @@ class DocumentPipeline:
     id_factory: Callable[[], UUID] = uuid4
     clock: Callable[[], datetime] = utc_now
 
-    def upload(
+    def initiate_upload(
         self,
         identity: VerifiedIdentity,
         requested_matter_id: str,
         request: UploadRequest,
         *,
+        expires_in: int = 900,
         correlation_id: str | None = None,
-    ) -> Document:
-        """Authorize, validate, store the body, and persist metadata.
-
-        Authorization happens before validation and storage, so a denied
-        cross-matter request has no observable storage side effect.
-        """
+    ) -> "UploadAuthorization":
+        """Authorize an upload and return a presigned PUT without storing a body."""
 
         context = build_request_context(
             identity,
@@ -188,10 +255,17 @@ class DocumentPipeline:
             self.authorization_store,
             correlation_id=correlation_id,
         )
-        validate_upload(request)
+        validate_upload_metadata(request)
+        if (
+            not isinstance(expires_in, int)
+            or isinstance(expires_in, bool)
+            or not MIN_PRESIGNED_URL_EXPIRES_SECONDS
+            <= expires_in
+            <= MAX_PRESIGNED_URL_EXPIRES_SECONDS
+        ):
+            raise DocumentValidationError("presigned URL expiry is outside the allowed range")
         document_id = str(self.id_factory())
         key = build_document_key(context, document_id)
-        uploaded_at = self.clock()
         document = Document(
             document_id=document_id,
             matter_id=context.matter_id,
@@ -202,31 +276,129 @@ class DocumentPipeline:
             jurisdiction=request.jurisdiction,
             document_date=request.document_date,
             confidentiality=request.confidentiality,
-            status=DocumentStatus.UPLOADED,
-            file_size_bytes=len(request.body),
-            uploaded_at=uploaded_at,
+            status=DocumentStatus.PENDING_UPLOAD,
+            file_size_bytes=request.file_size_bytes or 0,
+            uploaded_at=self.clock(),
         )
         try:
-            self.object_storage.put_object(
+            self.metadata_repository.save(document)
+        except Exception as exc:
+            raise DocumentMetadataError("document metadata persistence failed") from exc
+        try:
+            upload_url = self.object_storage.generate_presigned_put_url(
                 key=key,
-                body=request.body,
-                media_type=request.media_type,
+                media_type=document.media_type,
+                metadata=_safe_metadata(document),
+                expires_in=expires_in,
+            )
+        except Exception as exc:
+            self._best_effort_failed_metadata(document)
+            raise DocumentStorageError("document upload authorization failed") from exc
+        return UploadAuthorization(
+            document=document,
+            upload_url=upload_url,
+            headers=_upload_headers(document),
+        )
+
+    # Explicit name for API adapters that call this operation "authorize".
+    authorize_upload = initiate_upload
+
+    def confirm_upload(
+        self,
+        identity: VerifiedIdentity,
+        requested_matter_id: str,
+        document_id: str,
+        *,
+        correlation_id: str | None = None,
+    ) -> Document:
+        """Confirm only the server-owned object for an authorized document."""
+
+        context = build_request_context(
+            identity,
+            requested_matter_id,
+            self.authorization_store,
+            correlation_id=correlation_id,
+        )
+        document = self.metadata_repository.get_for_scope(
+            tenant_id=context.tenant_id,
+            matter_id=context.matter_id,
+            document_id=document_id,
+        )
+        if document is None:
+            raise DocumentError("document not found")
+        if document.status is not DocumentStatus.PENDING_UPLOAD:
+            raise DocumentValidationError("document is not pending upload")
+        try:
+            head = self.object_storage.head_object(key=document.s3_key)
+        except Exception as exc:
+            raise DocumentStorageError("uploaded object was not found") from exc
+        content_length = head.get("ContentLength")
+        if (
+            not isinstance(content_length, int)
+            or isinstance(content_length, bool)
+            or content_length <= 0
+            or content_length > MAX_DOCUMENT_BYTES
+            or content_length != document.file_size_bytes
+        ):
+            raise DocumentStorageError("uploaded object size is invalid")
+        if head.get("ContentType") != document.media_type:
+            raise DocumentStorageError("uploaded object media type is invalid")
+        stored_metadata = head.get("Metadata")
+        if not isinstance(stored_metadata, Mapping) or any(
+            stored_metadata.get(name) != value
+            for name, value in _safe_metadata(document).items()
+        ):
+            raise DocumentStorageError("uploaded object metadata is invalid")
+        return self.metadata_repository.update_status(
+            tenant_id=context.tenant_id,
+            matter_id=context.matter_id,
+            document_id=document.document_id,
+            status=DocumentStatus.UPLOADED,
+        )
+
+    def upload(
+        self,
+        identity: VerifiedIdentity,
+        requested_matter_id: str,
+        request: UploadRequest,
+        *,
+        correlation_id: str | None = None,
+    ) -> Document:
+        """Local/direct-upload convenience implemented through the same lifecycle."""
+
+        direct_request = request
+        if (
+            direct_request.file_size_bytes is None
+            and isinstance(direct_request.body, bytes)
+        ):
+            direct_request = replace(
+                direct_request, file_size_bytes=len(direct_request.body)
+            )
+        authorization = self.initiate_upload(
+            identity, requested_matter_id, direct_request, correlation_id=correlation_id
+        )
+        document = authorization.document
+        try:
+            validate_upload(direct_request)
+        except DocumentValidationError:
+            self._best_effort_failed_metadata(document)
+            raise
+        try:
+            self.object_storage.put_object(
+                key=document.s3_key,
+                body=direct_request.body,
+                media_type=direct_request.media_type,
                 metadata=_safe_metadata(document),
             )
         except Exception as exc:  # adapters normalize provider failures here
             self._best_effort_failed_metadata(document)
             raise DocumentStorageError("document object storage failed") from exc
-        try:
-            self.metadata_repository.save(document)
-        except Exception as exc:
-            try:
-                self.object_storage.delete_object(key=key)
-            except Exception:
-                # Preserve the stable public metadata error even if cleanup
-                # itself fails; the orphan is observable only operationally.
-                pass
-            raise DocumentMetadataError("document metadata persistence failed") from exc
-        return document
+        return self.confirm_upload(
+            identity,
+            requested_matter_id,
+            document.document_id,
+            correlation_id=correlation_id,
+        )
 
     def mark_status(
         self,
@@ -237,22 +409,21 @@ class DocumentPipeline:
         *,
         correlation_id: str | None = None,
     ) -> Document:
+        """Reject the old generic transition endpoint.
+
+        Upload completion is intentionally only reachable through
+        :meth:`confirm_upload`; future processing transitions will be owned by
+        their respective workers rather than by a client-selected status.
+        """
+
         context = build_request_context(
             identity,
             requested_matter_id,
             self.authorization_store,
             correlation_id=correlation_id,
         )
-        try:
-            status = DocumentStatus(status)
-        except ValueError as exc:
-            raise DocumentValidationError("unknown document status") from exc
-        return self.metadata_repository.update_status(
-            tenant_id=context.tenant_id,
-            matter_id=context.matter_id,
-            document_id=document_id,
-            status=status,
-        )
+        del context, document_id, status
+        raise DocumentValidationError("generic document status transitions are not available")
 
     def list_documents(
         self,
@@ -281,6 +452,9 @@ class DocumentPipeline:
 
 
 _ALLOWED_STATUS_TRANSITIONS: dict[DocumentStatus, frozenset[DocumentStatus]] = {
+    DocumentStatus.PENDING_UPLOAD: frozenset(
+        {DocumentStatus.UPLOADED, DocumentStatus.FAILED}
+    ),
     DocumentStatus.UPLOADED: frozenset(
         {DocumentStatus.PENDING_INGESTION, DocumentStatus.FAILED}
     ),
@@ -298,12 +472,14 @@ class InMemoryObjectStorage:
     metadata: dict[str, dict[str, str]]
     fail: bool = False
     fail_delete: bool = False
+    presigned_urls: dict[str, str] = field(default_factory=dict)
 
     def __init__(self, *, fail: bool = False, fail_delete: bool = False) -> None:
         self.objects = {}
         self.metadata = {}
         self.fail = fail
         self.fail_delete = fail_delete
+        self.presigned_urls = {}
 
     def put_object(
         self,
@@ -323,6 +499,35 @@ class InMemoryObjectStorage:
             raise RuntimeError("fictional cleanup failure")
         self.objects.pop(key, None)
         self.metadata.pop(key, None)
+
+    def generate_presigned_put_url(
+        self,
+        *,
+        key: str,
+        media_type: str,
+        metadata: Mapping[str, str],
+        expires_in: int,
+    ) -> str:
+        if self.fail:
+            raise RuntimeError("fictional storage failure")
+        url = f"https://s3.invalid/upload/{quote(key, safe='')}?expires={expires_in}"
+        self.presigned_urls[key] = url
+        return url
+
+    def head_object(self, *, key: str) -> Mapping[str, Any]:
+        if self.fail:
+            raise RuntimeError("fictional storage failure")
+        if key not in self.objects:
+            raise KeyError(key)
+        return {
+            "ContentLength": len(self.objects[key]),
+            "ContentType": self.metadata.get(key, {}).get("media-type"),
+            "Metadata": {
+                name: value
+                for name, value in self.metadata.get(key, {}).items()
+                if name != "media-type"
+            },
+        }
 
 
 @dataclass(slots=True)
@@ -351,6 +556,11 @@ class InMemoryDocumentMetadataRepository:
         updated = replace(document, status=status)
         self.documents[key] = updated
         return updated
+
+    def get_for_scope(
+        self, *, tenant_id: str, matter_id: str, document_id: str
+    ) -> Document | None:
+        return self.documents.get((tenant_id, matter_id, document_id))
 
     def list_for_scope(self, *, tenant_id: str, matter_id: str) -> tuple[Document, ...]:
         return tuple(
@@ -390,6 +600,30 @@ class Boto3S3ObjectStorage:
 
     def delete_object(self, *, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket_name, Key=key)
+
+    def generate_presigned_put_url(
+        self,
+        *,
+        key: str,
+        media_type: str,
+        metadata: Mapping[str, str],
+        expires_in: int,
+    ) -> str:
+        return self.client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": self.bucket_name,
+                "Key": key,
+                "ContentType": media_type,
+                "Metadata": dict(metadata),
+                "ServerSideEncryption": "AES256",
+            },
+            ExpiresIn=expires_in,
+            HttpMethod="PUT",
+        )
+
+    def head_object(self, *, key: str) -> Mapping[str, Any]:
+        return self.client.head_object(Bucket=self.bucket_name, Key=key)
 
 
 class Boto3DynamoDocumentMetadataRepository:
@@ -443,9 +677,26 @@ class Boto3DynamoDocumentMetadataRepository:
             Key={"pk": document_partition_key(tenant_id, matter_id), "sk": document_sort_key(document_id)},
             UpdateExpression="SET #status = :status",
             ExpressionAttributeNames={"#status": "status"},
-            ExpressionAttributeValues={":status": status.value},
+            ExpressionAttributeValues={
+                ":status": status.value,
+                ":expected_status": current.value,
+            },
+            ConditionExpression="#status = :expected_status",
         )
         return _document_from_item({**item, "status": status.value})
+
+    def get_for_scope(
+        self, *, tenant_id: str, matter_id: str, document_id: str
+    ) -> Document | None:
+        response = self.table.get_item(
+            Key={
+                "pk": document_partition_key(tenant_id, matter_id),
+                "sk": document_sort_key(document_id),
+            },
+            ConsistentRead=True,
+        )
+        item = response.get("Item")
+        return _document_from_item(item) if item else None
 
     def list_for_scope(self, *, tenant_id: str, matter_id: str) -> tuple[Document, ...]:
         documents: list[Document] = []

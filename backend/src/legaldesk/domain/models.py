@@ -27,6 +27,7 @@ class DocumentStatus(StrEnum):
     persisted in metadata.  Indexing is implemented by a later phase.
     """
 
+    PENDING_UPLOAD = "PENDING_UPLOAD"
     UPLOADED = "UPLOADED"
     PENDING_INGESTION = "PENDING_INGESTION"
     INDEXED = "INDEXED"
@@ -71,7 +72,7 @@ class Document:
     jurisdiction: str
     document_date: str
     confidentiality: str
-    status: DocumentStatus = DocumentStatus.UPLOADED
+    status: DocumentStatus = DocumentStatus.PENDING_UPLOAD
     file_size_bytes: int = 0
     uploaded_at: datetime = field(default_factory=utc_now)
 
