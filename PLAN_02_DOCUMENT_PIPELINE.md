@@ -29,7 +29,14 @@ Implementar la entrada de documentos: upload autorizado a S3 y metadata persisti
 6. Guardar metadata:
    type, jurisdiction, date, confidentiality, status.
 7. Definir estados:
-   `UPLOADED`, `PENDING_INGESTION`, `INDEXED`, `FAILED`.
+   `PENDING_UPLOAD`, `UPLOADED`, `PENDING_INGESTION`, `INDEXED`, `FAILED`.
+   Metadata is created before a presigned PUT completes; confirmation checks
+   the server-derived S3 key before transitioning `PENDING_UPLOAD` to
+   `UPLOADED`.
+   Lifecycle: `PENDING_UPLOAD → UPLOADED → PENDING_INGESTION → INDEXED`, with
+   `FAILED` for failures at the applicable stage.
+   Presigned authorization requires a declared file size within the limit;
+   direct local uploads derive it from the body.
 8. Aplicar allowed file types y límites razonables.
 9. No permitir path/key arbitraria proporcionada por usuario.
 10. Crear listing interno de documentos autorizado, que luego reutilizará MCP.
@@ -53,6 +60,10 @@ Implementar la entrada de documentos: upload autorizado a S3 y metadata persisti
 - metadata persistence con mocks/local;
 - test negativo cross-matter;
 - smoke test AWS opcional y mínimo.
+
+Los uploads abandonados pueden permanecer en `PENDING_UPLOAD` por ahora. La
+limpieza automática/TTL específico de objetos pendientes es un production gap
+para una iteración posterior y no forma parte de esta fase.
 
 ## Coste y seguridad
 

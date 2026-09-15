@@ -50,13 +50,85 @@ class DocumentPipelineTests(unittest.TestCase):
         self.metadata = InMemoryDocumentMetadataRepository()
         self.pipeline = DocumentPipeline(self.auth, self.objects, self.metadata)
 
-    def test_user_a_uploads_to_matter_a_with_server_scope(self) -> None:
-        document = self.pipeline.upload(ALICE, "mat_sundial", request())
+    def test_authorized_upload_starts_pending_and_returns_presigned_url(self) -> None:
+        authorization = self.pipeline.initiate_upload(
+            ALICE, "mat_sundial", request(body=None, file_size_bytes=len(FIXTURE))
+        )
+        document = authorization.document
         self.assertEqual(document.tenant_id, "tnt_aurora")
         self.assertEqual(document.matter_id, "mat_sundial")
+        self.assertEqual(document.status, DocumentStatus.PENDING_UPLOAD)
+        self.assertEqual(document.file_size_bytes, len(FIXTURE))
+        self.assertEqual(authorization.document_id, document.document_id)
+        self.assertEqual(authorization.s3_key, document.s3_key)
+        self.assertTrue(authorization.upload_url.startswith("https://s3.invalid/"))
+        self.assertEqual(authorization.headers["Content-Type"], "text/plain")
+        self.assertNotIn(document.s3_key, self.objects.objects)
+
+    def test_existing_object_confirms_to_uploaded(self) -> None:
+        authorization = self.pipeline.initiate_upload(
+            ALICE, "mat_sundial", request(body=None, file_size_bytes=len(FIXTURE))
+        )
+        self.objects.put_object(
+            key=authorization.s3_key,
+            body=FIXTURE,
+            media_type="text/plain",
+            metadata={
+                "tenant-id": "tnt_aurora",
+                "matter-id": "mat_sundial",
+                "document-id": authorization.document_id,
+            },
+        )
+        document = self.pipeline.confirm_upload(
+            ALICE, "mat_sundial", authorization.document_id
+        )
         self.assertEqual(document.status, DocumentStatus.UPLOADED)
-        self.assertIn(document.s3_key, self.objects.objects)
-        self.assertEqual(self.objects.objects[document.s3_key], FIXTURE)
+
+    def test_presigned_upload_requires_declared_positive_size(self) -> None:
+        with self.assertRaises(DocumentValidationError):
+            self.pipeline.initiate_upload(ALICE, "mat_sundial", request(body=None))
+        self.assertEqual(self.metadata.documents, {})
+
+    def test_missing_object_does_not_confirm(self) -> None:
+        authorization = self.pipeline.initiate_upload(
+            ALICE, "mat_sundial", request(body=None, file_size_bytes=len(FIXTURE))
+        )
+        with self.assertRaises(DocumentStorageError):
+            self.pipeline.confirm_upload(ALICE, "mat_sundial", authorization.document_id)
+        stored = self.metadata.documents[("tnt_aurora", "mat_sundial", authorization.document_id)]
+        self.assertEqual(stored.status, DocumentStatus.PENDING_UPLOAD)
+
+    def test_object_head_must_match_declared_size_and_metadata(self) -> None:
+        authorization = self.pipeline.initiate_upload(
+            ALICE,
+            "mat_sundial",
+            request(body=None, file_size_bytes=len(FIXTURE) + 1),
+        )
+        self.objects.put_object(
+            key=authorization.s3_key,
+            body=FIXTURE,
+            media_type="text/plain",
+            metadata={
+                "tenant-id": "tnt_aurora",
+                "matter-id": "mat_sundial",
+                "document-id": authorization.document_id,
+            },
+        )
+        with self.assertRaises(DocumentStorageError):
+            self.pipeline.confirm_upload(ALICE, "mat_sundial", authorization.document_id)
+        self.assertEqual(
+            self.metadata.documents[
+                ("tnt_aurora", "mat_sundial", authorization.document_id)
+            ].status,
+            DocumentStatus.PENDING_UPLOAD,
+        )
+
+    def test_cross_matter_confirmation_is_denied(self) -> None:
+        authorization = self.pipeline.initiate_upload(
+            ALICE, "mat_sundial", request(body=None, file_size_bytes=len(FIXTURE))
+        )
+        with self.assertRaises(AuthorizationDenied):
+            self.pipeline.confirm_upload(ALICE, "mat_glacier", authorization.document_id)
 
     def test_user_a_cannot_upload_to_matter_b(self) -> None:
         with self.assertRaises(AuthorizationDenied):
@@ -106,17 +178,32 @@ class DocumentPipelineTests(unittest.TestCase):
 
     def test_status_transitions_are_visible(self) -> None:
         document = self.pipeline.upload(ALICE, "mat_sundial", request())
-        pending = self.pipeline.mark_status(
-            ALICE, "mat_sundial", document.document_id, DocumentStatus.PENDING_INGESTION
+        pending = self.metadata.update_status(
+            tenant_id="tnt_aurora",
+            matter_id="mat_sundial",
+            document_id=document.document_id,
+            status=DocumentStatus.PENDING_INGESTION,
         )
-        indexed = self.pipeline.mark_status(
-            ALICE, "mat_sundial", document.document_id, DocumentStatus.INDEXED
+        indexed = self.metadata.update_status(
+            tenant_id="tnt_aurora",
+            matter_id="mat_sundial",
+            document_id=document.document_id,
+            status=DocumentStatus.INDEXED,
         )
         self.assertEqual(pending.status, DocumentStatus.PENDING_INGESTION)
         self.assertEqual(indexed.status, DocumentStatus.INDEXED)
         with self.assertRaises(DocumentValidationError):
             self.pipeline.mark_status(
                 ALICE, "mat_sundial", document.document_id, DocumentStatus.UPLOADED
+            )
+
+    def test_client_cannot_manipulate_uploaded_transition(self) -> None:
+        authorization = self.pipeline.initiate_upload(
+            ALICE, "mat_sundial", request(body=None, file_size_bytes=len(FIXTURE))
+        )
+        with self.assertRaises(DocumentValidationError):
+            self.pipeline.mark_status(
+                ALICE, "mat_sundial", authorization.document_id, DocumentStatus.PENDING_INGESTION
             )
 
     def test_listing_is_scoped_to_authorized_matter(self) -> None:
@@ -126,18 +213,22 @@ class DocumentPipelineTests(unittest.TestCase):
             self.pipeline.list_documents(ALICE, "mat_glacier")
 
     def test_metadata_has_no_document_body(self) -> None:
-        document = self.pipeline.upload(ALICE, "mat_sundial", request())
+        document = self.pipeline.initiate_upload(
+            ALICE, "mat_sundial", request(body=None, file_size_bytes=len(FIXTURE))
+        ).document
         stored = self.metadata.documents[("tnt_aurora", "mat_sundial", document.document_id)]
         self.assertFalse(hasattr(stored, "body"))
         self.assertEqual(stored.file_size_bytes, len(FIXTURE))
         self.assertNotIn(FIXTURE.decode(), repr(stored))
 
-    def test_storage_failure_marks_metadata_failed_and_raises(self) -> None:
+    def test_presign_failure_marks_metadata_failed_and_raises(self) -> None:
         objects = InMemoryObjectStorage(fail=True)
         metadata = InMemoryDocumentMetadataRepository()
         pipeline = DocumentPipeline(self.auth, objects, metadata)
         with self.assertRaises(DocumentStorageError):
-            pipeline.upload(ALICE, "mat_sundial", request())
+            pipeline.initiate_upload(
+                ALICE, "mat_sundial", request(body=None, file_size_bytes=len(FIXTURE))
+            )
         self.assertEqual(len(metadata.documents), 1)
         self.assertEqual(next(iter(metadata.documents.values())).status, DocumentStatus.FAILED)
 
@@ -154,11 +245,41 @@ class DocumentPipelineTests(unittest.TestCase):
         pipeline = DocumentPipeline(self.auth, objects, metadata)
         with self.assertRaises(DocumentMetadataError):
             pipeline.upload(ALICE, "mat_sundial", request())
-        self.assertEqual(len(objects.objects), 1)
+        self.assertEqual(len(objects.objects), 0)
 
     def test_single_table_key_shape(self) -> None:
         self.assertEqual(document_partition_key("tnt_aurora", "mat_sundial"), "TENANT#tnt_aurora#MATTER#mat_sundial")
         self.assertEqual(document_sort_key("doc-1"), "DOCUMENT#doc-1")
+
+    def test_dynamo_status_update_requires_expected_current_status(self) -> None:
+        document = self.pipeline.upload(ALICE, "mat_sundial", request())
+        item = Boto3DynamoDocumentMetadataRepository._item(document)
+
+        class FakeTable:
+            def __init__(self) -> None:
+                self.update_calls: list[dict[str, object]] = []
+
+            def get_item(self, **kwargs: object) -> dict[str, object]:
+                return {"Item": item}
+
+            def update_item(self, **kwargs: object) -> dict[str, object]:
+                self.update_calls.append(kwargs)
+                return {}
+
+        table = FakeTable()
+        repository = Boto3DynamoDocumentMetadataRepository("fictional-table", table=table)
+        updated = repository.update_status(
+            tenant_id="tnt_aurora",
+            matter_id="mat_sundial",
+            document_id=document.document_id,
+            status=DocumentStatus.PENDING_INGESTION,
+        )
+        self.assertEqual(updated.status, DocumentStatus.PENDING_INGESTION)
+        self.assertEqual(table.update_calls[0]["ConditionExpression"], "#status = :expected_status")
+        self.assertEqual(
+            table.update_calls[0]["ExpressionAttributeValues"],
+            {":status": "PENDING_INGESTION", ":expected_status": "UPLOADED"},
+        )
 
     def test_dynamo_adapter_scopes_documents_filters_prefix_and_paginates(self) -> None:
         first = self.pipeline.upload(ALICE, "mat_sundial", request())

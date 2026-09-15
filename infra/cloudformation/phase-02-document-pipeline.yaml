@@ -81,10 +81,11 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: WriteOriginalsOnly
+              - Sid: ManageOriginalsForUploadConfirmation
                 Effect: Allow
                 Action:
                   - s3:PutObject
+                  - s3:GetObject
                   - s3:DeleteObject
                 Resource: !Sub "${DocumentBucket.Arn}/tenants/*/matters/*/documents/*/original"
               - Sid: WriteAndListMetadata
