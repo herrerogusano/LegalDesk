@@ -126,10 +126,14 @@ No asumir que una operación AWS es gratuita.
 
 # 8. Git
 
-- trabajar en branch por fase;
+- usar `developer` como rama de integración y `prod` como rama de producción;
+- crear cada `phase/*` desde `developer` y abrir su PR contra `developer`;
+- al terminar y validar una fase, el supervisor puede crear y fusionar esa PR;
+- promover releases mediante PR de `developer` a `prod`;
+- mantener `main` como rama legacy mientras no se acuerde retirarla o cambiarla;
 - commits pequeños y descriptivos;
 - no reescribir historia compartida;
-- no hacer merge automático a `main` salvo instrucción explícita;
+- no fusionar directamente a `main` ni `prod` salvo instrucción explícita;
 - mantener el repo en estado ejecutable.
 
 Convención sugerida:
