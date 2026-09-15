@@ -36,7 +36,7 @@ Valid; requires CAPABILITY_NAMED_IAM
 - Memory disabled; tools empty; `allowedTools = [phase01_no_tools]`.
 - Execution role: `LegalDeskBedrockAgentCoreHarnessPhase01`.
 
-Three authorized smoke attempts were consumed across two approval rounds:
+Four authorized smoke attempts were consumed across three approval rounds:
 
 1. AWS rejected `temperature` plus `top_p` for Sonnet 4.6. `TopP` was removed
    and the stack updated successfully.
@@ -45,6 +45,9 @@ Three authorized smoke attempts were consumed across two approval rounds:
 3. After the FTU form became readable through `GetUseCaseForModelAccess`, AWS
    still rejected inference with the same message. The model reports
    `agreementAvailability = NOT_AVAILABLE`; no retry was made.
+4. After the agreement became `AVAILABLE`, AWS rejected the first subscription
+   because the Harness execution role lacks `aws-marketplace:ViewSubscriptions`
+   and `aws-marketplace:Subscribe`; no retry was made.
 
 At the time of the third attempt, the remaining blocker was the Anthropic
 Marketplace agreement rather than an application or infrastructure failure.
@@ -61,8 +64,21 @@ performed once and did not invoke a model. A supervisor read-back confirmed:
 - region: `AVAILABLE`.
 
 No permanent `aws-marketplace` permissions were added to the Harness execution
-role. The only remaining criterion is one successful, separately authorized
-smoke invocation.
+role. AWS requires the first invoking principal to complete the Marketplace
+subscription even after the account-level agreement becomes available.
+
+The proposed remediation is a separately approved, temporary policy granting:
+
+- `aws-marketplace:ViewSubscriptions` on `*`;
+- `aws-marketplace:Subscribe` on `*`, conditioned to product
+  `prod-ffvjxvh4ltq64` (Claude Sonnet 4.6);
+- `aws-marketplace:Unsubscribe` on `*`, as required by the documented Bedrock
+  model-access prerequisite.
+
+AWS Marketplace does not support resource ARNs for these actions. After one
+successful activation/invocation, all three permissions must be removed from
+the execution role without cancelling the model subscription. The only
+remaining criterion is one successful, separately authorized smoke invocation.
 
 ## Resources and potential cost
 
