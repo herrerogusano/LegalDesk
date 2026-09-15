@@ -36,20 +36,25 @@ Valid; requires CAPABILITY_NAMED_IAM
 - Memory disabled; tools empty; `allowedTools = [phase01_no_tools]`.
 - Execution role: `LegalDeskBedrockAgentCoreHarnessPhase01`.
 
-Two authorized smoke attempts were consumed:
+Three authorized smoke attempts were consumed across two approval rounds:
 
 1. AWS rejected `temperature` plus `top_p` for Sonnet 4.6. `TopP` was removed
    and the stack updated successfully.
 2. AWS rejected inference because Anthropic use-case details have not been
    submitted for this account.
+3. After the FTU form became readable through `GetUseCaseForModelAccess`, AWS
+   still rejected inference with the same message. The model reports
+   `agreementAvailability = NOT_AVAILABLE`; no retry was made.
 
-No third inference was attempted. The remaining acceptance blocker is an AWS
-account prerequisite, not an application or infrastructure failure.
+The remaining acceptance blocker is the Anthropic Marketplace agreement, not
+an application or infrastructure failure. The Harness execution role currently
+has no `aws-marketplace` permissions; adding them could accept/activate a
+commercial model agreement and therefore requires explicit approval.
 
 ## Resources and potential cost
 
 The IAM role and managed Harness/underlying Runtime remain deployed so the
-single pending smoke call can be retried after account enablement. The two
-failed attempts may have produced short Runtime session/log usage; no successful
-model output tokens were generated. Harness itself has no separate charge, but
-underlying AgentCore capabilities and Bedrock usage may be billed.
+pending smoke call can be retried after account enablement. The failed attempts
+may have produced short Runtime session/log usage; no successful model output
+tokens were generated. Harness itself has no separate charge, but underlying
+AgentCore capabilities and Bedrock usage may be billed.
