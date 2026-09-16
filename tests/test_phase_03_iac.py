@@ -14,6 +14,20 @@ TEMPLATE = (
 
 
 class Phase03InfrastructureTests(unittest.TestCase):
+    def test_knowledge_base_uses_supported_index_arn_configuration(self) -> None:
+        template = TEMPLATE.read_text(encoding="utf-8")
+        storage = re.search(
+            r"StorageConfiguration:\n(?P<body>[\s\S]*?)\n\n  LegalDeskS3DataSource:",
+            template,
+        )
+        self.assertIsNotNone(storage)
+        body = storage.group("body")
+        self.assertEqual(
+            re.findall(r"^\s+(IndexArn|IndexName|VectorBucketArn):", body, re.MULTILINE),
+            ["IndexArn"],
+        )
+        self.assertIn("IndexArn: !GetAtt LegalDeskVectorIndex.IndexArn", body)
+
     def test_data_source_has_only_the_approved_hierarchical_chunking(self) -> None:
         template = TEMPLATE.read_text(encoding="utf-8")
         chunking = re.search(

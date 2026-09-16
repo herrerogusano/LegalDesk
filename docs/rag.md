@@ -8,6 +8,9 @@ cosine distance, and two-level hierarchical chunking: parent chunks up to 1200
 tokens, child chunks up to 300 tokens, and 60 overlap tokens. The
 CloudFormation stack reuses the Phase 02 document bucket by name; it does not
 create or own that bucket.
+The Knowledge Base references the S3 Vectors index by `IndexArn`; CloudFormation
+accepts either this ARN by itself or the vector bucket ARN plus index name, not
+all three fields together.
 
 The S3 Vectors index configures `AMAZON_BEDROCK_TEXT` and
 `AMAZON_BEDROCK_METADATA` as non-filterable metadata keys, as required for the
@@ -22,10 +25,10 @@ chunking with S3 Vectors in general because parent-child metadata consumes the
 vector metadata budget, and high chunk sizes (over 8000 combined tokens) can
 exceed metadata limits. This configuration uses 1200 + 300 = 1500 tokens, well
 below that threshold, and the planned fictional dataset is very small. This is
-a deliberate conservative choice that still needs a small live ingestion smoke
-before production use. AWS CloudFormation documents chunking configuration
-updates as replacement operations; changing this strategy after connecting the
-data source requires replacing it and performing a new sync.
+a deliberate conservative choice exercised once with the fictional smoke
+dataset. AWS CloudFormation documents chunking configuration updates as
+replacement operations; changing this strategy after connecting the data
+source requires replacing it and performing a new sync.
 
 The object key now has a Bedrock-supported extension derived from the validated
 media type:
@@ -158,7 +161,7 @@ python backend/scripts/sync_knowledge_base.py --knowledge-base-id <KnowledgeBase
 ```
 
 The script starts a billable ingestion job and polls until completion or its
-30-minute timeout. It is intentionally not run by tests or deployment. A
+30-minute timeout. It is not run automatically by tests or deployment. A
 timeout, failed job, or partial document failure is reported without claiming
 the documents are indexed. Retrieval uses the `Retrieve` API through the
 authorized Python service; do not test it in a loop.
@@ -183,14 +186,13 @@ retrying teardown; do not delete the Phase 02 source objects as a cleanup step.
 
 ## Cost and verification status
 
-No AWS resources were created and no Bedrock, S3, DynamoDB, inference, ingestion,
-or retrieval API was invoked while implementing this phase. Local tests use
-injected fakes. The optional live smoke requires creating the listed resources,
-ingesting the fictional fixtures, and making retrieval requests; it is deferred
-until that spend is explicitly approved. Under `PLAN_03_KNOWLEDGE_BASE.md`, the
-live smoke is conditional on cost approval, so the local phase acceptance can
-be complete without it. Real AWS service behavior remains a deployment-time
-gap.
+No AWS resources remain after the approved smoke. The live smoke deployed the
+two phase stacks, ingested the two fictional fixtures once, made two scope-isolated
+retrieval calls plus one off-topic query, then deleted the stacks and fixture
+objects. The off-topic query returned the nearest chunk, so the live test does
+not establish empty-result behavior; local tests cover that branch. No
+generative-model inference or legal data was used. Actual charges were not
+queried, and production-scale AWS behavior remains unverified.
 
 Abandoned uploads can still remain in `PENDING_UPLOAD`; Phase 02 cleanup is not
 automated. A future production improvement is a bounded cleanup job that checks
