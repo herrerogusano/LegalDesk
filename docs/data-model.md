@@ -28,7 +28,9 @@ tools must reject raw browser scope and accept only the server-built context.
 
 ## Planned storage keys
 
-- S3: `tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original`
+- S3 original: `tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original.txt`
+  or `original.pdf`, chosen from the validated media type. Bedrock metadata is
+  stored beside it as `{source-key}.metadata.json` and never embedded as text.
 - Metadata partition: `TENANT#{tenantId}#MATTER#{matterId}`
 - Conversation scope: `{userId}:{matterId}:{sessionId}`
 - Memory actor/session namespaces must include the authorized user and matter.

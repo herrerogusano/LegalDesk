@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -146,7 +147,7 @@ class DocumentPipelineTests(unittest.TestCase):
         UUID(document.document_id)
         self.assertEqual(
             document.s3_key,
-            f"tenants/tnt_aurora/matters/mat_sundial/documents/{document.document_id}/original",
+            f"tenants/tnt_aurora/matters/mat_sundial/documents/{document.document_id}/original.pdf",
         )
         self.assertNotIn("evil", document.s3_key)
 
@@ -155,7 +156,7 @@ class DocumentPipelineTests(unittest.TestCase):
 
         scope = RequestContext("corr", "usr_alice", "tnt_aurora", "mat_sundial", frozenset())
         with self.assertRaises(ValueError):
-            build_document_key(scope, "browser-selected-key")
+            build_document_key(scope, "browser-selected-key", "text/plain")
 
     def test_validation_rejects_type_size_and_path(self) -> None:
         cases = (
@@ -220,6 +221,52 @@ class DocumentPipelineTests(unittest.TestCase):
         self.assertFalse(hasattr(stored, "body"))
         self.assertEqual(stored.file_size_bytes, len(FIXTURE))
         self.assertNotIn(FIXTURE.decode(), repr(stored))
+
+    def test_confirmed_upload_writes_filterable_bedrock_sidecar(self) -> None:
+        document = self.pipeline.upload(ALICE, "mat_sundial", request())
+        sidecar_key = f"{document.s3_key}.metadata.json"
+        sidecar = json.loads(self.objects.objects[sidecar_key].decode("utf-8"))
+        attributes = sidecar["metadataAttributes"]
+        self.assertEqual(
+            {name: item["value"]["stringValue"] for name, item in attributes.items()},
+            {
+                "tenantId": "tnt_aurora",
+                "matterId": "mat_sundial",
+                "documentId": document.document_id,
+                "mediaType": "text/plain",
+                "jurisdiction": "fictional-eu",
+                "confidentiality": "fictional-internal",
+            },
+        )
+        self.assertTrue(all(item["includeForEmbedding"] is False for item in attributes.values()))
+        self.assertTrue(all(item["value"]["type"] == "STRING" for item in attributes.values()))
+
+    def test_document_key_extension_is_derived_from_media_type(self) -> None:
+        from legaldesk.authorization import RequestContext
+
+        scope = RequestContext("corr", "usr_alice", "tnt_aurora", "mat_sundial", frozenset())
+        document_id = "ecad6ef5-3cdf-40e7-8088-9178adac0037"
+        self.assertTrue(build_document_key(scope, document_id, "application/pdf").endswith("/original.pdf"))
+        with self.assertRaises(ValueError):
+            build_document_key(scope, document_id, "application/x-user-controlled")
+
+    def test_sidecar_failure_does_not_complete_upload(self) -> None:
+        class SidecarFailingStorage(InMemoryObjectStorage):
+            def put_object(self, *, key, body, media_type, metadata):
+                if key.endswith(".metadata.json"):
+                    raise RuntimeError("fictional sidecar failure")
+                super().put_object(
+                    key=key, body=body, media_type=media_type, metadata=metadata
+                )
+
+        objects = SidecarFailingStorage()
+        metadata = InMemoryDocumentMetadataRepository()
+        pipeline = DocumentPipeline(self.auth, objects, metadata)
+        with self.assertRaises(DocumentStorageError):
+            pipeline.upload(ALICE, "mat_sundial", request())
+        stored = next(iter(metadata.documents.values()))
+        self.assertEqual(stored.status, DocumentStatus.PENDING_UPLOAD)
+        self.assertEqual(len(objects.objects), 1)
 
     def test_presign_failure_marks_metadata_failed_and_raises(self) -> None:
         objects = InMemoryObjectStorage(fail=True)

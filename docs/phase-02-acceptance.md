@@ -22,7 +22,9 @@ ingestion, or retrieval was created or invoked.
 - `DocumentPipeline` is HTTP-neutral. It builds `RequestContext` before any
   validation or storage, so an unauthorized matter has no storage side effect.
 - Document IDs and S3 keys are generated server-side. Keys are
-  `tenants/{tenant}/matters/{matter}/documents/{documentId}/original`.
+  `tenants/{tenant}/matters/{matter}/documents/{documentId}/original.txt` or
+  `original.pdf`, derived from the validated media type so Bedrock can recognize
+  the source document format.
 - Object storage and metadata are separate protocols. DynamoDB metadata never
   includes the body; its single-table keys are
   `TENANT#{tenant}#MATTER#{matter}` and `DOCUMENT#{documentId}`.
@@ -31,13 +33,18 @@ ingestion, or retrieval was created or invoked.
   confidentiality allowlist without requiring the body. The local direct-upload
   helper derives the size from its body and additionally validates PDF magic
   bytes or UTF-8 text. Missing S3 objects do not advance the lifecycle.
+- Once S3 confirms the uploaded object, the backend creates a neighboring
+  `.metadata.json` sidecar with tenant, matter, document, media type,
+  jurisdiction, and confidentiality metadata. The fields are filterable and
+  explicitly excluded from embedding. Failure to write the sidecar leaves the
+  document in `PENDING_UPLOAD`.
 - In-memory fakes support deterministic local tests; boto3 adapters are lazy
   and injectable and were not called in this phase.
 - IaC defines encrypted, private, TLS-only S3 with a 30-day lifecycle,
   on-demand encrypted DynamoDB, and a least-privilege pipeline role with
-  prefix-restricted object management (including `GetObject` only for upload
-  confirmation). Stack teardown removes both resources after the bucket is
-  emptied.
+  prefix-restricted object management for original files and Bedrock sidecars
+  (including `GetObject` only for upload confirmation). Stack teardown removes
+  both resources after the bucket is emptied.
 - Two small, clearly distinguishable fictional fixtures are included.
 
 ## Local evidence

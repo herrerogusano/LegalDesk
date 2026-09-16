@@ -81,13 +81,21 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: ManageOriginalsForUploadConfirmation
+              - Sid: ManageSupportedOriginalObjects
                 Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
                   - s3:DeleteObject
-                Resource: !Sub "${DocumentBucket.Arn}/tenants/*/matters/*/documents/*/original"
+                Resource:
+                  - !Sub "${DocumentBucket.Arn}/tenants/*/matters/*/documents/*/original.txt"
+                  - !Sub "${DocumentBucket.Arn}/tenants/*/matters/*/documents/*/original.pdf"
+              - Sid: WriteBedrockMetadataSidecars
+                Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  - !Sub "${DocumentBucket.Arn}/tenants/*/matters/*/documents/*/original.txt.metadata.json"
+                  - !Sub "${DocumentBucket.Arn}/tenants/*/matters/*/documents/*/original.pdf.metadata.json"
               - Sid: WriteAndListMetadata
                 Effect: Allow
                 Action:
