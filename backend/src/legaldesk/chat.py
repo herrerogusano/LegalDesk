@@ -8,11 +8,18 @@ browser selectors, retrieval filters, or provider credentials.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Mapping, Protocol
 
-from .authorization import AuthorizationStore, VerifiedIdentity
+from .authorization import AuthorizationStore, VerifiedIdentity, build_request_context
+from .guardrails import (
+    BedrockGuardrailClient,
+    GuardrailAuditSink,
+    GuardrailConfig,
+    GuardrailProcessor,
+    GuardrailStage,
+)
 from .prompts import (
     DEFAULT_SYSTEM_PROMPT_PROVIDER,
     PromptConfigurationError,
@@ -24,7 +31,7 @@ from .retrieval import (
     BedrockKnowledgeBaseClient,
     Citation,
     RetrievedPassage,
-    search_legal_documents,
+    _retrieve_with_context,
 )
 
 
@@ -34,6 +41,12 @@ GENERATION_RESPONSE_FIELDS = ("answer", "citationIds", "evidenceStatus")
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 INSUFFICIENT_EVIDENCE_ANSWER = (
     "No se encontró evidencia suficiente en los documentos autorizados para responder."
+)
+GUARDRAIL_INPUT_BLOCKED_ANSWER = (
+    "No puedo procesar esta solicitud porque infringe una política de seguridad."
+)
+GUARDRAIL_OUTPUT_BLOCKED_ANSWER = (
+    "No puedo mostrar esta respuesta porque infringe una política de seguridad."
 )
 
 
@@ -174,6 +187,25 @@ def insufficient_evidence_response(
     )
 
 
+def guardrail_blocked_response(
+    stage: GuardrailStage,
+    prompt_artifact: SystemPromptArtifact,
+) -> ChatResponse:
+    answer = (
+        GUARDRAIL_INPUT_BLOCKED_ANSWER
+        if stage is GuardrailStage.INPUT
+        else GUARDRAIL_OUTPUT_BLOCKED_ANSWER
+    )
+    return ChatResponse(
+        answer=answer,
+        citations=(),
+        evidence_status=EvidenceStatus.INSUFFICIENT_EVIDENCE,
+        disclaimer_required=True,
+        prompt_version=prompt_artifact.version,
+        prompt_sha256=prompt_artifact.sha256,
+    )
+
+
 def _validate_generation_response(
     result: Mapping[str, object],
     passages: tuple[RetrievedPassage, ...],
@@ -229,8 +261,11 @@ def answer_question(
     retrieval_client: BedrockKnowledgeBaseClient,
     knowledge_base_id: str,
     generator: TextGenerator,
+    guardrail_client: BedrockGuardrailClient,
+    guardrail_config: GuardrailConfig,
     correlation_id: str | None = None,
     prompt_provider: SystemPromptProvider = DEFAULT_SYSTEM_PROMPT_PROVIDER,
+    guardrail_audit_sink: GuardrailAuditSink | None = None,
 ) -> ChatResponse:
     """Load the server prompt, authorize and retrieve, then generate from evidence."""
 
@@ -243,26 +278,45 @@ def answer_question(
     if not isinstance(request, ChatRequest):
         raise TypeError("request must be a validated ChatRequest")
 
+    # This deterministic check must run before any Guardrail sees caller input.
+    context = build_request_context(
+        identity,
+        request.matter_id,
+        authorization_store,
+        correlation_id=correlation_id,
+    )
+
     try:
         prompt_artifact = prompt_provider.load()
     except PromptConfigurationError:
         # A missing or malformed server prompt must never fall back to generation.
         return insufficient_evidence_response()
 
-    passages = search_legal_documents(
-        identity,
-        request.matter_id,
-        request.question,
-        authorization_store=authorization_store,
+    guardrails = GuardrailProcessor(
+        guardrail_client,
+        guardrail_config,
+        audit_sink=guardrail_audit_sink,
+    )
+    input_result = guardrails.check_input(
+        request.question.strip(), correlation_id=context.correlation_id
+    )
+    if not input_result.can_proceed:
+        return guardrail_blocked_response(GuardrailStage.INPUT, prompt_artifact)
+    question = input_result.content[0]
+    if len(question) > MAX_QUERY_LENGTH:
+        return guardrail_blocked_response(GuardrailStage.INPUT, prompt_artifact)
+
+    passages = _retrieve_with_context(
+        context,
+        question,
         bedrock_client=retrieval_client,
         knowledge_base_id=knowledge_base_id,
-        correlation_id=correlation_id,
     )
     if not passages:
         return insufficient_evidence_response(prompt_artifact)
 
     generation_request = GenerationRequest(
-        question=request.question.strip(),
+        question=question,
         system_prompt=prompt_artifact,
         evidence=tuple(
             GenerationEvidence(
@@ -275,4 +329,19 @@ def answer_question(
     generated = generator.generate(generation_request)
     if not isinstance(generated, Mapping):
         return insufficient_evidence_response(prompt_artifact)
-    return _validate_generation_response(generated, passages, prompt_artifact)
+    response = _validate_generation_response(generated, passages, prompt_artifact)
+    if not response.citations:
+        return response
+
+    output_result = guardrails.check_output(
+        question,
+        generation_request.evidence,
+        response.answer,
+        correlation_id=context.correlation_id,
+    )
+    if not output_result.can_proceed:
+        return guardrail_blocked_response(GuardrailStage.OUTPUT, prompt_artifact)
+    safe_answer = output_result.content[0]
+    if len(safe_answer) > MAX_ANSWER_LENGTH:
+        return guardrail_blocked_response(GuardrailStage.OUTPUT, prompt_artifact)
+    return replace(response, answer=safe_answer)
