@@ -43,6 +43,7 @@ class Citation:
     page_number: int | None
     section: str | None
     source_metadata: Mapping[str, str]
+    document_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +106,10 @@ def _normalize_results(
         ):
             continue
         document_id = _metadata_string(metadata, "documentId")
+        document_name = (
+            _metadata_string(metadata, "documentName")
+            or _metadata_string(metadata, "document_name")
+        )
         text = content.get("text")
         if document_id is None or not isinstance(text, str) or not text.strip():
             continue
@@ -158,6 +163,7 @@ def _normalize_results(
                 citation=Citation(
                     citation_id=citation_id,
                     document_id=document_id,
+                    document_name=document_name,
                     source_uri=source_uri,
                     page_number=page_number,
                     section=section,

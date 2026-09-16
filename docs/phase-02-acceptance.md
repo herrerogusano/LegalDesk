@@ -35,9 +35,9 @@ ingestion, or retrieval was created or invoked.
   bytes or UTF-8 text. Missing S3 objects do not advance the lifecycle.
 - Once S3 confirms the uploaded object, the backend creates a neighboring
   `.metadata.json` sidecar with tenant, matter, document, media type,
-  jurisdiction, and confidentiality metadata. The fields are filterable and
-  explicitly excluded from embedding. Failure to write the sidecar leaves the
-  document in `PENDING_UPLOAD`.
+  document name, jurisdiction, and confidentiality metadata. The fields are
+  filterable and explicitly excluded from embedding. Failure to write the
+  sidecar leaves the document in `PENDING_UPLOAD`.
 - In-memory fakes support deterministic local tests; boto3 adapters are lazy
   and injectable and were not called in this phase.
 - IaC defines encrypted, private, TLS-only S3 with a 30-day lifecycle,

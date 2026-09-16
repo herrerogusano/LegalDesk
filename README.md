@@ -6,9 +6,11 @@ a legal product, and it must only use public or wholly fictional documents.
 
 ## Current status
 
-Phase 00 is complete: the repository boundaries, domain model, threat model,
-request authorization rules, and local negative tests are in place. No AWS
-resources were created in this phase.
+Phases 00–04 are complete. The project now covers deterministic authorization,
+presigned document upload, S3 Vectors-backed authorized retrieval, and a
+retrieve-then-generate chat boundary with fail-closed citations and a local
+citation panel. Phase 04 was validated with local fakes only: it made no AWS
+retrieval or model-inference calls and created no AWS resources.
 
 ## Repository layout
 

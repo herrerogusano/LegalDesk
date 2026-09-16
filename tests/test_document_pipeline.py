@@ -3,13 +3,18 @@ from __future__ import annotations
 import sys
 import unittest
 import json
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
 from fixture_loader import load_authorization_store
-from legaldesk.authorization import AuthorizationDenied, VerifiedIdentity
+from legaldesk.authorization import (
+    AuthorizationDenied,
+    InMemoryAuthorizationStore,
+    VerifiedIdentity,
+)
 from legaldesk.documents import (
     DocumentPipeline,
     Boto3DynamoDocumentMetadataRepository,
@@ -19,8 +24,11 @@ from legaldesk.documents import (
     InMemoryDocumentMetadataRepository,
     InMemoryObjectStorage,
     MAX_DOCUMENT_BYTES,
+    MAX_FILENAME_LENGTH,
+    MAX_METADATA_TEXT_LENGTH,
     UploadRequest,
     build_document_key,
+    build_bedrock_metadata_attributes,
     document_partition_key,
     document_sort_key,
 )
@@ -233,6 +241,7 @@ class DocumentPipelineTests(unittest.TestCase):
                 "tenantId": "tnt_aurora",
                 "matterId": "mat_sundial",
                 "documentId": document.document_id,
+                "documentName": "sundial-notice.txt",
                 "mediaType": "text/plain",
                 "jurisdiction": "fictional-eu",
                 "confidentiality": "fictional-internal",
@@ -240,6 +249,45 @@ class DocumentPipelineTests(unittest.TestCase):
         )
         self.assertTrue(all(item["includeForEmbedding"] is False for item in attributes.values()))
         self.assertTrue(all(item["value"]["type"] == "STRING" for item in attributes.values()))
+
+    def test_custom_metadata_map_with_max_fields_fits_bedrock_budget(self) -> None:
+        filename = "n" * (MAX_FILENAME_LENGTH - len(".txt")) + ".txt"
+        document = self.pipeline.upload(
+            ALICE,
+            "mat_sundial",
+            request(filename=filename, jurisdiction="j" * MAX_METADATA_TEXT_LENGTH),
+        )
+        sidecar_key = f"{document.s3_key}.metadata.json"
+        self.assertIn(sidecar_key, self.objects.objects)
+        attributes = build_bedrock_metadata_attributes(document)
+        self.assertEqual(len(attributes), 7)
+        compact_map = json.dumps(
+            attributes,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertLess(len(compact_map), 1024)
+
+    def test_excessive_custom_metadata_fails_before_persistence_or_presign(self) -> None:
+        user = self.auth.users_by_subject[ALICE.subject]
+        oversized_matter = replace(
+            self.auth.matters_by_id["mat_sundial"],
+            matter_id="m" * 1_024,
+        )
+        authorization = InMemoryAuthorizationStore(
+            users_by_subject={ALICE.subject: user},
+            matters_by_id={"mat_sundial": oversized_matter},
+        )
+        storage = InMemoryObjectStorage()
+        metadata = InMemoryDocumentMetadataRepository()
+        pipeline = DocumentPipeline(authorization, storage, metadata)
+
+        with self.assertRaises(DocumentValidationError):
+            pipeline.initiate_upload(ALICE, "mat_sundial", request())
+
+        self.assertEqual(metadata.documents, {})
+        self.assertEqual(storage.presigned_urls, {})
 
     def test_document_key_extension_is_derived_from_media_type(self) -> None:
         from legaldesk.authorization import RequestContext

@@ -32,8 +32,8 @@ remain unverified.
 - Phase 02 keys now end in `original.txt` or `original.pdf`; the extension is
   derived from validated media type. After confirming the object with S3, the
   backend writes a neighboring `.metadata.json` sidecar containing tenant,
-  matter, document, MIME, jurisdiction, and confidentiality attributes. All
-  fields are filterable and excluded from embedding.
+  matter, document ID and name, MIME, jurisdiction, and confidentiality
+  attributes. All fields are filterable and excluded from embedding.
 - The Bedrock role can list only the `tenants/` source prefix, read only
   `.../documents/*/original.*`, invoke only the selected embedding model, and
   access only the configured S3 Vector index. It does not grant clients or the

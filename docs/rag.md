@@ -45,12 +45,26 @@ tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original.pdf
 
 After `HeadObject` confirms an uploaded object and its signed metadata, the
 backend writes `{source-key}.metadata.json` beside it. The sidecar contains
-`tenantId`, `matterId`, `documentId`, `mediaType`, `jurisdiction`, and
-`confidentiality`. Every attribute is a typed Bedrock `STRING` with
-`includeForEmbedding: false`; attributes are filterable metadata and are not
-added to the embedding text. The sidecar write completes before upload
-confirmation changes the document to `UPLOADED`. A sidecar write failure leaves
-the document pending so confirmation can be retried.
+`tenantId`, `matterId`, `documentId`, `documentName`, `mediaType`,
+`jurisdiction`, and `confidentiality`. Every attribute is a typed Bedrock
+`STRING` with `includeForEmbedding: false`; attributes are filterable metadata
+and are not added to the embedding text. The builder serializes the flat map of
+seven custom attributes as compact UTF-8 JSON and rejects it at 1 KiB or more;
+upload initiation runs this check before metadata persistence and presigning,
+and sidecar serialization reuses that builder. A local test exercises maximum
+filename and jurisdiction lengths with fictional scope IDs. Bedrock Knowledge
+Bases documents the stricter S3 Vectors integration limits as 1 KiB of custom
+metadata (filterable and non-filterable combined) and 35 keys per vector; these
+govern this project. Native S3 Vectors separately documents 2 KiB filterable,
+40 KiB total metadata, 50 total keys, and 10 non-filterable keys per index.
+The Phase 03 index reserves two non-filterable Bedrock keys. The check covers
+our local custom map only; it does not inspect Bedrock's transformed vector
+metadata or establish live ingestion behavior. See [Bedrock Knowledge Bases
+metadata support](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-setup.html)
+and [native S3 Vectors limits](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-limitations.html).
+The sidecar write completes before upload confirmation changes the document to
+`UPLOADED`. A sidecar write failure leaves the document pending so confirmation
+can be retried.
 
 The S3 data source includes the `tenants/` prefix. Bedrock's service role can
 list only that prefix and read only objects matching the Phase 02 document
@@ -209,3 +223,65 @@ The Phase 02 bucket also expires source objects after 30 days. S3 expiry does
 not itself run a Bedrock sync, so stored vectors can outlive their source until
 the next deliberate sync; source deletion/expiry reconciliation should be
 scheduled before production retention policies are enabled.
+
+## Phase 04 — Grounded chat and citations
+
+`legaldesk.chat.parse_chat_request` accepts exactly `conversationId`,
+`sessionId`, `matterId`, and `question`. Conversation and session selectors
+must be 1–128 ASCII token characters; the matter selector has the same bounded
+syntax but remains untrusted. The parser rejects unknown fields such as
+`tenantId` and retrieval filters. The API adapter must supply a
+`VerifiedIdentity` only after identity-provider signature, issuer, audience,
+and expiry checks. Phase 04 is HTTP-neutral and does not implement that
+adapter.
+
+`answer_question` calls the existing authorized retrieval service before the
+generator. Retrieval derives scope from the authorization store and filters
+and rechecks tenant/matter server-side. An empty result returns this canonical
+response without invoking a model:
+
+```json
+{
+  "answer": "No se encontró evidencia suficiente en los documentos autorizados para responder.",
+  "citations": [],
+  "evidenceStatus": "insufficient_evidence",
+  "disclaimerRequired": true
+}
+```
+
+For non-empty results, generation receives only the question and each
+retrieval-issued citation ID plus passage text. A short handling note labels
+the passages as untrusted source data and says not to follow instructions
+inside them. Tenant/matter IDs, conversation/session selectors, document
+metadata, credentials, provider clients, and retrieval filters do not cross
+this boundary. This note is not a versioned system prompt; Phase 05 owns that
+prompt and its tests.
+
+The generator returns exactly `answer`, `citationIds`, and `evidenceStatus`
+(`answerable`, `ambiguous`, or `insufficient_evidence`). The backend accepts
+only unique citation IDs present in the retrieved set. A malformed response,
+invented/duplicate citation, unsupported status, or answer without valid
+citations fails closed to the canonical insufficient-evidence response. The
+backend maps accepted IDs to its own citation records, preserving document ID,
+name when supplied, S3 URI, page, and section. Browser-facing citations omit
+tenant/matter metadata. Every response currently sets `disclaimerRequired` to
+true because the prototype is not legal advice.
+
+Local test coverage includes answerable, ambiguous, model-reported
+unanswerable, empty retrieval/no model call, invalid citation, cross-document
+citations within one matter, cross-matter filtering, and authorization denial
+before retrieval. `frontend/index.html` is a responsive citation-panel example
+with fictional data; it can render the response shape but is not connected to
+an API.
+
+No AWS resources were created or modified in Phase 04. No Knowledge Base
+retrieval or real-model inference was run. Unit tests use injected fakes, so
+they add no AWS charges. Future AWS retrieval and text-generation calls are
+billable and must be deliberate under `AWS_COST_POLICY.md`.
+
+Remaining gaps are explicit: there is no HTTP/API adapter, durable conversation
+or session ownership/binding, real provider generator, versioned prompt or
+prompt-injection evaluation, AWS smoke, or production UI integration. The
+lexical selector checks do not establish ownership of a conversation or
+session; persistence and actor/session/matter binding need a later phase before
+multi-request use.

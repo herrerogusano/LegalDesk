@@ -30,6 +30,8 @@ ALLOWED_MEDIA_TYPES = frozenset({"application/pdf", "text/plain"})
 ALLOWED_CONFIDENTIALITY = frozenset({"public-fictional", "fictional-internal"})
 MAX_FILENAME_LENGTH = 255
 MAX_METADATA_TEXT_LENGTH = 256
+MAX_BEDROCK_CUSTOM_METADATA_BYTES = 1024
+MAX_BEDROCK_CUSTOM_METADATA_KEYS = 35
 MIN_PRESIGNED_URL_EXPIRES_SECONDS = 60
 MAX_PRESIGNED_URL_EXPIRES_SECONDS = 900
 MEDIA_TYPE_EXTENSIONS = {"application/pdf": ".pdf", "text/plain": ".txt"}
@@ -201,8 +203,8 @@ def _safe_metadata(document: Document) -> dict[str, str]:
     }
 
 
-def build_bedrock_metadata_sidecar(document: Document) -> bytes:
-    """Serialize filterable Bedrock metadata without embedding it as content."""
+def build_bedrock_metadata_attributes(document: Document) -> dict[str, str]:
+    """Build and budget the flat custom metadata map used by Bedrock KB."""
 
     import json
 
@@ -210,10 +212,35 @@ def build_bedrock_metadata_sidecar(document: Document) -> bytes:
         "tenantId": document.tenant_id,
         "matterId": document.matter_id,
         "documentId": document.document_id,
+        "documentName": document.name,
         "mediaType": document.media_type,
         "jurisdiction": document.jurisdiction,
         "confidentiality": document.confidentiality,
     }
+    if len(attributes) > MAX_BEDROCK_CUSTOM_METADATA_KEYS:
+        raise DocumentValidationError("document metadata has too many Bedrock attributes")
+    if any(not isinstance(value, str) for value in attributes.values()):
+        raise DocumentValidationError("document metadata attributes must be strings")
+    try:
+        serialized = json.dumps(
+            attributes,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, UnicodeEncodeError) as exc:
+        raise DocumentValidationError("document metadata cannot be encoded as UTF-8") from exc
+    if len(serialized) >= MAX_BEDROCK_CUSTOM_METADATA_BYTES:
+        raise DocumentValidationError("document metadata exceeds the Bedrock Knowledge Bases budget")
+    return attributes
+
+
+def build_bedrock_metadata_sidecar(document: Document) -> bytes:
+    """Serialize filterable Bedrock metadata without embedding it as content."""
+
+    import json
+
+    attributes = build_bedrock_metadata_attributes(document)
     payload = {
         "metadataAttributes": {
             key: {
@@ -312,6 +339,7 @@ class DocumentPipeline:
             file_size_bytes=request.file_size_bytes or 0,
             uploaded_at=self.clock(),
         )
+        build_bedrock_metadata_attributes(document)
         try:
             self.metadata_repository.save(document)
         except Exception as exc:
