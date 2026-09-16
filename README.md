@@ -6,12 +6,13 @@ a legal product, and it must only use public or wholly fictional documents.
 
 ## Current status
 
-Phases 00–05 are complete. The project now covers deterministic authorization,
+Phases 00–07 are complete. The project now covers deterministic authorization,
 presigned document upload, S3 Vectors-backed authorized retrieval, and a
 retrieve-then-generate chat boundary with fail-closed citations and a local
-citation panel. Its system prompt is a server-loaded, versioned artifact with
-local policy and integration tests. Phase 05 made no AWS retrieval or
-model-inference calls and created no AWS resources.
+citation panel. Its system prompt is versioned, Bedrock Guardrails have been
+validated with a small synthetic smoke, and the metadata-only
+`create_review_task` Lambda tool is ready for Gateway integration. Phase 07 was
+validated locally and created no AWS resources.
 
 ## Repository layout
 

@@ -103,3 +103,12 @@ class ReviewTask:
     status: ReviewTaskStatus = ReviewTaskStatus.OPEN
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+    # Correlation metadata is safe to persist; task bodies and document text
+    # deliberately have no field in this model.
+    correlation_id: str = ""
+
+    @property
+    def reason_code(self) -> str:
+        """Compatibility-friendly name for the closed review reason value."""
+
+        return self.reason
