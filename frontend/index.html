@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>LegalDesk — respuesta con fuentes</title>
+    <link rel="stylesheet" href="styles.css">
+    <script defer src="citations.js"></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="wordmark" href="#main" aria-label="LegalDesk, inicio">LegalDesk<span> / </span>Archivo</a>
+      <p class="environment"><span class="environment-dot" aria-hidden="true"></span> DEMO LOCAL · DATOS FICTICIOS</p>
+    </header>
+
+    <main id="main" class="workspace">
+      <div class="eyebrow"><span>Consulta documental</span><span class="eyebrow-rule" aria-hidden="true"></span><span>Respuesta fundamentada</span></div>
+      <div class="title-row">
+        <div>
+          <p class="kicker">EXPEDIENTE DE MUESTRA <span>·</span> SUN-017</p>
+          <h1>Una respuesta<br>con sus fuentes.</h1>
+        </div>
+        <div class="folio" aria-label="Vista de citas"><span>VISTA</span><strong>04</strong><span>/ CITAS</span></div>
+      </div>
+
+      <section class="question-card" aria-labelledby="question-label">
+        <div class="section-index"><span>01</span><span class="index-line" aria-hidden="true"></span></div>
+        <div>
+          <p id="question-label" class="field-label">PREGUNTA</p>
+          <p class="question-text">¿Cuál es el plazo de pago y desde cuándo empieza a contar?</p>
+        </div>
+      </section>
+
+      <section class="answer-layout" aria-labelledby="answer-label">
+        <div class="section-index answer-index"><span>02</span><span class="index-line" aria-hidden="true"></span></div>
+        <div class="answer-main">
+          <div class="answer-heading">
+            <p id="answer-label" class="field-label">RESPUESTA</p>
+            <p id="evidence-status" class="status"><span class="status-mark" aria-hidden="true"></span><span></span></p>
+          </div>
+          <div id="answer" class="answer-copy" aria-live="polite"></div>
+          <div id="disclaimer" class="disclaimer" hidden>
+            <span class="disclaimer-mark" aria-hidden="true">i</span>
+            <p>Resumen documental, no asesoramiento jurídico. Verifique el texto original y consulte a su profesional legal.</p>
+          </div>
+        </div>
+        <aside class="sources" aria-labelledby="sources-heading">
+          <div class="sources-heading-row">
+            <div class="section-index source-index"><span>03</span></div>
+            <div>
+              <p class="field-label">TRAZABILIDAD</p>
+              <h2 id="sources-heading">Fuentes consultadas</h2>
+            </div>
+          </div>
+          <p id="empty-citations" class="empty-citations" hidden>No se utilizaron fuentes para esta respuesta.</p>
+          <ol id="citation-list" class="citation-list" aria-label="Citas recuperadas"></ol>
+          <p class="source-note">Las referencias proceden únicamente de los pasajes recuperados para esta consulta.</p>
+        </aside>
+      </section>
+      <footer class="page-footer"><span>LEGALDESK <span class="footer-separator">/</span> PROTOTIPO DE INVESTIGACIÓN</span><span>NO CONTIENE DOCUMENTACIÓN REAL</span></footer>
+    </main>
+  </body>
+</html>

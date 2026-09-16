@@ -27,20 +27,24 @@ def result(
     *,
     page: int = 2,
     section: str = "Payment terms",
+    document_name: str | None = None,
 ) -> dict[str, Any]:
+    metadata = {
+        "tenantId": tenant_id,
+        "matterId": matter_id,
+        "documentId": document_id,
+        "mediaType": "application/pdf",
+        "jurisdiction": "fictional",
+        "confidentiality": "fictional-internal",
+        "x-amz-bedrock-kb-document-page-number": page,
+        "section": section,
+    }
+    if document_name is not None:
+        metadata["documentName"] = document_name
     return {
         "content": {"type": "TEXT", "text": text},
         "location": {"s3Location": {"uri": f"s3://fictional/{document_id}.pdf"}},
-        "metadata": {
-            "tenantId": tenant_id,
-            "matterId": matter_id,
-            "documentId": document_id,
-            "mediaType": "application/pdf",
-            "jurisdiction": "fictional",
-            "confidentiality": "fictional-internal",
-            "x-amz-bedrock-kb-document-page-number": page,
-            "section": section,
-        },
+        "metadata": metadata,
         "score": 0.87,
     }
 
@@ -98,11 +102,30 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(len(passages), 1)
         self.assertEqual(passages[0].text, "Sundial payment is due in 17 days.")
         self.assertEqual(passages[0].citation.document_id, "doc-sundial")
+        self.assertIsNone(passages[0].citation.document_name)
         self.assertEqual(passages[0].citation.page_number, 2)
         self.assertEqual(passages[0].citation.section, "Payment terms")
         self.assertEqual(passages[0].citation.source_uri, "s3://fictional/doc-sundial.pdf")
         self.assertEqual(passages[0].citation.source_metadata["matterId"], "mat_sundial")
         self.assertEqual(passages[0].score, 0.87)
+
+    def test_document_name_is_preserved_when_retrieval_provides_it(self) -> None:
+        passage = self.search(
+            ALICE,
+            "mat_sundial",
+            FakeKnowledgeBaseClient(
+                [
+                    result(
+                        "tnt_aurora",
+                        "mat_sundial",
+                        "doc-sundial",
+                        "Payment is due in 17 days.",
+                        document_name="Sundial agreement.pdf",
+                    )
+                ]
+            ),
+        )[0]
+        self.assertEqual(passage.citation.document_name, "Sundial agreement.pdf")
 
     def test_bob_retrieves_only_glacier_evidence(self) -> None:
         client = FakeKnowledgeBaseClient(
