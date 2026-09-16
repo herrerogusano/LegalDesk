@@ -4,11 +4,11 @@
 
 | Criterion | Evidence |
 | --- | --- |
-| Readable, explicitly versioned source of truth | [`prompts/legaldesk-system.md`](../prompts/legaldesk-system.md) has ID `legaldesk-system` and version `1.0.0`; no full copy is embedded in Python, documentation, or Phase 01 IaC. |
+| Readable, explicitly versioned source of truth | [`prompts/legaldesk-system.md`](../prompts/legaldesk-system.md) has ID `legaldesk-system` and version `1.1.0`; no full copy is embedded in Python, documentation, or Phase 01 IaC. |
 | Server-controlled, provider-neutral prompt loading | `backend/src/legaldesk/prompts.py` defines a provider interface and a filesystem implementation. The path is server configuration; browser payload parsing rejects prompt overrides. |
 | Metadata, version, encoding, content, and size validation | `tests/test_prompts.py`: malformed/duplicate metadata, invalid version, missing content, invalid UTF-8, BOM, control characters, and over-limit artifact. |
 | Prompt content is attached at the generation boundary | `tests/test_chat.py`: fake generator receives the loaded `SystemPromptArtifact` with validated content, version, and hash. |
-| Response traceability and fail-closed behavior | `tests/test_chat.py`: `promptVersion` and `promptSha256` are returned for generated and canonical insufficient-evidence responses; existing malformed-output and citation failures remain canonical. Invalid prompt configuration does not invoke the generator. |
+| Response traceability and citation-aware insufficient evidence | `tests/test_chat.py`: `promptVersion` and `promptSha256` are returned for generated, cited partial-insufficient, and canonical no-evidence responses. Empty citations in an insufficient-evidence result remain canonical; cited partial explanations are preserved after citation validation. Malformed output and invalid citations still fail closed. Invalid prompt configuration does not invoke the generator. |
 | Golden policy and output-contract coverage without model claims | `tests/test_prompts.py`: source policy, citations, insufficient evidence, advice limits/human review, document injection, prompt disclosure, privacy, tools, and authorization separation are checked as prompt structure. The JSON field names and evidence statuses are matched to the backend contract. No model inference was run. |
 | No secrets or legal data | The prompt secret-pattern check passes; fixtures and test inputs are fictional. |
 

@@ -204,8 +204,6 @@ def _validate_generation_response(
         or any(citation_id not in retrieved for citation_id in citation_ids)
     ):
         return insufficient_evidence_response(prompt_artifact)
-    if status is EvidenceStatus.INSUFFICIENT_EVIDENCE:
-        return insufficient_evidence_response(prompt_artifact)
     if not citation_ids:
         return insufficient_evidence_response(prompt_artifact)
 

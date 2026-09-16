@@ -246,7 +246,7 @@ response without invoking a model:
   "citations": [],
   "evidenceStatus": "insufficient_evidence",
   "disclaimerRequired": true,
-  "promptVersion": "1.0.0",
+  "promptVersion": "1.1.0",
   "promptSha256": "<sha256 of the loaded prompt artifact>"
 }
 ```
@@ -270,20 +270,23 @@ language guides model behavior and tools; it does not implement authorization.
 
 The generator returns exactly `answer`, `citationIds`, and `evidenceStatus`
 (`answerable`, `ambiguous`, or `insufficient_evidence`). The backend accepts
-only unique citation IDs present in the retrieved set. A malformed response,
-invented/duplicate citation, unsupported status, or answer without valid
-citations fails closed to the canonical insufficient-evidence response. The
-backend maps accepted IDs to its own citation records, preserving document ID,
-name when supplied, S3 URI, page, and section. Browser-facing citations omit
-tenant/matter metadata. Every response currently sets `disclaimerRequired` to
-true because the prototype is not legal advice.
+only unique citation IDs present in the retrieved set. `answerable` and
+`ambiguous` require at least one valid citation. For `insufficient_evidence`,
+an empty citation list returns the canonical no-evidence response; valid cited
+passages preserve a partial explanation of what the documents establish and
+what remains unsupported. A malformed response, invented/duplicate citation,
+or unsupported status fails closed to the canonical response. The backend maps
+accepted IDs to its own citation records, preserving document ID, name when
+supplied, S3 URI, page, and section. Browser-facing citations omit tenant/matter
+metadata. Every response currently sets `disclaimerRequired` to true because
+the prototype is not legal advice.
 
-Local test coverage includes answerable, ambiguous, model-reported
-unanswerable, empty retrieval/no model call, invalid citation, cross-document
-citations within one matter, cross-matter filtering, and authorization denial
-before retrieval. `frontend/index.html` is a responsive citation-panel example
-with fictional data; it can render the response shape but is not connected to
-an API.
+Local test coverage includes answerable, ambiguous, insufficient evidence with
+and without cited partial support, empty retrieval/no model call, invalid
+citations, cross-document citations within one matter, cross-matter filtering,
+and authorization denial before retrieval. `frontend/index.html` is a
+responsive citation-panel example with fictional data; it can render the
+response shape but is not connected to an API.
 
 No AWS resources were created or modified in Phase 04. No Knowledge Base
 retrieval or real-model inference was run. Unit tests use injected fakes, so
