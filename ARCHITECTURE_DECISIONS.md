@@ -71,6 +71,18 @@ Flujo:
 
 Para preguntas documentales, recuperar antes de responder.
 
+Implementación Phase 03: Amazon Bedrock Knowledge Base con S3 como data source,
+S3 Vectors como vector store, Amazon Titan Text Embeddings V2 en 1024
+dimensiones y chunking jerárquico (parent 1200, child 300, overlap 60 tokens).
+El índice de S3 Vectors reserva `AMAZON_BEDROCK_TEXT` y
+`AMAZON_BEDROCK_METADATA` como metadata no filterable; los atributos propios
+de LegalDesk, incluidos `tenantId` y `matterId`, permanecen filterable.
+`search_legal_documents` deriva el filtro
+AND `tenantId`/`matterId` desde `RequestContext` en el backend y vuelve a
+comprobar el scope de cada resultado. El modelo solo podrá recibir los
+passages/citations autorizados; no recibe credenciales ni acceso directo a S3 o
+a la Knowledge Base.
+
 ## ADR-008 — Identidad
 
 Preferencia MVP: Amazon Cognito, salvo que una integración OIDC existente resulte claramente más simple.
