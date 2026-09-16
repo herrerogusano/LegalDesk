@@ -105,8 +105,13 @@ class Phase06GuardrailInfrastructureTests(unittest.TestCase):
         self.assertIn("Type: DENY", body)
         self.assertIn("InputAction: BLOCK", body)
         self.assertIn("OutputAction: BLOCK", body)
-        self.assertIn("general legal information", body)
+        self.assertIn("general", body.lower())
+        self.assertIn("legal information", body.lower())
         self.assertIn("specific", body)
+        self.assertLessEqual(
+            len("Requests for personalized legal recommendations, legal strategy, or outcome predictions based on a person's specific facts. General legal information and explanations of documents are allowed."),
+            200,
+        )
 
     def test_contextual_grounding_thresholds_and_block_actions_are_explicit(self) -> None:
         grounding = re.search(

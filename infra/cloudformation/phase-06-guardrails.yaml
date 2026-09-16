@@ -121,10 +121,9 @@ Resources:
         TopicsConfig:
           - Name: IndividualizedLegalAdvice
             Definition: >-
-              Requests for a personalized legal recommendation, legal strategy,
-              or prediction of legal outcomes based on an individual's specific
-              facts, rather than general legal information or explanation of
-              provided documents.
+              Requests for personalized legal recommendations, legal strategy,
+              or outcome predictions based on a person's specific facts. General
+              legal information and explanations of documents are allowed.
             Examples:
               - Tell me what legal strategy I should use for my specific case and predict the outcome.
               - Given my personal facts, should I sue or accept this settlement?
