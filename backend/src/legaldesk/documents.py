@@ -32,6 +32,7 @@ MAX_FILENAME_LENGTH = 255
 MAX_METADATA_TEXT_LENGTH = 256
 MIN_PRESIGNED_URL_EXPIRES_SECONDS = 60
 MAX_PRESIGNED_URL_EXPIRES_SECONDS = 900
+MEDIA_TYPE_EXTENSIONS = {"application/pdf": ".pdf", "text/plain": ".txt"}
 
 
 class DocumentError(Exception):
@@ -109,16 +110,22 @@ def document_sort_key(document_id: str) -> str:
     return f"DOCUMENT#{document_id}"
 
 
-def build_document_key(context: RequestContext, document_id: str) -> str:
+def build_document_key(
+    context: RequestContext, document_id: str, media_type: str
+) -> str:
     """Build an object key solely from server-derived scope and ID."""
 
     try:
         UUID(document_id)
     except (ValueError, AttributeError) as exc:
         raise ValueError("document_id must be a UUID") from exc
+    try:
+        extension = MEDIA_TYPE_EXTENSIONS[media_type]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("media_type is not supported") from exc
     return (
         f"tenants/{context.tenant_id}/matters/{context.matter_id}/"
-        f"documents/{document_id}/original"
+        f"documents/{document_id}/original{extension}"
     )
 
 
@@ -194,6 +201,31 @@ def _safe_metadata(document: Document) -> dict[str, str]:
     }
 
 
+def build_bedrock_metadata_sidecar(document: Document) -> bytes:
+    """Serialize filterable Bedrock metadata without embedding it as content."""
+
+    import json
+
+    attributes = {
+        "tenantId": document.tenant_id,
+        "matterId": document.matter_id,
+        "documentId": document.document_id,
+        "mediaType": document.media_type,
+        "jurisdiction": document.jurisdiction,
+        "confidentiality": document.confidentiality,
+    }
+    payload = {
+        "metadataAttributes": {
+            key: {
+                "value": {"type": "STRING", "stringValue": value},
+                "includeForEmbedding": False,
+            }
+            for key, value in attributes.items()
+        }
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
 def _upload_headers(document: Document) -> dict[str, str]:
     """Headers required by the signed PUT request."""
 
@@ -265,7 +297,7 @@ class DocumentPipeline:
         ):
             raise DocumentValidationError("presigned URL expiry is outside the allowed range")
         document_id = str(self.id_factory())
-        key = build_document_key(context, document_id)
+        key = build_document_key(context, document_id, request.media_type)
         document = Document(
             document_id=document_id,
             matter_id=context.matter_id,
@@ -349,6 +381,16 @@ class DocumentPipeline:
             for name, value in _safe_metadata(document).items()
         ):
             raise DocumentStorageError("uploaded object metadata is invalid")
+        sidecar = build_bedrock_metadata_sidecar(document)
+        try:
+            self.object_storage.put_object(
+                key=f"{document.s3_key}.metadata.json",
+                body=sidecar,
+                media_type="application/json",
+                metadata={"document-id": document.document_id},
+            )
+        except Exception as exc:
+            raise DocumentStorageError("document metadata sidecar could not be stored") from exc
         return self.metadata_repository.update_status(
             tenant_id=context.tenant_id,
             matter_id=context.matter_id,

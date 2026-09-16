@@ -96,7 +96,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 - [x] Phase 00
 - [x] Phase 01
 - [x] Phase 02
-- [ ] Phase 03
+- [x] Phase 03 (local acceptance complete; optional live AWS smoke awaits cost approval)
 - [ ] Phase 04
 - [ ] Phase 05
 - [ ] Phase 06
