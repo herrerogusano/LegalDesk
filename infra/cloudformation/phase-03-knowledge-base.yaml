@@ -102,9 +102,7 @@ Resources:
       StorageConfiguration:
         Type: S3_VECTORS
         S3VectorsConfiguration:
-          VectorBucketArn: !GetAtt LegalDeskVectorBucket.VectorBucketArn
           IndexArn: !GetAtt LegalDeskVectorIndex.IndexArn
-          IndexName: legaldesk-phase03
       Tags:
         Project: LegalDesk
         Phase: "03"
