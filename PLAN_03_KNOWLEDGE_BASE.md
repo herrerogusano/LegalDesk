@@ -25,7 +25,9 @@ Convertir los documentos autorizados en una fuente RAG recuperable y demostrar r
 1. Crear/configurar Bedrock Knowledge Base.
 2. Conectar S3 como data source.
 3. Elegir vector store/configuración mínima compatible.
-4. Definir estrategia de chunking inicial simple.
+4. Usar chunking fijo con `MaxTokens: 800` y `OverlapPercentage: 15`. El modo
+   fijo mantiene un perfil de metadatos sencillo para S3 Vectors; el tamaño y
+   solapamiento equilibran contexto, cantidad de chunks y coste de embeddings.
 5. Adjuntar metadata necesaria para filtrar:
    `tenantId`, `matterId`, `documentId`, tipo y otros campos útiles.
 6. Crear proceso de sync/ingestion deliberado, no continuo.

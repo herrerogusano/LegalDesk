@@ -122,12 +122,10 @@ Resources:
             - tenants/
       VectorIngestionConfiguration:
         ChunkingConfiguration:
-          ChunkingStrategy: HIERARCHICAL
-          HierarchicalChunkingConfiguration:
-            LevelConfigurations:
-              - MaxTokens: 1200
-              - MaxTokens: 300
-            OverlapTokens: 60
+          ChunkingStrategy: FIXED_SIZE
+          FixedSizeChunkingConfiguration:
+            MaxTokens: 800
+            OverlapPercentage: 15
 
 Outputs:
   KnowledgeBaseId:

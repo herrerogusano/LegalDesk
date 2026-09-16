@@ -2,9 +2,12 @@
 
 ## Result
 
-Phase 03 passed local acceptance and the explicitly approved minimal AWS smoke.
-The smoke resources were torn down; the separate production deployment and
-ongoing cost profile remain unverified.
+The original Phase 03 implementation passed local acceptance and the explicitly
+approved minimal AWS smoke, then its smoke resources were torn down. That smoke
+used the earlier hierarchical chunking configuration. The current fixed-size
+chunking update has passed local validation only; it has not been deployed or
+tested against AWS. The separate production deployment and ongoing cost profile
+remain unverified.
 
 ## Implemented
 
@@ -18,14 +21,14 @@ ongoing cost profile remain unverified.
   remain filterable. The Knowledge Base references the index by `IndexArn`;
   CloudFormation's schema rejects supplying the ARN, name, and bucket ARN
   together because its supported alternatives overlap.
-- Titan Text Embeddings V2 is configured at 1024 dimensions. Data source
-  chunking has exactly two hierarchical levels: parent 1200 tokens, child 300
-  tokens, and 60 overlap tokens. Child chunks improve retrieval precision and
-  Bedrock can return broader parent context. AWS cautions against hierarchical
-  chunking with S3 Vectors because parent/child metadata consumes vector
-  metadata; high chunk sizes above 8000 combined tokens may exceed limits. This
-  configuration totals 1500 tokens and uses a minimal synthetic dataset.
-  Chunking changes require replacing the data source and re-syncing.
+- Titan Text Embeddings V2 is configured at 1024 dimensions. The current data
+  source uses fixed-size chunking with `MaxTokens: 800` and
+  `OverlapPercentage: 15`. This avoids hierarchical parent-child metadata,
+  which can consume S3 Vectors' metadata budget, and keeps passages bounded
+  while retaining some context at boundaries. Overlap repeats input across
+  chunks, and chunk count affects embedding and vector-storage usage; therefore
+  this is a compatibility and cost-control tradeoff, not a guarantee of lower
+  total cost. Chunking changes require replacing the data source and re-syncing.
 - Phase 02 keys now end in `original.txt` or `original.pdf`; the extension is
   derived from validated media type. After confirming the object with S3, the
   backend writes a neighboring `.metadata.json` sidecar containing tenant,
@@ -54,7 +57,14 @@ ongoing cost profile remain unverified.
 - Cleanup of abandoned `PENDING_UPLOAD` documents remains a documented
   production improvement; no automated cleanup is introduced.
 
-## Approved AWS smoke evidence
+## Historical approved AWS smoke evidence — previous chunking configuration
+
+This evidence is retained as a record of the original Phase 03 smoke. At the
+time, the deployed template used hierarchical chunking (parent 1200, child 300,
+overlap 60 tokens). It does not validate the current fixed-size settings
+(`MaxTokens: 800`, `OverlapPercentage: 15`), which have only been validated
+locally. No AWS call, deployment, ingestion, or retrieval was performed for the
+fixed-size update.
 
 - Executed 2026-09-16 in `eu-west-1` after explicit cost approval. The smoke
   deployed `legaldesk-phase-02` and `legaldesk-phase-03`; Bedrock reported the
@@ -103,24 +113,23 @@ ongoing cost profile remain unverified.
 - The CloudFormation template is statically validated. Tests use injected
   clients and synthetic fixtures. The live smoke used only fictional fixtures;
   no real legal data was used.
-- Static IaC tests assert the two hierarchy sizes, overlap, absence of
-  fixed-size chunking, and the required Bedrock non-filterable metadata keys in
-  the Phase 03 template.
+- Static IaC tests assert the current fixed-size strategy, 800-token maximum,
+  15% overlap, absence of hierarchical chunking, and the required Bedrock
+  non-filterable metadata keys in the Phase 03 template.
 
-Run the local suite and static checks from the repository root:
+Commands for local validation of the current fixed-size update, from the
+repository root:
 
 ```powershell
 python -m unittest discover -s tests -v
 python -m compileall -q backend/src backend/scripts tests
 git diff --check
-aws cloudformation validate-template --template-body file://infra/cloudformation/phase-03-knowledge-base.yaml --region eu-west-1
-aws cloudformation validate-template --template-body file://infra/cloudformation/phase-02-document-pipeline.yaml --region eu-west-1
 ```
 
-The AWS `validate-template` calls validate definitions only and create no
-resources. The separate approved smoke was deployed, exercised, and torn down
-as recorded above. S3 Vectors, Bedrock Knowledge Base, embeddings, data
-ingestion, and retrieval can incur charges.
+These local checks do not create resources or make AWS calls. The historical
+smoke is recorded above; it was deployed, exercised, and torn down with the
+previous hierarchical settings. S3 Vectors, Bedrock Knowledge Base, embeddings,
+data ingestion, and retrieval can incur charges.
 
 ## Operational limitations
 

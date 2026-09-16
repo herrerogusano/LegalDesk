@@ -4,10 +4,9 @@
 
 Phase 03 adds a Bedrock Knowledge Base with an S3 data source and an S3 Vectors
 index. It uses Titan Text Embeddings V2 at 1024 dimensions in `eu-west-1`,
-cosine distance, and two-level hierarchical chunking: parent chunks up to 1200
-tokens, child chunks up to 300 tokens, and 60 overlap tokens. The
-CloudFormation stack reuses the Phase 02 document bucket by name; it does not
-create or own that bucket.
+cosine distance, and fixed-size chunking with `MaxTokens: 800` and
+`OverlapPercentage: 15`. The CloudFormation stack reuses the Phase 02 document
+bucket by name; it does not create or own that bucket.
 The Knowledge Base references the S3 Vectors index by `IndexArn`; CloudFormation
 accepts either this ARN by itself or the vector bucket ARN plus index name, not
 all three fields together.
@@ -19,16 +18,22 @@ of the filterable metadata budget. This does not disable application filters:
 the sidecar's LegalDesk attributes, including `tenantId` and `matterId`, stay
 filterable and are used for authorization-scoped retrieval.
 
-The smaller child chunks improve retrieval precision; Bedrock can return their
-broader parent chunks to preserve context. AWS does not recommend hierarchical
-chunking with S3 Vectors in general because parent-child metadata consumes the
-vector metadata budget, and high chunk sizes (over 8000 combined tokens) can
-exceed metadata limits. This configuration uses 1200 + 300 = 1500 tokens, well
-below that threshold, and the planned fictional dataset is very small. This is
-a deliberate conservative choice exercised once with the fictional smoke
-dataset. AWS CloudFormation documents chunking configuration updates as
-replacement operations; changing this strategy after connecting the data
-source requires replacing it and performing a new sync.
+Fixed-size chunking keeps the S3 Vectors metadata profile simpler by avoiding
+hierarchical parent-child metadata, which AWS cautions can consume the vector
+metadata budget. The 800-token maximum keeps passages bounded; 15% overlap
+retains some context at chunk boundaries. Overlap repeats text between adjacent
+chunks, so the resulting embedding and vector counts depend on the source
+documents and these settings. This is a compatibility and cost-control tradeoff,
+not a claim that fixed-size chunking is always cheaper: the actual cost impact
+depends on document lengths, chunk count, embedding use, and vector storage.
+
+The earlier approved smoke used the former hierarchical settings (parent 1200,
+child 300, overlap 60 tokens). It is historical evidence for that configuration
+only and does not validate the current fixed-size settings. This update has been
+validated locally; it has not been deployed, ingested, or tested against AWS.
+AWS CloudFormation documents chunking configuration updates as replacement
+operations; changing this strategy after connecting the data source requires
+replacing it and performing a new sync.
 
 The object key now has a Bedrock-supported extension derived from the validated
 media type:
@@ -186,13 +191,16 @@ retrying teardown; do not delete the Phase 02 source objects as a cleanup step.
 
 ## Cost and verification status
 
-No AWS resources remain after the approved smoke. The live smoke deployed the
-two phase stacks, ingested the two fictional fixtures once, made two scope-isolated
-retrieval calls plus one off-topic query, then deleted the stacks and fixture
-objects. The off-topic query returned the nearest chunk, so the live test does
-not establish empty-result behavior; local tests cover that branch. No
-generative-model inference or legal data was used. Actual charges were not
-queried, and production-scale AWS behavior remains unverified.
+No AWS resources remain after the approved historical smoke. It deployed the
+two phase stacks with the former hierarchical chunking settings, ingested the
+two fictional fixtures once, made two scope-isolated retrieval calls plus one
+off-topic query, then deleted the stacks and fixture objects. The off-topic
+query returned the nearest chunk, so the live test does not establish
+empty-result behavior; local tests cover that branch. No generative-model
+inference or legal data was used. Actual charges were not queried, and
+production-scale AWS behavior remains unverified. The current fixed-size update
+was checked only with local tests and static checks; no AWS call was made for
+this change.
 
 Abandoned uploads can still remain in `PENDING_UPLOAD`; Phase 02 cleanup is not
 automated. A future production improvement is a bounded cleanup job that checks
