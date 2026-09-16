@@ -32,5 +32,9 @@ tools must reject raw browser scope and accept only the server-built context.
   or `original.pdf`, chosen from the validated media type. Bedrock metadata is
   stored beside it as `{source-key}.metadata.json` and never embedded as text.
 - Metadata partition: `TENANT#{tenantId}#MATTER#{matterId}`
+- Authorization User record: `pk=AUTH#USER#{verifiedSubject}`, `sk=PROFILE`
+- Authorization Matter record: `pk=AUTH#MATTER#{matterId}`, `sk=PROFILE`
+- Review task record: `pk=TENANT#{tenantId}#MATTER#{matterId}`,
+  `sk=REVIEW#{reviewTaskId}`
 - Conversation scope: `{userId}:{matterId}:{sessionId}`
 - Memory actor/session namespaces must include the authorized user and matter.

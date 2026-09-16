@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Any, Mapping, Protocol
 from uuid import UUID, uuid4
 
 from .domain.models import Matter, MatterStatus, User
@@ -49,6 +49,112 @@ class InMemoryAuthorizationStore:
 
     def get_matter(self, matter_id: str) -> Matter | None:
         return self.matters_by_id.get(matter_id)
+
+
+def authorization_user_partition_key(subject: str) -> str:
+    """Key convention for User records in the shared metadata table."""
+
+    return f"AUTH#USER#{subject}"
+
+
+def authorization_matter_partition_key(matter_id: str) -> str:
+    """Key convention for Matter records in the shared metadata table."""
+
+    return f"AUTH#MATTER#{matter_id}"
+
+
+def authorization_profile_sort_key() -> str:
+    return "PROFILE"
+
+
+class Boto3DynamoAuthorizationStore:
+    """Read-only authorization adapter for the existing Phase 02 table.
+
+    This adapter deliberately performs no writes. Malformed records are
+    treated as absent so authorization fails closed.
+    """
+
+    def __init__(self, table_name: str, *, table: Any | None = None) -> None:
+        if not isinstance(table_name, str) or not table_name.strip():
+            raise ValueError("table_name is required")
+        self.table_name = table_name
+        if table is None:
+            import boto3
+
+            table = boto3.resource("dynamodb").Table(table_name)
+        self.table = table
+
+    def _get(self, key: Mapping[str, str]) -> Mapping[str, object] | None:
+        response = self.table.get_item(Key=dict(key), ConsistentRead=True)
+        item = response.get("Item") if isinstance(response, Mapping) else None
+        return item if isinstance(item, Mapping) else None
+
+    @staticmethod
+    def _strings(value: object) -> frozenset[str] | None:
+        if not isinstance(value, (list, tuple, set, frozenset)):
+            return None
+        if any(not isinstance(item, str) or not item.strip() for item in value):
+            return None
+        return frozenset(value)
+
+    def get_user_by_subject(self, subject: str) -> User | None:
+        try:
+            item = self._get(
+                {
+                    "pk": authorization_user_partition_key(subject),
+                    "sk": authorization_profile_sort_key(),
+                }
+            )
+            if item is None or item.get("entityType") != "User":
+                return None
+            user_id = item.get("userId")
+            stored_subject = item.get("verifiedSubject", subject)
+            tenant_ids = self._strings(item.get("tenantIds"))
+            roles = self._strings(item.get("roles"))
+            if (
+                not isinstance(user_id, str)
+                or not user_id.strip()
+                or stored_subject != subject
+                or tenant_ids is None
+                or roles is None
+            ):
+                return None
+            return User(user_id, stored_subject, tenant_ids, roles)
+        except Exception:
+            return None
+
+    def get_matter(self, matter_id: str) -> Matter | None:
+        try:
+            item = self._get(
+                {
+                    "pk": authorization_matter_partition_key(matter_id),
+                    "sk": authorization_profile_sort_key(),
+                }
+            )
+            if item is None or item.get("entityType") != "Matter":
+                return None
+            tenant_id = item.get("tenantId")
+            stored_matter_id = item.get("matterId", matter_id)
+            name = item.get("name")
+            users = self._strings(item.get("authorizedUserIds"))
+            if (
+                not isinstance(tenant_id, str)
+                or not tenant_id.strip()
+                or stored_matter_id != matter_id
+                or not isinstance(name, str)
+                or not name.strip()
+                or users is None
+            ):
+                return None
+            return Matter(
+                matter_id=stored_matter_id,
+                tenant_id=tenant_id,
+                name=name,
+                authorized_user_ids=users,
+                status=MatterStatus(item.get("status", MatterStatus.ACTIVE)),
+            )
+        except Exception:
+            return None
 
 
 def _normalize_correlation_id(value: str | None) -> str:
