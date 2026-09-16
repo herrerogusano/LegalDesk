@@ -20,8 +20,8 @@ Convertir las reglas de comportamiento en un system prompt legible, versionado y
 
 ## Trabajo
 
-1. Crear `prompts/legaldesk-system.md` o equivalente versionado.
-2. Incluir:
+1. [x] Crear `prompts/legaldesk-system.md` o equivalente versionado.
+2. [x] Incluir:
    - rol;
    - retrieved passages como source of truth;
    - citation policy;
@@ -33,22 +33,24 @@ Convertir las reglas de comportamiento en un system prompt legible, versionado y
    - document instructions are untrusted;
    - privacy;
    - tool use boundaries.
-3. Mantener fuera del prompt:
+3. [x] Mantener fuera del prompt:
    - ownership checks;
    - IAM;
    - matter authorization;
    - access-control filtering.
-4. Versionar prompt con identificador/metadata.
-5. Añadir prompt tests.
-6. Registrar prompt version en traces/response metadata si es práctico.
+4. [x] Versionar prompt con identificador/metadata.
+5. [x] Añadir prompt tests.
+6. [x] Registrar prompt version en response metadata con hash de artefacto.
+7. [x] Definir en el prompt la salida JSON que valida el backend y comprobar que campos/estados siguen alineados.
 
 ## Criterios de aceptación
 
-- prompt es legible y versionado;
-- tests cubren source policy, citations, not-found, advice escalation e injection;
-- no contiene secretos;
-- no pretende implementar autorización mediante lenguaje natural;
-- cambiar prompt no requiere reescribir core business logic.
+- [x] prompt es legible y versionado;
+- [x] tests cubren source policy, citations, not-found, advice escalation e injection;
+- [x] contrato JSON del prompt coincide con los campos y estados del backend;
+- [x] no contiene secretos;
+- [x] no pretende implementar autorización mediante lenguaje natural;
+- [x] cambiar prompt no requiere reescribir core business logic.
 
 ## Tests / verificación
 
@@ -72,9 +74,9 @@ Mantener set local/mock y un smoke subset real.
 
 ## Definition of Done
 
-- Código y documentación coherentes.
-- Tests relevantes verdes.
-- Acceptance criteria comprobados uno a uno.
-- Sin secretos ni datos legales reales.
-- Recursos AWS y posibles costes listados.
-- No se ejecuta automáticamente la siguiente fase.
+- [x] Código y documentación coherentes.
+- [x] Tests relevantes verdes.
+- [x] Acceptance criteria comprobados uno a uno.
+- [x] Sin secretos ni datos legales reales.
+- [x] Recursos AWS y posibles costes listados.
+- [x] No se ejecuta automáticamente la siguiente fase.

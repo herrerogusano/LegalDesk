@@ -55,6 +55,9 @@ flowchart LR
 - The model never receives unrestricted S3 or database access.
 - Knowledge Base retrieval is filtered with authorized metadata before passages
   reach the model.
+- The server loads the versioned system prompt and passes it at the generation
+  boundary; prompt text does not make authorization decisions. Response
+  metadata may record the prompt version and hash, never the full prompt body.
 - Gateway tools validate the same authorized scope; Guardrails cannot replace
   those deterministic checks.
 - Retrieved documents are data, never executable instructions.

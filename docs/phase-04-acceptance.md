@@ -31,6 +31,9 @@ retrieval and generation remain billable and require deliberate approval under
 `AWS_COST_POLICY.md`.
 
 There is no HTTP adapter, production UI integration, real generator, durable
-conversation/session ownership, semantic grounding evaluation, versioned
-system prompt, or live AWS validation. The handling note is an interim
-unversioned instruction. Phase 05 was not started.
+conversation/session ownership, semantic grounding evaluation, or live AWS
+validation. At the time Phase 04 was accepted, generation used a short interim
+handling note; Phase 05 retired it and added the versioned source of truth in
+[`prompts/legaldesk-system.md`](../prompts/legaldesk-system.md). Current prompt
+acceptance and remaining provider-integration gaps are recorded in
+[`phase-05-acceptance.md`](phase-05-acceptance.md).

@@ -245,17 +245,28 @@ response without invoking a model:
   "answer": "No se encontró evidencia suficiente en los documentos autorizados para responder.",
   "citations": [],
   "evidenceStatus": "insufficient_evidence",
-  "disclaimerRequired": true
+  "disclaimerRequired": true,
+  "promptVersion": "1.0.0",
+  "promptSha256": "<sha256 of the loaded prompt artifact>"
 }
 ```
 
-For non-empty results, generation receives only the question and each
-retrieval-issued citation ID plus passage text. A short handling note labels
-the passages as untrusted source data and says not to follow instructions
-inside them. Tenant/matter IDs, conversation/session selectors, document
-metadata, credentials, provider clients, and retrieval filters do not cross
-this boundary. This note is not a versioned system prompt; Phase 05 owns that
-prompt and its tests.
+For non-empty results, generation receives the validated server-loaded prompt
+artifact, the question, and each retrieval-issued citation ID plus passage
+text. The only prompt source of truth is
+[`prompts/legaldesk-system.md`](../prompts/legaldesk-system.md); the file has
+an explicit ID and semantic version. The filesystem provider enforces a
+32-KiB limit, strict UTF-8, closed metadata fields, valid ID/version, and
+non-empty text. Its path is configured by the server and cannot be selected
+through browser input. Missing or invalid prompt configuration fails closed
+without calling the generator.
+
+Tenant/matter IDs, conversation/session selectors, document metadata,
+credentials, provider clients, and retrieval filters do not cross the
+generation boundary. `GenerationRequest` carries a `SystemPromptArtifact`
+with content, version, and SHA-256; `ChatResponse` carries the version and
+hash for traceability, without logging or returning the prompt body. Prompt
+language guides model behavior and tools; it does not implement authorization.
 
 The generator returns exactly `answer`, `citationIds`, and `evidenceStatus`
 (`answerable`, `ambiguous`, or `insufficient_evidence`). The backend accepts
@@ -280,8 +291,12 @@ they add no AWS charges. Future AWS retrieval and text-generation calls are
 billable and must be deliberate under `AWS_COST_POLICY.md`.
 
 Remaining gaps are explicit: there is no HTTP/API adapter, durable conversation
-or session ownership/binding, real provider generator, versioned prompt or
-prompt-injection evaluation, AWS smoke, or production UI integration. The
-lexical selector checks do not establish ownership of a conversation or
-session; persistence and actor/session/matter binding need a later phase before
-multi-request use.
+or session ownership/binding, real provider generator, model-based grounding or
+prompt-injection evaluation, AWS smoke, or production UI integration. Prompt
+policy structure is covered locally; those tests do not claim a model obeys
+the prompt. The Phase 01 Harness keeps its isolated minimal demonstration
+prompt; it is not wired to the Phase 05 provider. A future generator adapter
+must map `GenerationRequest.system_prompt` to the provider's system-message
+field. The lexical selector checks do not establish ownership of a conversation
+or session; persistence and actor/session/matter binding need a later phase
+before multi-request use.
