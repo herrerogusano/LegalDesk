@@ -196,6 +196,25 @@ def search_legal_documents(
         authorization_store,
         correlation_id=correlation_id,
     )
+    return _retrieve_with_context(
+        context,
+        query,
+        bedrock_client=bedrock_client,
+        knowledge_base_id=knowledge_base_id,
+    )
+
+
+def _retrieve_with_context(
+    context: RequestContext,
+    query: str,
+    *,
+    bedrock_client: BedrockKnowledgeBaseClient,
+    knowledge_base_id: str,
+) -> tuple[RetrievedPassage, ...]:
+    """Retrieve only with the RequestContext just authorized by the server."""
+
+    if not isinstance(context, RequestContext):
+        raise TypeError("context must be a server-built RequestContext")
     if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_LENGTH:
         raise ValueError("query is empty or outside the allowed length")
     if not isinstance(knowledge_base_id, str) or not knowledge_base_id.strip():

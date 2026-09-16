@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 06 Bedrock Guardrail policies and immutable version
+
+Parameters:
+  GuardrailVersionDescription:
+    Type: String
+    Default: Phase 06 baseline v1
+    Description: Change this value to publish a new immutable guardrail version
+    MinLength: 1
+    MaxLength: 200
+
+Resources:
+  LegalDeskGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: LegalDeskPhase06
+      Description: LegalDesk safety and contextual grounding baseline
+      BlockedInputMessaging: This request was blocked by a LegalDesk safety policy.
+      BlockedOutputsMessaging: This response was blocked by a LegalDesk safety policy.
+      ContentPolicyConfig:
+        FiltersConfig:
+          - Type: PROMPT_ATTACK
+            InputStrength: HIGH
+            OutputStrength: NONE
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: false
+            OutputAction: NONE
+          - Type: HATE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: INSULTS
+            InputStrength: HIGH
+            OutputStrength: HIGH
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: VIOLENCE
+            InputStrength: HIGH
+            OutputStrength: HIGH
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: SEXUAL
+            InputStrength: HIGH
+            OutputStrength: HIGH
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: MISCONDUCT
+            InputStrength: HIGH
+            OutputStrength: HIGH
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+      SensitiveInformationPolicyConfig:
+        PiiEntitiesConfig:
+          - Type: NAME
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+            OutputEnabled: true
+            OutputAction: ANONYMIZE
+          - Type: EMAIL
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+            OutputEnabled: true
+            OutputAction: ANONYMIZE
+          - Type: PHONE
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+            OutputEnabled: true
+            OutputAction: ANONYMIZE
+          - Type: ADDRESS
+            Action: ANONYMIZE
+            InputEnabled: true
+            InputAction: ANONYMIZE
+            OutputEnabled: true
+            OutputAction: ANONYMIZE
+          - Type: US_SOCIAL_SECURITY_NUMBER
+            Action: BLOCK
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: CREDIT_DEBIT_CARD_NUMBER
+            Action: BLOCK
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: AWS_ACCESS_KEY
+            Action: BLOCK
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: AWS_SECRET_KEY
+            Action: BLOCK
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+          - Type: PASSWORD
+            Action: BLOCK
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+      TopicPolicyConfig:
+        TopicsConfig:
+          - Name: IndividualizedLegalAdvice
+            Definition: >-
+              Requests for a personalized legal recommendation, legal strategy,
+              or prediction of legal outcomes based on an individual's specific
+              facts, rather than general legal information or explanation of
+              provided documents.
+            Examples:
+              - Tell me what legal strategy I should use for my specific case and predict the outcome.
+              - Given my personal facts, should I sue or accept this settlement?
+            Type: DENY
+            InputEnabled: true
+            InputAction: BLOCK
+            OutputEnabled: true
+            OutputAction: BLOCK
+      ContextualGroundingPolicyConfig:
+        FiltersConfig:
+          - Type: GROUNDING
+            Threshold: 0.75
+            Enabled: true
+            Action: BLOCK
+          - Type: RELEVANCE
+            Threshold: 0.5
+            Enabled: true
+            Action: BLOCK
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "06"
+
+  LegalDeskGuardrailVersion:
+    Type: AWS::Bedrock::GuardrailVersion
+    Properties:
+      GuardrailIdentifier: !GetAtt LegalDeskGuardrail.GuardrailId
+      Description: !Ref GuardrailVersionDescription
+
+Outputs:
+  GuardrailId:
+    Value: !GetAtt LegalDeskGuardrail.GuardrailId
+  GuardrailArn:
+    Value: !GetAtt LegalDeskGuardrail.GuardrailArn
+  GuardrailVersion:
+    Value: !GetAtt LegalDeskGuardrailVersion.Version
