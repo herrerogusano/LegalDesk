@@ -96,7 +96,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 - [x] Phase 00
 - [x] Phase 01
 - [x] Phase 02
-- [x] Phase 03 (local acceptance and approved minimal AWS smoke complete; smoke resources torn down)
+- [x] Phase 03 (initial local acceptance and approved AWS smoke complete with hierarchical chunking; current fixed-size configuration is validated locally only; smoke resources torn down)
 - [ ] Phase 04
 - [ ] Phase 05
 - [ ] Phase 06

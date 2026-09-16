@@ -73,7 +73,12 @@ Para preguntas documentales, recuperar antes de responder.
 
 Implementación Phase 03: Amazon Bedrock Knowledge Base con S3 como data source,
 S3 Vectors como vector store, Amazon Titan Text Embeddings V2 en 1024
-dimensiones y chunking jerárquico (parent 1200, child 300, overlap 60 tokens).
+dimensiones y chunking fijo (`MaxTokens: 800`, `OverlapPercentage: 15`). Esta
+configuración sustituye el chunking jerárquico inicial, cuyo smoke histórico no
+valida los parámetros actuales. Se elige el modo fijo para mantener el perfil
+de metadatos más sencillo y compatible con el presupuesto de metadatos de S3
+Vectors; no se afirma que reduzca el coste total, ya que el tamaño y solapamiento
+también afectan al número de chunks y embeddings.
 El índice de S3 Vectors reserva `AMAZON_BEDROCK_TEXT` y
 `AMAZON_BEDROCK_METADATA` como metadata no filterable; los atributos propios
 de LegalDesk, incluidos `tenantId` y `matterId`, permanecen filterable.

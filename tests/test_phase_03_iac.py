@@ -28,7 +28,7 @@ class Phase03InfrastructureTests(unittest.TestCase):
         )
         self.assertIn("IndexArn: !GetAtt LegalDeskVectorIndex.IndexArn", body)
 
-    def test_data_source_has_only_the_approved_hierarchical_chunking(self) -> None:
+    def test_data_source_has_only_the_approved_fixed_size_chunking(self) -> None:
         template = TEMPLATE.read_text(encoding="utf-8")
         chunking = re.search(
             r"ChunkingConfiguration:\n(?P<body>[\s\S]*?)\n\nOutputs:",
@@ -36,10 +36,12 @@ class Phase03InfrastructureTests(unittest.TestCase):
         )
         self.assertIsNotNone(chunking)
         body = chunking.group("body")
-        self.assertIn("ChunkingStrategy: HIERARCHICAL", body)
-        self.assertEqual(re.findall(r"MaxTokens: (\d+)", body), ["1200", "300"])
-        self.assertIn("OverlapTokens: 60", body)
-        self.assertNotIn("FIXED_SIZE", template)
+        self.assertIn("ChunkingStrategy: FIXED_SIZE", body)
+        self.assertIn("FixedSizeChunkingConfiguration:", body)
+        self.assertEqual(re.findall(r"MaxTokens: (\d+)", body), ["800"])
+        self.assertIn("OverlapPercentage: 15", body)
+        self.assertNotIn("HIERARCHICAL", template)
+        self.assertNotIn("HierarchicalChunkingConfiguration", template)
 
     def test_vector_index_reserves_bedrock_internal_metadata_as_non_filterable(self) -> None:
         template = TEMPLATE.read_text(encoding="utf-8")
