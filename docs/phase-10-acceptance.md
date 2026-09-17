@@ -1,7 +1,7 @@
 # Phase 10 acceptance — identity and isolation
 
-Status: local implementation complete; AWS deployment and smoke are intentionally
-not run in Phase 10.
+Status: implementation, AWS deployment, and synthetic smoke complete in
+`eu-west-1`.
 
 This phase adds reusable Cognito/OIDC verification, server-derived request
 identity, exact conversation bindings, and an opaque short-lived grant for MCP.
@@ -31,5 +31,43 @@ only by the client until token exchange.
 `infra/cloudformation/phase-10-identity.yaml` creates only a public Cognito
 Authorization Code + PKCE client and reuses the Phase 08 UserPool. The Phase 08
 Gateway template accepts an optional additional client while preserving M2M.
-No Phase 10 deployment or AWS smoke has been run. The operational audit view,
-traces, metrics, and dashboards remain Phase 11 work.
+
+## AWS deployment evidence
+
+Deployment was performed in account `344774635844`, region `eu-west-1`:
+
+- `LegalDeskPhase10Identity`: `CREATE_COMPLETE`; change set added only
+  `LegalDeskPublicClient` (`AWS::Cognito::UserPoolClient`). Public client ID:
+  `101hke40t7n5easmh7i3g9265o`. The live client reports OAuth flow `code`,
+  scopes `openid` and `legaldesk/use`, and `AllowedOAuthFlowsUserPoolClient=true`;
+  the template sets `GenerateSecret=false`.
+- `LegalDeskPhase08Gateway`: `UPDATE_COMPLETE`; the update change set listed
+  `Replacement=False` for the Gateway, both Lambda functions, the Gateway role,
+  and the MCP target. The Gateway ARN remained
+  `arn:aws:bedrock-agentcore:eu-west-1:344774635844:gateway/legaldeskgatewayphase08-f17ddi2woq`.
+- Clean, versioned artifacts were uploaded to the retained Phase 08 bucket:
+  `phase-10/interceptor.zip` version
+  `n_XIXaJDfdnrhbzG.4UMhF8_ug.eCksQ` and `phase-10/metadata-mcp.zip` version
+  `yMzZXCqPkw_U4g0pZmMh5GEE4qs5hOGI`. Existing Phase 08 objects were not
+  overwritten or deleted.
+
+## Synthetic authorization smoke
+
+Using the existing fictional M2M client and seeded fictional metadata only:
+
+| Check | Result |
+|---|---|
+| Gateway call for `mat_sundial` with interceptor-owned grant | HTTP 200; returned `Synthetic notice.pdf` metadata |
+| Same token requesting `mat_glacier` | HTTP 403; `access denied` |
+| Direct metadata Function URL without IAM/grant | HTTP 403; `Forbidden` |
+
+No Harness or model inference was used for this smoke. The direct endpoint
+remains IAM-protected, while the Gateway performs JWT plus server-side
+matter authorization.
+
+The deployed resources and artifact/Lambda/Gateway requests can incur AWS
+charges; retained resources remain subject to the project cost policy. The
+public Cognito client itself adds no secret and no new UserPool/table. Cleanup
+of the public client, phase-10 artifact versions, and retained Phase 08
+resources is a future teardown decision. The operational audit view, traces,
+metrics, dashboards, and broader deployment automation remain Phase 11 work.

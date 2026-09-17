@@ -96,10 +96,11 @@ shell output, or deployment artifacts.
 
 For this phase, Cognito client credentials deliberately identify one synthetic
 service actor: the access token's `sub` equals the app-client ID, and the smoke
-seeded that subject in the existing authorization table. This is sufficient to
-prove Gateway propagation and cross-matter enforcement, but it is not an
-end-user login design. Per-user identity and production isolation are reserved
-for Phase 10; until then this client must remain limited to fictional test data.
+seeded that subject in the existing authorization table. This remains a
+fictional service-actor smoke path. Phase 10 now additionally deploys a public
+Authorization Code + PKCE client and reuses the same Gateway authorization
+boundary; production end-user onboarding and broader operational controls
+remain subject to the Phase 10/11 acceptance gaps.
 
 ## Local protocol examples
 

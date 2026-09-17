@@ -40,8 +40,9 @@ its creation consumes the Cognito client secret. The Harness accepts its
 provider ARN/name as parameters; the secret remains outside Git and templates.
 The client-credentials token represents one synthetic service actor whose
 `sub` equals the app-client ID; its fictional authorization rows were seeded in
-the existing table for this smoke. It is not the future end-user identity
-model. Per-user identity and isolation remain explicitly in Phase 10.
+the existing table for this smoke. It is not the end-user identity model; the
+separate Phase 10 acceptance adds the public PKCE client and identity isolation
+boundary.
 
 ## Synthetic smoke evidence
 

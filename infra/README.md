@@ -25,7 +25,10 @@ in [phase-09-acceptance.md](../docs/phase-09-acceptance.md).
 Phase 10 adds the local identity/isolation boundary and the reusable public
 Cognito Authorization Code + PKCE client template
 ([phase-10-identity.yaml](cloudformation/phase-10-identity.yaml)). It reuses the
-Phase 08 UserPool and existing metadata table; no Phase 10 deployment or AWS
-smoke has been run. The Gateway template accepts an optional second client
-without removing the existing M2M client. OIDC verification uses the versioned
-core `PyJWT[crypto]` dependency.
+Phase 08 UserPool and existing metadata table. The public client is deployed
+in `LegalDeskPhase10Identity`, and the Phase 08 Gateway accepts it as an
+additional client without removing the existing M2M client. The live Gateway
+update preserved all resources without replacement; synthetic authorized,
+cross-matter, and direct-endpoint denial checks are recorded in
+`docs/phase-10-acceptance.md`. OIDC verification uses the versioned core
+`PyJWT[crypto]` dependency.
