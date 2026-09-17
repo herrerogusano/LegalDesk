@@ -25,9 +25,19 @@ Parameters:
   Phase08OAuthScope:
     Type: String
     Default: legaldesk/use
+  EnablePhase09Memory:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  Phase09MemoryArn:
+    Type: String
+    Default: ""
 
 Conditions:
   AttachPhase08Gateway: !Equals [!Ref EnablePhase08Gateway, "true"]
+  AttachPhase09Memory: !Equals [!Ref EnablePhase09Memory, "true"]
 
 Resources:
   HarnessExecutionRole:
@@ -108,6 +118,18 @@ Resources:
                   Action: secretsmanager:GetSecretValue
                   Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/oauth2/${Phase08OAuthProviderName}-*
                 - !Ref AWS::NoValue
+              - !If
+                - AttachPhase09Memory
+                - Sid: UsePhase09Memory
+                  Effect: Allow
+                  Action:
+                    - bedrock-agentcore:CreateEvent
+                    - bedrock-agentcore:DeleteEvent
+                    - bedrock-agentcore:GetEvent
+                    - bedrock-agentcore:ListEvents
+                    - bedrock-agentcore:RetrieveMemoryRecords
+                  Resource: !Ref Phase09MemoryArn
+                - !Ref AWS::NoValue
       Tags:
         - Key: Project
           Value: LegalDesk
@@ -153,8 +175,11 @@ Resources:
           - "@legaldesk_gateway/metadata-mcp___get_document_metadata"
           - "@legaldesk_gateway/review-task-lambda___create_review_task"
         - - phase01_no_tools
-      Memory:
-        Disabled: {}
+      Memory: !If
+        - AttachPhase09Memory
+        - AgentCoreMemoryConfiguration:
+            Arn: !Ref Phase09MemoryArn
+        - Disabled: {}
       MaxIterations: !If [AttachPhase08Gateway, 3, 1]
       MaxTokens: 256
       TimeoutSeconds: 120

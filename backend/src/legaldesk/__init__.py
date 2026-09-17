@@ -28,6 +28,19 @@ from .gateway_interceptor import (
     GatewayAuthorizationGrant,
     InMemoryGatewayGrantRepository,
 )
+from .memory import (
+    AgentCoreMemoryClient,
+    ConversationBinding,
+    ConversationBindingStore,
+    InMemoryShortTermMemory,
+    InMemoryConversationBindingStore,
+    LongTermMemoryDisabled,
+    MemoryEvent,
+    MemoryPolicy,
+    MemoryScope,
+    MemoryScopeError,
+    derive_memory_scope_for_identity,
+)
 
 __all__ = [
     "AuthorizationDenied",
@@ -54,4 +67,15 @@ __all__ = [
     "Boto3DynamoGatewayGrantRepository",
     "GatewayAuthorizationGrant",
     "InMemoryGatewayGrantRepository",
+    "AgentCoreMemoryClient",
+    "ConversationBinding",
+    "ConversationBindingStore",
+    "InMemoryShortTermMemory",
+    "InMemoryConversationBindingStore",
+    "LongTermMemoryDisabled",
+    "MemoryEvent",
+    "MemoryPolicy",
+    "MemoryScope",
+    "MemoryScopeError",
+    "derive_memory_scope_for_identity",
 ]
