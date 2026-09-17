@@ -1,0 +1,313 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 08 AgentCore Gateway with review Lambda and metadata MCP target
+
+Parameters:
+  ExistingMetadataTableName:
+    Type: String
+    MinLength: 3
+    MaxLength: 255
+    Description: Existing Phase 02 table containing authorization and document metadata
+  ExistingMetadataTableArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:dynamodb:[^:]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$"
+  ReviewTaskFunctionArn:
+    Type: String
+    AllowedPattern: "^arn:(aws[a-zA-Z-]*)?:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9-_.-]+$"
+  MetadataMcpCodeBucket:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  MetadataMcpCodeKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  MetadataMcpCodeVersion:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  InterceptorCodeBucket:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  InterceptorCodeKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  InterceptorCodeVersion:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  GatewayJwtDiscoveryUrl:
+    Type: String
+    AllowedPattern: "^.+/\\.well-known/openid-configuration$"
+  GatewayJwtAudience:
+    Type: String
+    MinLength: 1
+  GatewayJwtClientId:
+    Type: String
+    MinLength: 1
+  GatewayJwtScope:
+    Type: String
+    MinLength: 1
+
+Resources:
+  MetadataMcpLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/LegalDeskMetadataMcpPhase08
+      RetentionInDays: 14
+
+  MetadataMcpExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Least-privilege role for metadata-only MCP Lambda
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskMetadataMcpPhase08
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource: !Ref ExistingMetadataTableArn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${MetadataMcpLogGroup.Arn}:*
+
+  GatewayRequestInterceptorLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/LegalDeskGatewayRequestInterceptorPhase08
+      RetentionInDays: 14
+
+  GatewayRequestInterceptorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Least-privilege role for Gateway request authorization interceptor
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskGatewayRequestInterceptorPhase08
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !Ref ExistingMetadataTableArn
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !Ref ExistingMetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - GATEWAY#GRANT#*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${GatewayRequestInterceptorLogGroup.Arn}:*
+
+  GatewayRequestInterceptorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: LegalDeskGatewayRequestInterceptorPhase08
+      Runtime: python3.12
+      Handler: legaldesk.gateway_interceptor.gateway_request_interceptor
+      Role: !GetAtt GatewayRequestInterceptorRole.Arn
+      Code:
+        S3Bucket: !Ref InterceptorCodeBucket
+        S3Key: !Ref InterceptorCodeKey
+        S3ObjectVersion: !Ref InterceptorCodeVersion
+      MemorySize: 256
+      Timeout: 10
+      ReservedConcurrentExecutions: 5
+      Environment:
+        Variables:
+          REVIEW_TASK_TABLE_NAME: !Ref ExistingMetadataTableName
+          INTERCEPTOR_SCHEMA_VERSION: "1"
+
+  MetadataMcpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: LegalDeskMetadataMcpPhase08
+      Runtime: python3.12
+      Handler: legaldesk.mcp_server.mcp_lambda_handler
+      Role: !GetAtt MetadataMcpExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref MetadataMcpCodeBucket
+        S3Key: !Ref MetadataMcpCodeKey
+        S3ObjectVersion: !Ref MetadataMcpCodeVersion
+      MemorySize: 256
+      Timeout: 10
+      ReservedConcurrentExecutions: 5
+      Environment:
+        Variables:
+          DOCUMENT_METADATA_TABLE_NAME: !Ref ExistingMetadataTableName
+          MCP_SCHEMA_VERSION: "1"
+
+  MetadataMcpFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: AWS_IAM
+      TargetFunctionArn: !Ref MetadataMcpFunction
+
+  GatewayExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Least-privilege AgentCore Gateway role for Phase 08 targets
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/*
+      Policies:
+        - PolicyName: LegalDeskGatewayTargetsPhase08
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Ref ReviewTaskFunctionArn
+              - Effect: Allow
+                Action: lambda:InvokeFunctionUrl
+                Resource: !GetAtt MetadataMcpFunction.Arn
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt MetadataMcpFunction.Arn
+                Condition:
+                  Bool:
+                    lambda:InvokedViaFunctionUrl: "true"
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt GatewayRequestInterceptorFunction.Arn
+              # AgentCore requires this on a custom Gateway service role when
+              # GATEWAY_IAM_ROLE outbound authorization is used. Referencing
+              # LegalDeskGateway here would create a role/Gateway cycle, so
+              # scope the ARN to the fixed Gateway name plus generated suffix.
+              - Effect: Allow
+                Action: bedrock-agentcore:InvokeGateway
+                Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/LegalDeskGatewayPhase08-*
+
+  LegalDeskGateway:
+    Type: AWS::BedrockAgentCore::Gateway
+    Properties:
+      Name: LegalDeskGatewayPhase08
+      Description: Private JWT-authorized LegalDesk tool gateway
+      AuthorizerType: CUSTOM_JWT
+      AuthorizerConfiguration:
+        CustomJWTAuthorizer:
+          DiscoveryUrl: !Ref GatewayJwtDiscoveryUrl
+          AllowedAudience:
+            - !Ref GatewayJwtAudience
+          AllowedClients:
+            - !Ref GatewayJwtClientId
+          AllowedScopes:
+            - !Ref GatewayJwtScope
+      ProtocolType: MCP
+      RoleArn: !GetAtt GatewayExecutionRole.Arn
+      InterceptorConfigurations:
+        - InterceptionPoints:
+            - REQUEST
+          InputConfiguration:
+            PassRequestHeaders: true
+          Interceptor:
+            Lambda:
+              Arn: !GetAtt GatewayRequestInterceptorFunction.Arn
+      Tags:
+        Project: LegalDesk
+        Phase: "08"
+
+  ReviewTaskGatewayTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !Ref LegalDeskGateway
+      Name: review-task-lambda
+      Description: Human review task tool
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+      TargetConfiguration:
+        Mcp:
+          Lambda:
+            LambdaArn: !Ref ReviewTaskFunctionArn
+            ToolSchema:
+              InlinePayload:
+                - Name: create_review_task
+                  Description: Create an OPEN human-review task; returns only ID and status.
+                  InputSchema:
+                    Type: object
+                    Required:
+                      - reasonCode
+                    Properties:
+                      reasonCode:
+                        Type: string
+                        Description: "Allowed values are insufficient_evidence, ambiguous_evidence, material_legal_judgment, user_requested_review, or safety_escalation; the Lambda validates them."
+                      _legaldeskGrantId:
+                        Type: string
+                        Description: Reserved server-injected opaque authorization grant; client values are rejected.
+                  OutputSchema:
+                    Type: object
+                    Required:
+                      - reviewTaskId
+                      - status
+                    Properties:
+                      reviewTaskId:
+                        Type: string
+                      status:
+                        Type: string
+
+  MetadataMcpGatewayTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !Ref LegalDeskGateway
+      Name: metadata-mcp
+      Description: Read-only document metadata MCP server
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+          CredentialProvider:
+            IamCredentialProvider:
+              Service: lambda
+              Region: !Ref AWS::Region
+      MetadataConfiguration:
+        AllowedRequestHeaders:
+          - x-legaldesk-verified-subject
+          - x-legaldesk-requested-matter-id
+          - x-legaldesk-correlation-id
+      TargetConfiguration:
+        Mcp:
+          McpServer:
+            Endpoint: !GetAtt MetadataMcpFunctionUrl.FunctionUrl
+            ListingMode: DYNAMIC
+
+Outputs:
+  GatewayIdentifier:
+    Value: !Ref LegalDeskGateway
+  GatewayArn:
+    Value: !GetAtt LegalDeskGateway.GatewayArn
+  GatewayUrl:
+    Value: !GetAtt LegalDeskGateway.GatewayUrl
+  MetadataMcpEndpoint:
+    Value: !GetAtt MetadataMcpFunctionUrl.FunctionUrl

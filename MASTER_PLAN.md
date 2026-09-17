@@ -101,7 +101,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 - [x] Phase 05
 - [x] Phase 06 (local acceptance and approved AWS Guardrails smoke complete; temporary stack deleted)
 - [x] Phase 07 (local acceptance and CloudFormation schema validation complete; AWS deployment deferred)
-- [ ] Phase 08
+- [ ] Phase 08 (local MCP/Gateway implementation; live deployment deferred)
 - [ ] Phase 09
 - [ ] Phase 10
 - [ ] Phase 11

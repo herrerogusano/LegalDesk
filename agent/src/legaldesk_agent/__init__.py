@@ -7,6 +7,7 @@ from .client import (
     new_session_id,
 )
 from .local_agent import LocalAgent
+from .tool_router import LegalDeskTool, ToolTarget, select_tool
 
 __all__ = [
     "HarnessInvocationError",
@@ -14,4 +15,7 @@ __all__ = [
     "InvokeResult",
     "LocalAgent",
     "new_session_id",
+    "LegalDeskTool",
+    "ToolTarget",
+    "select_tool",
 ]

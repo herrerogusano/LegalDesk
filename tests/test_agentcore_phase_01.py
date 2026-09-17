@@ -9,6 +9,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "agent" / "src"))
 
 from legaldesk_agent import HarnessInvocationError, HarnessInvoker, LocalAgent, new_session_id
+from legaldesk_agent import LegalDeskTool, ToolTarget, select_tool
 
 
 class FakeHarnessClient:
@@ -34,6 +35,13 @@ class FailingEventStream:
 
 
 class AgentCorePhase01Tests(unittest.TestCase):
+    def test_phase08_tools_route_deterministically_without_inference(self) -> None:
+        self.assertEqual(select_tool("list_matter_documents"), (LegalDeskTool.LIST_MATTER_DOCUMENTS, ToolTarget.MCP))
+        self.assertEqual(select_tool("get_document_metadata"), (LegalDeskTool.GET_DOCUMENT_METADATA, ToolTarget.MCP))
+        self.assertEqual(select_tool("create_review_task"), (LegalDeskTool.CREATE_REVIEW_TASK, ToolTarget.LAMBDA))
+        with self.assertRaises(ValueError):
+            select_tool("search_legal_documents")
+
     def test_local_health_and_invoke(self) -> None:
         agent = LocalAgent()
         self.assertEqual(agent.health()["status"], "ok")

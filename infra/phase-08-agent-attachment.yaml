@@ -1,0 +1,31 @@
+# Declarative post-deploy update for the existing Phase 01 Harness.
+# This fragment is not a second Harness resource. Resolve placeholders in the
+# deployment system; no OAuth secret is stored here.
+schemaVersion: "1"
+action: update-existing
+harness:
+  arn: "${EXISTING_HARNESS_ARN}"
+  tools:
+    - name: legaldesk_gateway
+      type: agentcore_gateway
+      config:
+        agentCoreGateway:
+          gatewayArn: "${PHASE08_GATEWAY_ARN}"
+          outboundAuth:
+            oauth:
+              providerArn: "${OAUTH_PROVIDER_ARN}"
+              scopes:
+                - "${OAUTH_SCOPE}"
+
+# Deterministic local routing/documentation for tools discovered from Gateway.
+discoveredTools:
+  list_matter_documents: mcp
+  get_document_metadata: mcp
+  create_review_task: lambda
+
+# Attach this statement to the existing Harness execution role after the
+# Gateway ARN is known. Do not use Resource: "*".
+iamPolicyStatement:
+  effect: Allow
+  action: bedrock-agentcore:InvokeGateway
+  resource: "${PHASE08_GATEWAY_ARN}"
