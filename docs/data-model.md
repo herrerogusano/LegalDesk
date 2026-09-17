@@ -36,5 +36,10 @@ tools must reject raw browser scope and accept only the server-built context.
 - Authorization Matter record: `pk=AUTH#MATTER#{matterId}`, `sk=PROFILE`
 - Review task record: `pk=TENANT#{tenantId}#MATTER#{matterId}`,
   `sk=REVIEW#{reviewTaskId}`
+- Gateway authorization grant: `pk=GATEWAY#GRANT#{grantId}`, `sk=PROFILE`;
+  stores only verified subject, requested matter, correlation ID, target tool,
+  and a five-minute `expiresAt` epoch checked by the consumer. It contains no
+  document body or client-provided scope. Automatic deletion of expired grant
+  records is a deferred operational cleanup gap.
 - Conversation scope: `{userId}:{matterId}:{sessionId}`
 - Memory actor/session namespaces must include the authorized user and matter.

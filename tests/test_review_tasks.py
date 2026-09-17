@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 import os
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -21,6 +22,10 @@ from legaldesk.authorization import (
 )
 from legaldesk.domain.models import ReviewTaskStatus
 from legaldesk.domain.models import ReviewTask
+from legaldesk.gateway_interceptor import (
+    GatewayAuthorizationGrant,
+    InMemoryGatewayGrantRepository,
+)
 from legaldesk.review_tasks import (
     CREATE_REVIEW_TASK_TOOL_SCHEMA,
     AuthorizedToolEnvelope,
@@ -32,6 +37,7 @@ from legaldesk.review_tasks import (
     ReviewTaskValidationError,
     create_review_task,
     create_review_task_for_identity,
+    gateway_lambda_handler,
     lambda_handler,
     parse_review_task_input,
 )
@@ -372,6 +378,172 @@ class ReviewTaskToolTests(unittest.TestCase):
         ):
             self.assertEqual(lambda_handler(base, object()), {"error": "access_denied"})
             self.assertEqual(lambda_handler(forged, object()), {"error": "invalid_request"})
+        self.assertEqual(repository.tasks, {})
+
+    def test_gateway_entrypoint_accepts_flat_target_event_and_dynamo_grant(self) -> None:
+        repository = InMemoryReviewTaskRepository()
+        grants = InMemoryGatewayGrantRepository()
+        grant = GatewayAuthorizationGrant(
+            "9ec5d1c5-7b58-4bc2-a183-8fd48a3bd279",
+            ALICE.subject,
+            "mat_sundial",
+            CORRELATION_ID,
+            "create_review_task",
+            int(time.time()) + 300,
+        )
+        grants.put(grant)
+        event = {
+            "reasonCode": "user_requested_review",
+            "matterId": "mat_glacier",
+            "idempotencyKey": "model-controlled-key",
+            "_legaldeskGrantId": grant.grant_id,
+        }
+
+        with patch.object(
+            review_tasks,
+            "_repositories_from_environment",
+            return_value=(repository, load_authorization_store()),
+        ), patch.object(
+            review_tasks,
+            "_gateway_grant_repository_from_environment",
+            return_value=grants,
+        ):
+            response = gateway_lambda_handler(
+                event,
+                object(),
+            )
+        expected = create_review_task(
+            context(),
+            {
+                "reasonCode": "user_requested_review",
+                "idempotencyKey": f"gateway-{grant.grant_id}",
+            },
+            repository=InMemoryReviewTaskRepository(),
+        )
+        self.assertEqual(response["status"], "open")
+        self.assertEqual(response["reviewTaskId"], expected["reviewTaskId"])
+        self.assertEqual(len(repository.tasks), 1)
+        with patch.object(
+            review_tasks,
+            "_repositories_from_environment",
+            return_value=(repository, load_authorization_store()),
+        ), patch.object(
+            review_tasks,
+            "_gateway_grant_repository_from_environment",
+            return_value=grants,
+        ):
+            retry = gateway_lambda_handler(event, object())
+        self.assertEqual(retry["reviewTaskId"], response["reviewTaskId"])
+        self.assertEqual(len(repository.tasks), 1)
+
+        # The existing Phase 07 Lambda handler dispatches the same trusted
+        # flat-target contract, so the ARN need not change for Phase 08.
+        with patch.object(
+            review_tasks,
+            "_repositories_from_environment",
+            return_value=(repository, load_authorization_store()),
+        ), patch.object(
+            review_tasks,
+            "_gateway_grant_repository_from_environment",
+            return_value=grants,
+        ):
+            response = lambda_handler(
+                {"reasonCode": "user_requested_review", "_legaldeskGrantId": grant.grant_id},
+                object(),
+            )
+        self.assertEqual(response["status"], "open")
+
+    def test_gateway_entrypoint_discards_model_scope_and_requires_trusted_context(self) -> None:
+        self.assertEqual(
+            gateway_lambda_handler({"reasonCode": "user_requested_review"}, object()),
+            {"error": "access_denied"},
+        )
+        repository = InMemoryReviewTaskRepository()
+        grants = InMemoryGatewayGrantRepository()
+        grant = GatewayAuthorizationGrant(
+            "9ec5d1c5-7b58-4bc2-a183-8fd48a3bd280",
+            ALICE.subject,
+            "mat_sundial",
+            CORRELATION_ID,
+            "create_review_task",
+            int(time.time()) + 300,
+        )
+        grants.put(grant)
+        with patch.object(
+            review_tasks,
+            "_repositories_from_environment",
+            return_value=(repository, load_authorization_store()),
+        ), patch.object(
+            review_tasks,
+            "_gateway_grant_repository_from_environment",
+            return_value=grants,
+        ):
+            response = gateway_lambda_handler(
+                {"reasonCode": "user_requested_review", "matterId": "mat_glacier", "_legaldeskGrantId": grant.grant_id},
+                object(),
+            )
+        self.assertEqual(response["status"], "open")
+        self.assertEqual(len(repository.tasks), 1)
+        task = next(iter(repository.tasks.values()))
+        self.assertEqual(task.matter_id, "mat_sundial")
+        self.assertEqual(task.tenant_id, "tnt_aurora")
+
+    def test_gateway_entrypoint_rejects_model_supplied_authorized_context(self) -> None:
+        grants = InMemoryGatewayGrantRepository()
+        grant = GatewayAuthorizationGrant(
+            "9ec5d1c5-7b58-4bc2-a183-8fd48a3bd281",
+            ALICE.subject,
+            "mat_sundial",
+            CORRELATION_ID,
+            "create_review_task",
+            int(time.time()) + 300,
+        )
+        grants.put(grant)
+        response = gateway_lambda_handler(
+            {
+                "reasonCode": "user_requested_review",
+                "_legaldeskGrantId": grant.grant_id,
+                "authorizedContext": {"verifiedSubject": ALICE.subject},
+            },
+            object(),
+        )
+        self.assertEqual(response, {"error": "access_denied"})
+
+    def test_gateway_entrypoint_rejects_malformed_expired_and_wrong_tool_grants(self) -> None:
+        repository = InMemoryReviewTaskRepository()
+        grants = InMemoryGatewayGrantRepository()
+        for grant_id, tool_name, expires_at in (
+            ("9ec5d1c5-7b58-4bc2-a183-8fd48a3bd282", "create_review_task", int(time.time()) - 1),
+            ("9ec5d1c5-7b58-4bc2-a183-8fd48a3bd283", "metadata-mcp", int(time.time()) + 300),
+        ):
+            grants.put(
+                GatewayAuthorizationGrant(
+                    grant_id, ALICE.subject, "mat_sundial", CORRELATION_ID,
+                    tool_name, expires_at,
+                )
+            )
+        with patch.object(
+            review_tasks,
+            "_repositories_from_environment",
+            return_value=(repository, load_authorization_store()),
+        ), patch.object(
+            review_tasks,
+            "_gateway_grant_repository_from_environment",
+            return_value=grants,
+        ):
+            for grant_id in (
+                "not-a-uuid",
+                "9ec5d1c5-7b58-4bc2-a183-8fd48a3bd282",
+                "9ec5d1c5-7b58-4bc2-a183-8fd48a3bd283",
+            ):
+                with self.subTest(grant_id=grant_id):
+                    self.assertEqual(
+                        gateway_lambda_handler(
+                            {"reasonCode": "user_requested_review", "_legaldeskGrantId": grant_id},
+                            object(),
+                        )["error"],
+                        "access_denied" if grant_id != "not-a-uuid" else "invalid_request",
+                    )
         self.assertEqual(repository.tasks, {})
 
     def test_dynamo_authorization_adapter_reads_only_documented_auth_keys(self) -> None:

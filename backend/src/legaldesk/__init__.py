@@ -19,7 +19,14 @@ from .review_tasks import (
     ReviewReasonCode,
     create_review_task,
     create_review_task_for_identity,
+    gateway_lambda_handler,
     lambda_handler,
+)
+from .mcp_server import MCPServer, handle_metadata_request_for_identity, mcp_lambda_handler
+from .gateway_interceptor import (
+    Boto3DynamoGatewayGrantRepository,
+    GatewayAuthorizationGrant,
+    InMemoryGatewayGrantRepository,
 )
 
 __all__ = [
@@ -39,5 +46,12 @@ __all__ = [
     "ReviewReasonCode",
     "create_review_task",
     "create_review_task_for_identity",
+    "gateway_lambda_handler",
     "lambda_handler",
+    "MCPServer",
+    "handle_metadata_request_for_identity",
+    "mcp_lambda_handler",
+    "Boto3DynamoGatewayGrantRepository",
+    "GatewayAuthorizationGrant",
+    "InMemoryGatewayGrantRepository",
 ]

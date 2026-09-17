@@ -32,9 +32,11 @@ Valid; requires CAPABILITY_NAMED_IAM
 ## AWS deployment on 2026-09-14
 
 - Stack `legaldesk-phase-01`: `CREATE_COMPLETE` in `eu-west-1`.
-- Harness `LegalDeskPhase01-7EMjvNs1PC`: `READY`, version 2.
+- Harness `LegalDeskPhase01-7EMjvNs1PC`: `READY`, version 3 after the approved
+  Phase 08 Gateway attachment.
 - Underlying Runtime: `harness_LegalDeskPhase01-Kh25KQHkM9`.
-- Memory disabled; tools empty; `allowedTools = [phase01_no_tools]`.
+- Memory remains disabled. The original Phase 01 deployment had no tools; the
+  current version 3 has the Phase 08 Gateway and an exact three-tool allowlist.
 - Execution role: `LegalDeskBedrockAgentCoreHarnessPhase01`.
 
 Four authorized smoke attempts were consumed across three approval rounds:
@@ -94,7 +96,8 @@ prompt `Reply with exactly: LegalDesk Phase 01 ready`.
 - Invocation count in this operation: exactly one; no retry was performed.
 - Temporary policy: added and read back successfully; deleted successfully;
   verified absent afterward.
-- No other model was invoked.
+- No other model was invoked during that Phase 01 smoke operation. A later
+  Phase 08 acceptance smoke invoked the evolved version 3 Harness separately.
 
 ## Resources and potential cost
 

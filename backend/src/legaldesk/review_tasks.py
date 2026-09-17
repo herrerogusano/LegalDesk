@@ -8,10 +8,12 @@ tenant, matter, and creator scope always come from a server-built
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Mapping, Protocol
 from uuid import UUID
@@ -30,6 +32,7 @@ from .domain.models import ReviewTask, ReviewTaskStatus
 
 MAX_IDEMPOTENCY_KEY_LENGTH = 128
 REVIEW_TASK_SCHEMA_VERSION = "1"
+LEGALDESK_GRANT_ARGUMENT = "_legaldeskGrantId"
 _OPAQUE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _OPAQUE_SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:|@-]{0,255}$")
 
@@ -173,6 +176,11 @@ def parse_authorized_tool_envelope(event: Mapping[str, object]) -> tuple[Authori
     raw_context = event.get("authorizedContext")
     if not isinstance(arguments, Mapping) or not isinstance(raw_context, Mapping):
         raise ReviewTaskValidationError("tool envelope is invalid")
+    envelope = _parse_context_mapping(raw_context)
+    return envelope, arguments
+
+
+def _parse_context_mapping(raw_context: Mapping[str, object]) -> AuthorizedToolEnvelope:
     if set(raw_context) != {"verifiedSubject", "requestedMatterId", "correlationId"}:
         raise ReviewTaskValidationError("tool context is invalid")
     correlation_id = raw_context["correlationId"]
@@ -183,14 +191,13 @@ def parse_authorized_tool_envelope(event: Mapping[str, object]) -> tuple[Authori
     except (ValueError, AttributeError) as exc:
         raise ReviewTaskValidationError("tool context is invalid") from exc
     try:
-        envelope = AuthorizedToolEnvelope(
+        return AuthorizedToolEnvelope(
             verified_subject=raw_context["verifiedSubject"],  # type: ignore[arg-type]
             requested_matter_id=raw_context["requestedMatterId"],  # type: ignore[arg-type]
             correlation_id=correlation_id,
         )
     except ValueError as exc:
         raise ReviewTaskValidationError("tool context is invalid") from exc
-    return envelope, arguments
 
 
 def review_task_partition_key(tenant_id: str, matter_id: str) -> str:
@@ -426,17 +433,39 @@ def _repositories_from_environment() -> tuple[ReviewTaskRepository, Authorizatio
     )
 
 
+def _gateway_grant_repository_from_environment() -> Any | None:
+    table_name = os.environ.get("REVIEW_TASK_TABLE_NAME")
+    if (
+        not table_name
+        or os.environ.get("REVIEW_TASK_SCHEMA_VERSION", REVIEW_TASK_SCHEMA_VERSION)
+        != REVIEW_TASK_SCHEMA_VERSION
+    ):
+        return None
+    from .gateway_interceptor import Boto3DynamoGatewayGrantRepository
+
+    return Boto3DynamoGatewayGrantRepository(table_name)
+
+
 def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict[str, object]:
     """AWS-compatible entrypoint with Dynamo authorization before PutItem.
 
-    The function is intended for a private IAM/Gateway invoker. The event must
-    contain an ``authorizedContext`` outside ``arguments``; its subject and
-    matter are looked up in DynamoDB and reauthorized bilaterally. No tenant or
-    user value from the event is ever used as authoritative scope.
+    The function is intended for a private IAM/Gateway invoker. The legacy
+    service envelope contains ``authorizedContext`` outside ``arguments``;
+    AgentCore flat events dispatch through the opaque grant path below. In
+    both cases, subject and matter are looked up in DynamoDB and reauthorized
+    bilaterally. No tenant or user value from model input is authoritative.
     """
 
     if not isinstance(event, Mapping):
         return {"error": "invalid_request"}
+    # Phase 08 AgentCore targets deliver flat tool properties. Keep this
+    # compatibility dispatch in the existing Phase 07 AWS handler so the
+    # deployed function can be upgraded in place without changing its ARN.
+    # AgentCore supplies a flat event. The reserved grant selector is the
+    # only Phase 08 marker; client_context.custom is provider metadata and is
+    # never treated as caller identity or authorization.
+    if LEGALDESK_GRANT_ARGUMENT in event:
+        return gateway_lambda_handler(event, _lambda_context)
     try:
         envelope, arguments = parse_authorized_tool_envelope(event)
         repository_config = _repositories_from_environment()
@@ -450,6 +479,88 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
     return ReviewTaskLambdaHandler(repository, authorization_store).handle(
         {"arguments": arguments}, authorized_context=envelope
     )
+
+
+def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) -> dict[str, object]:
+    """AgentCore Lambda-target adapter for flat tool arguments.
+
+    AgentCore supplies flat tool properties. The trusted REQUEST interceptor
+    writes a short-lived grant to the existing DynamoDB table and injects only
+    its opaque ID into the transformed tool arguments. Provider metadata in
+    ``context.client_context.custom`` is intentionally ignored.
+    """
+
+    if not isinstance(event, Mapping):
+        return {"error": "invalid_request"}
+    try:
+        grant_id = event.get(LEGALDESK_GRANT_ARGUMENT)
+        if not isinstance(grant_id, str):
+            return {"error": "access_denied"}
+        if "authorizedContext" in event:
+            return {"error": "access_denied"}
+        try:
+            UUID(grant_id)
+        except (ValueError, AttributeError) as exc:
+            raise ReviewTaskValidationError("grant ID is invalid") from exc
+        grants = _gateway_grant_repository_from_environment()
+        if grants is None:
+            return {"error": "service_unavailable"}
+        raw_grant = grants.get(grant_id)
+        if not isinstance(raw_grant, Mapping):
+            return {"error": "access_denied"}
+        required = {
+            "pk", "sk", "entityType", "verifiedSubject", "requestedMatterId",
+            "correlationId", "toolName", "expiresAt",
+        }
+        if set(raw_grant) != required or raw_grant.get("entityType") != "GatewayAuthorizationGrant":
+            return {"error": "access_denied"}
+        if raw_grant.get("pk") != f"GATEWAY#GRANT#{grant_id}" or raw_grant.get("sk") != "PROFILE":
+            return {"error": "access_denied"}
+        if raw_grant.get("toolName") != "create_review_task":
+            return {"error": "access_denied"}
+        expires_at = raw_grant.get("expiresAt")
+        if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float, Decimal)):
+            return {"error": "access_denied"}
+        import time
+
+        try:
+            expired = not math.isfinite(float(expires_at)) or expires_at <= time.time()
+        except (TypeError, ValueError, OverflowError):
+            return {"error": "access_denied"}
+        if expired:
+            return {"error": "access_denied"}
+        try:
+            envelope = AuthorizedToolEnvelope(
+                verified_subject=raw_grant["verifiedSubject"],  # type: ignore[arg-type]
+                requested_matter_id=raw_grant["requestedMatterId"],  # type: ignore[arg-type]
+                correlation_id=raw_grant["correlationId"],  # type: ignore[arg-type]
+            )
+        except (TypeError, ValueError) as exc:
+            raise ReviewTaskValidationError("grant context is invalid") from exc
+        target_arguments = dict(event)
+        target_arguments.pop(LEGALDESK_GRANT_ARGUMENT, None)
+        # Gateway keeps matterId to satisfy the target schema; it is only a
+        # selector and must never reach the parser or influence authorization.
+        target_arguments.pop("matterId", None)
+        # One interceptor grant represents one logical Gateway tool call.
+        # Always overwrite a model-supplied retry key so replaying the same
+        # grant cannot create multiple tasks under different keys.
+        target_arguments["idempotencyKey"] = f"gateway-{grant_id}"
+        repository_config = _repositories_from_environment()
+        if repository_config is None:
+            return {"error": "service_unavailable"}
+        repository, authorization_store = repository_config
+        return ReviewTaskLambdaHandler(repository, authorization_store).handle(
+            {"arguments": target_arguments}, authorized_context=envelope
+        )
+    except ReviewTaskValidationError:
+        return {"error": "invalid_request"}
+    except (TypeError, ValueError):
+        return {"error": "invalid_request"}
+    except AuthorizationDenied:
+        return {"error": "access_denied"}
+    except Exception:
+        return {"error": "service_unavailable"}
 
 
 class Boto3DynamoReviewTaskRepository:
@@ -567,10 +678,12 @@ __all__ = [
     "ReviewTaskPersistenceError",
     "ReviewTaskRepository",
     "REVIEW_TASK_SCHEMA_VERSION",
+    "LEGALDESK_GRANT_ARGUMENT",
     "ReviewTaskValidationError",
     "ReviewReasonCode",
     "create_review_task",
     "create_review_task_for_identity",
+    "gateway_lambda_handler",
     "lambda_handler",
     "parse_create_review_task_input",
     "parse_authorized_tool_envelope",

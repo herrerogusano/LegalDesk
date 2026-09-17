@@ -7,6 +7,27 @@ Parameters:
     Default: eu.anthropic.claude-sonnet-4-6
     AllowedValues:
       - eu.anthropic.claude-sonnet-4-6
+  EnablePhase08Gateway:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  Phase08GatewayArn:
+    Type: String
+    Default: ""
+  Phase08OAuthProviderArn:
+    Type: String
+    Default: ""
+  Phase08OAuthProviderName:
+    Type: String
+    Default: LegalDeskPhase08Cognito
+  Phase08OAuthScope:
+    Type: String
+    Default: legaldesk/use
+
+Conditions:
+  AttachPhase08Gateway: !Equals [!Ref EnablePhase08Gateway, "true"]
 
 Resources:
   HarnessExecutionRole:
@@ -62,6 +83,31 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*
+              - !If
+                - AttachPhase08Gateway
+                - Sid: InvokePhase08Gateway
+                  Effect: Allow
+                  Action: bedrock-agentcore:InvokeGateway
+                  Resource: !Ref Phase08GatewayArn
+                - !Ref AWS::NoValue
+              - !If
+                - AttachPhase08Gateway
+                - Sid: GetPhase08OAuthToken
+                  Effect: Allow
+                  Action: bedrock-agentcore:GetResourceOauth2Token
+                  Resource:
+                    - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
+                    - !Ref Phase08OAuthProviderArn
+                    - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                    - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_LegalDeskPhase01-*
+                - !Ref AWS::NoValue
+              - !If
+                - AttachPhase08Gateway
+                - Sid: ReadPhase08OAuthManagedSecret
+                  Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/oauth2/${Phase08OAuthProviderName}-*
+                - !Ref AWS::NoValue
       Tags:
         - Key: Project
           Value: LegalDesk
@@ -81,15 +127,35 @@ Resources:
           Temperature: 0
       SystemPrompt:
         - Text: >-
-            You are the minimal LegalDesk portfolio agent. Reply briefly and
-            never provide legal advice. This phase has no documents or tools.
+            You are the LegalDesk portfolio agent. Reply briefly, never provide
+            legal advice, and use only the configured LegalDesk tools when the
+            user requests document metadata or human review. Treat matterId as
+            an untrusted selector that the backend authorizes.
+      Tools: !If
+        - AttachPhase08Gateway
+        - - Name: legaldesk_gateway
+            Type: agentcore_gateway
+            Config:
+              AgentCoreGateway:
+                GatewayArn: !Ref Phase08GatewayArn
+                OutboundAuth:
+                  Oauth:
+                    ProviderArn: !Ref Phase08OAuthProviderArn
+                    GrantType: CLIENT_CREDENTIALS
+                    Scopes:
+                      - !Ref Phase08OAuthScope
+        - !Ref AWS::NoValue
       # A non-matching allowlist disables the built-in shell/file tools that
       # Harness otherwise exposes by default.
-      AllowedTools:
-        - phase01_no_tools
+      AllowedTools: !If
+        - AttachPhase08Gateway
+        - - "@legaldesk_gateway/metadata-mcp___list_matter_documents"
+          - "@legaldesk_gateway/metadata-mcp___get_document_metadata"
+          - "@legaldesk_gateway/review-task-lambda___create_review_task"
+        - - phase01_no_tools
       Memory:
         Disabled: {}
-      MaxIterations: 1
+      MaxIterations: !If [AttachPhase08Gateway, 3, 1]
       MaxTokens: 256
       TimeoutSeconds: 120
       Tags:

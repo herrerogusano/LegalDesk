@@ -12,9 +12,13 @@ No improvisar una arquitectura distinta sin necesidad demostrable.
 
 ## Supervisor / orchestrator
 
-Preferencia si el cliente Codex permite seleccionar este modelo:
+Configuración obligatoria si el cliente Codex permite seleccionar este modelo:
 - **GPT-5.6 Sol**
 - reasoning: **Medium**
+
+El supervisor debe crearse o seleccionarse explícitamente con esta
+configuración. Si una tarea ya iniciada no permite cambiar su modelo, debe
+informarse al usuario y aplicar la configuración en la siguiente tarea.
 
 Responsabilidades:
 - leer el plan activo;
@@ -38,9 +42,14 @@ Usar razonamiento superior solo para:
 
 ## Worker
 
-Preferencia:
+Configuración obligatoria:
 - **GPT-5.6 Luna**
 - reasoning: **High**
+
+Todo subagente nuevo debe crearse pasando explícitamente el modelo y el nivel
+de razonamiento, aunque el cliente permita heredar la configuración. No
+reutilizar un subagente existente si no se puede verificar que usa GPT-5.6
+Luna con reasoning High; crear uno nuevo para el siguiente bloque concreto.
 
 Responsabilidades:
 - implementar la tarea asignada;
@@ -50,9 +59,9 @@ Responsabilidades:
 - no ampliar alcance.
 
 Si esos nombres/modelos no están disponibles en el cliente Codex actual:
-- mantener la separación de roles;
-- usar el modelo más potente disponible únicamente para supervisor;
-- usar un modelo más ligero para trabajo rutinario.
+- detener la delegación;
+- informar al usuario antes de usar una configuración alternativa;
+- mantener la separación de roles solo tras recibir su indicación.
 
 # 3. Política de eficiencia de límites
 
