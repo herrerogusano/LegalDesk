@@ -276,6 +276,7 @@ class Phase09InfrastructureTests(unittest.TestCase):
         for action in ("CreateEvent", "DeleteEvent", "GetEvent", "ListEvents", "RetrieveMemoryRecords"):
             self.assertIn(f"bedrock-agentcore:{action}", template)
         self.assertIn("AgentCoreMemoryConfiguration", template)
+        self.assertIn("MessagesCount: 10", template)
 
 
 if __name__ == "__main__":

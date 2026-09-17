@@ -102,7 +102,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 - [x] Phase 06 (local acceptance and approved AWS Guardrails smoke complete; temporary stack deleted)
 - [x] Phase 07 (local acceptance plus synthetic AWS deployment/smoke complete; Lambda retained for Phase 08+)
 - [x] Phase 08 (Gateway, MCP, OAuth, Harness attachment, and synthetic live smoke complete)
-- [ ] Phase 09 (local implementation and tests complete; AWS Memory deployment/smoke pending explicit cost approval)
+- [x] Phase 09 (local acceptance and approved synthetic AWS Memory smoke complete)
 - [ ] Phase 10
 - [ ] Phase 11
 - [ ] Phase 12

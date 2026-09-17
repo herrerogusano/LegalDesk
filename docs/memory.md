@@ -39,6 +39,9 @@ that ARN: `CreateEvent`, `DeleteEvent`, `GetEvent`, `ListEvents`, and
 `RetrieveMemoryRecords`. The application does not expose an `actorId` CLI
 option. `HarnessInvoker` accepts it only inside the typed
 `HarnessMemoryScope` produced from a server-derived scope.
+The BYO attachment requests `messagesCount=10` so the Harness can re-inject a
+bounded short-term window; this is separate from the Runtime session ID and
+does not enable long-term retrieval.
 
 ## Cleanup and production gaps
 
@@ -51,4 +54,11 @@ tests only), replace the in-memory conversation binding store with its durable
 authenticated implementation, and revisit a narrowly allowlisted preference
 strategy only with an approved data classification.
 
-No AWS deployment or live Memory smoke is claimed by Phase 09 acceptance.
+The Memory stack is deployed in `eu-west-1` as
+`legaldesk-phase-09-memory` with ARN
+`arn:aws:bedrock-agentcore:eu-west-1:344774635844:memory/LegalDeskPhase09-NKV8SZFz5U`.
+It is `ACTIVE`, has seven-day expiry, and reports no strategies. The synthetic
+smoke confirmed event persistence and actor/session storage isolation. The
+initial Harness re-read was run before `messagesCount=10` was added, so a
+post-correction Harness continuity re-smoke was then run once with the same
+derived Alice actor/session and recovered the synthetic marker.
