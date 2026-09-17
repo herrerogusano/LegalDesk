@@ -62,3 +62,7 @@ smoke confirmed event persistence and actor/session storage isolation. The
 initial Harness re-read was run before `messagesCount=10` was added, so a
 post-correction Harness continuity re-smoke was then run once with the same
 derived Alice actor/session and recovered the synthetic marker.
+
+Phase 10 provides `Boto3DynamoConversationBindingStore` for production wiring.
+It uses the existing metadata table and conditionally stores an exact
+user/tenant/matter/conversation/session binding; no new table is created.

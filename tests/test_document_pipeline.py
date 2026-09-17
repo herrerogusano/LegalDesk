@@ -11,11 +11,12 @@ from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
-from fixture_loader import load_authorization_store
+from fixture_loader import load_authorization_store, test_identity
 from legaldesk.authorization import (
     AuthorizationDenied,
     InMemoryAuthorizationStore,
     VerifiedIdentity,
+    build_request_context,
 )
 from legaldesk.documents import (
     DocumentPipeline,
@@ -37,7 +38,7 @@ from legaldesk.documents import (
 from legaldesk.domain.models import DocumentStatus
 
 
-ALICE = VerifiedIdentity("idp|alice-fictional")
+ALICE = test_identity("idp|alice-fictional")
 FIXTURE = b"fictional Project Sundial notice; not legal advice."
 
 
@@ -164,7 +165,7 @@ class DocumentPipelineTests(unittest.TestCase):
     def test_key_helper_rejects_non_uuid(self) -> None:
         from legaldesk.authorization import RequestContext
 
-        scope = RequestContext("corr", "usr_alice", "tnt_aurora", "mat_sundial", frozenset())
+        scope = build_request_context(ALICE, "mat_sundial", self.auth, correlation_id="00000000-0000-4000-8000-000000000001")
         with self.assertRaises(ValueError):
             build_document_key(scope, "browser-selected-key", "text/plain")
 
@@ -294,7 +295,7 @@ class DocumentPipelineTests(unittest.TestCase):
     def test_document_key_extension_is_derived_from_media_type(self) -> None:
         from legaldesk.authorization import RequestContext
 
-        scope = RequestContext("corr", "usr_alice", "tnt_aurora", "mat_sundial", frozenset())
+        scope = build_request_context(ALICE, "mat_sundial", self.auth, correlation_id="00000000-0000-4000-8000-000000000001")
         document_id = "ecad6ef5-3cdf-40e7-8088-9178adac0037"
         self.assertTrue(build_document_key(scope, document_id, "application/pdf").endswith("/original.pdf"))
         with self.assertRaises(ValueError):

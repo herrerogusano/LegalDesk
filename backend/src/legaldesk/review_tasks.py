@@ -25,7 +25,9 @@ from .authorization import (
     AuthorizationStore,
     RequestContext,
     VerifiedIdentity,
+    _gateway_identity_from_verified_subject,
     build_request_context,
+    require_authorized_context,
 )
 from .domain.models import ReviewTask, ReviewTaskStatus
 
@@ -209,6 +211,7 @@ def review_task_sort_key(review_task_id: str) -> str:
 
 
 def _idempotent_task_id(context: RequestContext, key: str) -> str:
+    context = require_authorized_context(context)
     scope = f"{context.tenant_id}\x00{context.matter_id}\x00{context.user_id}\x00{key}"
     return "review-" + hashlib.sha256(scope.encode("utf-8")).hexdigest()[:32]
 
@@ -220,6 +223,7 @@ class InMemoryReviewTaskRepository:
         self.tasks: dict[tuple[str, str, str], ReviewTask] = {}
 
     def get(self, *, context: RequestContext, review_task_id: str) -> ReviewTask | None:
+        context = require_authorized_context(context)
         return self.tasks.get((context.tenant_id, context.matter_id, review_task_id))
 
     def save(self, task: ReviewTask) -> None:
@@ -243,6 +247,7 @@ def _validated_existing_task(
 ) -> ReviewTask:
     """Validate an idempotency read before exposing any stored fields."""
 
+    context = require_authorized_context(context)
     if not isinstance(existing, ReviewTask):
         raise ReviewTaskPersistenceError("review task store unavailable")
     try:
@@ -292,8 +297,7 @@ def create_review_task(
 ) -> dict[str, str]:
     """Create a human-review task inside the server-authorized matter scope."""
 
-    if not isinstance(context, RequestContext):
-        raise AuthorizationDenied("access denied")
+    context = require_authorized_context(context)
     parsed = parse_review_task_input(payload)
     task_id = (
         _idempotent_task_id(context, parsed.idempotency_key)
@@ -396,7 +400,9 @@ class ReviewTaskLambdaHandler:
             if not isinstance(payload, Mapping):
                 raise ReviewTaskValidationError("tool input must be an object")
             request_context = build_request_context(
-                VerifiedIdentity(authorized_context.verified_subject),
+                _gateway_identity_from_verified_subject(
+                    authorized_context.verified_subject
+                ),
                 authorized_context.requested_matter_id,
                 self.authorization_store,
                 correlation_id=authorized_context.correlation_id,
@@ -594,6 +600,7 @@ class Boto3DynamoReviewTaskRepository:
         }
 
     def get(self, *, context: RequestContext, review_task_id: str) -> ReviewTask | None:
+        context = require_authorized_context(context)
         try:
             response = self.table.get_item(
                 Key={

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from legaldesk.authorization import InMemoryAuthorizationStore
+from legaldesk.authorization import InMemoryAuthorizationStore, VerifiedIdentity, _IDENTITY_FACTORY_TOKEN
 from legaldesk.domain.models import Matter, MatterStatus, User
 
 
@@ -32,4 +32,17 @@ def load_authorization_store() -> InMemoryAuthorizationStore:
     return InMemoryAuthorizationStore(
         users_by_subject={user.verified_subject: user for user in users},
         matters_by_id={matter.matter_id: matter for matter in matters},
+    )
+
+
+def test_identity(subject: str) -> VerifiedIdentity:
+    """Test-only trusted identity fixture; production has no free factory."""
+
+    return VerifiedIdentity._from_verified_claims(
+        subject=subject,
+        issuer="test://legaldesk",
+        client_id="test-client",
+        token_use="access",
+        scopes=frozenset({"legaldesk/use"}),
+        _factory_token=_IDENTITY_FACTORY_TOKEN,
     )

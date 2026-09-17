@@ -32,16 +32,20 @@ before any write.
 
 The Gateway uses `CUSTOM_JWT` with parameterized discovery URL, audience,
 client, and scope. The metadata Function URL remains `AWS_IAM`; its
-allowlisted headers are selectors only. The REQUEST interceptor derives the
+allowlisted headers contain only a server-owned grant and selectors. The REQUEST interceptor derives the
 subject from the Gateway-validated bearer token (ignoring client subject
 headers), reauthorizes the requested matter against DynamoDB, creates a
-correlation ID, and overwrites metadata headers. For the review target it
-writes the grant and injects only its server-owned opaque ID; attacker-supplied
-grant IDs are overwritten before target invocation. Provider
+correlation ID, and overwrites metadata headers. For the review and metadata
+MCP targets it writes a short-lived grant and injects only its server-owned
+opaque ID; attacker-supplied grant IDs are overwritten before target
+invocation. The MCP Function URL ignores subject, matter, and correlation
+headers for business calls and consumes the exact grant, including its tool,
+subject, matter, and expiry binding. Provider
 `client_context.custom` metadata is not treated as identity or authorization.
-No token or request body is logged. Grants expire after five minutes; expiry plus deterministic
-grant-derived idempotency prevents replay writes, while cleanup remains a
-deferred operational task.
+No token or request body is logged. Grants expire after five minutes and are
+replayable during that TTL by design; deterministic grant-derived idempotency
+limits duplicate review writes. Grant cleanup remains a deferred operational
+task.
 
 MCP `initialize`, `tools/list`, `ping`, and the `notifications/initialized`
 notification are allowed without business scope so Gateway dynamic discovery

@@ -223,6 +223,9 @@ class GatewayInterceptorTests(unittest.TestCase):
         with patch(
             "legaldesk.gateway_interceptor._authorization_store_from_environment",
             return_value=self.auth,
+        ), patch(
+            "legaldesk.gateway_interceptor._grant_repository_from_environment",
+            return_value=InMemoryGatewayGrantRepository(),
         ), self.assertLogs("legaldesk.gateway_interceptor", level="INFO") as logs:
             response = gateway_request_interceptor(request, object())
         self.assertIn("transformedGatewayRequest", response["mcp"])

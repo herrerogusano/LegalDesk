@@ -8,11 +8,12 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT / "agent" / "src"))
 
-from fixture_loader import load_authorization_store  # noqa: E402
+from fixture_loader import load_authorization_store, test_identity  # noqa: E402
 from legaldesk.authorization import (  # noqa: E402
     AuthorizationDenied,
     RequestContext,
     VerifiedIdentity,
+    build_request_context,
 )
 from legaldesk.memory import (  # noqa: E402
     AgentCoreMemoryClient,
@@ -27,8 +28,14 @@ from legaldesk_agent import HarnessMemoryScope, HarnessInvoker  # noqa: E402
 
 
 def context(*, user: str = "usr_alice", matter: str = "mat_sundial") -> RequestContext:
-    tenant = "tnt_borealis" if user == "usr_bob" or matter == "mat_glacier" else "tnt_aurora"
-    return RequestContext("00000000-0000-4000-8000-000000000001", user, tenant, matter, frozenset())
+    subject = "idp|bob-fictional" if user == "usr_bob" else "idp|alice-fictional"
+    identity = test_identity(subject)
+    return build_request_context(
+        identity,
+        matter,
+        load_authorization_store(),
+        correlation_id="00000000-0000-4000-8000-000000000001",
+    )
 
 
 class FakeMemoryClient:
@@ -72,7 +79,7 @@ class Phase09MemoryTests(unittest.TestCase):
             session_selector=session,
         )
         return derive_memory_scope_for_identity(
-            VerifiedIdentity("idp|alice-fictional"),
+            test_identity("idp|alice-fictional"),
             authorized_context.matter_id,
             conversation,
             session,
@@ -95,7 +102,7 @@ class Phase09MemoryTests(unittest.TestCase):
         bob_bindings = InMemoryConversationBindingStore()
         bob_bindings.bind(bob_context, conversation_id="conversation-a", session_selector="session-a")
         other_actor_matter = derive_memory_scope_for_identity(
-            VerifiedIdentity("idp|bob-fictional"),
+            test_identity("idp|bob-fictional"),
             "mat_glacier",
             "conversation-a",
             "session-a",
@@ -134,7 +141,7 @@ class Phase09MemoryTests(unittest.TestCase):
         bindings = InMemoryConversationBindingStore()
         bindings.bind(context(), conversation_id="conversation-a", session_selector="session-a")
         scope = derive_memory_scope_for_identity(
-            VerifiedIdentity("idp|alice-fictional"),
+            test_identity("idp|alice-fictional"),
             "mat_sundial",
             "conversation-a",
             "session-a",
@@ -147,7 +154,7 @@ class Phase09MemoryTests(unittest.TestCase):
         self.assertNotIn("mat_sundial", scope.actor_id)
         with self.assertRaises(AuthorizationDenied):
             derive_memory_scope_for_identity(
-                VerifiedIdentity("idp|alice-fictional"),
+                test_identity("idp|alice-fictional"),
                 "mat_glacier",
                 "conversation-a",
                 "session-a",
@@ -156,7 +163,7 @@ class Phase09MemoryTests(unittest.TestCase):
             )
         with self.assertRaises(AuthorizationDenied):
             derive_memory_scope_for_identity(
-                VerifiedIdentity("idp|unknown-fictional"),
+                test_identity("idp|unknown-fictional"),
                 "mat_sundial",
                 "conversation-a",
                 "session-a",
@@ -166,7 +173,7 @@ class Phase09MemoryTests(unittest.TestCase):
         for conversation, session in (("unknown-conversation", "session-a"), ("conversation-a", "unknown-session")):
             with self.subTest(conversation=conversation, session=session), self.assertRaises(AuthorizationDenied):
                 derive_memory_scope_for_identity(
-                    VerifiedIdentity("idp|alice-fictional"),
+                    test_identity("idp|alice-fictional"),
                     "mat_sundial",
                     conversation,
                     session,
@@ -175,7 +182,7 @@ class Phase09MemoryTests(unittest.TestCase):
                 )
         with self.assertRaises(AuthorizationDenied):
             derive_memory_scope_for_identity(
-                VerifiedIdentity("idp|bob-fictional"),
+                test_identity("idp|bob-fictional"),
                 "mat_sundial",
                 "conversation-a",
                 "session-a",

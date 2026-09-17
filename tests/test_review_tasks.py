@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
-from fixture_loader import load_authorization_store
+from fixture_loader import load_authorization_store, test_identity
 from legaldesk.authorization import (
     AuthorizationDenied,
     Boto3DynamoAuthorizationStore,
@@ -35,6 +35,7 @@ from legaldesk.review_tasks import (
     ReviewTaskIdempotencyConflict,
     ReviewTaskPersistenceError,
     ReviewTaskValidationError,
+    build_request_context,
     create_review_task,
     create_review_task_for_identity,
     gateway_lambda_handler,
@@ -44,18 +45,19 @@ from legaldesk.review_tasks import (
 import legaldesk.review_tasks as review_tasks
 
 
-ALICE = VerifiedIdentity("idp|alice-fictional")
+ALICE = test_identity("idp|alice-fictional")
 CORRELATION_ID = "8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279"
 
 
 def context(matter_id: str = "mat_sundial") -> RequestContext:
-    return RequestContext(
-        correlation_id=CORRELATION_ID,
-        user_id="usr_alice",
-        tenant_id="tnt_aurora",
-        matter_id=matter_id,
-        roles=frozenset({"member"}),
-    )
+    if matter_id == "mat_other":
+        return build_request_context(
+            test_identity("idp|bob-fictional"),
+            "mat_glacier",
+            load_authorization_store(),
+            correlation_id=CORRELATION_ID,
+        )
+    return build_request_context(ALICE, matter_id, load_authorization_store(), correlation_id=CORRELATION_ID)
 
 
 class ReviewTaskToolTests(unittest.TestCase):

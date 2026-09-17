@@ -18,6 +18,7 @@ from .authorization import (
     RequestContext,
     VerifiedIdentity,
     build_request_context,
+    require_authorized_context,
 )
 
 
@@ -56,8 +57,7 @@ class RetrievedPassage:
 def build_matter_filter(context: RequestContext) -> dict[str, Any]:
     """Return the mandatory AND filter from a server-built request context."""
 
-    if not isinstance(context, RequestContext):
-        raise TypeError("context must be a server-built RequestContext")
+    context = require_authorized_context(context)
     return {
         "andAll": [
             {"equals": {"key": "tenantId", "value": context.tenant_id}},
@@ -86,6 +86,7 @@ def _optional_positive_int(value: Any) -> int | None:
 def _normalize_results(
     response: Mapping[str, Any], context: RequestContext
 ) -> tuple[RetrievedPassage, ...]:
+    context = require_authorized_context(context)
     raw_results = response.get("retrievalResults", ())
     if not isinstance(raw_results, (list, tuple)):
         return ()
@@ -213,8 +214,7 @@ def _retrieve_with_context(
 ) -> tuple[RetrievedPassage, ...]:
     """Retrieve only with the RequestContext just authorized by the server."""
 
-    if not isinstance(context, RequestContext):
-        raise TypeError("context must be a server-built RequestContext")
+    context = require_authorized_context(context)
     if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_LENGTH:
         raise ValueError("query is empty or outside the allowed length")
     if not isinstance(knowledge_base_id, str) or not knowledge_base_id.strip():

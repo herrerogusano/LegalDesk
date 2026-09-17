@@ -38,12 +38,17 @@ tools must reject raw browser scope and accept only the server-built context.
   `sk=REVIEW#{reviewTaskId}`
 - Gateway authorization grant: `pk=GATEWAY#GRANT#{grantId}`, `sk=PROFILE`;
   stores only verified subject, requested matter, correlation ID, target tool,
-  and a five-minute `expiresAt` epoch checked by the consumer. It contains no
-  document body or client-provided scope. Automatic deletion of expired grant
-  records is a deferred operational cleanup gap.
+  and a five-minute `expiresAt` epoch checked by the consumer. Grants are
+  replayable during that TTL; review idempotency limits duplicate writes. It
+  contains no document body or client-provided scope. Automatic deletion of
+  expired grant records is a deferred operational cleanup gap.
 - Conversation scope is derived server-side from the authorized user/matter and
   opaque conversation/session selectors. The AgentCore values are deterministic
   opaque IDs, not the raw `{userId}:{matterId}:{sessionId}` string.
+- Conversation binding records reuse the existing metadata table with
+  `pk=CONVERSATION#{tenantId}#{matterId}#{userId}#{conversationId}` and
+  `sk=SESSION#{sessionSelector}`. Creation is conditional and reads require an
+  exact user/tenant/matter/conversation/session match; no new table is needed.
 - Memory actor/session namespaces include the authorized user and matter only
   through the server-side derivation; raw tenant, user, matter, or browser
   selectors are never sent as AgentCore IDs.

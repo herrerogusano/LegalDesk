@@ -10,17 +10,31 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import os
 import re
+import time
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Mapping
+from uuid import UUID
 
 from .authorization import (
+    AuthorizationDenied,
     AuthorizationStore,
     Boto3DynamoAuthorizationStore,
     RequestContext,
     VerifiedIdentity,
+    _gateway_identity_from_verified_subject,
     build_request_context,
+    require_authorized_context,
+)
+from .gateway_interceptor import (
+    GATEWAY_GRANT_ENTITY,
+    GATEWAY_GRANT_SORT_KEY,
+    GatewayGrantRepository,
+    Boto3DynamoGatewayGrantRepository,
+    gateway_grant_partition_key,
 )
 from .documents import (
     Boto3DynamoDocumentMetadataRepository,
@@ -102,6 +116,14 @@ class MCPServer:
     ) -> dict[str, object] | None:
         if not isinstance(request, Mapping):
             return self._error(None, -32600, "invalid request", None)
+        if request_context is not None:
+            try:
+                request_context = require_authorized_context(request_context)
+            except AuthorizationDenied:
+                request_context = None
+            if request.get("id") is not None:
+                if request_context is None:
+                    return self._error(request.get("id"), -32001, "access denied", None)
         if request.get("jsonrpc") != "2.0":
             return self._error(request.get("id"), -32600, "invalid request", None)
         request_id = request.get("id")
@@ -144,12 +166,12 @@ class MCPServer:
                 )
                 result = {}
             elif method == "tools/call":
-                if not isinstance(request_context, RequestContext):
+                if request_context is None:
                     return self._error(request_id, -32001, "access denied", None)
                 result = self._call_tool(request.get("params"), request_context)
             else:
                 return self._error(request_id, -32601, "method not found", request_context)
-            if isinstance(request_context, RequestContext):
+            if request_context is not None:
                 result["_meta"] = {"correlationId": request_context.correlation_id}
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except MCPRequestError:
@@ -163,6 +185,7 @@ class MCPServer:
         raw_params: object,
         context: RequestContext,
     ) -> dict[str, object]:
+        context = require_authorized_context(context)
         if not isinstance(raw_params, Mapping):
             raise MCPRequestError("params must be an object")
         param_names = set(raw_params)
@@ -229,6 +252,10 @@ class MCPServer:
 
     @staticmethod
     def _in_scope(document: object, context: RequestContext) -> bool:
+        try:
+            context = require_authorized_context(context)
+        except AuthorizationDenied:
+            return False
         return (
             isinstance(document, Document)
             and document.tenant_id == context.tenant_id
@@ -237,6 +264,7 @@ class MCPServer:
 
     @staticmethod
     def _safe_document(document: Document, context: RequestContext) -> dict[str, object]:
+        context = require_authorized_context(context)
         if not MCPServer._in_scope(document, context):
             raise MCPRequestError("document not found")
         return {
@@ -257,6 +285,11 @@ class MCPServer:
         message: str,
         context: RequestContext | None,
     ) -> dict[str, object]:
+        if context is not None:
+            try:
+                context = require_authorized_context(context)
+            except AuthorizationDenied:
+                context = None
         response: dict[str, object] = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -313,6 +346,58 @@ def _mcp_repositories_from_environment(
     )
 
 
+def _mcp_grant_repository_from_environment() -> GatewayGrantRepository | None:
+    table_name = os.environ.get("DOCUMENT_METADATA_TABLE_NAME") or os.environ.get(
+        "REVIEW_TASK_TABLE_NAME"
+    )
+    if not table_name:
+        return None
+    return Boto3DynamoGatewayGrantRepository(table_name)
+
+
+def _validated_mcp_grant(
+    repository: GatewayGrantRepository,
+    grant_id: object,
+    request: Mapping[str, object],
+) -> tuple[str, str, str] | None:
+    """Load one exact, short-lived Gateway capability; headers are ignored."""
+
+    if not isinstance(grant_id, str):
+        return None
+    try:
+        UUID(grant_id)
+    except (ValueError, AttributeError):
+        return None
+    item = repository.get(grant_id)
+    if not isinstance(item, Mapping):
+        return None
+    required = {
+        "pk", "sk", "entityType", "verifiedSubject", "requestedMatterId",
+        "correlationId", "toolName", "expiresAt",
+    }
+    if set(item) != required or item.get("pk") != gateway_grant_partition_key(grant_id):
+        return None
+    if item.get("sk") != GATEWAY_GRANT_SORT_KEY or item.get("entityType") != GATEWAY_GRANT_ENTITY:
+        return None
+    tool_name = item.get("toolName")
+    subject = item.get("verifiedSubject")
+    matter_id = item.get("requestedMatterId")
+    correlation_id = item.get("correlationId")
+    expires_at = item.get("expiresAt")
+    if (
+        tool_name not in {LIST_MATTER_DOCUMENTS, GET_DOCUMENT_METADATA}
+        or not all(isinstance(value, str) and value for value in (subject, matter_id, correlation_id))
+        or isinstance(expires_at, bool)
+        or not isinstance(expires_at, (int, float, Decimal))
+        or not math.isfinite(float(expires_at))
+        or expires_at <= time.time()
+    ):
+        return None
+    params = request.get("params")
+    request_tool = params.get("name") if isinstance(params, Mapping) else None
+    if request_tool != tool_name:
+        return None
+    return subject, matter_id, correlation_id
 def mcp_lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict[str, object]:
     """AWS Function URL adapter for the remote MCP server.
 
@@ -352,25 +437,29 @@ def mcp_lambda_handler(event: Mapping[str, object], _lambda_context: object) -> 
             "ping",
             "notifications/initialized",
         }
-        subject = normalized_headers.get("x-legaldesk-verified-subject")
-        matter_id = normalized_headers.get("x-legaldesk-requested-matter-id")
-        correlation_id = normalized_headers.get("x-legaldesk-correlation-id")
-        if not lifecycle_method and not all(
-            isinstance(value, str) for value in (subject, matter_id, correlation_id)
-        ):
-            return _http_json(403, {"error": "access_denied"})
         repositories = _mcp_repositories_from_environment()
         if repositories is None:
             return _http_json(503, {"error": "service_unavailable"})
         authorization_store, metadata_repository = repositories
-        if lifecycle_method and not any(
-            value is not None for value in (subject, matter_id, correlation_id)
-        ):
+        if lifecycle_method:
             response = MCPServer(metadata_repository).handle_jsonrpc(request)
         else:
+            grant_repository = _mcp_grant_repository_from_environment()
+            grant = (
+                _validated_mcp_grant(
+                    grant_repository,
+                    normalized_headers.get("x-legaldesk-grant-id"),
+                    request,
+                )
+                if grant_repository is not None
+                else None
+            )
+            if grant is None:
+                return _http_json(403, {"error": "access_denied"})
+            subject, matter_id, correlation_id = grant
             response = handle_metadata_request_for_identity(
                 request,
-                VerifiedIdentity(subject),
+                _gateway_identity_from_verified_subject(subject),
                 matter_id,
                 authorization_store=authorization_store,
                 metadata_repository=metadata_repository,
