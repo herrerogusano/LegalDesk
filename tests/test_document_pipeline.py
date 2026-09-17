@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sys
+import types
 import unittest
 import json
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
@@ -400,6 +402,71 @@ class DocumentPipelineTests(unittest.TestCase):
         self.assertIn("ExclusiveStartKey", table.calls[1])
         self.assertIn("DOCUMENT#", str(table.calls[0]["KeyConditionExpression"]))
         self.assertNotIn("body", first_item)
+
+    def test_injected_boto3_table_uses_key_condition_without_boto3_dependency(self) -> None:
+        document = self.pipeline.upload(ALICE, "mat_sundial", request())
+        item = Boto3DynamoDocumentMetadataRepository._item(document)
+
+        class FakeCondition:
+            def __init__(self, expression: object) -> None:
+                self.expression = expression
+
+            def __and__(self, other: "FakeCondition") -> "FakeCondition":
+                return FakeCondition(("and", self.expression, other.expression))
+
+            def __repr__(self) -> str:
+                return repr(self.expression)
+
+        class FakeKey:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def eq(self, value: object) -> FakeCondition:
+                return FakeCondition((self.name, "=", value))
+
+            def begins_with(self, value: object) -> FakeCondition:
+                return FakeCondition((self.name, "begins_with", value))
+
+        fake_conditions = types.ModuleType("boto3.dynamodb.conditions")
+        fake_conditions.Key = FakeKey  # type: ignore[attr-defined]
+        fake_dynamodb = types.ModuleType("boto3.dynamodb")
+        fake_boto3 = types.ModuleType("boto3")
+        fake_boto3.dynamodb = fake_dynamodb  # type: ignore[attr-defined]
+
+        class FakeTable:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def query(self, **kwargs: object) -> dict[str, object]:
+                self.calls.append(kwargs)
+                return {"Items": [item]}
+
+        table = FakeTable()
+        repository = Boto3DynamoDocumentMetadataRepository(
+            "fictional-table", table=table, boto3_backed=True
+        )
+        with patch.dict(
+            sys.modules,
+            {
+                "boto3": fake_boto3,
+                "boto3.dynamodb": fake_dynamodb,
+                "boto3.dynamodb.conditions": fake_conditions,
+            },
+        ):
+            listed = repository.list_for_scope(
+                tenant_id="tnt_aurora", matter_id="mat_sundial"
+            )
+        self.assertEqual([item.document_id for item in listed], [document.document_id])
+        self.assertEqual(
+            repr(table.calls[0]["KeyConditionExpression"]),
+            repr(
+                (
+                    "and",
+                    ("pk", "=", "TENANT#tnt_aurora#MATTER#mat_sundial"),
+                    ("sk", "begins_with", "DOCUMENT#"),
+                )
+            ),
+        )
 
 
 if __name__ == "__main__":

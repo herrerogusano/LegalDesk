@@ -7,6 +7,8 @@ never contain tenant or matter scope.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
@@ -28,7 +30,8 @@ from .documents import (
 
 
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-MCP_PROTOCOL_VERSION = "2025-06-18"
+# AgentCore Gateway currently supports the March 2025 MCP revision.
+MCP_PROTOCOL_VERSION = "2025-03-26"
 MCP_SERVER_NAME = "legaldesk-metadata"
 MCP_SCHEMA_VERSION = "1"
 
@@ -38,7 +41,15 @@ GET_DOCUMENT_METADATA = "get_document_metadata"
 LIST_MATTER_DOCUMENTS_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
-    "properties": {},
+    "properties": {
+        "matterId": {
+            "type": "string",
+            "pattern": _OPAQUE_ID.pattern,
+            "maxLength": 128,
+            "description": "Matter to query.",
+        }
+    },
+    "required": ["matterId"],
 }
 GET_DOCUMENT_METADATA_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -48,9 +59,15 @@ GET_DOCUMENT_METADATA_SCHEMA: dict[str, object] = {
             "type": "string",
             "pattern": _OPAQUE_ID.pattern,
             "maxLength": 128,
-        }
+        },
+        "matterId": {
+            "type": "string",
+            "pattern": _OPAQUE_ID.pattern,
+            "maxLength": 128,
+            "description": "Matter containing the document.",
+        },
     },
-    "required": ["documentId"],
+    "required": ["documentId", "matterId"],
 }
 
 MCP_TOOL_DEFINITIONS: tuple[dict[str, object], ...] = (
@@ -89,7 +106,9 @@ class MCPServer:
             return self._error(request.get("id"), -32600, "invalid request", None)
         request_id = request.get("id")
         method = request.get("method")
-        if method == "notifications/initialized" and "id" not in request:
+        # JSON-RPC notifications never receive a response. Unknown or
+        # side-effecting notification methods are ignored rather than run.
+        if "id" not in request:
             return None
         if not isinstance(method, str) or isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
             return self._error(request_id, -32600, "invalid request", request_context)
@@ -103,10 +122,26 @@ class MCPServer:
                     "capabilities": {"tools": {"listChanged": False}},
                 }
             elif method == "tools/list":
-                self._strict_params(request.get("params", {}), expected=set())
+                params = request.get("params", {})
+                self._strict_params(
+                    params,
+                    expected=set(),
+                    optional={"cursor", "_meta"},
+                )
+                if (
+                    isinstance(params, Mapping)
+                    and "cursor" in params
+                    and params.get("cursor") is not None
+                    and not isinstance(params.get("cursor"), str)
+                ):
+                    raise MCPRequestError("cursor must be a string or null")
                 result = {"tools": [dict(tool) for tool in MCP_TOOL_DEFINITIONS]}
             elif method == "ping":
-                self._strict_params(request.get("params", {}), expected=set())
+                self._strict_params(
+                    request.get("params", {}),
+                    expected=set(),
+                    optional={"_meta"},
+                )
                 result = {}
             elif method == "tools/call":
                 if not isinstance(request_context, RequestContext):
@@ -130,8 +165,15 @@ class MCPServer:
     ) -> dict[str, object]:
         if not isinstance(raw_params, Mapping):
             raise MCPRequestError("params must be an object")
-        if set(raw_params) != {"name", "arguments"}:
+        param_names = set(raw_params)
+        if not {"name", "arguments"}.issubset(param_names) or param_names - {
+            "name",
+            "arguments",
+            "_meta",
+        }:
             raise MCPRequestError("tool call shape is invalid")
+        if "_meta" in raw_params and not isinstance(raw_params.get("_meta"), Mapping):
+            raise MCPRequestError("tool call metadata is invalid")
         name = raw_params.get("name")
         arguments = raw_params.get("arguments")
         if not isinstance(name, str) or not isinstance(arguments, Mapping):
@@ -169,9 +211,21 @@ class MCPServer:
         return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
 
     @staticmethod
-    def _strict_params(value: object, *, expected: set[str]) -> None:
-        if not isinstance(value, Mapping) or set(value) != expected:
+    def _strict_params(
+        value: object,
+        *,
+        expected: set[str],
+        optional: set[str] | None = None,
+    ) -> None:
+        allowed_optional = optional or set()
+        if (
+            not isinstance(value, Mapping)
+            or not expected.issubset(set(value))
+            or set(value) - expected - allowed_optional
+        ):
             raise MCPRequestError("parameters are invalid")
+        if "_meta" in value and not isinstance(value.get("_meta"), Mapping):
+            raise MCPRequestError("metadata must be an object")
 
     @staticmethod
     def _in_scope(document: object, context: RequestContext) -> bool:
@@ -251,7 +305,11 @@ def _mcp_repositories_from_environment(
     table = boto3.resource("dynamodb").Table(table_name)
     return (
         Boto3DynamoAuthorizationStore(table_name, table=table),
-        Boto3DynamoDocumentMetadataRepository(table_name, table=table),
+        Boto3DynamoDocumentMetadataRepository(
+            table_name,
+            table=table,
+            boto3_backed=True,
+        ),
     )
 
 
@@ -270,6 +328,17 @@ def mcp_lambda_handler(event: Mapping[str, object], _lambda_context: object) -> 
     body = event.get("body")
     if not isinstance(headers, Mapping) or not isinstance(body, str):
         return _http_json(403, {"error": "access_denied"})
+    normalized_headers = _normalize_headers(headers)
+    if normalized_headers is None:
+        return _http_json(400, {"error": "invalid_request"})
+    encoded = event.get("isBase64Encoded", False)
+    if not isinstance(encoded, bool):
+        return _http_json(400, {"error": "invalid_request"})
+    if encoded:
+        try:
+            body = base64.b64decode(body, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            return _http_json(400, {"error": "invalid_request"})
     try:
         try:
             request = json.loads(body)
@@ -283,9 +352,9 @@ def mcp_lambda_handler(event: Mapping[str, object], _lambda_context: object) -> 
             "ping",
             "notifications/initialized",
         }
-        subject = headers.get("x-legaldesk-verified-subject")
-        matter_id = headers.get("x-legaldesk-requested-matter-id")
-        correlation_id = headers.get("x-legaldesk-correlation-id")
+        subject = normalized_headers.get("x-legaldesk-verified-subject")
+        matter_id = normalized_headers.get("x-legaldesk-requested-matter-id")
+        correlation_id = normalized_headers.get("x-legaldesk-correlation-id")
         if not lifecycle_method and not all(
             isinstance(value, str) for value in (subject, matter_id, correlation_id)
         ):
@@ -308,7 +377,14 @@ def mcp_lambda_handler(event: Mapping[str, object], _lambda_context: object) -> 
                 correlation_id=correlation_id,
             )
         if response is None:
-            return {"statusCode": 204, "headers": {"content-type": "application/json"}, "body": ""}
+            return {
+                "statusCode": 204,
+                "headers": {
+                    "content-type": "application/json",
+                    "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+                },
+                "body": "",
+            }
         status_code = 200 if "result" in response else 400
         return _http_json(status_code, response)
     except Exception:
@@ -320,9 +396,26 @@ def _http_json(status_code: int, payload: Mapping[str, object]) -> dict[str, obj
 
     return {
         "statusCode": status_code,
-        "headers": {"content-type": "application/json"},
+        "headers": {
+            "content-type": "application/json",
+            "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+        },
         "body": json.dumps(payload, ensure_ascii=False),
     }
+
+
+def _normalize_headers(headers: Mapping[object, object]) -> dict[str, object] | None:
+    """Normalize Function URL headers without accepting ambiguous duplicates."""
+
+    normalized: dict[str, object] = {}
+    for key, value in headers.items():
+        if not isinstance(key, str):
+            return None
+        normalized_key = key.casefold()
+        if normalized_key in normalized:
+            return None
+        normalized[normalized_key] = value
+    return normalized
 
 
 __all__ = [

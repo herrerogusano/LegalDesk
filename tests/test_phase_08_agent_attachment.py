@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 ATTACHMENT = Path(__file__).parents[1] / "infra" / "phase-08-agent-attachment.yaml"
+HARNESS_TEMPLATE = Path(__file__).parents[1] / "infra" / "cloudformation" / "phase-01-harness.yaml"
 
 
 class Phase08AgentAttachmentTests(unittest.TestCase):
@@ -40,6 +41,21 @@ class Phase08AgentAttachmentTests(unittest.TestCase):
         self.assertIn("scopes:", self.config)
         self.assertNotIn("clientSecret", self.config)
         self.assertNotIn("OAUTH_SECRET", self.config)
+
+    def test_reproducible_harness_template_can_attach_phase_08(self) -> None:
+        template = HARNESS_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("EnablePhase08Gateway", template)
+        self.assertIn("Action: bedrock-agentcore:InvokeGateway", template)
+        self.assertIn("Action: bedrock-agentcore:GetResourceOauth2Token", template)
+        self.assertIn("Action: secretsmanager:GetSecretValue", template)
+        self.assertIn("bedrock-agentcore-identity!default/oauth2/${Phase08OAuthProviderName}-*", template)
+        self.assertIn("Resource: !Ref Phase08GatewayArn", template)
+        self.assertIn("ProviderArn: !Ref Phase08OAuthProviderArn", template)
+        self.assertIn("GrantType: CLIENT_CREDENTIALS", template)
+        self.assertIn('"@legaldesk_gateway/metadata-mcp___list_matter_documents"', template)
+        self.assertIn('"@legaldesk_gateway/metadata-mcp___get_document_metadata"', template)
+        self.assertIn('"@legaldesk_gateway/review-task-lambda___create_review_task"', template)
+        self.assertNotIn("clientSecret", template)
 
 
 if __name__ == "__main__":

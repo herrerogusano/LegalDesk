@@ -699,9 +699,19 @@ class Boto3S3ObjectStorage:
 class Boto3DynamoDocumentMetadataRepository:
     """DynamoDB single-table adapter storing metadata only."""
 
-    def __init__(self, table_name: str, *, table: Any | None = None) -> None:
+    def __init__(
+        self,
+        table_name: str,
+        *,
+        table: Any | None = None,
+        boto3_backed: bool = False,
+    ) -> None:
         self.table_name = table_name
-        self._boto3_backed = table is None
+        # An injected Table may still be a real boto3 resource (for example,
+        # when auth and metadata repositories share one table). Keep the
+        # backend choice explicit so dependency-free fakes retain their tuple
+        # assertions while production callers can select boto3 conditions.
+        self._boto3_backed = table is None or boto3_backed
         if table is None:
             import boto3
 

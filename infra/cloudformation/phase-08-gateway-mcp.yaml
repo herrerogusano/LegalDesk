@@ -38,9 +38,6 @@ Parameters:
   GatewayJwtDiscoveryUrl:
     Type: String
     AllowedPattern: "^.+/\\.well-known/openid-configuration$"
-  GatewayJwtAudience:
-    Type: String
-    MinLength: 1
   GatewayJwtClientId:
     Type: String
     MinLength: 1
@@ -137,7 +134,6 @@ Resources:
         S3ObjectVersion: !Ref InterceptorCodeVersion
       MemorySize: 256
       Timeout: 10
-      ReservedConcurrentExecutions: 5
       Environment:
         Variables:
           REVIEW_TASK_TABLE_NAME: !Ref ExistingMetadataTableName
@@ -156,7 +152,6 @@ Resources:
         S3ObjectVersion: !Ref MetadataMcpCodeVersion
       MemorySize: 256
       Timeout: 10
-      ReservedConcurrentExecutions: 5
       Environment:
         Variables:
           DOCUMENT_METADATA_TABLE_NAME: !Ref ExistingMetadataTableName
@@ -210,7 +205,7 @@ Resources:
               # scope the ARN to the fixed Gateway name plus generated suffix.
               - Effect: Allow
                 Action: bedrock-agentcore:InvokeGateway
-                Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/LegalDeskGatewayPhase08-*
+                Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/legaldeskgatewayphase08-*
 
   LegalDeskGateway:
     Type: AWS::BedrockAgentCore::Gateway
@@ -221,8 +216,6 @@ Resources:
       AuthorizerConfiguration:
         CustomJWTAuthorizer:
           DiscoveryUrl: !Ref GatewayJwtDiscoveryUrl
-          AllowedAudience:
-            - !Ref GatewayJwtAudience
           AllowedClients:
             - !Ref GatewayJwtClientId
           AllowedScopes:
@@ -261,10 +254,14 @@ Resources:
                     Type: object
                     Required:
                       - reasonCode
+                      - matterId
                     Properties:
                       reasonCode:
                         Type: string
                         Description: "Allowed values are insufficient_evidence, ambiguous_evidence, material_legal_judgment, user_requested_review, or safety_escalation; the Lambda validates them."
+                      matterId:
+                        Type: string
+                        Description: "Matter containing the review request."
                       _legaldeskGrantId:
                         Type: string
                         Description: Reserved server-injected opaque authorization grant; client values are rejected.
@@ -284,7 +281,7 @@ Resources:
     Properties:
       GatewayIdentifier: !Ref LegalDeskGateway
       Name: metadata-mcp
-      Description: Read-only document metadata MCP server
+      Description: Read-only document metadata MCP server (MCP 2025-03-26)
       CredentialProviderConfigurations:
         - CredentialProviderType: GATEWAY_IAM_ROLE
           CredentialProvider:

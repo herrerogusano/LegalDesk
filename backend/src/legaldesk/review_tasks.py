@@ -537,9 +537,11 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
             )
         except (TypeError, ValueError) as exc:
             raise ReviewTaskValidationError("grant context is invalid") from exc
-        target_arguments = {
-            key: value for key, value in event.items() if key != LEGALDESK_GRANT_ARGUMENT
-        }
+        target_arguments = dict(event)
+        target_arguments.pop(LEGALDESK_GRANT_ARGUMENT, None)
+        # Gateway keeps matterId to satisfy the target schema; it is only a
+        # selector and must never reach the parser or influence authorization.
+        target_arguments.pop("matterId", None)
         # One interceptor grant represents one logical Gateway tool call.
         # Always overwrite a model-supplied retry key so replaying the same
         # grant cannot create multiple tasks under different keys.

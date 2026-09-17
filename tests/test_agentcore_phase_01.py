@@ -85,15 +85,17 @@ class AgentCorePhase01Tests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessInvocationError, "stream rejected"):
             HarnessInvoker(client, "arn:test").invoke("hello")
 
-    def test_template_excludes_future_phase_services_and_wildcard_actions(self) -> None:
+    def test_template_keeps_phase_08_gateway_disabled_by_default(self) -> None:
         template = (ROOT / "infra" / "cloudformation" / "phase-01-harness.yaml").read_text(
             encoding="utf-8"
         )
-        for forbidden in ("s3:", "KnowledgeBase", "InvokeGateway", "CreateEvent"):
+        for forbidden in ("s3:", "KnowledgeBase", "CreateEvent"):
             self.assertNotIn(forbidden, template)
         self.assertNotIn('Action: "*"', template)
         self.assertNotIn("Action: '*'", template)
         self.assertIn("phase01_no_tools", template)
+        self.assertIn('Default: "false"', template)
+        self.assertIn("AttachPhase08Gateway", template)
         self.assertIn("Temperature:", template)
         self.assertNotIn("TopP:", template)
 

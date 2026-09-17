@@ -36,8 +36,12 @@ class Phase08GatewayInfrastructureTests(unittest.TestCase):
         self.assertIn("IamCredentialProvider:", metadata_target)
         self.assertIn("Service: lambda", metadata_target)
 
-    def test_targets_have_narrow_schemas_and_no_scope_arguments(self) -> None:
-        for forbidden in ("tenantId", "matterId", "userId"):
+    def test_targets_have_narrow_schemas_and_untrusted_matter_selector(self) -> None:
+        # matterId is intentionally public as an untrusted selector so callers
+        # such as Harness can choose a matter. The REQUEST interceptor must
+        # authorize it and strip it before either target receives the call.
+        self.assertIn("                    matterId:", self.template)
+        for forbidden in ("tenantId", "userId"):
             self.assertNotIn(f"                    {forbidden}:", self.template)
         self.assertIn("Name: create_review_task", self.template)
         self.assertIn("metadata-mcp", self.template)
@@ -68,7 +72,7 @@ class Phase08GatewayInfrastructureTests(unittest.TestCase):
         self.assertIn("aws:SourceAccount: !Ref AWS::AccountId", self.template)
         self.assertIn("bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/*", self.template)
         self.assertIn("Action: bedrock-agentcore:InvokeGateway", self.template)
-        self.assertIn("gateway/LegalDeskGatewayPhase08-*", self.template)
+        self.assertIn("gateway/legaldeskgatewayphase08-*", self.template)
         self.assertNotRegex(self.template, r"(?m)^\s+Action: ['\"]\*['\"]$")
         self.assertNotRegex(self.template, r"(?m)^\s+Resource: ['\"]\*['\"]$")
         self.assertNotIn("AWS::DynamoDB::Table", self.template)
@@ -88,7 +92,6 @@ class Phase08GatewayInfrastructureTests(unittest.TestCase):
             "InterceptorCodeKey",
             "InterceptorCodeVersion",
             "GatewayJwtDiscoveryUrl",
-            "GatewayJwtAudience",
             "GatewayJwtClientId",
             "GatewayJwtScope",
         ):

@@ -394,6 +394,7 @@ class ReviewTaskToolTests(unittest.TestCase):
         grants.put(grant)
         event = {
             "reasonCode": "user_requested_review",
+            "matterId": "mat_glacier",
             "idempotencyKey": "model-controlled-key",
             "_legaldeskGrantId": grant.grant_id,
         }
@@ -452,7 +453,7 @@ class ReviewTaskToolTests(unittest.TestCase):
             )
         self.assertEqual(response["status"], "open")
 
-    def test_gateway_entrypoint_rejects_model_scope_and_missing_trusted_context(self) -> None:
+    def test_gateway_entrypoint_discards_model_scope_and_requires_trusted_context(self) -> None:
         self.assertEqual(
             gateway_lambda_handler({"reasonCode": "user_requested_review"}, object()),
             {"error": "access_denied"},
@@ -481,8 +482,11 @@ class ReviewTaskToolTests(unittest.TestCase):
                 {"reasonCode": "user_requested_review", "matterId": "mat_glacier", "_legaldeskGrantId": grant.grant_id},
                 object(),
             )
-        self.assertEqual(response, {"error": "invalid_request"})
-        self.assertEqual(repository.tasks, {})
+        self.assertEqual(response["status"], "open")
+        self.assertEqual(len(repository.tasks), 1)
+        task = next(iter(repository.tasks.values()))
+        self.assertEqual(task.matter_id, "mat_sundial")
+        self.assertEqual(task.tenant_id, "tnt_aurora")
 
     def test_gateway_entrypoint_rejects_model_supplied_authorized_context(self) -> None:
         grants = InMemoryGatewayGrantRepository()

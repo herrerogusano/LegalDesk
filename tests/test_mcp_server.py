@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import unittest
+import base64
 from pathlib import Path
 from unittest.mock import patch
 
@@ -59,6 +60,88 @@ class MCPMetadataTests(unittest.TestCase):
         self.assertEqual([tool["name"] for tool in response["result"]["tools"]], [LIST_MATTER_DOCUMENTS, GET_DOCUMENT_METADATA])
         self.assertEqual(response["result"]["_meta"], {"correlationId": CORRELATION_ID})
         self.assertTrue(all(tool["inputSchema"]["additionalProperties"] is False for tool in response["result"]["tools"]))
+        self.assertEqual(response["result"]["tools"][0]["inputSchema"]["required"], ["matterId"])
+        self.assertEqual(
+            response["result"]["tools"][1]["inputSchema"]["required"],
+            ["documentId", "matterId"],
+        )
+
+    def test_tools_list_accepts_pagination_cursor_and_reserved_meta(self) -> None:
+        response = self.server.handle_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": "page-2",
+                "method": "tools/list",
+                "params": {"cursor": "opaque-next-page", "_meta": {"trace": "opaque"}},
+            }
+        )
+        self.assertIn("result", response)
+        malformed_meta = self.server.handle_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": "bad-meta",
+                "method": "tools/list",
+                "params": {"cursor": "opaque-next-page", "_meta": "not-an-object"},
+            }
+        )
+        self.assertEqual(malformed_meta["error"]["code"], -32602)
+        invalid_cursor = self.server.handle_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": "bad-cursor",
+                "method": "tools/list",
+                "params": {"cursor": 7, "_meta": {}},
+            }
+        )
+        self.assertEqual(invalid_cursor["error"]["code"], -32602)
+
+    def test_lifecycle_rejects_unknown_params_and_ping_cursor(self) -> None:
+        unknown = self.server.handle_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": "unknown",
+                "method": "tools/list",
+                "params": {"_meta": {}, "unexpected": True},
+            }
+        )
+        self.assertEqual(unknown["error"]["code"], -32602)
+        ping_cursor = self.server.handle_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": "ping-cursor",
+                "method": "ping",
+                "params": {"cursor": "not-valid-for-ping"},
+            }
+        )
+        self.assertEqual(ping_cursor["error"]["code"], -32602)
+
+    def test_jsonrpc_notifications_never_respond_or_execute_tools(self) -> None:
+        for method in (
+            "notifications/initialized",
+            "notifications/cancelled",
+            "notifications/progress",
+            "unknown/notification",
+        ):
+            with self.subTest(method=method):
+                self.assertIsNone(
+                    self.server.handle_jsonrpc(
+                        {"jsonrpc": "2.0", "method": method, "params": {}}
+                    )
+                )
+
+        self.assertIsNone(
+            self.server.handle_jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "params": {
+                        "name": GET_DOCUMENT_METADATA,
+                        "arguments": {"documentId": "doc-sundial"},
+                    },
+                },
+                request_context=context(),
+            )
+        )
 
     def test_list_current_matter_returns_metadata_without_s3_or_body(self) -> None:
         response = self.server.handle_jsonrpc(
@@ -83,6 +166,36 @@ class MCPMetadataTests(unittest.TestCase):
             request_context=context(),
         )
         self.assertEqual(invalid["error"], {"code": -32602, "message": "invalid parameters"})
+
+    def test_tools_call_allows_reserved_meta_without_relaxing_arguments(self) -> None:
+        response = self.server.handle_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": "meta",
+                "method": "tools/call",
+                "params": {
+                    "name": GET_DOCUMENT_METADATA,
+                    "arguments": {"documentId": "doc-sundial"},
+                    "_meta": {"trace": "opaque-client-metadata"},
+                },
+            },
+            request_context=context(),
+        )
+        self.assertIn("result", response)
+        invalid = self.server.handle_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": "meta-invalid",
+                "method": "tools/call",
+                "params": {
+                    "name": GET_DOCUMENT_METADATA,
+                    "arguments": {"documentId": "doc-sundial", "matterId": "mat_sundial"},
+                    "_meta": {},
+                },
+            },
+            request_context=context(),
+        )
+        self.assertEqual(invalid["error"]["code"], -32602)
 
     def test_repository_results_are_scope_checked_and_cross_matter_auth_denies_first(self) -> None:
         class LeakyRepository:
@@ -157,6 +270,7 @@ class MCPMetadataTests(unittest.TestCase):
                 object(),
             )
         self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["headers"]["MCP-Protocol-Version"], "2025-03-26")
 
     def test_function_url_lifecycle_allows_sync_without_business_scope(self) -> None:
         with patch.object(
@@ -170,6 +284,61 @@ class MCPMetadataTests(unittest.TestCase):
                         {"jsonrpc": "2.0", "id": 9, "method": "tools/list", "params": {}}
                     ),
                     "headers": {},
+                },
+                object(),
+            )
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["headers"]["MCP-Protocol-Version"], "2025-03-26")
+
+    def test_function_url_decodes_base64_json_body_and_rejects_invalid_base64(self) -> None:
+        request_body = json.dumps(
+            {"jsonrpc": "2.0", "id": "encoded", "method": "tools/list", "params": {}}
+        ).encode("utf-8")
+        with patch.object(
+            __import__("legaldesk.mcp_server", fromlist=["_mcp_repositories_from_environment"]),
+            "_mcp_repositories_from_environment",
+            return_value=(load_authorization_store(), self.repository),
+        ):
+            response = mcp_lambda_handler(
+                {
+                    "body": base64.b64encode(request_body).decode("ascii"),
+                    "isBase64Encoded": True,
+                    "headers": {},
+                },
+                object(),
+            )
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["headers"]["MCP-Protocol-Version"], "2025-03-26")
+        invalid = mcp_lambda_handler(
+            {"body": "not-base64!", "isBase64Encoded": True, "headers": {}}, object()
+        )
+        self.assertEqual(invalid["statusCode"], 400)
+        self.assertEqual(json.loads(invalid["body"]), {"error": "invalid_request"})
+
+    def test_function_url_reads_selector_headers_case_insensitively(self) -> None:
+        with patch.object(
+            __import__("legaldesk.mcp_server", fromlist=["_mcp_repositories_from_environment"]),
+            "_mcp_repositories_from_environment",
+            return_value=(load_authorization_store(), self.repository),
+        ):
+            response = mcp_lambda_handler(
+                {
+                    "body": json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": "mixed-case",
+                            "method": "tools/call",
+                            "params": {
+                                "name": LIST_MATTER_DOCUMENTS,
+                                "arguments": {},
+                            },
+                        }
+                    ),
+                    "headers": {
+                        "X-LegalDesk-Verified-Subject": ALICE.subject,
+                        "X-LEGALDESK-REQUESTED-MATTER-ID": "mat_sundial",
+                        "x-LeGaLdEsK-cOrReLaTiOn-Id": CORRELATION_ID,
+                    },
                 },
                 object(),
             )

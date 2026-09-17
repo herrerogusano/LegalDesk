@@ -87,7 +87,6 @@ Resources:
         S3ObjectVersion: !Ref ReviewTaskCodeVersion
       MemorySize: 256
       Timeout: 10
-      ReservedConcurrentExecutions: 5
       Environment:
         Variables:
           REVIEW_TASK_TABLE_NAME: !Ref ReviewTaskTableName
