@@ -9,9 +9,11 @@ and ARN as parameters. The zip is also supplied as a versioned S3 artifact
 (`ReviewTaskCodeBucket`, `ReviewTaskCodeKey`, and `ReviewTaskCodeVersion`) so a
 deployment can be reproduced without embedding code in the stack.
 
-The function uses Python 3.12, a 10-second timeout, 256 MB memory, and a
-reserved concurrency of 5. These are starting limits for a small MVP tool and
-should be adjusted only after observing bounded load. The only data-plane
+The function uses Python 3.12, a 10-second timeout, and 256 MB memory. The
+smoke account exposes only 10 total Lambda concurrency and requires 10 to
+remain unreserved, so no per-function reserved cap is configured in this
+deployment; add a cap after a quota increase and bounded-load observation.
+The only data-plane
 permissions are `dynamodb:GetItem` and `dynamodb:PutItem` on the parameterized
 existing table. `GetItem` supports idempotency lookup; `PutItem` must use a
 server-owned key and a condition that prevents replacing an existing task.
@@ -66,28 +68,21 @@ aws cloudformation deploy `
   --region eu-west-1
 ```
 
-The deploy creates Lambda, IAM role, and CloudWatch log-group resources and
-can incur AWS charges. Phase 07 local tests and IaC validation are sufficient
-for this target-ready deliverable; do not deploy or invoke it as part of local
-tests. If a smoke is authorized later, use synthetic context and one
-authorized create, one repeated idempotency request, and one cross-matter
-request. Verify the cross-matter request is denied before `PutItem`, then
-delete the stack and wait for deletion:
+With explicit approval, `LegalDeskPhase07ReviewTask` was deployed in
+`eu-west-1` and retained as the Phase 08 review target. The synthetic Gateway
+smoke created an OPEN task in the authorized matter, preserved idempotent
+server ownership, and denied a cross-matter request before persistence. Local
+tests still use fakes and never invoke AWS.
 
-```powershell
-aws cloudformation delete-stack --stack-name LegalDeskPhase07ReviewTask --region eu-west-1
-aws cloudformation wait stack-delete-complete --stack-name LegalDeskPhase07ReviewTask --region eu-west-1
-```
-
-Review the stack resource list after deletion and confirm no function, role,
-log group, or other stack resource remains. The separately managed artifact
-bucket/object is not deleted by this stack and needs its own approved cleanup
-procedure.
+The deployment creates Lambda, IAM role, and CloudWatch log-group resources
+and can incur AWS charges. Teardown is intentionally deferred while later
+phases depend on the target; the versioned artifact is managed by the separate
+Phase 08 artifact stack.
 
 ## Cost notes
 
 Lambda requests, duration, and logs may be metered. DynamoDB reads/writes use
 the existing table's billing mode and can add request cost. The 14-day log
-retention and reserved concurrency cap limit accidental growth but do not make
+retention and the account-level concurrency quota limit accidental growth but do not make
 these services free. Keep smoke calls and test data small, monitor usage, and
 reconfirm current AWS prices before deployment.
