@@ -7,6 +7,16 @@ from .authorization import (
     RequestContext,
     VerifiedIdentity,
     build_request_context,
+    require_authorized_context,
+)
+from .identity import (
+    PkceAuthorizationRequest,
+    IdentityVerificationError,
+    OidcTokenVerifier,
+    OidcVerifierConfig,
+    PyJwtJwksKeyResolver,
+    create_pkce_authorization_request,
+    pkce_code_challenge,
 )
 from .review_tasks import (
     AuthorizedToolEnvelope,
@@ -30,6 +40,7 @@ from .gateway_interceptor import (
 )
 from .memory import (
     AgentCoreMemoryClient,
+    Boto3DynamoConversationBindingStore,
     ConversationBinding,
     ConversationBindingStore,
     InMemoryShortTermMemory,
@@ -40,6 +51,8 @@ from .memory import (
     MemoryScope,
     MemoryScopeError,
     derive_memory_scope_for_identity,
+    conversation_binding_partition_key,
+    conversation_binding_sort_key,
 )
 
 __all__ = [
@@ -49,6 +62,14 @@ __all__ = [
     "RequestContext",
     "VerifiedIdentity",
     "build_request_context",
+    "require_authorized_context",
+    "IdentityVerificationError",
+    "PkceAuthorizationRequest",
+    "OidcTokenVerifier",
+    "OidcVerifierConfig",
+    "PyJwtJwksKeyResolver",
+    "create_pkce_authorization_request",
+    "pkce_code_challenge",
     "Boto3DynamoReviewTaskRepository",
     "AuthorizedToolEnvelope",
     "CREATE_REVIEW_TASK_TOOL_DESCRIPTION",
@@ -68,6 +89,7 @@ __all__ = [
     "GatewayAuthorizationGrant",
     "InMemoryGatewayGrantRepository",
     "AgentCoreMemoryClient",
+    "Boto3DynamoConversationBindingStore",
     "ConversationBinding",
     "ConversationBindingStore",
     "InMemoryShortTermMemory",
@@ -78,4 +100,6 @@ __all__ = [
     "MemoryScope",
     "MemoryScopeError",
     "derive_memory_scope_for_identity",
+    "conversation_binding_partition_key",
+    "conversation_binding_sort_key",
 ]

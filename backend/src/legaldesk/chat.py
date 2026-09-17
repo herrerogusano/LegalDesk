@@ -12,7 +12,13 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Mapping, Protocol
 
-from .authorization import AuthorizationStore, VerifiedIdentity, build_request_context
+from .authorization import (
+    AuthorizationDenied,
+    AuthorizationStore,
+    VerifiedIdentity,
+    build_request_context,
+)
+from .memory import ConversationBindingStore
 from .guardrails import (
     BedrockGuardrailClient,
     GuardrailAuditSink,
@@ -263,6 +269,7 @@ def answer_question(
     generator: TextGenerator,
     guardrail_client: BedrockGuardrailClient,
     guardrail_config: GuardrailConfig,
+    conversation_binding_store: ConversationBindingStore,
     correlation_id: str | None = None,
     prompt_provider: SystemPromptProvider = DEFAULT_SYSTEM_PROMPT_PROVIDER,
     guardrail_audit_sink: GuardrailAuditSink | None = None,
@@ -285,6 +292,12 @@ def answer_question(
         authorization_store,
         correlation_id=correlation_id,
     )
+    if not conversation_binding_store.is_bound(
+        context=context,
+        conversation_id=request.conversation_id,
+        session_selector=request.session_id,
+    ):
+        raise AuthorizationDenied("conversation access denied")
 
     try:
         prompt_artifact = prompt_provider.load()

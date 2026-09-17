@@ -61,4 +61,5 @@ To detach Memory while retaining the Phase 01 Harness, redeploy the Harness
 template with `EnablePhase09Memory=false`; do not delete Phase 01 unless its
 future dependencies have been reviewed.
 
-No Phase 10 identity work was started.
+Phase 10 identity work was intentionally out of scope for this acceptance and
+was subsequently implemented and deployed as a separate phase.

@@ -9,8 +9,8 @@ from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
-from fixture_loader import load_authorization_store
-from legaldesk.authorization import AuthorizationDenied, VerifiedIdentity
+from fixture_loader import load_authorization_store, test_identity
+from legaldesk.authorization import AuthorizationDenied, VerifiedIdentity, build_request_context
 from legaldesk.chat import (
     GUARDRAIL_INPUT_BLOCKED_ANSWER,
     GUARDRAIL_OUTPUT_BLOCKED_ANSWER,
@@ -23,9 +23,10 @@ from legaldesk.chat import (
 )
 from legaldesk.guardrails import GuardrailConfig, GuardrailOutcome, GuardrailStage
 from legaldesk.prompts import FileSystemSystemPromptProvider
+from legaldesk.memory import InMemoryConversationBindingStore
 
 
-ALICE = VerifiedIdentity("idp|alice-fictional")
+ALICE = test_identity("idp|alice-fictional")
 GUARDRAIL_CONFIG = GuardrailConfig("guardrail-fictional", "1")
 
 
@@ -131,6 +132,7 @@ def request(matter_id: str = "mat_sundial") -> ChatRequest:
 class GroundedChatTests(unittest.TestCase):
     def setUp(self) -> None:
         self.auth = load_authorization_store()
+        self.bindings = InMemoryConversationBindingStore()
 
     def answer(
         self,
@@ -142,9 +144,16 @@ class GroundedChatTests(unittest.TestCase):
         audit_sink: FakeAuditSink | None = None,
         retrieval_client: FakeKnowledgeBaseClient | None = None,
     ):
+        effective_request = chat_request or request()
+        context = build_request_context(ALICE, effective_request.matter_id, self.auth)
+        self.bindings.bind(
+            context,
+            conversation_id=effective_request.conversation_id,
+            session_selector=effective_request.session_id,
+        )
         return answer_question(
             ALICE,
-            chat_request or request(),
+            effective_request,
             authorization_store=self.auth,
             retrieval_client=retrieval_client or FakeKnowledgeBaseClient(results),
             knowledge_base_id="kb-fictional",
@@ -153,6 +162,7 @@ class GroundedChatTests(unittest.TestCase):
             guardrail_config=GUARDRAIL_CONFIG,
             correlation_id="8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279",
             guardrail_audit_sink=audit_sink,
+            conversation_binding_store=self.bindings,
         )
 
     def test_answerable_response_carries_retrieved_citation_and_disclaimer(self) -> None:
@@ -274,9 +284,15 @@ class GroundedChatTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             invalid_prompt_path = Path(directory) / "invalid-prompt.md"
             invalid_prompt_path.write_text("not valid prompt metadata", encoding="utf-8")
+            effective = request()
+            self.bindings.bind(
+                build_request_context(ALICE, effective.matter_id, self.auth),
+                conversation_id=effective.conversation_id,
+                session_selector=effective.session_id,
+            )
             response = answer_question(
                 ALICE,
-                request(),
+                effective,
                 authorization_store=self.auth,
                 retrieval_client=client,
                 knowledge_base_id="kb-fictional",
@@ -284,6 +300,7 @@ class GroundedChatTests(unittest.TestCase):
                 guardrail_client=guardrail_client,
                 guardrail_config=GUARDRAIL_CONFIG,
                 prompt_provider=FileSystemSystemPromptProvider(invalid_prompt_path),
+                conversation_binding_store=self.bindings,
             )
         self.assertEqual(response.answer, INSUFFICIENT_EVIDENCE_ANSWER)
         self.assertIsNone(response.prompt_version)
@@ -430,6 +447,7 @@ class GroundedChatTests(unittest.TestCase):
                 generator=generator,
                 guardrail_client=guardrail_client,
                 guardrail_config=GUARDRAIL_CONFIG,
+                conversation_binding_store=self.bindings,
             )
         self.assertEqual(client.calls, [])
         self.assertEqual(generator.requests, [])
@@ -498,6 +516,7 @@ class GroundedChatTests(unittest.TestCase):
                 generator=generator,
                 guardrail_client=guardrail_client,
                 guardrail_config=GUARDRAIL_CONFIG,
+                conversation_binding_store=self.bindings,
             )
         self.assertEqual(client.calls, [])
         self.assertEqual(generator.requests, [])

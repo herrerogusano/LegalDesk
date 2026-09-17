@@ -21,6 +21,7 @@ from .authorization import (
     RequestContext,
     VerifiedIdentity,
     build_request_context,
+    require_authorized_context,
 )
 
 
@@ -92,7 +93,7 @@ class MemoryScope:
     ) -> "MemoryScope":
         if _factory_token is not _SCOPE_FACTORY_TOKEN:
             raise TypeError("MemoryScope must be created by an authorized server scope")
-        if not isinstance(context, RequestContext):
+        if type(context) is not RequestContext or not context.is_server_derived():
             raise TypeError("context must be a server-built RequestContext")
         conversation = _selector(conversation_id, "conversation_id")
         if (session_selector is None) == (session_id is None):
@@ -135,6 +136,14 @@ class ConversationBinding:
 
 
 class ConversationBindingStore(Protocol):
+    def bind(
+        self,
+        context: RequestContext,
+        *,
+        conversation_id: str,
+        session_selector: str,
+    ) -> ConversationBinding: ...
+
     def is_bound(
         self,
         *,
@@ -157,7 +166,7 @@ class InMemoryConversationBindingStore:
         conversation_id: str,
         session_selector: str,
     ) -> ConversationBinding:
-        if not isinstance(context, RequestContext):
+        if type(context) is not RequestContext or not context.is_server_derived():
             raise TypeError("context must be a server-built RequestContext")
         conversation = _selector(conversation_id, "conversation_id")
         session = _selector(session_selector, "session_selector")
@@ -178,7 +187,7 @@ class InMemoryConversationBindingStore:
         conversation_id: str,
         session_selector: str,
     ) -> bool:
-        if not isinstance(context, RequestContext):
+        if type(context) is not RequestContext or not context.is_server_derived():
             return False
         try:
             conversation = _selector(conversation_id, "conversation_id")
@@ -192,6 +201,125 @@ class InMemoryConversationBindingStore:
             conversation_id=conversation,
             session_selector=session,
         ) in self._bindings
+
+
+def conversation_binding_partition_key(context: RequestContext, conversation_id: str) -> str:
+    context = require_authorized_context(context)
+    return f"CONVERSATION#{context.tenant_id}#{context.matter_id}#{context.user_id}#{conversation_id}"
+
+
+def conversation_binding_sort_key(session_selector: str) -> str:
+    return f"SESSION#{session_selector}"
+
+
+class Boto3DynamoConversationBindingStore:
+    """Durable conversation binding using the existing metadata table."""
+
+    def __init__(self, table_name: str, *, table: Any | None = None) -> None:
+        if not isinstance(table_name, str) or not table_name.strip():
+            raise ValueError("table_name is required")
+        self.table_name = table_name
+        if table is None:
+            import boto3
+
+            table = boto3.resource("dynamodb").Table(table_name)
+        self.table = table
+
+    @staticmethod
+    def _item(binding: ConversationBinding) -> dict[str, object]:
+        return {
+            "pk": (
+                f"CONVERSATION#{binding.tenant_id}#{binding.matter_id}#"
+                f"{binding.user_id}#{binding.conversation_id}"
+            ),
+            "sk": conversation_binding_sort_key(binding.session_selector),
+            "entityType": "ConversationBinding",
+            "userId": binding.user_id,
+            "tenantId": binding.tenant_id,
+            "matterId": binding.matter_id,
+            "conversationId": binding.conversation_id,
+            "sessionSelector": binding.session_selector,
+        }
+
+    @staticmethod
+    def _valid_item(item: object, binding: ConversationBinding) -> bool:
+        if not isinstance(item, Mapping):
+            return False
+        expected = Boto3DynamoConversationBindingStore._item(binding)
+        return all(item.get(key) == value for key, value in expected.items())
+
+    def bind(
+        self,
+        context: RequestContext,
+        *,
+        conversation_id: str,
+        session_selector: str,
+    ) -> ConversationBinding:
+        if type(context) is not RequestContext or not context.is_server_derived():
+            raise TypeError("context must be a server-built RequestContext")
+        conversation = _selector(conversation_id, "conversation_id")
+        session = _selector(session_selector, "session_selector")
+        binding = ConversationBinding(
+            user_id=context.user_id,
+            tenant_id=context.tenant_id,
+            matter_id=context.matter_id,
+            conversation_id=conversation,
+            session_selector=session,
+        )
+        try:
+            self.table.put_item(
+                Item=self._item(binding),
+                ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
+            )
+            return binding
+        except Exception:
+            try:
+                response = self.table.get_item(
+                    Key={
+                        "pk": conversation_binding_partition_key(context, conversation),
+                        "sk": conversation_binding_sort_key(session),
+                    },
+                    ConsistentRead=True,
+                )
+            except Exception as exc:
+                raise AuthorizationDenied("conversation access denied") from exc
+            item = response.get("Item") if isinstance(response, Mapping) else None
+            if self._valid_item(item, binding):
+                return binding
+            raise AuthorizationDenied("conversation access denied")
+
+    def is_bound(
+        self,
+        *,
+        context: RequestContext,
+        conversation_id: str,
+        session_selector: str,
+    ) -> bool:
+        if type(context) is not RequestContext or not context.is_server_derived():
+            return False
+        try:
+            conversation = _selector(conversation_id, "conversation_id")
+            session = _selector(session_selector, "session_selector")
+            response = self.table.get_item(
+                Key={
+                    "pk": conversation_binding_partition_key(context, conversation),
+                    "sk": conversation_binding_sort_key(session),
+                },
+                ConsistentRead=True,
+            )
+            item = response.get("Item") if isinstance(response, Mapping) else None
+            return self._valid_item(
+                item,
+                ConversationBinding(
+                    user_id=context.user_id,
+                    tenant_id=context.tenant_id,
+                    matter_id=context.matter_id,
+                    conversation_id=conversation,
+                    session_selector=session,
+                ),
+            )
+        except Exception:
+            return False
 
 
 def derive_memory_scope_for_identity(
@@ -400,6 +528,7 @@ def _validate_scope(scope: MemoryScope) -> None:
 
 __all__ = [
     "AgentCoreMemoryClient",
+    "Boto3DynamoConversationBindingStore",
     "InMemoryShortTermMemory",
     "LongTermMemoryDisabled",
     "MEMORY_EVENT_EXPIRY_DAYS",
@@ -411,4 +540,6 @@ __all__ = [
     "ConversationBindingStore",
     "InMemoryConversationBindingStore",
     "derive_memory_scope_for_identity",
+    "conversation_binding_partition_key",
+    "conversation_binding_sort_key",
 ]

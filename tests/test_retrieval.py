@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
-from fixture_loader import load_authorization_store
+from fixture_loader import load_authorization_store, test_identity
 from legaldesk.authorization import AuthorizationDenied, VerifiedIdentity, build_request_context
 from legaldesk.retrieval import (
     build_matter_filter,
@@ -15,8 +15,8 @@ from legaldesk.retrieval import (
 )
 
 
-ALICE = VerifiedIdentity("idp|alice-fictional")
-BOB = VerifiedIdentity("idp|bob-fictional")
+ALICE = test_identity("idp|alice-fictional")
+BOB = test_identity("idp|bob-fictional")
 
 
 def result(
@@ -181,7 +181,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(client.calls, [])
 
     def test_filter_builder_rejects_untrusted_context_shape(self) -> None:
-        with self.assertRaises(TypeError):
+        with self.assertRaises(AuthorizationDenied):
             build_matter_filter({"tenant_id": "tnt_borealis", "matter_id": "mat_glacier"})  # type: ignore[arg-type]
 
     def test_invalid_query_is_rejected_after_authorization_before_bedrock_call(self) -> None:

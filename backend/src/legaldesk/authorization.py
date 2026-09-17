@@ -13,14 +13,80 @@ class AuthorizationDenied(PermissionError):
     """Generic denial that avoids revealing cross-tenant resource existence."""
 
 
-@dataclass(frozen=True, slots=True)
+_IDENTITY_FACTORY_TOKEN = object()
+_CONTEXT_FACTORY_TOKEN = object()
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class VerifiedIdentity:
     """Identity claims after signature, issuer, audience, and expiry validation."""
 
     subject: str
+    issuer: str | None
+    client_id: str | None
+    token_use: str | None
+    scopes: frozenset[str]
+    _trust: object
 
+    def __init__(self, subject: str) -> None:
+        """Reject free-form identities at production boundaries.
 
-@dataclass(frozen=True, slots=True)
+        This constructor intentionally creates an untrusted value. Production
+        adapters must use the capability-gated factories in this module.
+        """
+
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError("subject is required")
+        object.__setattr__(self, "subject", subject)
+        object.__setattr__(self, "issuer", None)
+        object.__setattr__(self, "client_id", None)
+        object.__setattr__(self, "token_use", None)
+        object.__setattr__(self, "scopes", frozenset())
+        object.__setattr__(self, "_trust", None)
+
+    @classmethod
+    def _from_verified_claims(
+        cls,
+        *,
+        subject: str,
+        issuer: str,
+        client_id: str | None,
+        token_use: str | None,
+        scopes: frozenset[str],
+        _factory_token: object,
+    ) -> "VerifiedIdentity":
+        if _factory_token is not _IDENTITY_FACTORY_TOKEN:
+            raise TypeError("identity must be created by a verified adapter")
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError("subject is required")
+        if not isinstance(issuer, str) or not issuer.strip():
+            raise ValueError("issuer is required")
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "subject", subject)
+        object.__setattr__(instance, "issuer", issuer)
+        object.__setattr__(instance, "client_id", client_id)
+        object.__setattr__(instance, "token_use", token_use)
+        object.__setattr__(instance, "scopes", frozenset(scopes))
+        object.__setattr__(instance, "_trust", _IDENTITY_FACTORY_TOKEN)
+        return instance
+
+    def is_trusted(self) -> bool:
+        return self._trust is _IDENTITY_FACTORY_TOKEN
+
+def _gateway_identity_from_verified_subject(subject: str) -> VerifiedIdentity:
+    """Internal Gateway adapter boundary after CUSTOM_JWT verification."""
+    if not isinstance(subject, str) or not subject.strip():
+        raise ValueError("subject is required")
+    return VerifiedIdentity._from_verified_claims(
+        subject=subject,
+        issuer="gateway-custom-jwt",
+        client_id=None,
+        token_use=None,
+        scopes=frozenset(),
+        _factory_token=_IDENTITY_FACTORY_TOKEN,
+    )
+
+@dataclass(frozen=True, slots=True, init=False)
 class RequestContext:
     """Server-derived context safe to pass to retrieval and tool boundaries."""
 
@@ -29,6 +95,52 @@ class RequestContext:
     tenant_id: str
     matter_id: str
     roles: frozenset[str]
+    _seal: object
+
+    def __init__(
+        self,
+        correlation_id: str,
+        user_id: str,
+        tenant_id: str,
+        matter_id: str,
+        roles: frozenset[str],
+    ) -> None:
+        """Create an untrusted value; sensitive seams require the factory seal."""
+
+        object.__setattr__(self, "correlation_id", correlation_id)
+        object.__setattr__(self, "user_id", user_id)
+        object.__setattr__(self, "tenant_id", tenant_id)
+        object.__setattr__(self, "matter_id", matter_id)
+        object.__setattr__(self, "roles", roles)
+        object.__setattr__(self, "_seal", None)
+
+    @classmethod
+    def _from_authorized(
+        cls,
+        *,
+        correlation_id: str,
+        user_id: str,
+        tenant_id: str,
+        matter_id: str,
+        roles: frozenset[str],
+        _factory_token: object,
+    ) -> "RequestContext":
+        if _factory_token is not _CONTEXT_FACTORY_TOKEN:
+            raise TypeError("RequestContext must be created by the authorization boundary")
+        instance = object.__new__(cls)
+        for name, value in {
+            "correlation_id": correlation_id,
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "matter_id": matter_id,
+            "roles": roles,
+            "_seal": _CONTEXT_FACTORY_TOKEN,
+        }.items():
+            object.__setattr__(instance, name, value)
+        return instance
+
+    def is_server_derived(self) -> bool:
+        return self._seal is _CONTEXT_FACTORY_TOKEN
 
 
 class AuthorizationStore(Protocol):
@@ -180,6 +292,8 @@ def build_request_context(
     verified subject maps to a stored user and bilateral membership checks pass.
     """
 
+    if type(identity) is not VerifiedIdentity or not identity.is_trusted():
+        raise AuthorizationDenied("access denied")
     user = store.get_user_by_subject(identity.subject)
     matter = store.get_matter(requested_matter_id)
 
@@ -192,10 +306,19 @@ def build_request_context(
     ):
         raise AuthorizationDenied("access denied")
 
-    return RequestContext(
+    return RequestContext._from_authorized(
         correlation_id=_normalize_correlation_id(correlation_id),
         user_id=user.user_id,
         tenant_id=matter.tenant_id,
         matter_id=matter.matter_id,
         roles=user.roles,
+        _factory_token=_CONTEXT_FACTORY_TOKEN,
     )
+
+
+def require_authorized_context(context: object) -> RequestContext:
+    """Return only the exact sealed context produced by authorization."""
+
+    if type(context) is not RequestContext or not context.is_server_derived():
+        raise AuthorizationDenied("access denied")
+    return context

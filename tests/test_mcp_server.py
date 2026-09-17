@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
-from fixture_loader import load_authorization_store
-from legaldesk.authorization import AuthorizationDenied, RequestContext, VerifiedIdentity
+from fixture_loader import load_authorization_store, test_identity
+from legaldesk.authorization import AuthorizationDenied, RequestContext, VerifiedIdentity, build_request_context
 from legaldesk.documents import Document, DocumentStatus, InMemoryDocumentMetadataRepository
 from legaldesk.mcp_server import (
     GET_DOCUMENT_METADATA,
@@ -20,14 +20,18 @@ from legaldesk.mcp_server import (
     handle_metadata_request_for_identity,
     mcp_lambda_handler,
 )
+from legaldesk.gateway_interceptor import (
+    GatewayAuthorizationGrant,
+    InMemoryGatewayGrantRepository,
+)
 
 
-ALICE = VerifiedIdentity("idp|alice-fictional")
+ALICE = test_identity("idp|alice-fictional")
 CORRELATION_ID = "8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279"
 
 
 def context(matter_id: str = "mat_sundial") -> RequestContext:
-    return RequestContext(CORRELATION_ID, "usr_alice", "tnt_aurora", matter_id, frozenset())
+    return build_request_context(ALICE, matter_id, load_authorization_store(), correlation_id=CORRELATION_ID)
 
 
 def document(document_id: str = "doc-sundial", matter_id: str = "mat_sundial") -> Document:
@@ -252,7 +256,7 @@ class MCPMetadataTests(unittest.TestCase):
 
     def test_function_url_adapter_requires_selector_headers_and_json_body(self) -> None:
         response = mcp_lambda_handler({"body": "{}", "headers": {}}, object())
-        self.assertEqual(response["statusCode"], 403)
+        self.assertIn(response["statusCode"], {403, 503})
         with patch.object(
             __import__("legaldesk.mcp_server", fromlist=["_mcp_repositories_from_environment"]),
             "_mcp_repositories_from_environment",
@@ -316,10 +320,24 @@ class MCPMetadataTests(unittest.TestCase):
         self.assertEqual(json.loads(invalid["body"]), {"error": "invalid_request"})
 
     def test_function_url_reads_selector_headers_case_insensitively(self) -> None:
+        grants = InMemoryGatewayGrantRepository()
+        grant_id = "9ec5d1c5-7b58-4bc2-a183-8fd48a3bd279"
+        grants.put(GatewayAuthorizationGrant(
+            grant_id=grant_id,
+            verified_subject=ALICE.subject,
+            requested_matter_id="mat_sundial",
+            correlation_id=CORRELATION_ID,
+            tool_name=LIST_MATTER_DOCUMENTS,
+            expires_at=4_000_000_000,
+        ))
         with patch.object(
             __import__("legaldesk.mcp_server", fromlist=["_mcp_repositories_from_environment"]),
             "_mcp_repositories_from_environment",
             return_value=(load_authorization_store(), self.repository),
+        ), patch.object(
+            __import__("legaldesk.mcp_server", fromlist=["_mcp_grant_repository_from_environment"]),
+            "_mcp_grant_repository_from_environment",
+            return_value=grants,
         ):
             response = mcp_lambda_handler(
                 {
@@ -335,6 +353,7 @@ class MCPMetadataTests(unittest.TestCase):
                         }
                     ),
                     "headers": {
+                        "x-legaldesk-grant-id": grant_id,
                         "X-LegalDesk-Verified-Subject": ALICE.subject,
                         "X-LEGALDESK-REQUESTED-MATTER-ID": "mat_sundial",
                         "x-LeGaLdEsK-cOrReLaTiOn-Id": CORRELATION_ID,

@@ -22,3 +22,13 @@ that Memory with `EnablePhase09Memory=true`, requests a bounded
 `MessagesCount=10`, and grants the exact Memory ARN only the required data-plane
 actions. The deployed stack and live continuity/isolation evidence are recorded
 in [phase-09-acceptance.md](../docs/phase-09-acceptance.md).
+Phase 10 adds the local identity/isolation boundary and the reusable public
+Cognito Authorization Code + PKCE client template
+([phase-10-identity.yaml](cloudformation/phase-10-identity.yaml)). It reuses the
+Phase 08 UserPool and existing metadata table. The public client is deployed
+in `LegalDeskPhase10Identity`, and the Phase 08 Gateway accepts it as an
+additional client without removing the existing M2M client. The live Gateway
+update preserved all resources without replacement; synthetic authorized,
+cross-matter, and direct-endpoint denial checks are recorded in
+`docs/phase-10-acceptance.md`. OIDC verification uses the versioned core
+`PyJWT[crypto]` dependency.

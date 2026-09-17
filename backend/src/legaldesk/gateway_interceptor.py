@@ -24,6 +24,7 @@ from .authorization import (
     AuthorizationStore,
     Boto3DynamoAuthorizationStore,
     VerifiedIdentity,
+    _gateway_identity_from_verified_subject,
     build_request_context,
 )
 
@@ -71,6 +72,12 @@ def _target_for_gateway_tool(tool_name: object) -> GatewayTarget:
         return expected[tool_name]
     except KeyError as exc:
         raise AuthorizationDenied("access denied") from exc
+
+
+def _local_gateway_tool_name(tool_name: object) -> str:
+    if not isinstance(tool_name, str):
+        raise AuthorizationDenied("access denied")
+    return tool_name.rsplit(GATEWAY_TOOL_DELIMITER, 1)[-1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +332,7 @@ def transform_gateway_request(
     except (ValueError, AttributeError) as exc:
         raise AuthorizationDenied("access denied") from exc
     context = build_request_context(
-        VerifiedIdentity(subject),
+        _gateway_identity_from_verified_subject(subject),
         matter_id,
         authorization_store,
         correlation_id=correlation_id,
@@ -365,8 +372,29 @@ def transform_gateway_request(
         # Overwrite, never honor, a client/model supplied grant selector.
         transformed_arguments["_legaldeskGrantId"] = grant_id
     elif target is GatewayTarget.METADATA_MCP:
+        grant_id: str | None = None
+        if grant_repository is not None:
+            grant_id = str(grant_id_factory())
+            try:
+                UUID(grant_id)
+            except (ValueError, AttributeError) as exc:
+                raise AuthorizationDenied("access denied") from exc
+            grant = GatewayAuthorizationGrant(
+                grant_id=grant_id,
+                verified_subject=envelope.verifiedSubject,
+                requested_matter_id=envelope.requestedMatterId,
+                correlation_id=envelope.correlationId,
+                tool_name=_local_gateway_tool_name(params.get("name")),
+                expires_at=int(time.time()) + GATEWAY_GRANT_TTL_SECONDS,
+            )
+            try:
+                grant_repository.put(grant)
+            except Exception as exc:
+                raise AuthorizationDenied("access denied") from exc
         # Scope is represented in the public Gateway schema but is only a
-        # selector; the metadata target receives it through trusted headers.
+        # selector; the metadata target receives it through this short-lived
+        # server-side capability. Legacy direct unit callers may still inspect
+        # the trusted headers, but the AWS interceptor always supplies a grant.
         transformed_arguments.pop("matterId", None)
         transformed_headers = {
             str(key): value
@@ -379,13 +407,13 @@ def transform_gateway_request(
                 "x-legaldesk-correlation-id",
             }
         }
-        transformed_headers.update(
-            {
-                "x-legaldesk-verified-subject": envelope.verifiedSubject,
-                "x-legaldesk-requested-matter-id": envelope.requestedMatterId,
-                "x-legaldesk-correlation-id": envelope.correlationId,
-            }
-        )
+        transformed_headers.update({
+            "x-legaldesk-verified-subject": envelope.verifiedSubject,
+            "x-legaldesk-requested-matter-id": envelope.requestedMatterId,
+            "x-legaldesk-correlation-id": envelope.correlationId,
+        })
+        if grant_id is not None:
+            transformed_headers["x-legaldesk-grant-id"] = grant_id
         return {
             "interceptorOutputVersion": "1.0",
             "mcp": {
@@ -515,7 +543,9 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         store = _authorization_store_from_environment()
         if store is None:
             return _safe_error(event, "service unavailable")
-        grants = _grant_repository_from_environment() if target is GatewayTarget.REVIEW_LAMBDA else None
+        grants = _grant_repository_from_environment()
+        if grants is None:
+            return _safe_error(event, "service unavailable")
         response = transform_gateway_request(
             event,
             target=target,

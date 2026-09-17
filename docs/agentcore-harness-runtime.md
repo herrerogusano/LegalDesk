@@ -31,6 +31,12 @@ exists in Phase 01.
 - application-side invocation adapter and output/error handling;
 - tests, cost limits, teardown, and future authorization boundaries.
 
+Phase 10 direct Harness access remains an IAM-only service path. A browser does
+not invoke Harness or supply `actorId`, tenant, user, or matter headers. When
+Memory is attached, the caller must pass the typed `HarnessMemoryScope` created
+from an authorized backend binding; no AgentCore resource policy is invented
+because the service integration does not expose one in this design.
+
 ## Session isolation
 
 Every new conversation receives a UUID (36 characters, satisfying AgentCore's

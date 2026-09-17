@@ -21,6 +21,7 @@ from .authorization import (
     RequestContext,
     VerifiedIdentity,
     build_request_context,
+    require_authorized_context,
 )
 from .domain.models import Document, DocumentStatus, utc_now
 
@@ -117,6 +118,7 @@ def build_document_key(
 ) -> str:
     """Build an object key solely from server-derived scope and ID."""
 
+    context = require_authorized_context(context)
     try:
         UUID(document_id)
     except (ValueError, AttributeError) as exc:
