@@ -2,6 +2,7 @@
 
 from .client import (
     HarnessInvocationError,
+    HarnessMemoryScope,
     HarnessInvoker,
     InvokeResult,
     new_session_id,
@@ -11,6 +12,7 @@ from .tool_router import LegalDeskTool, ToolTarget, select_tool
 
 __all__ = [
     "HarnessInvocationError",
+    "HarnessMemoryScope",
     "HarnessInvoker",
     "InvokeResult",
     "LocalAgent",

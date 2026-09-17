@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 09 short-term AgentCore Memory (no long-term strategies)
+
+Parameters:
+  MemoryName:
+    Type: String
+    Default: LegalDeskPhase09
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]{0,47}$"
+
+Resources:
+  ShortTermMemory:
+    Type: AWS::BedrockAgentCore::Memory
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Name: !Ref MemoryName
+      Description: >-
+        LegalDesk short-term conversation events only. Long-term memory and
+        memory strategies are intentionally disabled by data-minimization policy.
+      EventExpiryDuration: 7
+      Tags:
+        Project: LegalDesk
+        Phase: "09"
+        MemoryClass: short-term-only
+
+Outputs:
+  MemoryArn:
+    Description: ARN consumed by the Phase 01 Harness attachment when enabled.
+    Value: !GetAtt ShortTermMemory.MemoryArn
+  MemoryId:
+    Value: !GetAtt ShortTermMemory.MemoryId

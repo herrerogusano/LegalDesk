@@ -89,13 +89,15 @@ class AgentCorePhase01Tests(unittest.TestCase):
         template = (ROOT / "infra" / "cloudformation" / "phase-01-harness.yaml").read_text(
             encoding="utf-8"
         )
-        for forbidden in ("s3:", "KnowledgeBase", "CreateEvent"):
+        for forbidden in ("s3:", "KnowledgeBase"):
             self.assertNotIn(forbidden, template)
         self.assertNotIn('Action: "*"', template)
         self.assertNotIn("Action: '*'", template)
         self.assertIn("phase01_no_tools", template)
         self.assertIn('Default: "false"', template)
         self.assertIn("AttachPhase08Gateway", template)
+        self.assertIn("EnablePhase09Memory", template)
+        self.assertIn("AttachPhase09Memory", template)
         self.assertIn("Temperature:", template)
         self.assertNotIn("TopP:", template)
 
