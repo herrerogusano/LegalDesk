@@ -124,6 +124,14 @@ Long-term memory: empezar **deshabilitada o extremadamente restringida** hasta q
 
 Nunca persistir texto legal bruto o conclusiones legales como memoria larga.
 
+Phase 09 concreta esta decisión con AgentCore Memory sin `MemoryStrategies`,
+eventos con `EventExpiryDuration` de siete días y `extractionMode=SKIP`. La
+política de aplicación rechaza cualquier escritura o retrieval long-term,
+incluidas preferencias inocuas, hasta una futura revisión de clasificación de
+datos. `actorId` y `sessionId` se derivan de `RequestContext` autorizado y de
+selectores de conversación; no se aceptan como valores libres del navegador o
+CLI.
+
 ## ADR-012 — Observabilidad
 
 Cada request tendrá un `correlationId`.

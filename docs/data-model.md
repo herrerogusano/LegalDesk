@@ -41,5 +41,9 @@ tools must reject raw browser scope and accept only the server-built context.
   and a five-minute `expiresAt` epoch checked by the consumer. It contains no
   document body or client-provided scope. Automatic deletion of expired grant
   records is a deferred operational cleanup gap.
-- Conversation scope: `{userId}:{matterId}:{sessionId}`
-- Memory actor/session namespaces must include the authorized user and matter.
+- Conversation scope is derived server-side from the authorized user/matter and
+  opaque conversation/session selectors. The AgentCore values are deterministic
+  opaque IDs, not the raw `{userId}:{matterId}:{sessionId}` string.
+- Memory actor/session namespaces include the authorized user and matter only
+  through the server-side derivation; raw tenant, user, matter, or browser
+  selectors are never sent as AgentCore IDs.
