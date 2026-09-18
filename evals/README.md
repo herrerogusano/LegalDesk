@@ -28,3 +28,19 @@ It is hard-capped at four calls with no retries. The checked-in report stores
 only bounded labels and latency; it does not store prompts, responses, tokens,
 or secrets. A failed or unexpected case leaves the real-model acceptance
 incomplete.
+
+## Direct Bedrock alternative (prepared, not executed)
+
+`direct_bedrock_smoke.py` is a separate four-case alternative: three cases send
+the versioned system prompt and synthetic passages directly to
+`eu.anthropic.claude-sonnet-4-6` through `bedrock-runtime` in `eu-west-1`. It
+reuses the backend JSON/citation validator, fixes `maxTokens` to `256` and
+temperature to `0`, and has no retry path. The fourth no-evidence case uses the
+backend's deterministic canonical response without a model call, so the model
+cap is exactly three calls (`maxModelInvocations=3`). It has not been run; any execution requires new
+approval for model cost, logs, retention, and data scope. Its report would
+contain only prompt metadata, evidence status, citation IDs, validation/error
+codes, safety booleans, and latency.
+The injection gate uses a documented synthetic canary plus fail-closed literal
+prompt-overlap checks; it does not prove resistance to every semantic
+paraphrase.

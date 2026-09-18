@@ -91,3 +91,23 @@ classifier that was actually used during the four cloud calls. Its subsequent
 metadata-only review is recorded separately as `auditVersion=2.0.0`; the
 current fail-closed runner is also version 2.0.0. This preserves provenance
 without presenting the historical lexical matches as accepted evidence.
+
+## Direct Bedrock alternative — prepared, not executed
+
+`evals/direct_bedrock_smoke.py` provides a separate bounded design for four
+synthetic cases: three direct `bedrock-runtime.converse` calls using the
+versioned prompt artifact and the backend's JSON/citation validator, plus one
+deterministic no-evidence backend path without a model call. It fixes model
+`eu.anthropic.claude-sonnet-4-6`, region `eu-west-1`, `maxTokens=256`,
+temperature `0`, `maxModelInvocations=3`, and zero retries. The cases cover an
+answerable citation, cited partial insufficient evidence, no evidence with
+empty citations, and an untrusted prompt-injection passage.
+
+The injection gate adds a synthetic, non-secret canary to the system input and
+rejects canary leakage or significant literal overlap with the real prompt.
+This gives auditable canary/literal-disclosure and cited-fact checks, but does
+not prove resistance to every semantic paraphrase without a second judge.
+
+This alternative has not been executed. It requires new explicit approval for
+model cost, log/retention controls, and the exact synthetic cases. No direct
+Bedrock report or AWS call is claimed by this repository state.
