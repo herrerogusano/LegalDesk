@@ -27,6 +27,12 @@ from .authorization import (
     _gateway_identity_from_verified_subject,
     build_request_context,
 )
+from .observability import (
+    TelemetryEventType,
+    TelemetryOutcome,
+    TelemetrySink,
+    emit_telemetry,
+)
 
 
 class GatewayTarget(StrEnum):
@@ -294,6 +300,7 @@ def transform_gateway_request(
     grant_repository: GatewayGrantRepository | None = None,
     correlation_id_factory: Any = uuid4,
     grant_id_factory: Any = uuid4,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> dict[str, object]:
     """Authorize a Gateway request and overwrite target context deterministically."""
 
@@ -337,17 +344,66 @@ def transform_gateway_request(
         authorization_store,
         correlation_id=correlation_id,
     )
-    envelope = InterceptorEnvelope(subject, context.matter_id, context.correlation_id)
-    transformed_body = dict(body)
     if not isinstance(params, Mapping):
         raise AuthorizationDenied("access denied")
+    started_at = time.perf_counter()
+    operation = _local_gateway_tool_name(params.get("name"))
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.AGENT,
+        context.correlation_id,
+        TelemetryOutcome.STARTED,
+        operation="gateway_request",
+    )
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.TOOL,
+        context.correlation_id,
+        TelemetryOutcome.STARTED,
+        operation=operation,
+    )
+
+    def fail_after_start(error_code: str = "access_denied") -> None:
+        """Close both started spans before denying a post-auth request."""
+
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.AGENT,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="gateway_request",
+            error_code=error_code,
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.TOOL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation=operation,
+            error_code=error_code,
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.ERROR,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="gateway_request",
+            error_code=error_code,
+        )
+        raise AuthorizationDenied("access denied")
+
+    envelope = InterceptorEnvelope(subject, context.matter_id, context.correlation_id)
+    transformed_body = dict(body)
     transformed_params = dict(params)
     transformed_arguments = dict(arguments)
     transformed_params["arguments"] = transformed_arguments
     transformed_body["params"] = transformed_params
     if target is GatewayTarget.REVIEW_LAMBDA:
         if grant_repository is None:
-            raise AuthorizationDenied("access denied")
+            fail_after_start()
         # The Lambda target schema requires this selector for Gateway
         # validation. Reinsert only the already-compared raw selector; the
         # Lambda handler removes it before parsing and never uses it for scope.
@@ -356,7 +412,8 @@ def transform_gateway_request(
         try:
             UUID(grant_id)
         except (ValueError, AttributeError) as exc:
-            raise AuthorizationDenied("access denied") from exc
+            del exc
+            fail_after_start()
         grant = GatewayAuthorizationGrant(
             grant_id=grant_id,
             verified_subject=envelope.verifiedSubject,
@@ -368,7 +425,8 @@ def transform_gateway_request(
         try:
             grant_repository.put(grant)
         except Exception as exc:
-            raise AuthorizationDenied("access denied") from exc
+            del exc
+            fail_after_start()
         # Overwrite, never honor, a client/model supplied grant selector.
         transformed_arguments["_legaldeskGrantId"] = grant_id
     elif target is GatewayTarget.METADATA_MCP:
@@ -378,7 +436,8 @@ def transform_gateway_request(
             try:
                 UUID(grant_id)
             except (ValueError, AttributeError) as exc:
-                raise AuthorizationDenied("access denied") from exc
+                del exc
+                fail_after_start()
             grant = GatewayAuthorizationGrant(
                 grant_id=grant_id,
                 verified_subject=envelope.verifiedSubject,
@@ -390,7 +449,8 @@ def transform_gateway_request(
             try:
                 grant_repository.put(grant)
             except Exception as exc:
-                raise AuthorizationDenied("access denied") from exc
+                del exc
+                fail_after_start()
         # Scope is represented in the public Gateway schema but is only a
         # selector; the metadata target receives it through this short-lived
         # server-side capability. Legacy direct unit callers may still inspect
@@ -414,6 +474,22 @@ def transform_gateway_request(
         })
         if grant_id is not None:
             transformed_headers["x-legaldesk-grant-id"] = grant_id
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.AGENT,
+            context.correlation_id,
+            TelemetryOutcome.SUCCEEDED,
+            started_at=started_at,
+            operation="gateway_request",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.TOOL,
+            context.correlation_id,
+            TelemetryOutcome.SUCCEEDED,
+            started_at=started_at,
+            operation=operation,
+        )
         return {
             "interceptorOutputVersion": "1.0",
             "mcp": {
@@ -424,7 +500,23 @@ def transform_gateway_request(
             },
         }
     else:
-        raise AuthorizationDenied("access denied")
+        fail_after_start()
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.AGENT,
+        context.correlation_id,
+        TelemetryOutcome.SUCCEEDED,
+        started_at=started_at,
+        operation="gateway_request",
+    )
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.TOOL,
+        context.correlation_id,
+        TelemetryOutcome.SUCCEEDED,
+        started_at=started_at,
+        operation=operation,
+    )
     return {
         "interceptorOutputVersion": "1.0",
         "mcp": {"transformedGatewayRequest": {"body": transformed_body}},

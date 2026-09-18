@@ -11,6 +11,7 @@ import hashlib
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -30,6 +31,12 @@ from .authorization import (
     require_authorized_context,
 )
 from .domain.models import ReviewTask, ReviewTaskStatus
+from .observability import (
+    TelemetryEventType,
+    TelemetryOutcome,
+    TelemetrySink,
+    emit_telemetry,
+)
 
 
 MAX_IDEMPOTENCY_KEY_LENGTH = 128
@@ -294,59 +301,136 @@ def create_review_task(
     payload: Mapping[str, object],
     *,
     repository: ReviewTaskRepository,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> dict[str, str]:
     """Create a human-review task inside the server-authorized matter scope."""
 
     context = require_authorized_context(context)
-    parsed = parse_review_task_input(payload)
-    task_id = (
-        _idempotent_task_id(context, parsed.idempotency_key)
-        if parsed.idempotency_key is not None
-        else f"review-{uuid4().hex}"
+    started_at = time.perf_counter()
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.TOOL,
+        context.correlation_id,
+        TelemetryOutcome.STARTED,
+        operation="create_review_task",
     )
     try:
-        existing = repository.get(context=context, review_task_id=task_id)
-    except Exception as exc:
-        raise ReviewTaskPersistenceError("review task store unavailable") from exc
-    if existing is not None:
-        return _task_response(
-            _validated_existing_task(
-                existing,
-                context=context,
-                review_task_id=task_id,
-                reason=parsed.reason_code.value,
-            )
+        parsed = parse_review_task_input(payload)
+        task_id = (
+            _idempotent_task_id(context, parsed.idempotency_key)
+            if parsed.idempotency_key is not None
+            else f"review-{uuid4().hex}"
         )
-
-    task = ReviewTask(
-        review_task_id=task_id,
-        matter_id=context.matter_id,
-        tenant_id=context.tenant_id,
-        created_by_user_id=context.user_id,
-        reason=parsed.reason_code.value,
-        status=ReviewTaskStatus.OPEN,
-        correlation_id=context.correlation_id,
-    )
-    try:
-        repository.save(task)
-    except Exception as exc:
-        # A concurrent idempotent retry may have won the conditional write.
-        if parsed.idempotency_key is not None:
-            try:
-                existing = repository.get(context=context, review_task_id=task_id)
-            except Exception:
-                existing = None
-            if existing is not None:
-                return _task_response(
-                    _validated_existing_task(
-                        existing,
-                        context=context,
-                        review_task_id=task_id,
-                        reason=parsed.reason_code.value,
-                    )
+        try:
+            existing = repository.get(context=context, review_task_id=task_id)
+        except Exception as exc:
+            raise ReviewTaskPersistenceError("review task store unavailable") from exc
+        if existing is not None:
+            response = _task_response(
+                _validated_existing_task(
+                    existing,
+                    context=context,
+                    review_task_id=task_id,
+                    reason=parsed.reason_code.value,
                 )
+            )
+            emit_telemetry(
+                telemetry_sink,
+                TelemetryEventType.TOOL,
+                context.correlation_id,
+                TelemetryOutcome.SUCCEEDED,
+                started_at=started_at,
+                operation="create_review_task",
+            )
+            return response
+
+        task = ReviewTask(
+            review_task_id=task_id,
+            matter_id=context.matter_id,
+            tenant_id=context.tenant_id,
+            created_by_user_id=context.user_id,
+            reason=parsed.reason_code.value,
+            status=ReviewTaskStatus.OPEN,
+            correlation_id=context.correlation_id,
+        )
+        try:
+            repository.save(task)
+        except Exception as exc:
+            # A concurrent idempotent retry may have won the conditional write.
+            if parsed.idempotency_key is not None:
+                try:
+                    existing = repository.get(context=context, review_task_id=task_id)
+                except Exception:
+                    existing = None
+                if existing is not None:
+                    response = _task_response(
+                        _validated_existing_task(
+                            existing,
+                            context=context,
+                            review_task_id=task_id,
+                            reason=parsed.reason_code.value,
+                        )
+                    )
+                    emit_telemetry(
+                        telemetry_sink,
+                        TelemetryEventType.TOOL,
+                        context.correlation_id,
+                        TelemetryOutcome.SUCCEEDED,
+                        started_at=started_at,
+                        operation="create_review_task",
+                    )
+                    return response
+            raise ReviewTaskPersistenceError("review task store unavailable") from exc
+        response = _task_response(task)
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.TOOL,
+            context.correlation_id,
+            TelemetryOutcome.SUCCEEDED,
+            started_at=started_at,
+            operation="create_review_task",
+        )
+        return response
+    except ReviewTaskError as exc:
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.TOOL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="create_review_task",
+            error_code=exc.public_code,
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.ERROR,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="create_review_task",
+            error_code=exc.public_code,
+        )
+        raise
+    except Exception as exc:
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.TOOL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="create_review_task",
+            error_code="service_unavailable",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.ERROR,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="create_review_task",
+            error_code="service_unavailable",
+        )
         raise ReviewTaskPersistenceError("review task store unavailable") from exc
-    return _task_response(task)
 
 
 def create_review_task_for_identity(
@@ -357,6 +441,7 @@ def create_review_task_for_identity(
     authorization_store: AuthorizationStore,
     repository: ReviewTaskRepository,
     correlation_id: str | None = None,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> dict[str, str]:
     """Adapter for a verified edge: derive scope, then enter the tool boundary."""
 
@@ -366,7 +451,9 @@ def create_review_task_for_identity(
         authorization_store,
         correlation_id=correlation_id,
     )
-    return create_review_task(context, payload, repository=repository)
+    return create_review_task(
+        context, payload, repository=repository, telemetry_sink=telemetry_sink
+    )
 
 
 class ReviewTaskLambdaHandler:
@@ -381,9 +468,11 @@ class ReviewTaskLambdaHandler:
         self,
         repository: ReviewTaskRepository,
         authorization_store: AuthorizationStore,
+        telemetry_sink: TelemetrySink | None = None,
     ) -> None:
         self.repository = repository
         self.authorization_store = authorization_store
+        self.telemetry_sink = telemetry_sink
 
     def handle(
         self,
@@ -411,12 +500,64 @@ class ReviewTaskLambdaHandler:
                 request_context,
                 payload,
                 repository=self.repository,
+                telemetry_sink=self.telemetry_sink,
             )
         except AuthorizationDenied:
+            emit_telemetry(
+                self.telemetry_sink,
+                TelemetryEventType.TOOL,
+                authorized_context.correlation_id,
+                TelemetryOutcome.ERROR,
+                operation="create_review_task",
+                error_code="access_denied",
+            )
+            emit_telemetry(
+                self.telemetry_sink,
+                TelemetryEventType.ERROR,
+                authorized_context.correlation_id,
+                TelemetryOutcome.ERROR,
+                operation="create_review_task",
+                error_code="access_denied",
+            )
             return {"error": "access_denied"}
         except ReviewTaskError as exc:
+            # create_review_task closes its own STARTED span. Validation
+            # errors raised before entering it still get a redacted pointer.
+            if not isinstance(event.get("arguments"), Mapping):
+                emit_telemetry(
+                    self.telemetry_sink,
+                    TelemetryEventType.TOOL,
+                    authorized_context.correlation_id,
+                    TelemetryOutcome.ERROR,
+                    operation="create_review_task",
+                    error_code=exc.public_code,
+                )
+                emit_telemetry(
+                    self.telemetry_sink,
+                    TelemetryEventType.ERROR,
+                    authorized_context.correlation_id,
+                    TelemetryOutcome.ERROR,
+                    operation="create_review_task",
+                    error_code=exc.public_code,
+                )
             return {"error": exc.public_code}
         except Exception:
+            emit_telemetry(
+                self.telemetry_sink,
+                TelemetryEventType.ERROR,
+                authorized_context.correlation_id,
+                TelemetryOutcome.ERROR,
+                operation="create_review_task",
+                error_code="service_unavailable",
+            )
+            emit_telemetry(
+                self.telemetry_sink,
+                TelemetryEventType.ERROR,
+                authorized_context.correlation_id,
+                TelemetryOutcome.ERROR,
+                operation="create_review_task",
+                error_code="service_unavailable",
+            )
             return {"error": "service_unavailable"}
 
     __call__ = handle

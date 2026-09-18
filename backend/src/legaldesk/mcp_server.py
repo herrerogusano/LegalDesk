@@ -41,6 +41,12 @@ from .documents import (
     Document,
     DocumentMetadataRepository,
 )
+from .observability import (
+    TelemetryEventType,
+    TelemetryOutcome,
+    TelemetrySink,
+    emit_telemetry,
+)
 
 
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -107,6 +113,7 @@ class MCPServer:
     """JSON-RPC MCP endpoint using an already authorized request context."""
 
     metadata_repository: DocumentMetadataRepository
+    telemetry_sink: TelemetrySink | None = None
 
     def handle_jsonrpc(
         self,
@@ -135,8 +142,6 @@ class MCPServer:
         if not isinstance(method, str) or isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
             return self._error(request_id, -32600, "invalid request", request_context)
         try:
-            if "params" in request and not isinstance(request.get("params"), Mapping):
-                raise MCPRequestError("params must be an object")
             if method == "initialize":
                 result: dict[str, object] = {
                     "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -175,9 +180,39 @@ class MCPServer:
                 result["_meta"] = {"correlationId": request_context.correlation_id}
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except MCPRequestError:
+            if request_context is not None and method == "tools/call":
+                emit_telemetry(
+                    self.telemetry_sink,
+                    TelemetryEventType.TOOL,
+                    request_context.correlation_id,
+                    TelemetryOutcome.ERROR,
+                    operation="mcp_tool_call",
+                    error_code="invalid_parameters",
+                )
             return self._error(request_id, -32602, "invalid parameters", request_context)
         except Exception:
             # Provider errors never expose stack traces or document data.
+            if request_context is not None:
+                if method == "tools/call":
+                    # _call_tool emits STARTED before touching the provider;
+                    # close that span as a TOOL error so ToolErrors metrics
+                    # remain faithful. Keep the generic ERROR pointer too.
+                    emit_telemetry(
+                        self.telemetry_sink,
+                        TelemetryEventType.TOOL,
+                        request_context.correlation_id,
+                        TelemetryOutcome.ERROR,
+                        operation="mcp_tool_call",
+                        error_code="mcp_service_unavailable",
+                    )
+                emit_telemetry(
+                    self.telemetry_sink,
+                    TelemetryEventType.ERROR,
+                    request_context.correlation_id,
+                    TelemetryOutcome.ERROR,
+                    operation="mcp_tool_call" if method == "tools/call" else "mcp_request",
+                    error_code="mcp_service_unavailable",
+                )
             return self._error(request_id, -32000, "metadata service unavailable", request_context)
 
     def _call_tool(
@@ -186,6 +221,14 @@ class MCPServer:
         context: RequestContext,
     ) -> dict[str, object]:
         context = require_authorized_context(context)
+        started_at = time.perf_counter()
+        emit_telemetry(
+            self.telemetry_sink,
+            TelemetryEventType.TOOL,
+            context.correlation_id,
+            TelemetryOutcome.STARTED,
+            operation="mcp_tool_call",
+        )
         if not isinstance(raw_params, Mapping):
             raise MCPRequestError("params must be an object")
         param_names = set(raw_params)
@@ -231,7 +274,17 @@ class MCPServer:
             payload = {"document": self._safe_document(document, context)}
         else:
             raise MCPRequestError("tool not found")
-        return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
+        result = {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
+        emit_telemetry(
+            self.telemetry_sink,
+            TelemetryEventType.TOOL,
+            context.correlation_id,
+            TelemetryOutcome.SUCCEEDED,
+            started_at=started_at,
+            operation=name,
+            count=len(payload.get("documents", ())) if isinstance(payload.get("documents"), list) else None,
+        )
+        return result
 
     @staticmethod
     def _strict_params(
@@ -308,6 +361,7 @@ def handle_metadata_request_for_identity(
     authorization_store: AuthorizationStore,
     metadata_repository: DocumentMetadataRepository,
     correlation_id: str | None = None,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> dict[str, object]:
     """Verified-edge adapter: authorize first, then dispatch the MCP request."""
 
@@ -317,7 +371,7 @@ def handle_metadata_request_for_identity(
         authorization_store,
         correlation_id=correlation_id,
     )
-    return MCPServer(metadata_repository).handle_jsonrpc(
+    return MCPServer(metadata_repository, telemetry_sink=telemetry_sink).handle_jsonrpc(
         request,
         request_context=context,
     )

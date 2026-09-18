@@ -54,6 +54,19 @@ from .memory import (
     conversation_binding_partition_key,
     conversation_binding_sort_key,
 )
+from .observability import (
+    DEFAULT_TELEMETRY_SINK,
+    InMemoryTelemetrySink,
+    LoggingTelemetrySink,
+    NullTelemetrySink,
+    TelemetryEvent,
+    TelemetryErrorCode,
+    TelemetryEventType,
+    TelemetryOperation,
+    TelemetryOutcome,
+    TelemetrySink,
+    emit_telemetry,
+)
 
 __all__ = [
     "AuthorizationDenied",
@@ -102,4 +115,15 @@ __all__ = [
     "derive_memory_scope_for_identity",
     "conversation_binding_partition_key",
     "conversation_binding_sort_key",
+    "DEFAULT_TELEMETRY_SINK",
+    "InMemoryTelemetrySink",
+    "LoggingTelemetrySink",
+    "NullTelemetrySink",
+    "TelemetryEvent",
+    "TelemetryErrorCode",
+    "TelemetryEventType",
+    "TelemetryOperation",
+    "TelemetryOutcome",
+    "TelemetrySink",
+    "emit_telemetry",
 ]
