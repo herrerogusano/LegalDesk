@@ -39,6 +39,15 @@ Valid; requires CAPABILITY_NAMED_IAM
   current version 3 has the Phase 08 Gateway and an exact three-tool allowlist.
 - Execution role: `LegalDeskBedrockAgentCoreHarnessPhase01`.
 
+On 2026-09-18, the existing Harness was updated in place to version 7 with
+`DISABLE_ADOT_OBSERVABILITY=true` and
+`AWS_GENAI_CONTENT_EXTRACTION_OPT_OUT=true` (ADOT Python instrumentation
+>=0.17.1 required for the content opt-out). The change set modified only the
+Harness environment variables and preserved the ARN, Runtime, role, Gateway,
+and Memory. A bounded synthetic smoke completed successfully and its unique
+question/answer markers appeared in zero provider events; managed internal
+trace detail remains intentionally unavailable.
+
 Four authorized smoke attempts were consumed across three approval rounds:
 
 1. AWS rejected `temperature` plus `top_p` for Sonnet 4.6. `TopP` was removed

@@ -7,8 +7,10 @@ not exposed through this adapter.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
 import re
+import time
+from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Protocol
 from uuid import UUID, uuid4
 
@@ -18,6 +20,58 @@ _DERIVED_ACTOR = re.compile(r"^ldactor-[0-9a-f]{48}$")
 _DERIVED_SESSION = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTelemetryEvent:
+    """Typed, redacted fallback event for environments without backend code."""
+
+    event_type: str
+    correlation_id: str
+    outcome: str
+    timestamp_ms: int
+    operation: str
+    latency_ms: int | None = None
+    error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.event_type not in {"agent", "error"}:
+            raise ValueError("event_type is invalid")
+        if self.outcome not in {"started", "succeeded", "error"}:
+            raise ValueError("outcome is invalid")
+        if not isinstance(self.operation, str) or self.operation != "invoke_harness":
+            raise ValueError("operation is invalid")
+        try:
+            UUID(self.correlation_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("correlation_id is invalid") from exc
+        if isinstance(self.timestamp_ms, bool) or self.timestamp_ms <= 0:
+            raise ValueError("timestamp_ms is invalid")
+        if self.latency_ms is not None and (
+            isinstance(self.latency_ms, bool) or self.latency_ms < 0
+        ):
+            raise ValueError("latency_ms is invalid")
+        if self.error_code is not None and self.error_code not in {
+            "harness_invoke_failed",
+            "harness_runtime_error",
+            "harness_stream_error",
+            "harness_malformed_response",
+        }:
+            raise ValueError("error_code is invalid")
+
+    def to_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "event_type": self.event_type,
+            "correlation_id": self.correlation_id,
+            "outcome": self.outcome,
+            "timestamp_ms": self.timestamp_ms,
+            "operation": self.operation,
+        }
+        if self.latency_ms is not None:
+            result["latency_ms"] = self.latency_ms
+        if self.error_code is not None:
+            result["error_code"] = self.error_code
+        return result
 
 
 class HarnessInvocationError(RuntimeError):
@@ -32,6 +86,7 @@ class HarnessDataPlane(Protocol):
 class InvokeResult:
     session_id: str
     text: str
+    correlation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -111,6 +166,7 @@ def _text_from_events(events: Iterable[Mapping[str, Any]]) -> str:
 class HarnessInvoker:
     client: HarnessDataPlane
     harness_arn: str
+    telemetry_sink: object | None = None
 
     @classmethod
     def from_boto3(cls, harness_arn: str, region: str = "eu-west-1") -> "HarnessInvoker":
@@ -127,6 +183,7 @@ class HarnessInvoker:
         *,
         session_id: str | None = None,
         memory_scope: HarnessMemoryScope | None = None,
+        correlation_id: str | None = None,
     ) -> InvokeResult:
         if not message or not message.strip():
             raise ValueError("message must not be empty")
@@ -138,6 +195,16 @@ class HarnessInvoker:
         effective_session_id = validate_session_id(
             memory_scope.session_id if memory_scope is not None else (session_id or new_session_id())
         )
+        effective_correlation_id = correlation_id or effective_session_id
+        validate_session_id(effective_correlation_id)
+        started_at = time.perf_counter()
+        _record_agent_event(
+            self.telemetry_sink,
+            "agent",
+            effective_correlation_id,
+            "started",
+            operation="invoke_harness",
+        )
         request: dict[str, Any] = {
             "harnessArn": self.harness_arn,
             "runtimeSessionId": effective_session_id,
@@ -145,13 +212,156 @@ class HarnessInvoker:
         }
         if memory_scope is not None:
             request["actorId"] = memory_scope.actor_id
-        response = self.client.invoke_harness(**request)
         try:
-            text = _text_from_events(response["stream"])
+            response = self.client.invoke_harness(**request)
+        except Exception:
+            _record_agent_event(
+                self.telemetry_sink,
+                "agent",
+                effective_correlation_id,
+                "error",
+                operation="invoke_harness",
+                started_at=started_at,
+                error_code="harness_invoke_failed",
+            )
+            _record_agent_event(
+                self.telemetry_sink,
+                "error",
+                effective_correlation_id,
+                "error",
+                operation="invoke_harness",
+                started_at=started_at,
+                error_code="harness_invoke_failed",
+            )
+            raise
+        try:
+            if not isinstance(response, Mapping):
+                raise ValueError("response must be an object")
+            stream = response.get("stream")
+            if isinstance(stream, (str, bytes, Mapping)) or not isinstance(stream, Iterable):
+                raise ValueError("stream must be iterable")
+            text = _text_from_events(stream)
         except HarnessInvocationError:
+            _record_agent_event(
+                self.telemetry_sink,
+                "agent",
+                effective_correlation_id,
+                "error",
+                operation="invoke_harness",
+                started_at=started_at,
+                error_code="harness_runtime_error",
+            )
+            _record_agent_event(
+                self.telemetry_sink,
+                "error",
+                effective_correlation_id,
+                "error",
+                operation="invoke_harness",
+                started_at=started_at,
+                error_code="harness_runtime_error",
+            )
             raise
         except Exception as exc:
-            if exc.__class__.__name__ != "EventStreamError":
-                raise
-            raise HarnessInvocationError(str(exc)) from exc
-        return InvokeResult(session_id=effective_session_id, text=text)
+            _record_agent_event(
+                self.telemetry_sink,
+                "agent",
+                effective_correlation_id,
+                "error",
+                operation="invoke_harness",
+                started_at=started_at,
+                error_code=(
+                    "harness_stream_error"
+                    if exc.__class__.__name__ == "EventStreamError"
+                    else "harness_malformed_response"
+                ),
+            )
+            code = (
+                "harness_stream_error"
+                if exc.__class__.__name__ == "EventStreamError"
+                else "harness_malformed_response"
+            )
+            _record_agent_event(
+                self.telemetry_sink,
+                "error",
+                effective_correlation_id,
+                "error",
+                operation="invoke_harness",
+                started_at=started_at,
+                error_code=code,
+            )
+            if exc.__class__.__name__ == "EventStreamError":
+                raise HarnessInvocationError(str(exc)) from exc
+            raise HarnessInvocationError("AgentCore returned an invalid event stream") from exc
+        _record_agent_event(
+            self.telemetry_sink,
+            "agent",
+            effective_correlation_id,
+            "succeeded",
+            operation="invoke_harness",
+            started_at=started_at,
+        )
+        return InvokeResult(
+            session_id=effective_session_id,
+            text=text,
+            correlation_id=effective_correlation_id,
+        )
+
+
+def _record_agent_event(
+    sink: object | None,
+    event_type: str,
+    correlation_id: str,
+    outcome: str,
+    *,
+    operation: str,
+    started_at: float | None = None,
+    error_code: str | None = None,
+) -> None:
+    latency_ms = (
+        max(0, int((time.perf_counter() - started_at) * 1000))
+        if started_at is not None
+        else None
+    )
+    try:
+        # Local integration uses the canonical backend event type, while the
+        # standalone agent package uses the equivalent validated fallback.
+        from legaldesk.observability import (
+            TelemetryErrorCode,
+            TelemetryEvent,
+            TelemetryEventType,
+            TelemetryOperation,
+            TelemetryOutcome,
+        )
+
+        event = TelemetryEvent(
+            event_type=(
+                TelemetryEventType.ERROR
+                if event_type == "error"
+                else TelemetryEventType.AGENT
+            ),
+            correlation_id=correlation_id,
+            outcome=TelemetryOutcome(outcome),
+            timestamp_ms=int(time.time() * 1000),
+            latency_ms=latency_ms,
+            operation=TelemetryOperation(operation),
+            error_code=TelemetryErrorCode(error_code) if error_code else None,
+        )
+    except ImportError:
+        event = AgentTelemetryEvent(
+            event_type=event_type,
+            correlation_id=correlation_id,
+            outcome=outcome,
+            timestamp_ms=int(time.time() * 1000),
+            operation=operation,
+            latency_ms=latency_ms,
+            error_code=error_code,
+        )
+    try:
+        recorder = getattr(sink, "record", None)
+        if callable(recorder):
+            recorder(event)
+        else:
+            print(json.dumps(event.to_dict(), separators=(",", ":"), sort_keys=True), flush=True)
+    except Exception:
+        # Telemetry must never break the security-sensitive invocation path.
+        pass

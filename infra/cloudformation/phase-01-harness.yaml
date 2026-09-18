@@ -147,6 +147,14 @@ Resources:
           ApiFormat: converse_stream
           MaxTokens: 256
           Temperature: 0
+      # Requires the managed Harness observability instrumentation to include
+      # AWS ADOT Python instrumentation >= 0.17.1.  The first defense opts out
+      # of LLM content extraction; the stronger switch disables the managed
+      # ADOT observability layer because the content opt-out was ineffective in
+      # the deployed Harness. LegalDesk keeps its own allowlisted telemetry.
+      EnvironmentVariables:
+        AWS_GENAI_CONTENT_EXTRACTION_OPT_OUT: "true"
+        DISABLE_ADOT_OBSERVABILITY: "true"
       SystemPrompt:
         - Text: >-
             You are the LegalDesk portfolio agent. Reply briefly, never provide

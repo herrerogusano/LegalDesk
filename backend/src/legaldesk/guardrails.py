@@ -7,6 +7,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Mapping, Protocol, Sequence
 
+from .observability import (
+    TelemetryEventType,
+    TelemetryOutcome,
+    TelemetrySink,
+    emit_telemetry,
+)
+
 
 _LOGGER = logging.getLogger("legaldesk.guardrails")
 _VALID_ACTIONS = {"NONE", "GUARDRAIL_INTERVENED"}
@@ -97,10 +104,12 @@ class GuardrailProcessor:
         client: BedrockGuardrailClient,
         config: GuardrailConfig,
         audit_sink: GuardrailAuditSink | None = None,
+        telemetry_sink: TelemetrySink | None = None,
     ) -> None:
         self._client = client
         self._config = config
         self._audit_sink = audit_sink or LoggingGuardrailAuditSink()
+        self._telemetry_sink = telemetry_sink
 
     def check_input(self, text: str, *, correlation_id: str) -> GuardrailResult:
         content = ({"text": {"text": text}},)
@@ -265,6 +274,20 @@ class GuardrailProcessor:
         safe_action = action if action in _VALID_ACTIONS else "ERROR"
         self._audit_sink.record(
             GuardrailAuditEvent(correlation_id, stage, safe_action, outcome)
+        )
+        telemetry_outcome = {
+            GuardrailOutcome.ALLOWED: TelemetryOutcome.SUCCEEDED,
+            GuardrailOutcome.ANONYMIZED: TelemetryOutcome.SUCCEEDED,
+            GuardrailOutcome.BLOCKED: TelemetryOutcome.BLOCKED,
+            GuardrailOutcome.ERROR: TelemetryOutcome.ERROR,
+        }[outcome]
+        emit_telemetry(
+            self._telemetry_sink,
+            TelemetryEventType.GUARDRAIL,
+            correlation_id,
+            telemetry_outcome,
+            operation=stage.value,
+            error_code=("guardrail_error" if outcome is GuardrailOutcome.ERROR else None),
         )
         return GuardrailResult(outcome, content)
 

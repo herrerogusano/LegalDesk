@@ -101,6 +101,15 @@ class AgentCorePhase01Tests(unittest.TestCase):
         self.assertIn("Temperature:", template)
         self.assertNotIn("TopP:", template)
 
+    def test_harness_disables_genai_content_extraction(self) -> None:
+        template = (ROOT / "infra" / "cloudformation" / "phase-01-harness.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("EnvironmentVariables:", template)
+        self.assertIn('AWS_GENAI_CONTENT_EXTRACTION_OPT_OUT: "true"', template)
+        self.assertIn('DISABLE_ADOT_OBSERVABILITY: "true"', template)
+        self.assertIn("ADOT Python instrumentation >= 0.17.1", template)
+
 
 if __name__ == "__main__":
     unittest.main()

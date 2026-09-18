@@ -8,6 +8,7 @@ browser selectors, retrieval filters, or provider credentials.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Mapping, Protocol
@@ -19,6 +20,12 @@ from .authorization import (
     build_request_context,
 )
 from .memory import ConversationBindingStore
+from .observability import (
+    TelemetryEventType,
+    TelemetryOutcome,
+    TelemetrySink,
+    emit_telemetry,
+)
 from .guardrails import (
     BedrockGuardrailClient,
     GuardrailAuditSink,
@@ -168,6 +175,7 @@ class ChatResponse:
     disclaimer_required: bool
     prompt_version: str | None
     prompt_sha256: str | None
+    correlation_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -177,11 +185,14 @@ class ChatResponse:
             "disclaimerRequired": self.disclaimer_required,
             "promptVersion": self.prompt_version,
             "promptSha256": self.prompt_sha256,
+            "correlationId": self.correlation_id,
         }
 
 
 def insufficient_evidence_response(
     prompt_artifact: SystemPromptArtifact | None = None,
+    *,
+    correlation_id: str | None = None,
 ) -> ChatResponse:
     return ChatResponse(
         answer=INSUFFICIENT_EVIDENCE_ANSWER,
@@ -190,12 +201,15 @@ def insufficient_evidence_response(
         disclaimer_required=True,
         prompt_version=prompt_artifact.version if prompt_artifact else None,
         prompt_sha256=prompt_artifact.sha256 if prompt_artifact else None,
+        correlation_id=correlation_id,
     )
 
 
 def guardrail_blocked_response(
     stage: GuardrailStage,
     prompt_artifact: SystemPromptArtifact,
+    *,
+    correlation_id: str | None = None,
 ) -> ChatResponse:
     answer = (
         GUARDRAIL_INPUT_BLOCKED_ANSWER
@@ -209,6 +223,7 @@ def guardrail_blocked_response(
         disclaimer_required=True,
         prompt_version=prompt_artifact.version,
         prompt_sha256=prompt_artifact.sha256,
+        correlation_id=correlation_id,
     )
 
 
@@ -273,6 +288,7 @@ def answer_question(
     correlation_id: str | None = None,
     prompt_provider: SystemPromptProvider = DEFAULT_SYSTEM_PROMPT_PROVIDER,
     guardrail_audit_sink: GuardrailAuditSink | None = None,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> ChatResponse:
     """Load the server prompt, authorize and retrieve, then generate from evidence."""
 
@@ -299,34 +315,93 @@ def answer_question(
     ):
         raise AuthorizationDenied("conversation access denied")
 
+    request_started_at = time.perf_counter()
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.AGENT,
+        context.correlation_id,
+        TelemetryOutcome.STARTED,
+        operation="answer_question",
+    )
+
+    def finish(response: ChatResponse) -> ChatResponse:
+        response = replace(response, correlation_id=context.correlation_id)
+        final_outcome = (
+            TelemetryOutcome.BLOCKED
+            if response.answer in {GUARDRAIL_INPUT_BLOCKED_ANSWER, GUARDRAIL_OUTPUT_BLOCKED_ANSWER}
+            else TelemetryOutcome.NOT_FOUND
+            if response.evidence_status is EvidenceStatus.INSUFFICIENT_EVIDENCE and not response.citations
+            else TelemetryOutcome.SUCCEEDED
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.AGENT,
+            context.correlation_id,
+            final_outcome,
+            started_at=request_started_at,
+            operation="answer_question",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.FINAL,
+            context.correlation_id,
+            final_outcome,
+            started_at=request_started_at,
+            operation="answer_question",
+            count=len(response.citations),
+        )
+        return response
+
     try:
         prompt_artifact = prompt_provider.load()
     except PromptConfigurationError:
         # A missing or malformed server prompt must never fall back to generation.
-        return insufficient_evidence_response()
+        return finish(insufficient_evidence_response(correlation_id=context.correlation_id))
 
     guardrails = GuardrailProcessor(
         guardrail_client,
         guardrail_config,
         audit_sink=guardrail_audit_sink,
+        telemetry_sink=telemetry_sink,
     )
     input_result = guardrails.check_input(
         request.question.strip(), correlation_id=context.correlation_id
     )
     if not input_result.can_proceed:
-        return guardrail_blocked_response(GuardrailStage.INPUT, prompt_artifact)
+        return finish(guardrail_blocked_response(GuardrailStage.INPUT, prompt_artifact, correlation_id=context.correlation_id))
     question = input_result.content[0]
     if len(question) > MAX_QUERY_LENGTH:
-        return guardrail_blocked_response(GuardrailStage.INPUT, prompt_artifact)
+        return finish(guardrail_blocked_response(GuardrailStage.INPUT, prompt_artifact, correlation_id=context.correlation_id))
 
-    passages = _retrieve_with_context(
-        context,
-        question,
-        bedrock_client=retrieval_client,
-        knowledge_base_id=knowledge_base_id,
-    )
+    try:
+        passages = _retrieve_with_context(
+            context,
+            question,
+            bedrock_client=retrieval_client,
+            knowledge_base_id=knowledge_base_id,
+            telemetry_sink=telemetry_sink,
+        )
+    except Exception:
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.AGENT,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=request_started_at,
+            operation="answer_question",
+            error_code="retrieval_failed",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.FINAL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=request_started_at,
+            operation="answer_question",
+        )
+        raise
     if not passages:
-        return insufficient_evidence_response(prompt_artifact)
+        return finish(insufficient_evidence_response(prompt_artifact, correlation_id=context.correlation_id))
 
     generation_request = GenerationRequest(
         question=question,
@@ -339,12 +414,58 @@ def answer_question(
             for passage in passages
         ),
     )
-    generated = generator.generate(generation_request)
+    model_started_at = time.perf_counter()
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.MODEL,
+        context.correlation_id,
+        TelemetryOutcome.STARTED,
+        operation="generate_answer",
+    )
+    try:
+        generated = generator.generate(generation_request)
+    except Exception:
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.MODEL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=model_started_at,
+            operation="generate_answer",
+            error_code="model_failed",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.ERROR,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=model_started_at,
+            operation="generate_answer",
+            error_code="model_failed",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.AGENT,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=request_started_at,
+            operation="answer_question",
+            error_code="model_failed",
+        )
+        raise
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.MODEL,
+        context.correlation_id,
+        TelemetryOutcome.SUCCEEDED,
+        started_at=model_started_at,
+        operation="generate_answer",
+    )
     if not isinstance(generated, Mapping):
-        return insufficient_evidence_response(prompt_artifact)
+        return finish(insufficient_evidence_response(prompt_artifact, correlation_id=context.correlation_id))
     response = _validate_generation_response(generated, passages, prompt_artifact)
     if not response.citations:
-        return response
+        return finish(response)
 
     output_result = guardrails.check_output(
         question,
@@ -353,8 +474,8 @@ def answer_question(
         correlation_id=context.correlation_id,
     )
     if not output_result.can_proceed:
-        return guardrail_blocked_response(GuardrailStage.OUTPUT, prompt_artifact)
+        return finish(guardrail_blocked_response(GuardrailStage.OUTPUT, prompt_artifact, correlation_id=context.correlation_id))
     safe_answer = output_result.content[0]
     if len(safe_answer) > MAX_ANSWER_LENGTH:
-        return guardrail_blocked_response(GuardrailStage.OUTPUT, prompt_artifact)
-    return replace(response, answer=safe_answer)
+        return finish(guardrail_blocked_response(GuardrailStage.OUTPUT, prompt_artifact, correlation_id=context.correlation_id))
+    return finish(replace(response, answer=safe_answer))

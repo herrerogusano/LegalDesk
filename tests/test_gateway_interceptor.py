@@ -18,6 +18,7 @@ from legaldesk.gateway_interceptor import (
     gateway_request_interceptor,
     transform_gateway_request,
 )
+from legaldesk.observability import InMemoryTelemetrySink, TelemetryEventType, TelemetryOutcome
 
 
 def token(subject: str) -> str:
@@ -161,6 +162,14 @@ class GatewayInterceptorTests(unittest.TestCase):
                 target=GatewayTarget.METADATA_MCP,
                 authorization_store=self.auth,
             )
+        malformed_params = event()
+        malformed_params["mcp"]["gatewayRequest"]["body"]["params"] = None
+        with self.assertRaises(PermissionError):
+            transform_gateway_request(
+                malformed_params,
+                target=GatewayTarget.METADATA_MCP,
+                authorization_store=self.auth,
+            )
 
     def test_string_arguments_are_normalized_for_raw_and_gateway_requests(self) -> None:
         request = event()
@@ -247,6 +256,32 @@ class GatewayInterceptorTests(unittest.TestCase):
         arguments = response["mcp"]["transformedGatewayRequest"]["body"]["params"]["arguments"]
         self.assertEqual(arguments["_legaldeskGrantId"], "9ec5d1c5-7b58-4bc2-a183-8fd48a3bd279")
         self.assertNotIn("00000000-0000-0000-0000-000000000000", grants.grants)
+
+    def test_post_auth_grant_failure_closes_agent_and_tool_and_emits_generic_error(self) -> None:
+        class FailingGrantRepository(InMemoryGatewayGrantRepository):
+            def put(self, grant: GatewayAuthorizationGrant) -> None:
+                raise RuntimeError("synthetic grant store failure")
+
+        sink = InMemoryTelemetrySink()
+        with self.assertRaises(PermissionError):
+            transform_gateway_request(
+                event(),
+                target=GatewayTarget.REVIEW_LAMBDA,
+                authorization_store=self.auth,
+                grant_repository=FailingGrantRepository(),
+                telemetry_sink=sink,
+            )
+        observed = [(item.event_type, item.outcome) for item in sink.events]
+        self.assertEqual(
+            observed,
+            [
+                (TelemetryEventType.AGENT, TelemetryOutcome.STARTED),
+                (TelemetryEventType.TOOL, TelemetryOutcome.STARTED),
+                (TelemetryEventType.AGENT, TelemetryOutcome.ERROR),
+                (TelemetryEventType.TOOL, TelemetryOutcome.ERROR),
+                (TelemetryEventType.ERROR, TelemetryOutcome.ERROR),
+            ],
+        )
 
     def test_cross_matter_and_malformed_token_are_denied(self) -> None:
         with self.assertRaises(PermissionError):

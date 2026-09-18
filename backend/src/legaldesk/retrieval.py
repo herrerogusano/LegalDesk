@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+import time
 from typing import Any, Mapping, Protocol
 
 from .authorization import (
@@ -19,6 +20,12 @@ from .authorization import (
     VerifiedIdentity,
     build_request_context,
     require_authorized_context,
+)
+from .observability import (
+    TelemetryEventType,
+    TelemetryOutcome,
+    TelemetrySink,
+    emit_telemetry,
 )
 
 
@@ -149,13 +156,14 @@ def _normalize_results(
             source_metadata["section"] = section
 
         raw_score = result.get("score")
-        score = (
-            float(raw_score)
-            if isinstance(raw_score, (int, float))
-            and not isinstance(raw_score, bool)
-            and isfinite(float(raw_score))
-            else None
-        )
+        if raw_score is None:
+            score = None
+        elif isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+            raise ValueError("retrieval score is malformed")
+        else:
+            score = float(raw_score)
+            if not isfinite(score):
+                raise ValueError("retrieval score is outside the finite range")
         citation_id = f"citation-{len(normalized) + 1}"
         normalized.append(
             RetrievedPassage(
@@ -184,6 +192,7 @@ def search_legal_documents(
     bedrock_client: BedrockKnowledgeBaseClient,
     knowledge_base_id: str,
     correlation_id: str | None = None,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     """Authorize a matter, retrieve with a server-built filter, and normalize.
 
@@ -202,6 +211,7 @@ def search_legal_documents(
         query,
         bedrock_client=bedrock_client,
         knowledge_base_id=knowledge_base_id,
+        telemetry_sink=telemetry_sink,
     )
 
 
@@ -211,6 +221,7 @@ def _retrieve_with_context(
     *,
     bedrock_client: BedrockKnowledgeBaseClient,
     knowledge_base_id: str,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     """Retrieve only with the RequestContext just authorized by the server."""
 
@@ -220,16 +231,97 @@ def _retrieve_with_context(
     if not isinstance(knowledge_base_id, str) or not knowledge_base_id.strip():
         raise ValueError("knowledge_base_id is not configured")
 
-    response = bedrock_client.retrieve(
-        knowledgeBaseId=knowledge_base_id,
-        retrievalQuery={"text": query.strip()},
-        retrievalConfiguration={
-            "vectorSearchConfiguration": {
-                "numberOfResults": DEFAULT_NUMBER_OF_RESULTS,
-                "filter": build_matter_filter(context),
-            }
-        },
+    started_at = time.perf_counter()
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.RETRIEVAL,
+        context.correlation_id,
+        TelemetryOutcome.STARTED,
+        operation="knowledge_base_retrieve",
     )
+    try:
+        response = bedrock_client.retrieve(
+            knowledgeBaseId=knowledge_base_id,
+            retrievalQuery={"text": query.strip()},
+            retrievalConfiguration={
+                "vectorSearchConfiguration": {
+                    "numberOfResults": DEFAULT_NUMBER_OF_RESULTS,
+                    "filter": build_matter_filter(context),
+                }
+            },
+        )
+    except Exception:
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.RETRIEVAL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="knowledge_base_retrieve",
+            error_code="retrieval_failed",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.ERROR,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="knowledge_base_retrieve",
+            error_code="retrieval_failed",
+        )
+        raise
     if not isinstance(response, Mapping):
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.RETRIEVAL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="knowledge_base_retrieve",
+            error_code="retrieval_invalid_response",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.ERROR,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="knowledge_base_retrieve",
+            error_code="retrieval_invalid_response",
+        )
         return ()
-    return _normalize_results(response, context)
+    try:
+        results = _normalize_results(response, context)
+    except Exception:
+        # Provider-shaped content is untrusted.  A malformed score/page or
+        # another normalization failure must close the started retrieval span
+        # before failing closed, rather than leaving an open started event.
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.RETRIEVAL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="knowledge_base_retrieve",
+            error_code="retrieval_invalid_response",
+        )
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.ERROR,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=started_at,
+            operation="knowledge_base_retrieve",
+            error_code="retrieval_invalid_response",
+        )
+        return ()
+    emit_telemetry(
+        telemetry_sink,
+        TelemetryEventType.RETRIEVAL,
+        context.correlation_id,
+        TelemetryOutcome.SUCCEEDED if results else TelemetryOutcome.NOT_FOUND,
+        started_at=started_at,
+        operation="knowledge_base_retrieve",
+        count=len(results),
+    )
+    return results
