@@ -32,3 +32,11 @@ update preserved all resources without replacement; synthetic authorized,
 cross-matter, and direct-endpoint denial checks are recorded in
 `docs/phase-10-acceptance.md`. OIDC verification uses the versioned core
 `PyJWT[crypto]` dependency.
+Phase 11 adds the small redacted observability stack
+([phase-11-observability.yaml](cloudformation/phase-11-observability.yaml))
+over those existing Lambda log groups. It was deployed as
+`LegalDeskPhase11Observability` in `eu-west-1` with seven metric filters; no
+raw AgentCore payload logging, new log group, or dashboard was enabled. The
+deployment/smoke and teardown procedure are recorded in
+[`phase-11-acceptance.md`](../docs/phase-11-acceptance.md) and
+`phase-11-commands.md`.
