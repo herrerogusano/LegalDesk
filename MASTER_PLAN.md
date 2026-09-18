@@ -105,4 +105,4 @@ No confiar en el LLM para ninguna decisión de acceso.
 - [x] Phase 09 (local acceptance and approved synthetic AWS Memory smoke complete)
 - [x] Phase 10 (Cognito public PKCE client, Gateway artifact update, and synthetic identity-isolation smoke complete in eu-west-1; operational observability remains Phase 11)
 - [x] Phase 11 (repeatable observability IaC, redacted application telemetry, metric filters, and synthetic AWS smoke complete in eu-west-1; managed ADOT detail disabled after content opt-out was ineffective, with bounded no-content smoke PASS and internal managed trace intentionally unavailable; teardown remains documented/dry-run)
-- [ ] Phase 12
+- [ ] Phase 12 (local deterministic evaluation/demo complete; one authorized four-call real-model smoke ran, but 0/4 cases have accepted structured evidence)

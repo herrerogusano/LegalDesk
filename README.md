@@ -6,13 +6,17 @@ a legal product, and it must only use public or wholly fictional documents.
 
 ## Current status
 
-Phases 00–07 are complete. The project now covers deterministic authorization,
-presigned document upload, S3 Vectors-backed authorized retrieval, and a
-retrieve-then-generate chat boundary with fail-closed citations and a local
-citation panel. Its system prompt is versioned, Bedrock Guardrails have been
-validated with a small synthetic smoke, and the metadata-only
-`create_review_task` Lambda tool is ready for Gateway integration. Phase 07 was
-validated locally and created no AWS resources.
+Phases 00–11 are complete and Phase 12 local evaluation is complete. The
+portfolio MVP covers deterministic authorization, presigned document upload,
+S3 Vectors-backed authorized retrieval, retrieve-then-generate chat with
+citations, Guardrails, Gateway → MCP metadata tools, human review tasks,
+short-term Memory, identity isolation, and redacted application telemetry.
+Phase 12 adds 24 deterministic local evaluations across eight security/quality
+categories. No real legal data is permitted and no Phase 12 real-model subset
+is accepted as complete: one bounded real-model smoke was run once with four
+synthetic calls; the historical lexical classifier recorded two matches, but
+the audit accepts `0/4` because the Harness adapter exposed no structured tool
+or policy trace.
 
 ## Repository layout
 
@@ -20,8 +24,9 @@ validated locally and created no AWS resources.
 agent/       Agent orchestration (introduced in Phase 01)
 backend/     Domain and deterministic authorization code
 docs/        Architecture, data model, security, and dataset design
-frontend/    Minimal UI boundary (implemented in a later phase)
-infra/       Reproducible infrastructure (implemented in later phases)
+frontend/    Minimal UI boundary and citation panel
+infra/       Reproducible CloudFormation and deployment/teardown commands
+evals/       Synthetic Phase 12 dataset, local runner, and report artifacts
 tests/       Local unit tests and fictional multi-tenant fixtures
 ```
 
@@ -33,6 +38,63 @@ library:
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+Run the Phase 12 deterministic evaluation without AWS or model inference:
+
+```bash
+python evals/run_evals.py --output evals/results/phase12-local-report.json
+python -m unittest discover -s tests -p 'test_phase_12_evaluation.py' -v
+```
+
+The bounded real-model smoke is documented in
+[`docs/phase-12-evaluation-report.md`](docs/phase-12-evaluation-report.md) and
+is not a replacement for the deterministic security suite. It consumed exactly
+four Harness attempts, with no retries, and remains incomplete: text-only
+responses cannot prove authorization, refusal, escalation, or tool use.
+
+The latest local run has 24/24 cases passing, 100% citation exactness,
+bounded citation-to-fixture alignment, tool-choice accuracy, and cross-matter
+denial. The alignment figure is not semantic model groundedness. Latency in
+this report is process-local only; it is not a cloud performance SLO.
+
+## Architecture and trust boundaries
+
+The browser is untrusted. Cognito/OIDC or a verified Gateway edge supplies
+identity; the backend reloads membership and derives an immutable request scope.
+Retrieval is metadata-filtered before generation. Gateway tools reauthorize the
+same scope. Memory is short-term and actor/session/matter scoped; long-term
+memory is rejected. Application telemetry is an allowlist of metadata only.
+See [`docs/architecture.md`](docs/architecture.md),
+[`docs/architecture-final.md`](docs/architecture-final.md),
+[`docs/authorization-matrix.md`](docs/authorization-matrix.md), and
+[`docs/threat-model.md`](docs/threat-model.md).
+
+## Setup, deploy, and teardown
+
+Local work requires Python 3.11+ and the dependencies declared by the backend
+and agent packages. Cloud deployment is phase-scoped and must use the documented
+change-set commands under [`infra/`](infra/README.md). Phase 12 itself creates
+no AWS resources. Teardown commands and retained-resource warnings are in
+[`infra/phase-11-commands.md`](infra/phase-11-commands.md) and the phase
+acceptance records.
+
+## Trade-offs, limitations, and cost
+
+This is an educational MVP, not legal advice or a production legal system.
+S3 Vectors and fixed chunking keep the first architecture explainable, at the
+cost of less hierarchical retrieval control. Long-term memory is disabled for
+data minimization. Bedrock/AgentCore inference, Knowledge Base ingestion,
+Memory, Gateway, Lambda, DynamoDB, S3, and CloudWatch can incur charges; the
+Phase 12 runner uses zero AWS calls. The managed Harness internal ADOT detail
+is disabled after content extraction was observed; the application allowlisted
+telemetry pointer is the supported operational trace surface.
+
+Before real legal data enters the system, read
+[`docs/what-i-would-change-before-real-legal-data.md`](docs/what-i-would-change-before-real-legal-data.md).
+The five-minute synthetic walkthrough is in
+[`docs/phase-12-walkthrough.md`](docs/phase-12-walkthrough.md).
+The phase acceptance matrix is in
+[`docs/phase-12-acceptance.md`](docs/phase-12-acceptance.md).
 
 Planning and phase constraints are defined in `AGENTS.md`, `MASTER_PLAN.md`,
 and the corresponding `PLAN_XX_*.md` file.
