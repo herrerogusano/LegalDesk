@@ -1,9 +1,9 @@
 # Phase 12 acceptance
 
-Status: local deterministic block complete. A single authorized real-model
-smoke used four synthetic Harness calls with no retries; its structured-evidence
-acceptance is `0/4`, so the real-model criterion remains incomplete. Any rerun
-requires new explicit authorization.
+Status: local deterministic block complete. The authorized real-model work is
+incomplete: the Harness smoke had `0/4` accepted under structured-trace policy,
+and the direct Bedrock smoke had `2/4` accepted with `3` model calls plus one
+local no-evidence case. Any rerun requires new explicit authorization.
 
 | Criterion | Evidence | Result |
 |---|---|---|
@@ -20,6 +20,8 @@ requires new explicit authorization.
 | Production reflection | `docs/what-i-would-change-before-real-legal-data.md` | PASS |
 | README/architecture/cost/teardown | `README.md`, `docs/architecture-final.md`, existing infra docs | PASS |
 | Bounded real-model smoke | `evals/results/phase12-real-smoke-report.json`: exactly `4/4` attempts, `0` retries, `0/4` accepted under structured-trace policy; historical lexical field recorded `2/4` | INCOMPLETE |
+| Direct Bedrock smoke | `evals/results/phase12-direct-bedrock-report.json`: `3/3` model calls, `0` retries, `2/4` accepted; no-evidence case local | INCOMPLETE |
+| Direct Bedrock two-case follow-up | `evals/direct_bedrock_followup.py`: prepared with cap `2`, not executed; new approval required | PENDING |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double

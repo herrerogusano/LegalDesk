@@ -29,7 +29,7 @@ only bounded labels and latency; it does not store prompts, responses, tokens,
 or secrets. A failed or unexpected case leaves the real-model acceptance
 incomplete.
 
-## Direct Bedrock alternative (prepared, not executed)
+## Direct Bedrock smoke (executed once; acceptance incomplete)
 
 `direct_bedrock_smoke.py` is a separate four-case alternative: three cases send
 the versioned system prompt and synthetic passages directly to
@@ -37,10 +37,18 @@ the versioned system prompt and synthetic passages directly to
 reuses the backend JSON/citation validator, fixes `maxTokens` to `256` and
 temperature to `0`, and has no retry path. The fourth no-evidence case uses the
 backend's deterministic canonical response without a model call, so the model
-cap is exactly three calls (`maxModelInvocations=3`). It has not been run; any execution requires new
-approval for model cost, logs, retention, and data scope. Its report would
-contain only prompt metadata, evidence status, citation IDs, validation/error
-codes, safety booleans, and latency.
+cap is exactly three calls (`maxModelInvocations=3`). It was executed once with
+exactly three model calls and zero retries; report:
+`evals/results/phase12-direct-bedrock-report.json`. The run accepted `2/4`
+cases. Any rerun requires new approval for model cost, logs, retention, and
+data scope. The report contains only prompt metadata, evidence status, citation
+IDs, validation/error codes, safety booleans, and latency.
 The injection gate uses a documented synthetic canary plus fail-closed literal
 prompt-overlap checks; it does not prove resistance to every semantic
 paraphrase.
+
+The exact two-case follow-up is prepared in `direct_bedrock_followup.py` but
+has not been executed. It uses the corrected shared runner (`1.1.0`), applies
+literal prompt overlap only to the injection case, and is capped at exactly two
+model calls. Any execution requires new explicit approval. The previous
+direct-smoke report remains preserved as historical `1.0.0` evidence.

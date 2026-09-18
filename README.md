@@ -13,10 +13,10 @@ citations, Guardrails, Gateway → MCP metadata tools, human review tasks,
 short-term Memory, identity isolation, and redacted application telemetry.
 Phase 12 adds 24 deterministic local evaluations across eight security/quality
 categories. No real legal data is permitted and no Phase 12 real-model subset
-is accepted as complete: one bounded real-model smoke was run once with four
-synthetic calls; the historical lexical classifier recorded two matches, but
-the audit accepts `0/4` because the Harness adapter exposed no structured tool
-or policy trace.
+is accepted as complete. The managed Harness smoke recorded `0/4` accepted
+structured outcomes; a separate direct Bedrock smoke used `3` model calls plus
+one local no-evidence case and accepted `2/4`. Both remain incomplete evidence,
+not production legal-quality validation.
 
 ## Repository layout
 
