@@ -23,6 +23,7 @@ Cada fase agrega una capacidad y deja tests que protegen lo aprendido.
 | 10 | `PLAN_10_IDENTITY_ISOLATION.md` | identity + cross-matter enforcement | 09 |
 | 11 | `PLAN_11_DEPLOY_OBSERVABILITY.md` | IaC, traces, metrics, correlation IDs, teardown | 10 |
 | 12 | `PLAN_12_EVALUATION_DEMO.md` | 20+ evals, README, demo, final audit | 11 |
+| 13 | `PLAN_13_INTEGRATION_RELEASE.md` | integración E2E local y preparación de release | 00–12 |
 
 ## Milestones
 
@@ -51,10 +52,12 @@ Fases 09–10.
 
 Memoria, identidad y aislamiento comprobados.
 
-### M6 — Portfolio-ready
-Fases 11–12.
+### M6 — Portfolio readiness (pendiente)
+Fases 11–13.
 
-Deploy reproducible, observabilidad, evaluación, teardown y demo.
+Fases 11–12 acreditan componentes, evaluación acotada y checklist de demo,
+no una aplicación integrada. Fase 13 integra y verifica el recorrido local.
+Smoke AWS y promoción a prod requieren autorización posterior.
 
 ## Reglas de avance
 
@@ -92,6 +95,11 @@ Aislamiento en capas:
 No confiar en el LLM para ninguna decisión de acceso.
 
 ## Estado
+
+Auditoría: `NOT_READY_FOR_PROD` (ver `docs/release-audit.md`). Fases 00–12
+conservan su aceptación acotada; no certifican readiness de portfolio/E2E.
+
+- [ ] Phase 13 (checkpoint 0: baseline green; integration/identity feasibility pending; no AWS execution or prod promotion)
 
 - [x] Phase 00
 - [x] Phase 01

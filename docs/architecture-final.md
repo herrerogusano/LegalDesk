@@ -1,4 +1,22 @@
-# LegalDesk final MVP architecture
+# LegalDesk architecture — integration baseline
+
+The diagram is the intended topology, not an implemented E2E application.
+Phases 00–12 are complete only in their recorded component/bounded scopes.
+Phase 13 is pending; portfolio/release readiness is not established.
+
+## Executable baseline
+
+- Frontend: standalone fictional citation panel, no backend connection.
+- Backend: callable authorization/upload/retrieval/chat services, exercised by
+  tests; no application entry point composes the complete flow.
+- Separated chat: Converse Resolver/Writer adapters and an injected grounding
+  protocol; no productive grounding adapter is wired.
+- Harness: separate minimal-prompt service with M2M Gateway tools and scoped
+  Memory; end-user identity/correlation through outbound tools is unproven.
+- Gateway/MCP/review: component evidence with grant-based authorization.
+- Telemetry: scoped chat and Gateway flows, not a joined application trace.
+
+## Target topology (not release evidence)
 
 ```mermaid
 flowchart LR

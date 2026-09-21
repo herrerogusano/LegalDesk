@@ -6,8 +6,14 @@ a legal product, and it must only use public or wholly fictional documents.
 
 ## Current status
 
-Phases 00–12 are complete. The
-portfolio MVP covers deterministic authorization, presigned document upload,
+Phases 00–12 are complete within their recorded component/bounded scopes.
+The release audit is **NOT_READY_FOR_PROD**: the frontend is a static example
+and one integrated application has not been demonstrated. Phase 13
+(`PLAN_13_INTEGRATION_RELEASE.md`) addresses local integration; AWS smoke and
+promotion to prod require later explicit approval. See the
+[release audit](docs/release-audit.md).
+
+The implemented components cover deterministic authorization, presigned document upload,
 S3 Vectors-backed authorized retrieval, retrieve-then-generate chat with
 citations, Guardrails, Gateway → MCP metadata tools, human review tasks,
 short-term Memory, identity isolation, and redacted application telemetry.
@@ -38,11 +44,12 @@ added closed grounding diagnostic codes. Its authorized run used exactly 9
 resolver and 9 writer calls, zero retries, and accepted `6/9`; importantly, the
 resolver passed `9/9`, isolating all remaining failures to writer/oracle
 phrasing. Writer `1.2.0` now preserves requested values with their units and
-the oracle accepts bounded omission/count paraphrases without accepting
-invented claims. The writer-only follow-up used 9 calls, zero retries, and
-accepted `8/9`; only one partial answer remained a conservative lexical false
-negative. A bounded relation-token canonicalizer now covers grammatical forms
-without permitting new names, entities, directives, or typed values. The local
+the oracle accepts bounded omission/count paraphrases. The release audit also
+reproduced semantic false positives and legitimate-paraphrase false negatives;
+this oracle is not a productive grounding validator. The writer-only follow-up
+used 9 calls, zero retries, and accepted `8/9`; one partial answer failed lexical
+validation, without retained text sufficient to prove why. A bounded
+relation-token canonicalizer covers selected grammatical forms. The local
 regression remains `9/9`. The one-call targeted check then passed `1/1`, giving
 composite staged acceptance of resolver `9/9` and writer `9/9`, with all
 reports metadata-only and all historical failures preserved. This closes the

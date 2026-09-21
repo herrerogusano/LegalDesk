@@ -107,6 +107,11 @@ Destruir infraestructura al terminar cuando no se necesite.
 
 ## Acceptance criteria globales a confirmar
 
+Release-audit correction (2026-09-21): checks below record historical component
+acceptance, not integrated E2E evidence. Application composition, end-user
+Harness/tool identity, source inspection and joined trace remain incomplete.
+Phase 13 owns these release gates; historical checkboxes do not imply readiness.
+
 - [x] Auth + select matter + upload + ask
 - [x] Grounded answer + citations
 - [x] Lambda/API tool through Gateway

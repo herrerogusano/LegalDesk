@@ -2,6 +2,10 @@
 
 ## Initial component flow
 
+This is the intended topology, not evidence of an executable E2E system.
+At the Phase 13 baseline frontend, backend chat and Harness are separate flows;
+see `architecture-final.md` and `release-audit.md`.
+
 ```mermaid
 flowchart LR
   subgraph Untrusted[Untrusted client boundary]
