@@ -2,8 +2,11 @@
 
 Status: local deterministic block complete. The authorized real-model work is
 incomplete: the Harness smoke had `0/4` accepted under structured-trace policy,
-and the direct Bedrock smoke had `2/4` accepted with `3` model calls plus one
-local no-evidence case. Any rerun requires new explicit authorization.
+the direct Bedrock smoke had `2/4` accepted with `3` model calls plus one
+local no-evidence case, and the one-time two-case follow-up had `0/2` accepted.
+The follow-up exposed a prompt-policy issue; the local fix is version `1.2.0`.
+The final two-case runner is prepared but not executed. Any rerun requires new
+explicit authorization.
 
 | Criterion | Evidence | Result |
 |---|---|---|
@@ -21,7 +24,8 @@ local no-evidence case. Any rerun requires new explicit authorization.
 | README/architecture/cost/teardown | `README.md`, `docs/architecture-final.md`, existing infra docs | PASS |
 | Bounded real-model smoke | `evals/results/phase12-real-smoke-report.json`: exactly `4/4` attempts, `0` retries, `0/4` accepted under structured-trace policy; historical lexical field recorded `2/4` | INCOMPLETE |
 | Direct Bedrock smoke | `evals/results/phase12-direct-bedrock-report.json`: `3/3` model calls, `0` retries, `2/4` accepted; no-evidence case local | INCOMPLETE |
-| Direct Bedrock two-case follow-up | `evals/direct_bedrock_followup.py`: prepared with cap `2`, not executed; new approval required | PENDING |
+| Direct Bedrock two-case follow-up | `evals/results/phase12-direct-bedrock-followup-report.json`: exactly `2/2` model calls, `0` retries, `0/2` accepted; one-time follow-up executed, no rerun permitted without new approval | INCOMPLETE |
+| Prompt policy fix and final two-case runner | `prompts/legaldesk-system.md` version `1.2.0`; `evals/direct_bedrock_final.py` is capped at exactly `2` calls with current prompt and distinct report path, but was not executed | PENDING |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double

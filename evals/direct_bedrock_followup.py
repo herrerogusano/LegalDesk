@@ -1,14 +1,15 @@
-"""Prepare the exact two-case direct-Bedrock Phase 12 follow-up.
+"""Run the exact two-case direct-Bedrock Phase 12 follow-up.
 
-This follow-up is intentionally not executed by the local suite. It exists to
-retry only the two model cases that were not accepted by the historical
-three-call smoke, after the shared validator policy was corrected.
+This follow-up is bounded to one attempt per case. It retries only the two
+model cases that were not accepted by the historical three-call smoke, after
+the shared validator policy was corrected.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import replace
@@ -51,7 +52,23 @@ FOLLOW_UP_CASES: tuple[DirectCase, ...] = tuple(
 )
 MAX_MODEL_INVOCATIONS = 2
 TOTAL_CASES = 2
+CURRENT_PROMPT_VERSION = "1.2.0"
+CURRENT_PROMPT_SHA256 = "d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2"
 ROOT = Path(__file__).resolve().parents[1]
+HISTORICAL_REPORT_PATH = (ROOT / "evals" / "results" / "phase12-direct-bedrock-followup-report.json").resolve()
+DEFAULT_OUTPUT = ROOT / "evals" / "results" / "phase12-direct-bedrock-followup-rerun-report.json"
+
+
+def _assert_output_path_is_not_historical(output_path: Path | None) -> None:
+    """Never allow a follow-up execution to overwrite its one-time evidence."""
+
+    if output_path is None:
+        return
+    resolved_output = output_path.resolve()
+    if os.path.normcase(str(resolved_output)) == os.path.normcase(str(HISTORICAL_REPORT_PATH)):
+        raise RuntimeError(
+            "historical Phase 12 follow-up report is immutable; use the final runner's distinct output path"
+        )
 
 
 def run_follow_up(
@@ -71,7 +88,12 @@ def run_follow_up(
     # Validate the cap before loading the prompt or creating a client.
     if sum(bool(case.evidence) for case in cases) != MAX_MODEL_INVOCATIONS:
         raise RuntimeError("follow-up must contain exactly two model cases")
+    _assert_output_path_is_not_historical(output_path)
     prompt = (prompt_provider or FileSystemSystemPromptProvider()).load()
+    if prompt.version != CURRENT_PROMPT_VERSION:
+        raise RuntimeError("follow-up requires the current prompt version")
+    if prompt.sha256 != CURRENT_PROMPT_SHA256:
+        raise RuntimeError("follow-up requires the exact approved prompt artifact")
     factory = client_factory or (lambda selected_region: __import__("boto3").client("bedrock-runtime", region_name=selected_region))
     client = factory(region)
     results: list[dict[str, object]] = []
@@ -117,7 +139,7 @@ def run_follow_up(
     report: dict[str, object] = {
         "runner": "legaldesk-phase12-direct-bedrock-followup",
         "runnerVersion": "1.0.0",
-        "mode": "direct-bedrock-followup-prepared-not-executed",
+        "mode": "direct-bedrock-followup-bounded",
         "modelId": MODEL_ID,
         "region": region,
         "promptId": prompt.prompt_id,
@@ -143,7 +165,7 @@ def run_follow_up(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--region", default=REGION)
-    parser.add_argument("--output", type=Path, default=ROOT / "evals" / "results" / "phase12-direct-bedrock-followup-report.json")
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args(argv)
     report = run_follow_up(region=args.region, output_path=args.output)
     print(json.dumps({"mode": report["mode"], "acceptedCases": report["acceptedCases"], "totalCases": report["totalCases"]}, sort_keys=True))

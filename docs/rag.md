@@ -246,7 +246,7 @@ response without invoking a model:
   "citations": [],
   "evidenceStatus": "insufficient_evidence",
   "disclaimerRequired": true,
-  "promptVersion": "1.1.0",
+  "promptVersion": "1.2.0",
   "promptSha256": "<sha256 of the loaded prompt artifact>"
 }
 ```

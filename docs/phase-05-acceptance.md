@@ -4,7 +4,7 @@
 
 | Criterion | Evidence |
 | --- | --- |
-| Readable, explicitly versioned source of truth | [`prompts/legaldesk-system.md`](../prompts/legaldesk-system.md) has ID `legaldesk-system` and version `1.1.0`; no full copy is embedded in Python, documentation, or Phase 01 IaC. |
+| Readable, explicitly versioned source of truth | [`prompts/legaldesk-system.md`](../prompts/legaldesk-system.md) has ID `legaldesk-system`, version `1.2.0`, and SHA-256 `d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2`; no full copy is embedded in Python, documentation, or Phase 01 IaC. |
 | Server-controlled, provider-neutral prompt loading | `backend/src/legaldesk/prompts.py` defines a provider interface and a filesystem implementation. The path is server configuration; browser payload parsing rejects prompt overrides. |
 | Metadata, version, encoding, content, and size validation | `tests/test_prompts.py`: malformed/duplicate metadata, invalid version, missing content, invalid UTF-8, BOM, control characters, and over-limit artifact. |
 | Prompt content is attached at the generation boundary | `tests/test_chat.py`: fake generator receives the loaded `SystemPromptArtifact` with validated content, version, and hash. |
@@ -19,6 +19,11 @@ not implement authentication, ownership, IAM, matter authorization, or
 retrieval filtering. Those controls remain deterministic server
 responsibilities before evidence reaches generation. The browser cannot submit
 prompt content or a prompt path.
+
+Prompt version `1.2.0` distinguishes a directly supported factual answer from
+partial or inconclusive evidence and requires unsafe-request refusals to retain
+the exact JSON contract. The backend validator and server-side citation checks
+remain authoritative.
 
 The Phase 05 provider interface supplies a validated artifact to
 `GenerationRequest`; a future real generator adapter must map its content to a

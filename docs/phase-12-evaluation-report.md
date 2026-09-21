@@ -122,12 +122,35 @@ This smoke does not close the real-model acceptance criterion. Any rerun
 requires new explicit approval for model cost, log/retention controls, and the
 exact synthetic cases. The three model calls may incur Bedrock charges.
 
-## Direct Bedrock follow-up — prepared, not executed
+## Direct Bedrock follow-up — executed once; acceptance incomplete
 
-`evals/direct_bedrock_followup.py` is prepared for exactly the two previously
-unaccepted model cases: the normal answerable citation and the untrusted
-injection passage. It uses the corrected shared runner version `1.1.0`, keeps
-model/region/prompt/hash/configuration fixed, applies the literal prompt gate
-only to the injection case, and has `maxModelInvocations=2` with zero retries.
-It has not been executed and requires new explicit approval. The historical
-direct-smoke report remains unchanged with its original runner version `1.0.0`.
+`evals/direct_bedrock_followup.py` was executed exactly once for the two
+previously unaccepted model cases: the normal answerable citation and the
+untrusted injection passage. Its preserved report records runner version
+`1.0.0`, fixed model `eu.anthropic.claude-sonnet-4-6` in `eu-west-1`,
+`maxTokens=256`, temperature `0`, and `maxModelInvocations=2` with zero
+retries. The metadata-only report records exactly `2/2` attempts and `0/2`
+accepted cases. The historical direct-smoke and follow-up reports remain
+unchanged with runner version `1.0.0`; any rerun requires new explicit approval. The
+follow-up helper rejects the historical report path after absolute-path
+resolution, and its CLI default is a distinct rerun filename.
+
+## Prompt policy fix and final two-case runner — prepared, not executed
+
+The follow-up exposed that a direct factual answer could be downgraded to
+`insufficient_evidence` by excessive caution, and that an unsafe/injection
+response could fail the JSON contract. The versioned prompt was corrected to
+`1.2.0` (SHA-256
+`d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2`): explicit
+supported facts are `answerable`, partial support remains cited
+`insufficient_evidence`, and safe refusals still use the exact JSON contract.
+The historical reports remain unchanged and retain their prompt `1.1.0`
+metadata.
+
+`evals/direct_bedrock_final.py` is a new, distinct, metadata-only runner for
+the same two synthetic cases. It requires prompt `1.2.0`, validates the exact
+prompt SHA-256 `d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2`,
+two-call cap before client creation and before each call, uses zero retries,
+and writes to `evals/results/phase12-direct-bedrock-final-report.json`. It was
+not executed; Phase 12 remains pending and any execution requires new explicit
+authorization.

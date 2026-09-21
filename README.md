@@ -15,8 +15,11 @@ Phase 12 adds 24 deterministic local evaluations across eight security/quality
 categories. No real legal data is permitted and no Phase 12 real-model subset
 is accepted as complete. The managed Harness smoke recorded `0/4` accepted
 structured outcomes; a separate direct Bedrock smoke used `3` model calls plus
-one local no-evidence case and accepted `2/4`. Both remain incomplete evidence,
-not production legal-quality validation.
+one local no-evidence case and accepted `2/4`; its one-time two-case follow-up
+used exactly `2` additional calls and accepted `0/2`. Both remain incomplete
+evidence, not production legal-quality validation.
+The follow-up prompted a local system-prompt fix to version `1.2.0`; a bounded
+final runner is prepared but not executed.
 
 ## Repository layout
 

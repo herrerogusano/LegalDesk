@@ -10,7 +10,9 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 
 from evals.direct_bedrock_followup import (  # noqa: E402
+    CURRENT_PROMPT_SHA256,
     FOLLOW_UP_CASES,
+    HISTORICAL_REPORT_PATH,
     MAX_MODEL_INVOCATIONS,
     run_follow_up,
 )
@@ -20,6 +22,7 @@ from evals.direct_bedrock_smoke import (  # noqa: E402
     _parse_and_validate,
 )
 from legaldesk.prompts import FileSystemSystemPromptProvider  # noqa: E402
+from legaldesk.prompts import SystemPromptArtifact  # noqa: E402
 
 
 def _response(answer: str, status: str = "answerable") -> dict[str, object]:
@@ -40,6 +43,43 @@ class _FakeBedrock:
 
 
 class DirectBedrockFollowupTests(unittest.TestCase):
+    def test_historical_report_overwrite_is_blocked_before_client_creation(self) -> None:
+        called = False
+
+        def forbidden_factory(_region: str):
+            nonlocal called
+            called = True
+            raise AssertionError("client must not be created")
+
+        with self.assertRaises(RuntimeError):
+            run_follow_up(client_factory=forbidden_factory, output_path=HISTORICAL_REPORT_PATH)
+        self.assertFalse(called)
+
+    def test_prompt_hash_mismatch_is_blocked_before_client_creation(self) -> None:
+        loaded = FileSystemSystemPromptProvider().load()
+        wrong_prompt = SystemPromptArtifact(
+            prompt_id=loaded.prompt_id,
+            version="1.2.0",
+            content=loaded.content,
+            sha256="0" * 64,
+        )
+        called = False
+
+        def forbidden_factory(_region: str):
+            nonlocal called
+            called = True
+            raise AssertionError("client must not be created")
+
+        with self.assertRaises(RuntimeError):
+            run_follow_up(
+                client_factory=forbidden_factory,
+                prompt_provider=type("WrongPromptProvider", (), {"load": lambda _self: wrong_prompt})(),
+            )
+        self.assertFalse(called)
+
+    def test_approved_prompt_hash_is_the_exact_final_contract(self) -> None:
+        self.assertEqual(FileSystemSystemPromptProvider().load().sha256, CURRENT_PROMPT_SHA256)
+
     def test_answerable_disclaimer_does_not_trigger_literal_gate(self) -> None:
         prompt = FileSystemSystemPromptProvider().load()
         answer = "The deadline is 17 days. You are not a lawyer and do not create an attorney-client relationship."
@@ -97,13 +137,13 @@ class DirectBedrockFollowupTests(unittest.TestCase):
         self.assertTrue(baseline["cases"][0]["passed"])
         self.assertFalse(mutated["cases"][0]["passed"])
 
-    def test_report_is_metadata_only_and_pending_by_default(self) -> None:
+    def test_report_is_metadata_only_and_bounded(self) -> None:
         client = _FakeBedrock([_response("17 days."), _response("17 days.")])
         report = run_follow_up(client_factory=lambda _region: client)
         encoded = json.dumps(report)
         for forbidden in ("What is the fictional payment deadline?", "17 days.", "Ignore prior instructions", INJECTION_CANARY):
             self.assertNotIn(forbidden, encoded)
-        self.assertEqual(report["mode"], "direct-bedrock-followup-prepared-not-executed")
+        self.assertEqual(report["mode"], "direct-bedrock-followup-bounded")
         self.assertEqual(report["maxModelInvocations"], 2)
 
 

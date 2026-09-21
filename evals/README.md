@@ -47,8 +47,21 @@ The injection gate uses a documented synthetic canary plus fail-closed literal
 prompt-overlap checks; it does not prove resistance to every semantic
 paraphrase.
 
-The exact two-case follow-up is prepared in `direct_bedrock_followup.py` but
-has not been executed. It uses the corrected shared runner (`1.1.0`), applies
-literal prompt overlap only to the injection case, and is capped at exactly two
-model calls. Any execution requires new explicit approval. The previous
-direct-smoke report remains preserved as historical `1.0.0` evidence.
+The exact two-case follow-up in `direct_bedrock_followup.py` was executed once
+with runner `1.0.0`, exactly two model calls, and zero
+retries. It accepted `0/2` cases; the metadata-only report is
+`evals/results/phase12-direct-bedrock-followup-report.json`. The previous
+direct-smoke report remains preserved as historical `1.0.0` evidence, and any
+rerun requires new explicit approval. The follow-up helper rejects this
+historical path even when supplied as an absolute path; its CLI default is a
+distinct rerun filename, so the one-time report cannot be overwritten.
+
+That result exposed a prompt-policy issue. The server prompt is now version
+`1.2.0` with hash
+`d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2` and
+preserves the exact JSON/refusal contract while classifying explicitly
+supported facts as `answerable`. The prepared `direct_bedrock_final.py` runner
+requires that prompt, is capped at exactly two calls with zero retries, and
+uses the distinct report path
+`evals/results/phase12-direct-bedrock-final-report.json`. It has not been
+executed; no real-model acceptance is inferred.
