@@ -6,14 +6,14 @@ a legal product, and it must only use public or wholly fictional documents.
 
 ## Current status
 
-Phases 00–11 are complete and Phase 12 local evaluation is complete. The
+Phases 00–12 are complete. The
 portfolio MVP covers deterministic authorization, presigned document upload,
 S3 Vectors-backed authorized retrieval, retrieve-then-generate chat with
 citations, Guardrails, Gateway → MCP metadata tools, human review tasks,
 short-term Memory, identity isolation, and redacted application telemetry.
 Phase 12 adds 24 deterministic local evaluations across eight security/quality
-categories. No real legal data is permitted and no Phase 12 real-model subset
-is accepted as complete. The managed Harness smoke recorded `0/4` accepted
+categories. No real legal data is permitted. The managed Harness smoke
+historically recorded `0/4` accepted
 structured outcomes; a separate direct Bedrock smoke used `3` model calls plus
 one local no-evidence case and accepted `2/4`; its one-time two-case follow-up
 used exactly `2` additional calls and accepted `0/2`. Both remain incomplete
@@ -21,8 +21,8 @@ evidence, not production legal-quality validation.
 The follow-up prompted a local system-prompt fix to version `1.2.0`; a bounded
 final runner was executed once with exactly `2/2` calls and `0` retries, and
 accepted `1/2`. The factual citation case remained insufficient evidence while
-the untrusted-injection case passed. Phase 12 real-model acceptance remains
-incomplete; no retry is permitted without separate authorization.
+the untrusted-injection case passed. At that stage, real-model acceptance was
+incomplete and no retry was permitted without separate authorization.
 The separated `1.3.0` remediation was subsequently executed once over nine
 synthetic cases. It used 9 resolver and 5 writer calls (`14` total), zero
 retries, and accepted `3/9`: all factual cases passed, while partial and
@@ -43,8 +43,11 @@ invented claims. The writer-only follow-up used 9 calls, zero retries, and
 accepted `8/9`; only one partial answer remained a conservative lexical false
 negative. A bounded relation-token canonicalizer now covers grammatical forms
 without permitting new names, entities, directives, or typed values. The local
-regression remains `9/9`, and a one-call targeted check is prepared but not
-executed.
+regression remains `9/9`. The one-call targeted check then passed `1/1`, giving
+composite staged acceptance of resolver `9/9` and writer `9/9`, with all
+reports metadata-only and all historical failures preserved. This closes the
+Phase 12 bounded real-model subset; it does not claim production legal quality
+or statistical model reliability.
 
 ## Repository layout
 

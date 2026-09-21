@@ -62,8 +62,8 @@ That result exposed a prompt-policy issue. The historical
 capped at exactly two calls with zero retries, and uses the distinct report path
 `evals/results/phase12-direct-bedrock-final-report.json`. It was executed once
 with exactly `2/2` attempts and `0` retries; the metadata-only report records
-`acceptedCases=1/2`. Phase 12 remains incomplete and no retry is permitted
-without new explicit authorization.
+`acceptedCases=1/2`. At that point Phase 12 remained incomplete and no retry
+was permitted without new explicit authorization.
 
 The current local remediation prompt is version `1.3.0`, SHA-256
 `de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56`.
@@ -139,4 +139,6 @@ typed values, and directives. `evals.phase12_writer_targeted` pins the
 immutable `8/9` report by canonical hash and permits exactly one call for the
 sole failed case. It defaults to
 `evals/results/phase12-remediation-writer-v2-report.json`, uses zero retries,
-stores metadata only, and requires separate authorization.
+and stores metadata only. The authorized call passed `1/1`. Resolver-v3,
+writer-v1, and writer-v2 therefore provide composite staged evidence of
+resolver `9/9` and writer `9/9`; all three reports are immutable.

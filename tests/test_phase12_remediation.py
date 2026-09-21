@@ -298,6 +298,8 @@ class Phase12RemediationTests(unittest.TestCase):
             assert_output_path(Path("evals/results/phase12-remediation-resolver-v2-report.json"))
         with self.assertRaises(ValueError):
             assert_output_path(Path("evals/results/phase12-remediation-resolver-v3-report.json"))
+        with self.assertRaises(ValueError):
+            assert_output_path(Path("evals/results/phase12-remediation-writer-v2-report.json"))
 
     def test_real_execution_never_overwrites_its_own_report(self) -> None:
         output = Path("evals/results/phase12-existing-real-test.json")

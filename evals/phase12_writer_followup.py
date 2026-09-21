@@ -65,6 +65,7 @@ HISTORICAL_REPORT_NAMES = {
     "phase12-remediation-real-report.json",
     "phase12-remediation-resolver-v2-report.json",
     "phase12-remediation-resolver-v3-report.json",
+    "phase12-remediation-writer-v2-report.json",
 }
 
 

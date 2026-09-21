@@ -107,16 +107,16 @@ Destruir infraestructura al terminar cuando no se necesite.
 
 ## Acceptance criteria globales a confirmar
 
-- [ ] Auth + select matter + upload + ask
-- [ ] Grounded answer + citations
-- [ ] Lambda/API tool through Gateway
-- [ ] Remote MCP tool through Gateway
-- [ ] Guardrails + automated tests
-- [ ] Versioned system prompt
-- [ ] Conversation context
-- [ ] Safe long-term memory or justified rejection
-- [ ] Cross-matter isolation
-- [ ] Traces for decision/retrieval/tool/guardrail/final
-- [ ] Repeatable deploy
-- [ ] Teardown
-- [ ] README trade-offs/limitations/security/production gaps
+- [x] Auth + select matter + upload + ask
+- [x] Grounded answer + citations
+- [x] Lambda/API tool through Gateway
+- [x] Remote MCP tool through Gateway
+- [x] Guardrails + automated tests
+- [x] Versioned system prompt
+- [x] Conversation context
+- [x] Safe long-term memory or justified rejection
+- [x] Cross-matter isolation
+- [x] Traces for decision/retrieval/tool/guardrail/final
+- [x] Repeatable deploy
+- [x] Teardown
+- [x] README trade-offs/limitations/security/production gaps

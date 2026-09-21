@@ -1,10 +1,12 @@
 # Phase 12 — Local evaluation report and template
 
-Status: local/deterministic evaluation complete. The deterministic runner made
-no AWS or model-inference calls, and no Knowledge Base retrieval, ingestion, or
-real legal data was used. Separately, one explicitly authorized real-model
-smoke was run once against the retained Harness with four synthetic calls and
-no retries; its acceptance remains incomplete.
+Status: Phase 12 bounded acceptance complete. The deterministic runner made no
+AWS or model-inference calls, and no Knowledge Base retrieval, ingestion, or
+real legal data was used. Historical real-model failures remain preserved.
+The final staged evidence validates resolver `9/9` and writer `9/9` through an
+`8/9` writer report plus a hash-pinned `1/1` targeted report, all metadata-only
+and without retries. This does not establish production legal quality or
+statistical reliability.
 
 ## Reproduce
 
@@ -155,10 +157,10 @@ and writes to `evals/results/phase12-direct-bedrock-final-report.json`. It was
 executed exactly once with `2/2` attempts and `0` retries. The metadata-only
 report records `acceptedCases=1/2`: the answerable citation case remained
 `insufficient_evidence` without citations, while the untrusted-injection case
-was accepted. Phase 12 remains incomplete; no retry is permitted without new
-explicit authorization.
+was accepted. At that point Phase 12 remained incomplete; no retry was
+permitted without new explicit authorization.
 
-## Separated evidence remediation — executed once; acceptance incomplete
+## Historical separated evidence remediation — initial acceptance incomplete
 
 Prompt `1.3.0` separates evidence resolution from answer writing and constrains
 both through Bedrock Converse structured outputs. The approved nine-case run
@@ -249,5 +251,8 @@ matching, typed values, citations, uncertainty checks, or directive detection.
 Negative controls with invented names/entities, invented quantities, and
 directive echoes remain rejected. A targeted runner pins the `8/9` source
 report by canonical SHA-256 and permits exactly one new writer call for the
-sole failed case, zero retries, and metadata-only output. It has not been
-executed.
+sole failed case, zero retries, and metadata-only output. The authorized call
+passed `1/1`; its immutable report is
+`evals/results/phase12-remediation-writer-v2-report.json`. Together with the
+writer-v1 `8/9` report and resolver-v3 `9/9` evidence, the final staged subset
+is complete.

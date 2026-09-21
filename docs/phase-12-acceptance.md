@@ -1,18 +1,23 @@
 # Phase 12 acceptance
 
-Status: local deterministic block complete. The authorized real-model work is
-incomplete: the Harness smoke had `0/4` accepted under structured-trace policy,
+Status: complete for the Phase 12 bounded acceptance scope. The final staged
+evidence is resolver `9/9` plus writer `9/9`: writer follow-up v1 accepted
+`8/9`, and the canonical-hash-pinned one-case follow-up accepted the sole
+remaining case `1/1`. Every real runner used zero retries and metadata-only
+reports. This is bounded synthetic evidence, not production legal-quality or
+statistical reliability evidence. Earlier historical runs remain immutable:
+the Harness smoke had `0/4` accepted under structured-trace policy,
 the direct Bedrock smoke had `2/4` accepted with `3` model calls plus one
 local no-evidence case, and the one-time two-case follow-up had `0/2` accepted.
 The follow-up exposed a prompt-policy issue; the historical fix was version
 `1.2.0`. The final two-case runner was executed once with that prompt: exactly
 `2/2` model attempts, `0` retries, and `1/2` accepted. The answerable citation
 case remained `insufficient_evidence` without citations; the untrusted-injection
-case was accepted. No retry is permitted without a new, separate approval, so
-the real-model acceptance remains incomplete. The subsequent separated-pipeline
+case was accepted. At that point no retry was permitted without a new,
+separate approval, so acceptance remained incomplete. The subsequent separated-pipeline
 and prompt `1.3.0` remediation was executed once: 9 resolver calls plus 5
 writer calls (`14` total), zero retries, and `3/9` accepted. All three factual
-cases passed; partial and injection behavior remains incomplete. Historical
+cases passed; partial and injection behavior remained incomplete. Historical
 reports remain immutable. A second authorized run of the dedicated stage
 pipeline used 9 resolver and 6 writer calls (`15` total), zero retries, and
 accepted `5/9`: factual `3/3`, injection `2/3`, and partial `0/3`. Stage prompt
@@ -22,8 +27,8 @@ one injection writer output failed the bounded grounding oracle. Writer
 `1.2.0` and the revised local oracle pass `9/9` locally, but the writer-only
 real follow-up accepted `8/9` after 9 calls and zero retries. Its sole failure
 was partial case 03 with `UNSUPPORTED_LEXICAL_CLAIM`. A bounded morphological
-canonicalizer retains all negative controls locally; one targeted real call
-remains unexecuted.
+canonicalizer retains all negative controls locally; the targeted real call
+passed `1/1` with exactly one inference and zero retries.
 
 | Criterion | Evidence | Result |
 |---|---|---|
@@ -47,13 +52,15 @@ remains unexecuted.
 | Dedicated resolver/writer run | `evals/results/phase12-remediation-resolver-v2-report.json`: stage prompts `1.0.0`, `9` resolver + `6` writer calls, `0` retries, `5/9` accepted; factual `3/3`, partial `0/3`, injection `2/3` | INCOMPLETE |
 | Generic resolver remediation | `evals/results/phase12-remediation-resolver-v3-report.json`: resolver `1.1.0`, writer `1.1.0`, `18` calls, `0` retries, `6/9` accepted; resolver resolution matched `9/9`, with three writer/oracle failures | PASS (resolver), INCOMPLETE (writer) |
 | Writer/oracle follow-up | `evals/results/phase12-remediation-writer-v1-report.json`: writer `1.2.0`, `9` calls, `0` retries, `8/9` accepted; sole failure partial-03 `UNSUPPORTED_LEXICAL_CLAIM` | INCOMPLETE |
-| Targeted lexical-oracle follow-up | bounded relational morphology only; local positive and negative controls pass; one-call metadata-only runner pins the immutable `8/9` report by canonical hash | PASS (local), INCOMPLETE (real) |
+| Targeted lexical-oracle follow-up | `evals/results/phase12-remediation-writer-v2-report.json`: bounded relational morphology only, immutable `8/9` source pinned by canonical hash, exactly `1/1` call accepted, `0` retries, metadata-only | PASS |
+| Final staged real-model subset | resolver-v3 proves resolver `9/9`; writer-v1 plus writer-v2 prove writer `8/9 + 1/1 = 9/9` with writer prompt `1.2.0` | PASS (bounded synthetic subset) |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double
-generator is not evidence of real model reasoning quality. Real-model evaluation,
-managed trace inspection, and production legal-data readiness remain explicit
-gaps rather than being silently inferred from local results.
+generator is not evidence of broad model reasoning quality. The bounded staged
+real-model subset is complete, while managed trace inspection, evaluation on a
+larger distribution, and production legal-data readiness remain explicit gaps
+rather than being silently inferred from these results.
 
 The scorer keeps the oracle (`expected`) separate from execution. Authorization,
 tool routing, Guardrail outcome, evidence status, citations, escalation, and the

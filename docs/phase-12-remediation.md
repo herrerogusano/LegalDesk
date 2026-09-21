@@ -80,8 +80,8 @@ budget and separate approval. Prompt `1.3.0` (SHA-256
 `de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56`)
 was executed once with the separated pipeline. The bounded run made 9 resolver
 and 5 writer calls (`14` total), with zero retries, and accepted `3/9`. All
-three factual cases passed; the partial and injection groups remain incomplete.
-No rerun is permitted without separate approval.
+three factual cases passed; at that stage the partial and injection groups
+remained incomplete, and no rerun was permitted without separate approval.
 
 ## Resolver/writer isolation after the 3/9 run
 
@@ -162,7 +162,12 @@ only explicit grammatical variants of neutral evidence-relation tokens. It
 does not stem arbitrary words, weaken typed-value checks, or permit invented
 names/entities. The targeted follow-up pins the immutable `8/9` report by a
 canonical JSON hash and permits one call for exactly partial-03, with zero
-retries and metadata-only output. It has not been executed.
+retries and metadata-only output. The authorized call passed `1/1`; the
+immutable report is
+`evals/results/phase12-remediation-writer-v2-report.json`. Combined with the
+resolver-v3 `9/9` and writer-v1 `8/9` reports, the bounded staged subset is
+complete. This remains synthetic evaluation evidence, not production legal
+quality or broad statistical reliability.
 
 The repository exposes the separated path through `answer_question` only when
 resolver, writer, and grounding validator are supplied together; partial wiring
