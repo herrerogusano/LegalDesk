@@ -20,8 +20,16 @@ Branch: `phase/13-integration-release`, from `developer`.
   24/24, zero AWS calls, no report overwrites.
 - [x] Add Phase 13 to master plan; distinguish component and E2E readiness.
 - [x] Record potentially necessary resources, without claiming live inventory.
-- [ ] Resolve trusted identity/correlation transport through managed Harness.
+- [x] Resolve trusted identity/correlation transport through managed Harness.
   Never invent a transport in doubles that the provider does not support.
+
+Feasibility confirmed locally against the installed SDK and official Harness
+Tools documentation: invoke-time tools/allowedTools overrides support
+remoteMcp URL and headers. Use the existing JWT Gateway endpoint with the
+verified user's token in transport headers, not messages; replace M2M defaults
+and bind selected matter/session/correlation server-side. No ADR service change
+or custom Runtime is needed. Provider behavior still needs the later live smoke.
+Reference: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-tools.html
 
 Baseline: developer `eedc520abf4044f453f1b251e3fe66cbe0230639`, 2026-09-21.
 
