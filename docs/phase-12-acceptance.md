@@ -13,7 +13,11 @@ the real-model acceptance remains incomplete. The subsequent separated-pipeline
 and prompt `1.3.0` remediation was executed once: 9 resolver calls plus 5
 writer calls (`14` total), zero retries, and `3/9` accepted. All three factual
 cases passed; partial and injection behavior remains incomplete. Historical
-reports remain immutable.
+reports remain immutable. A second authorized run of the dedicated stage
+pipeline used 9 resolver and 6 writer calls (`15` total), zero retries, and
+accepted `5/9`: factual `3/3`, injection `2/3`, and partial `0/3`. Stage prompt
+`1.1.0` is a new local-only remediation and therefore does not yet change the
+real-model status.
 
 | Criterion | Evidence | Result |
 |---|---|---|
@@ -34,7 +38,8 @@ reports remain immutable.
 | Direct Bedrock two-case follow-up | `evals/results/phase12-direct-bedrock-followup-report.json`: exactly `2/2` model calls, `0` retries, `0/2` accepted; one-time follow-up executed, no rerun permitted without new approval | INCOMPLETE |
 | Prompt policy fix and final two-case runner | `evals/results/phase12-direct-bedrock-final-report.json`: prompt `1.2.0` with the fixed SHA-256, exactly `2/2` calls, `0` retries, `1/2` accepted; factual citation remained insufficient and injection case accepted | INCOMPLETE |
 | Separated evidence-pipeline remediation | `evals/results/phase12-remediation-real-report.json`: prompt `1.3.0`, `9` resolver + `5` writer calls, `0` retries, `3/9` accepted; factual `3/3`, partial `0/3`, injection `0/3` | INCOMPLETE |
-| Dedicated resolver/writer prompt solution | `evals/results/phase12-solution-synthetic-report.json`: stage prompts independently versioned/hashed, claim-to-cited-passage grounding, exact fixture/prompt pinning, `9/9` local with `0` AWS calls; real runner `5.1.0` not executed | PASS (local), INCOMPLETE (real) |
+| Dedicated resolver/writer run | `evals/results/phase12-remediation-resolver-v2-report.json`: stage prompts `1.0.0`, `9` resolver + `6` writer calls, `0` retries, `5/9` accepted; factual `3/3`, partial `0/3`, injection `2/3` | INCOMPLETE |
+| Generic stage-prompt remediation | `evals/results/phase12-solution-v2-synthetic-report.json`: stage prompts `1.1.0`, explicit partial/none semantics, metadata-only grounding reasons, exact fixture/prompt pinning, `9/9` local with `0` AWS calls; runner `6.0.0` not executed | PASS (local), INCOMPLETE (real) |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double

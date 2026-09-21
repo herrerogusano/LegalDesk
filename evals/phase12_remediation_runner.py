@@ -31,9 +31,9 @@ from legaldesk.evidence import (  # noqa: E402
 )
 from legaldesk.prompts import FileSystemSystemPromptProvider  # noqa: E402
 try:
-    from .grounding_oracle import GroundingSpec, evaluate_grounding  # noqa: E402
+    from .grounding_oracle import GroundingSpec, evaluate_grounding_detailed  # noqa: E402
 except ImportError:  # Direct script execution.
-    from grounding_oracle import GroundingSpec, evaluate_grounding  # type: ignore[no-redef]  # noqa: E402
+    from grounding_oracle import GroundingSpec, evaluate_grounding_detailed  # type: ignore[no-redef]  # noqa: E402
 try:
     from .synthetic_debug import SYNTHETIC_CASES  # noqa: E402
 except ImportError:  # Direct script execution.
@@ -46,21 +46,22 @@ MAX_RESOLVER_INVOCATIONS = 9
 MAX_WRITER_INVOCATIONS = 9
 MAX_REAL_MODEL_INVOCATIONS = MAX_RESOLVER_INVOCATIONS + MAX_WRITER_INVOCATIONS
 MAX_PER_GROUP = 3
-RUNNER_VERSION = "5.1.0"
+RUNNER_VERSION = "6.0.0"
 EXPECTED_PROMPT_VERSION = "1.3.0"
 EXPECTED_PROMPT_SHA256 = "de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56"
-EXPECTED_RESOLVER_PROMPT_VERSION = "1.0.0"
-EXPECTED_RESOLVER_PROMPT_SHA256 = "af14a60ec2c15e23b0cb1bf36f8374d768e72cad40b90ad2260a988ea9166984"
-EXPECTED_WRITER_PROMPT_VERSION = "1.0.0"
-EXPECTED_WRITER_PROMPT_SHA256 = "5a03f9b51fa18a3956c3050f3829de73f4b9b8548c1a1aaa868b0ad154adac66"
+EXPECTED_RESOLVER_PROMPT_VERSION = "1.1.0"
+EXPECTED_RESOLVER_PROMPT_SHA256 = "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672"
+EXPECTED_WRITER_PROMPT_VERSION = "1.1.0"
+EXPECTED_WRITER_PROMPT_SHA256 = "e91ab61c8bcb63d5df77aa8a906d89b3fa3b26460bfd6378eb63ed2de74eeb60"
 RESULTS_ROOT = ROOT / "evals" / "results"
-DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-resolver-v2-report.json"
+DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-resolver-v3-report.json"
 HISTORICAL_REPORTS = {
     "phase12-remediation-synthetic-report.json",
     "phase12-direct-bedrock-report.json",
     "phase12-direct-bedrock-followup-report.json",
     "phase12-direct-bedrock-final-report.json",
     "phase12-remediation-real-report.json",
+    "phase12-remediation-resolver-v2-report.json",
 }
 CASE_GROUPS = {
     "factual": tuple(f"synthetic-factual-{index:02d}" for index in range(1, 4)),
@@ -182,12 +183,16 @@ class _BoundedClient:
         return self._client.converse(**kwargs)
 
 
-def _deterministic_grounding(answer: str, case: Mapping[str, object], citation_ids: tuple[str, ...]) -> Mapping[str, object]:
+def _deterministic_grounding_detailed(
+    answer: str,
+    case: Mapping[str, object],
+    citation_ids: tuple[str, ...],
+) -> tuple[Mapping[str, object], str]:
     """Use the fixture-declared claim oracle; no third model call is made."""
     spec = case.get("groundingSpec")
     passages = case.get("passages")
     if not isinstance(spec, GroundingSpec) or not isinstance(passages, (list, tuple)):
-        return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+        return ({"grounded": False, "score": 0.0, "matchedCitationIds": []}, "FIXTURE_INVALID")
     available_ids = tuple(
         item.get("citationId")
         for item in passages
@@ -200,13 +205,24 @@ def _deterministic_grounding(answer: str, case: Mapping[str, object], citation_i
         and isinstance(item.get("citationId"), str)
         and isinstance(item.get("text"), str)
     }
-    return evaluate_grounding(
+    return evaluate_grounding_detailed(
         answer,
         spec,
         citation_ids,
         available_ids,
         evidence_by_citation_id,
     )
+
+
+def _deterministic_grounding(
+    answer: str,
+    case: Mapping[str, object],
+    citation_ids: tuple[str, ...],
+) -> Mapping[str, object]:
+    """Compatibility wrapper exposing only the production validator shape."""
+
+    result, _reason_code = _deterministic_grounding_detailed(answer, case, citation_ids)
+    return result
 
 
 def _error_code(stage: str, exc: Exception) -> str:
@@ -219,6 +235,22 @@ def _error_code(stage: str, exc: Exception) -> str:
     if isinstance(exc, GroundingContractError):
         return "GROUNDING_INVALID"
     return f"{stage.upper()}_PROVIDER_FAILURE"
+
+
+def _resolution_mismatch_codes(
+    actual: Mapping[str, object],
+    expected: Mapping[str, object],
+) -> list[str]:
+    """Describe only mismatched dimensions; never persist resolver content."""
+
+    codes: list[str] = []
+    if actual.get("coverage") != expected.get("coverage"):
+        codes.append("RESOLUTION_COVERAGE_MISMATCH")
+    if actual.get("conflict") != expected.get("conflict"):
+        codes.append("RESOLUTION_CONFLICT_MISMATCH")
+    if actual.get("supportingCitationIds") != expected.get("supportingCitationIds"):
+        codes.append("RESOLUTION_CITATIONS_MISMATCH")
+    return codes or ["RESOLUTION_ORACLE_MISMATCH"]
 
 
 def run_real_evaluation(*, client: RealConverseClient | None = None, output_path: Path | None = None, execute: bool = False, preflight: bool = False) -> dict[str, object]:
@@ -266,7 +298,11 @@ def run_real_evaluation(*, client: RealConverseClient | None = None, output_path
             metadata["validationCodes"] = ["RESOLUTION_VALID"]
             expected_resolution = case.get("resolver")
             if not isinstance(expected_resolution, Mapping) or normalized.to_dict() != dict(expected_resolution):
-                metadata["errorCodes"] = ["RESOLUTION_ORACLE_MISMATCH"]
+                metadata["errorCodes"] = (
+                    ["RESOLUTION_ORACLE_INVALID"]
+                    if not isinstance(expected_resolution, Mapping)
+                    else _resolution_mismatch_codes(normalized.to_dict(), expected_resolution)
+                )
                 results.append(metadata)
                 continue
             if normalized.coverage.value == "none":
@@ -279,8 +315,14 @@ def run_real_evaluation(*, client: RealConverseClient | None = None, output_path
             answer = written.get("answer") if isinstance(written, Mapping) else None
             if not isinstance(answer, str) or not answer.strip():
                 raise ValueError("writer answer was not text")
+            grounding_raw, grounding_reason = _deterministic_grounding_detailed(
+                answer,
+                case,
+                normalized.supporting_citation_ids,
+            )
+            metadata["groundingDiagnosticCode"] = grounding_reason
             grounding = validate_grounding_result(
-                _deterministic_grounding(answer, case, normalized.supporting_citation_ids),
+                grounding_raw,
                 supporting_citation_ids=normalized.supporting_citation_ids,
             )
             metadata["validationCodes"] = ["RESOLUTION_VALID", "WRITER_VALID", "GROUNDING_VALID"]

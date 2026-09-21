@@ -27,9 +27,15 @@ The separated `1.3.0` remediation was subsequently executed once over nine
 synthetic cases. It used 9 resolver and 5 writer calls (`14` total), zero
 retries, and accepted `3/9`: all factual cases passed, while partial and
 injection cases exposed remaining resolver/grounding gaps.
-The follow-up local fix now isolates resolver and writer prompts and uses a
-claim-to-cited-passage synthetic grounding oracle. Its local regression is `9/9`; the
-updated pipeline has not yet been revalidated against Bedrock.
+The dedicated resolver/writer pipeline was then executed once with stage
+prompts `1.0.0`: 9 resolver plus 6 writer calls (`15` total), zero retries, and
+`5/9` accepted. All factual cases and two injection cases passed. Two partial
+cases were incorrectly classified as having no material support, one partial
+writer failed grounding, and one injection fact was classified as partial.
+The metadata-only report is immutable. A generic local fix in stage prompts
+`1.1.0` now sharpens `partial` versus `none`, preserves facts adjacent to
+embedded directives, and records closed grounding diagnostic codes. Its local
+regression is `9/9`; this revised artifact has not yet been called in AWS.
 
 ## Repository layout
 

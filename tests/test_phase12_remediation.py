@@ -17,6 +17,8 @@ from evals.phase12_remediation_runner import (
     assert_output_path,
     build_real_run_plan,
     _deterministic_grounding,
+    _deterministic_grounding_detailed,
+    _resolution_mismatch_codes,
     preflight_real_run,
     run_real_evaluation,
 )
@@ -40,6 +42,18 @@ class Phase12RemediationTests(unittest.TestCase):
         case = SYNTHETIC_CASES[0]
         result = _deterministic_grounding("The deadline is 17 days, not 99 days.", case, ("citation-1",))
         self.assertFalse(result["grounded"])
+
+    def test_grounding_diagnostic_is_closed_metadata_not_answer_content(self) -> None:
+        case = SYNTHETIC_CASES[0]
+        result, reason = _deterministic_grounding_detailed(
+            "The deadline is 17 days, not 99 days.",
+            case,
+            ("citation-1",),
+        )
+        self.assertFalse(result["grounded"])
+        self.assertEqual(reason, "UNSUPPORTED_TYPED_VALUE")
+        self.assertNotIn("17", reason)
+        self.assertNotIn("99", reason)
 
     def test_grounding_oracle_rejects_negated_required_value(self) -> None:
         case = SYNTHETIC_CASES[0]
@@ -162,6 +176,14 @@ class Phase12RemediationTests(unittest.TestCase):
         self.assertEqual(len({item["caseId"] for item in plan}), 9)
         self.assertTrue(all(item["maxAttempts"] == 1 and item["retries"] == 0 for item in plan))
 
+    def test_resolution_mismatch_diagnostics_identify_dimensions_only(self) -> None:
+        actual = {"coverage": "none", "conflict": False, "supportingCitationIds": []}
+        expected = {"coverage": "partial", "conflict": False, "supportingCitationIds": ["citation-4"]}
+        self.assertEqual(
+            _resolution_mismatch_codes(actual, expected),
+            ["RESOLUTION_COVERAGE_MISMATCH", "RESOLUTION_CITATIONS_MISMATCH"],
+        )
+
     def test_debug_runner_requires_opt_in_and_writes_full_synthetic_report(self) -> None:
         with patch.dict(os.environ, {"EVAL_DEBUG_SYNTHETIC": "true"}):
             with tempfile.TemporaryDirectory() as directory:
@@ -199,10 +221,10 @@ class Phase12RemediationTests(unittest.TestCase):
         self.assertEqual(preflight["model"], MODEL_ID)
         self.assertEqual(preflight["promptVersion"], EXPECTED_PROMPT_VERSION)
         self.assertEqual(preflight["promptHash"], EXPECTED_PROMPT_SHA256)
-        self.assertEqual(preflight["resolverPromptVersion"], "1.0.0")
-        self.assertEqual(preflight["resolverPromptHash"], "af14a60ec2c15e23b0cb1bf36f8374d768e72cad40b90ad2260a988ea9166984")
-        self.assertEqual(preflight["writerPromptVersion"], "1.0.0")
-        self.assertEqual(preflight["writerPromptHash"], "5a03f9b51fa18a3956c3050f3829de73f4b9b8548c1a1aaa868b0ad154adac66")
+        self.assertEqual(preflight["resolverPromptVersion"], "1.1.0")
+        self.assertEqual(preflight["resolverPromptHash"], "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672")
+        self.assertEqual(preflight["writerPromptVersion"], "1.1.0")
+        self.assertEqual(preflight["writerPromptHash"], "e91ab61c8bcb63d5df77aa8a906d89b3fa3b26460bfd6378eb63ed2de74eeb60")
         self.assertEqual(preflight["maxModelInvocations"], 18)
         self.assertEqual(preflight["retryCount"], 0)
         self.assertTrue(preflight["structuredOutput"])
@@ -233,6 +255,8 @@ class Phase12RemediationTests(unittest.TestCase):
             assert_output_path(Path("evals/results/phase12-remediation-synthetic-report.json"))
         with self.assertRaises(ValueError):
             assert_output_path(Path("evals/results/phase12-remediation-real-report.json"))
+        with self.assertRaises(ValueError):
+            assert_output_path(Path("evals/results/phase12-remediation-resolver-v2-report.json"))
 
     def test_real_execution_never_overwrites_its_own_report(self) -> None:
         output = Path("evals/results/phase12-existing-real-test.json")
@@ -300,6 +324,7 @@ class Phase12RemediationTests(unittest.TestCase):
             self.assertEqual(client.calls, 18)
             self.assertEqual(report["inferenceCalls"], 18)
             self.assertEqual(report["acceptedCases"], 9)
+            self.assertTrue(all(case.get("groundingDiagnosticCode") == "VALID" for case in report["cases"]))
             encoded = json.dumps(report)
             for case in SYNTHETIC_CASES:
                 self.assertNotIn(str(case["question"]), encoded)

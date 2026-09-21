@@ -122,10 +122,24 @@ conservatively reject valid phrasing and is not a claim of general production
 semantic grounding; the production output Guardrail remains an independent
 boundary.
 
-Runner `5.1.0` and the new synthetic report validate this design locally at
-`9/9` with zero AWS calls. A real run has not been made with the dedicated
-stage prompts. It is capped at 9 resolver plus 9 writer calls, one total HTTP
-attempt per stage, zero retries, and a new immutable report path.
+Runner `5.1.0` was executed once with dedicated stage prompts `1.0.0`. Its
+immutable metadata-only report is
+`evals/results/phase12-remediation-resolver-v2-report.json`: `5/9` accepted, 9
+resolver plus 6 writer calls, and zero retries. The result isolated two
+resolver errors between `partial` and `none`, one partial writer grounding
+failure, and one injection fact downgraded from `complete` to `partial`.
+
+The next local remediation versions both stage prompts as `1.1.0`. Its rules
+are generic rather than fixture-specific: a related passage that establishes a
+subject or relationship but omits the requested attribute is `partial`; only
+materially unrelated evidence is `none`; and instruction-like text adjacent to
+a supported fact does not reduce coverage. The writer is limited to the
+supported relationship plus the explicitly missing detail. The oracle also
+returns closed metadata-only failure codes while its production-facing
+validator shape remains unchanged. Runner `6.0.0` pins these hashes and writes
+only to a new path. The local report
+`evals/results/phase12-solution-v2-synthetic-report.json` passes `9/9` with zero
+AWS calls. A new real run has not been authorized or executed.
 
 The repository exposes the separated path through `answer_question` only when
 resolver, writer, and grounding validator are supplied together; partial wiring

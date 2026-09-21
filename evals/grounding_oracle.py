@@ -331,17 +331,21 @@ def _contains_forbidden_directive(answer: str, directive: str) -> bool:
     return bool(directive_tokens) and directive_tokens.issubset(answer_tokens)
 
 
-def evaluate_grounding(
+def _grounding_failure(reason_code: str) -> tuple[Mapping[str, object], str]:
+    return ({"grounded": False, "score": 0.0, "matchedCitationIds": []}, reason_code)
+
+
+def evaluate_grounding_detailed(
     answer: str,
     spec: GroundingSpec,
     citation_ids: Sequence[str],
     available_citation_ids: Sequence[str],
     evidence_by_citation_id: Mapping[str, str],
-) -> Mapping[str, object]:
-    """Return the strict validator shape used by ``validate_grounding_result``."""
+) -> tuple[Mapping[str, object], str]:
+    """Return the strict validator shape plus one closed, metadata-only reason."""
 
     if not isinstance(answer, str) or not answer.strip() or not spec.claims:
-        return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+        return _grounding_failure("EMPTY_OR_UNSCOPED_ANSWER")
 
     cited = tuple(citation_ids)
     available = tuple(available_citation_ids)
@@ -353,7 +357,7 @@ def evaluate_grounding(
         or any(item not in evidence_by_citation_id for item in cited)
         or any(not isinstance(evidence_by_citation_id[item], str) for item in cited)
     ):
-        return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+        return _grounding_failure("CITATION_INVALID")
 
     answer_values = _semantic_values(answer)
     answer_value_set = set(answer_values)
@@ -373,16 +377,16 @@ def evaluate_grounding(
         constrained_kinds.update(item.kind for item in required)
         for semantic_value in required:
             if semantic_value not in cited_evidence_values:
-                return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+                return _grounding_failure("SPEC_NOT_SUPPORTED_BY_EVIDENCE")
             for token in re.findall(r"\d+(?:[.]\d+)?", semantic_value.value):
                 normalized_number = _number(token)
                 if normalized_number is not None:
                     allowed_numeric_tokens.add(normalized_number)
 
         if claim.subject_terms and not _has_term(answer, claim.subject_terms):
-            return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+            return _grounding_failure("ANSWER_SUBJECT_MISSING")
         if claim.subject_terms and not _has_term(cited_evidence, claim.subject_terms):
-            return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+            return _grounding_failure("EVIDENCE_SUBJECT_MISSING")
         for term in (*claim.subject_terms, *claim.unknown_markers, *claim.allowed_answer_terms):
             allowed_answer_tokens.update(_normalize(term).split())
 
@@ -393,26 +397,26 @@ def evaluate_grounding(
             else:
                 supported = _has_term(normalized_answer, (raw_value,))
                 if not _has_term(cited_evidence, (raw_value,)):
-                    return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+                    return _grounding_failure("SPEC_NOT_SUPPORTED_BY_EVIDENCE")
             if not supported:
-                return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+                return _grounding_failure("REQUIRED_VALUE_MISSING")
             if semantic_value and any(
                 _required_value_is_negated(answer, value) for value in semantic_value
             ):
-                return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+                return _grounding_failure("REQUIRED_VALUE_NEGATED")
 
         if claim.must_be_unknown:
             if not _has_term(answer, claim.unknown_markers):
-                return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+                return _grounding_failure("UNCERTAINTY_MISSING")
             if not _has_term(cited_evidence, _EVIDENCE_ABSENCE_MARKERS):
-                return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+                return _grounding_failure("EVIDENCE_ABSENCE_UNPROVEN")
 
         forbidden = _constraint_values(claim.forbidden_values)
         if any(value in answer_value_set for value in forbidden) or any(
             _contains_forbidden_directive(normalized_answer, value)
             for value in claim.forbidden_values
         ):
-            return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+            return _grounding_failure("FORBIDDEN_DIRECTIVE_ECHO")
 
     allowed_by_kind: dict[str, set[str]] = {}
     for value in required_semantic:
@@ -421,7 +425,7 @@ def evaluate_grounding(
         constrained_kinds.update(_TYPED_VALUE_KINDS)
     for value in answer_values:
         if value.kind in constrained_kinds and value.value not in allowed_by_kind.get(value.kind, set()):
-            return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+            return _grounding_failure("UNSUPPORTED_TYPED_VALUE")
 
     for token in _normalize(answer).split():
         normalized_number = _number(token)
@@ -432,9 +436,36 @@ def evaluate_grounding(
             continue
         if normalized_number is not None and normalized_number in allowed_numeric_tokens:
             continue
-        return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
+        return _grounding_failure("UNSUPPORTED_LEXICAL_CLAIM")
 
-    return {"grounded": True, "score": float(spec.score), "matchedCitationIds": list(cited)}
+    return (
+        {"grounded": True, "score": float(spec.score), "matchedCitationIds": list(cited)},
+        "VALID",
+    )
 
 
-__all__ = ["GroundingClaim", "GroundingSpec", "evaluate_grounding"]
+def evaluate_grounding(
+    answer: str,
+    spec: GroundingSpec,
+    citation_ids: Sequence[str],
+    available_citation_ids: Sequence[str],
+    evidence_by_citation_id: Mapping[str, str],
+) -> Mapping[str, object]:
+    """Return only the strict shape consumed by ``validate_grounding_result``."""
+
+    result, _reason_code = evaluate_grounding_detailed(
+        answer,
+        spec,
+        citation_ids,
+        available_citation_ids,
+        evidence_by_citation_id,
+    )
+    return result
+
+
+__all__ = [
+    "GroundingClaim",
+    "GroundingSpec",
+    "evaluate_grounding",
+    "evaluate_grounding_detailed",
+]

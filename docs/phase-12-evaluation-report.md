@@ -194,5 +194,27 @@ declared directive check also catches stopword-shortened echoes, but is not a
 general synonym-level injection detector. The preflight pins the exact fixture
 IDs and both stage-prompt hashes. The new synthetic report
 `evals/results/phase12-solution-synthetic-report.json` is `9/9` with zero AWS
-calls. This is not yet real-model evidence; a separately authorized bounded run
-is required before changing the Phase 12 status.
+calls.
+
+### Dedicated-stage real result and second local remediation
+
+The separately authorized runner `5.1.0` was executed once and wrote the
+immutable metadata-only report
+`evals/results/phase12-remediation-resolver-v2-report.json`. It made 9 resolver
+and 6 writer calls (`15` total), zero retries, and accepted `5/9`. Factual cases
+passed `3/3`; injection passed `2/3`; partial passed `0/3`. Two partial cases
+were classified as `none`, one partial writer failed grounding, and one
+injection fact was classified as `partial`. No raw question, passage, answer,
+provider exception, token, or secret was stored.
+
+Stage prompts `1.1.0` now define `partial` as a materially related passage that
+establishes the subject or relationship while omitting the requested
+attribute, and reserve `none` for unrelated evidence. They also state that an
+embedded directive does not downgrade an otherwise supported fact. The writer
+must state both the supported relationship and the missing detail without
+adding a conclusion. Grounding failures can now emit one closed diagnostic
+code alongside the unchanged strict validator object; answer content is never
+persisted. The new local report
+`evals/results/phase12-solution-v2-synthetic-report.json` passes `9/9` with zero
+AWS calls. This is not yet real-model evidence; another bounded run requires
+new explicit authorization.
