@@ -1,0 +1,2 @@
+# Versioned prompt hashes bind exact bytes across Windows and Unix checkouts.
+prompts/*.md text eol=lf
