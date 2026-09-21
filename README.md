@@ -19,7 +19,10 @@ one local no-evidence case and accepted `2/4`; its one-time two-case follow-up
 used exactly `2` additional calls and accepted `0/2`. Both remain incomplete
 evidence, not production legal-quality validation.
 The follow-up prompted a local system-prompt fix to version `1.2.0`; a bounded
-final runner is prepared but not executed.
+final runner was executed once with exactly `2/2` calls and `0` retries, and
+accepted `1/2`. The factual citation case remained insufficient evidence while
+the untrusted-injection case passed. Phase 12 real-model acceptance remains
+incomplete; no retry is permitted without separate authorization.
 
 ## Repository layout
 
@@ -88,9 +91,10 @@ S3 Vectors and fixed chunking keep the first architecture explainable, at the
 cost of less hierarchical retrieval control. Long-term memory is disabled for
 data minimization. Bedrock/AgentCore inference, Knowledge Base ingestion,
 Memory, Gateway, Lambda, DynamoDB, S3, and CloudWatch can incur charges; the
-Phase 12 runner uses zero AWS calls. The managed Harness internal ADOT detail
-is disabled after content extraction was observed; the application allowlisted
-telemetry pointer is the supported operational trace surface.
+Phase 12 deterministic local runner uses zero AWS calls, while the separately
+authorized real-model runners call Bedrock. The managed Harness internal ADOT
+detail is disabled after content extraction was observed; the application
+allowlisted telemetry pointer is the supported operational trace surface.
 
 Before real legal data enters the system, read
 [`docs/what-i-would-change-before-real-legal-data.md`](docs/what-i-would-change-before-real-legal-data.md).

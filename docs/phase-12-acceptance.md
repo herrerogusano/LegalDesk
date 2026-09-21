@@ -5,8 +5,11 @@ incomplete: the Harness smoke had `0/4` accepted under structured-trace policy,
 the direct Bedrock smoke had `2/4` accepted with `3` model calls plus one
 local no-evidence case, and the one-time two-case follow-up had `0/2` accepted.
 The follow-up exposed a prompt-policy issue; the local fix is version `1.2.0`.
-The final two-case runner is prepared but not executed. Any rerun requires new
-explicit authorization.
+The final two-case runner was executed once with the corrected prompt: exactly
+`2/2` model attempts, `0` retries, and `1/2` accepted. The answerable citation
+case remained `insufficient_evidence` without citations; the untrusted-injection
+case was accepted. No retry is permitted without a new, separate approval, so
+the real-model acceptance remains incomplete.
 
 | Criterion | Evidence | Result |
 |---|---|---|
@@ -25,7 +28,7 @@ explicit authorization.
 | Bounded real-model smoke | `evals/results/phase12-real-smoke-report.json`: exactly `4/4` attempts, `0` retries, `0/4` accepted under structured-trace policy; historical lexical field recorded `2/4` | INCOMPLETE |
 | Direct Bedrock smoke | `evals/results/phase12-direct-bedrock-report.json`: `3/3` model calls, `0` retries, `2/4` accepted; no-evidence case local | INCOMPLETE |
 | Direct Bedrock two-case follow-up | `evals/results/phase12-direct-bedrock-followup-report.json`: exactly `2/2` model calls, `0` retries, `0/2` accepted; one-time follow-up executed, no rerun permitted without new approval | INCOMPLETE |
-| Prompt policy fix and final two-case runner | `prompts/legaldesk-system.md` version `1.2.0`; `evals/direct_bedrock_final.py` is capped at exactly `2` calls with current prompt and distinct report path, but was not executed | PENDING |
+| Prompt policy fix and final two-case runner | `evals/results/phase12-direct-bedrock-final-report.json`: prompt `1.2.0` with the fixed SHA-256, exactly `2/2` calls, `0` retries, `1/2` accepted; factual citation remained insufficient and injection case accepted | INCOMPLETE |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double

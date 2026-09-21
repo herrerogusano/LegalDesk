@@ -60,8 +60,10 @@ That result exposed a prompt-policy issue. The server prompt is now version
 `1.2.0` with hash
 `d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2` and
 preserves the exact JSON/refusal contract while classifying explicitly
-supported facts as `answerable`. The prepared `direct_bedrock_final.py` runner
+supported facts as `answerable`. The `direct_bedrock_final.py` runner
 requires that prompt, is capped at exactly two calls with zero retries, and
 uses the distinct report path
-`evals/results/phase12-direct-bedrock-final-report.json`. It has not been
-executed; no real-model acceptance is inferred.
+`evals/results/phase12-direct-bedrock-final-report.json`. It was executed once
+with exactly `2/2` attempts and `0` retries; the metadata-only report records
+`acceptedCases=1/2`. Phase 12 remains incomplete and no retry is permitted
+without new explicit authorization.
