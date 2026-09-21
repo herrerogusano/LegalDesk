@@ -207,7 +207,7 @@ were classified as `none`, one partial writer failed grounding, and one
 injection fact was classified as `partial`. No raw question, passage, answer,
 provider exception, token, or secret was stored.
 
-Stage prompts `1.1.0` now define `partial` as a materially related passage that
+Stage prompts `1.1.0` define `partial` as a materially related passage that
 establishes the subject or relationship while omitting the requested
 attribute, and reserve `none` for unrelated evidence. They also state that an
 embedded directive does not downgrade an otherwise supported fact. The writer
@@ -216,5 +216,24 @@ adding a conclusion. Grounding failures can now emit one closed diagnostic
 code alongside the unchanged strict validator object; answer content is never
 persisted. The new local report
 `evals/results/phase12-solution-v2-synthetic-report.json` passes `9/9` with zero
-AWS calls. This is not yet real-model evidence; another bounded run requires
-new explicit authorization.
+AWS calls.
+
+Runner `6.0.0` was subsequently executed once. Its immutable metadata-only
+report is `evals/results/phase12-remediation-resolver-v3-report.json`: 9
+resolver plus 9 writer calls, zero retries, and `6/9` accepted. Every resolver
+decision matched the oracle (`9/9`). The remaining failures were writer/oracle
+boundary failures: `UNSUPPORTED_LEXICAL_CLAIM` and `UNCERTAINTY_MISSING` for
+two partial answers, plus `REQUIRED_VALUE_MISSING` for one injection-adjacent
+fact. This proves the resolver correction and narrows the unresolved behavior
+without persisting any answer text.
+
+Writer `1.2.0` now requires every requested value to retain its unit,
+denomination, or full date and gives a generic structure for explaining
+partial evidence. The bounded oracle recognizes explicit omission wording and
+equivalent number/unit order while retaining fail-closed checks for missing
+values, invented typed values, unsupported lexical claims, invalid citations,
+and echoed directives. The new local report
+`evals/results/phase12-solution-v3-synthetic-report.json` passes `9/9` with zero
+AWS calls. A writer-only runner pins the successful resolver-v3 report by hash
+and can revalidate all nine writer cases with at most 9 calls and zero retries;
+it has not been executed.

@@ -46,15 +46,15 @@ MAX_RESOLVER_INVOCATIONS = 9
 MAX_WRITER_INVOCATIONS = 9
 MAX_REAL_MODEL_INVOCATIONS = MAX_RESOLVER_INVOCATIONS + MAX_WRITER_INVOCATIONS
 MAX_PER_GROUP = 3
-RUNNER_VERSION = "6.0.0"
+RUNNER_VERSION = "6.1.0"
 EXPECTED_PROMPT_VERSION = "1.3.0"
 EXPECTED_PROMPT_SHA256 = "de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56"
 EXPECTED_RESOLVER_PROMPT_VERSION = "1.1.0"
 EXPECTED_RESOLVER_PROMPT_SHA256 = "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672"
-EXPECTED_WRITER_PROMPT_VERSION = "1.1.0"
-EXPECTED_WRITER_PROMPT_SHA256 = "e91ab61c8bcb63d5df77aa8a906d89b3fa3b26460bfd6378eb63ed2de74eeb60"
+EXPECTED_WRITER_PROMPT_VERSION = "1.2.0"
+EXPECTED_WRITER_PROMPT_SHA256 = "3e6142b473d2df1efce4070eada43566d4b831063af3e1230e3cd70e3ae7d0cf"
 RESULTS_ROOT = ROOT / "evals" / "results"
-DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-resolver-v3-report.json"
+DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-resolver-v4-report.json"
 HISTORICAL_REPORTS = {
     "phase12-remediation-synthetic-report.json",
     "phase12-direct-bedrock-report.json",
@@ -62,6 +62,7 @@ HISTORICAL_REPORTS = {
     "phase12-direct-bedrock-final-report.json",
     "phase12-remediation-real-report.json",
     "phase12-remediation-resolver-v2-report.json",
+    "phase12-remediation-resolver-v3-report.json",
 }
 CASE_GROUPS = {
     "factual": tuple(f"synthetic-factual-{index:02d}" for index in range(1, 4)),

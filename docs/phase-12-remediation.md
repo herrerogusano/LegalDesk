@@ -129,7 +129,7 @@ resolver plus 6 writer calls, and zero retries. The result isolated two
 resolver errors between `partial` and `none`, one partial writer grounding
 failure, and one injection fact downgraded from `complete` to `partial`.
 
-The next local remediation versions both stage prompts as `1.1.0`. Its rules
+The next remediation versions the resolver and writer as `1.1.0`. Its rules
 are generic rather than fixture-specific: a related passage that establishes a
 subject or relationship but omits the requested attribute is `partial`; only
 materially unrelated evidence is `none`; and instruction-like text adjacent to
@@ -139,7 +139,21 @@ returns closed metadata-only failure codes while its production-facing
 validator shape remains unchanged. Runner `6.0.0` pins these hashes and writes
 only to a new path. The local report
 `evals/results/phase12-solution-v2-synthetic-report.json` passes `9/9` with zero
-AWS calls. A new real run has not been authorized or executed.
+AWS calls. Runner `6.0.0` was then executed once: its immutable report
+`evals/results/phase12-remediation-resolver-v3-report.json` records `6/9`, 18
+calls, and zero retries. Resolver classification passed all nine cases. The
+three remaining failures are exclusively writer/oracle outcomes, identified
+without raw text as `UNSUPPORTED_LEXICAL_CLAIM`, `UNCERTAINTY_MISSING`, and
+`REQUIRED_VALUE_MISSING`.
+
+Writer `1.2.0` now explicitly preserves a requested value together with its
+unit, denomination, or full date and uses a constrained structure for partial
+evidence. The oracle accepts bounded omission paraphrases and number/unit word
+order while continuing to reject invented typed and lexical claims. The local
+report `evals/results/phase12-solution-v3-synthetic-report.json` passes `9/9`.
+The writer-only follow-up pins the resolver-v3 report by SHA-256, makes no
+resolver calls, caps execution at 9 writer calls with zero retries, and writes
+only metadata to a new immutable path. It has not been executed.
 
 The repository exposes the separated path through `answer_question` only when
 resolver, writer, and grounding validator are supplied together; partial wiring

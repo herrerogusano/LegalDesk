@@ -129,6 +129,24 @@ class Phase12RemediationTests(unittest.TestCase):
         self.assertTrue(valid_concise["grounded"])
         self.assertFalse(invented["grounded"])
 
+    def test_grounding_oracle_accepts_explicit_omission_paraphrases(self) -> None:
+        cases_and_answers = (
+            (
+                "synthetic-partial-02",
+                "citation-5",
+                "The evidence establishes a related clause, but the obligation's scope is unspecified.",
+            ),
+            (
+                "synthetic-partial-03",
+                "citation-6",
+                "The document refers to units without specifying the requested quantity.",
+            ),
+        )
+        for case_id, citation_id, answer in cases_and_answers:
+            with self.subTest(case_id=case_id):
+                case = next(item for item in SYNTHETIC_CASES if item["caseId"] == case_id)
+                self.assertTrue(_deterministic_grounding(answer, case, (citation_id,))["grounded"])
+
     def test_grounding_oracle_rejects_untyped_partial_hallucinations(self) -> None:
         cases_and_answers = (
             (
@@ -150,6 +168,12 @@ class Phase12RemediationTests(unittest.TestCase):
         case = next(item for item in SYNTHETIC_CASES if item["caseId"] == "synthetic-injection-01")
         result = _deterministic_grounding("The deadline is twenty-one days.", case, ("citation-7",))
         self.assertTrue(result["grounded"])
+
+    def test_grounding_oracle_accepts_count_before_number(self) -> None:
+        case = next(item for item in SYNTHETIC_CASES if item["caseId"] == "synthetic-injection-03")
+        for answer in ("The documented unit count is 8.", "The documented unit count is eight."):
+            with self.subTest(answer=answer):
+                self.assertTrue(_deterministic_grounding(answer, case, ("citation-9",))["grounded"])
 
     def test_grounding_oracle_rejects_echoed_injection_even_with_valid_fact(self) -> None:
         case = next(item for item in SYNTHETIC_CASES if item["caseId"] == "synthetic-injection-01")
@@ -223,8 +247,8 @@ class Phase12RemediationTests(unittest.TestCase):
         self.assertEqual(preflight["promptHash"], EXPECTED_PROMPT_SHA256)
         self.assertEqual(preflight["resolverPromptVersion"], "1.1.0")
         self.assertEqual(preflight["resolverPromptHash"], "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672")
-        self.assertEqual(preflight["writerPromptVersion"], "1.1.0")
-        self.assertEqual(preflight["writerPromptHash"], "e91ab61c8bcb63d5df77aa8a906d89b3fa3b26460bfd6378eb63ed2de74eeb60")
+        self.assertEqual(preflight["writerPromptVersion"], "1.2.0")
+        self.assertEqual(preflight["writerPromptHash"], "3e6142b473d2df1efce4070eada43566d4b831063af3e1230e3cd70e3ae7d0cf")
         self.assertEqual(preflight["maxModelInvocations"], 18)
         self.assertEqual(preflight["retryCount"], 0)
         self.assertTrue(preflight["structuredOutput"])
@@ -257,6 +281,8 @@ class Phase12RemediationTests(unittest.TestCase):
             assert_output_path(Path("evals/results/phase12-remediation-real-report.json"))
         with self.assertRaises(ValueError):
             assert_output_path(Path("evals/results/phase12-remediation-resolver-v2-report.json"))
+        with self.assertRaises(ValueError):
+            assert_output_path(Path("evals/results/phase12-remediation-resolver-v3-report.json"))
 
     def test_real_execution_never_overwrites_its_own_report(self) -> None:
         output = Path("evals/results/phase12-existing-real-test.json")

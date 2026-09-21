@@ -110,12 +110,24 @@ AWS calls. Runner `5.1.0` was then executed once. Its immutable report
 `evals/results/phase12-remediation-resolver-v2-report.json` records `5/9`
 accepted after 9 resolver and 6 writer calls (`15` total), zero retries.
 
-The next local remediation versions both stage prompts as `1.1.0`, clarifies
+The next remediation versions both stage prompts as `1.1.0`, clarifies
 the generic `partial`/`none` boundary, preserves supported facts beside
 embedded directives, and adds closed metadata-only grounding reason codes
 without changing the strict grounding-result schema. The local report
 `evals/results/phase12-solution-v2-synthetic-report.json` passes `9/9` with zero
-AWS calls. Runner `6.0.0` is pinned to the new hashes and defaults to the new
-unwritten path `evals/results/phase12-remediation-resolver-v3-report.json`. A
-real execution remains capped at 18 calls with zero retries and requires new
+AWS calls. Runner `6.0.0` was executed once and its immutable
+`evals/results/phase12-remediation-resolver-v3-report.json` records `6/9` after
+18 calls with zero retries. Resolver output matched all nine expected
+resolutions; two partial writer answers and one injection-adjacent factual
+answer failed the bounded oracle.
+
+Writer `1.2.0` preserves explicit requested values and units and constrains
+partial explanations. The oracle now accepts bounded omission and count-order
+paraphrases but retains rejection of missing facts, invented claims, invalid
+citations, and directive echoes. The new local report
+`evals/results/phase12-solution-v3-synthetic-report.json` passes `9/9` with zero
+AWS calls. `evals.phase12_writer_followup` pins the resolver-v3 report by hash
+and can revalidate all nine writer outputs with at most 9 calls, zero retries,
+and the new metadata-only path
+`evals/results/phase12-remediation-writer-v1-report.json`. It requires new
 explicit authorization.

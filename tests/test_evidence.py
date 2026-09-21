@@ -198,7 +198,9 @@ class EvidenceResolverContractTests(unittest.TestCase):
         self.assertIn("insufficient_evidence", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("Continue to use relevant factual", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("explicitly state which requested material detail", ANSWER_WRITER_SYSTEM_PROMPT)
-        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.1.0")
+        self.assertIn("both the number", ANSWER_WRITER_SYSTEM_PROMPT)
+        self.assertIn("what is being counted", ANSWER_WRITER_SYSTEM_PROMPT)
+        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.2.0")
         self.assertRegex(ANSWER_WRITER_PROMPT_SHA256, r"^[0-9a-f]{64}$")
 
     def test_answer_writer_contract_rejects_extra_or_empty_fields(self) -> None:

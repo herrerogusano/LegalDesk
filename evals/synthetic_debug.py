@@ -31,9 +31,9 @@ except ImportError:  # Direct script execution.
 
 
 SYNTHETIC_DEBUG_ENV = "EVAL_DEBUG_SYNTHETIC"
-DEFAULT_OUTPUT = Path(__file__).resolve().parent / "results" / "phase12-solution-v2-synthetic-report.json"
+DEFAULT_OUTPUT = Path(__file__).resolve().parent / "results" / "phase12-solution-v3-synthetic-report.json"
 FIXTURE_ROOT = Path(__file__).resolve().parent
-RUNNER_VERSION = "3.3.0"
+RUNNER_VERSION = "3.4.0"
 MODEL = "synthetic-fixture-model"
 IMMUTABLE_REPORT_NAMES = {
     "phase12-remediation-synthetic-report.json",
@@ -42,7 +42,9 @@ IMMUTABLE_REPORT_NAMES = {
     "phase12-direct-bedrock-followup-report.json",
     "phase12-direct-bedrock-final-report.json",
     "phase12-remediation-resolver-v2-report.json",
+    "phase12-remediation-resolver-v3-report.json",
     "phase12-solution-synthetic-report.json",
+    "phase12-solution-v2-synthetic-report.json",
 }
 
 

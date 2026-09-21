@@ -32,10 +32,15 @@ prompts `1.0.0`: 9 resolver plus 6 writer calls (`15` total), zero retries, and
 `5/9` accepted. All factual cases and two injection cases passed. Two partial
 cases were incorrectly classified as having no material support, one partial
 writer failed grounding, and one injection fact was classified as partial.
-The metadata-only report is immutable. A generic local fix in stage prompts
-`1.1.0` now sharpens `partial` versus `none`, preserves facts adjacent to
-embedded directives, and records closed grounding diagnostic codes. Its local
-regression is `9/9`; this revised artifact has not yet been called in AWS.
+The metadata-only report is immutable. Stage prompts `1.1.0` then sharpened
+`partial` versus `none`, preserved facts adjacent to embedded directives, and
+added closed grounding diagnostic codes. Its authorized run used exactly 9
+resolver and 9 writer calls, zero retries, and accepted `6/9`; importantly, the
+resolver passed `9/9`, isolating all remaining failures to writer/oracle
+phrasing. Writer `1.2.0` now preserves requested values with their units and
+the oracle accepts bounded omission/count paraphrases without accepting
+invented claims. The new local regression is `9/9`. A writer-only follow-up is
+prepared but has not been executed.
 
 ## Repository layout
 

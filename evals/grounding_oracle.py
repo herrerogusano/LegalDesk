@@ -125,6 +125,20 @@ _UNKNOWN_MARKERS = (
     "do not establish",
     "does not say",
     "do not say",
+    "not specified",
+    "does not specify",
+    "do not specify",
+    "not defined",
+    "does not define",
+    "do not define",
+    "unspecified",
+    "omit",
+    "omits",
+    "omitted",
+    "missing",
+    "without specifying",
+    "without stating",
+    "unclear",
 )
 _EVIDENCE_ABSENCE_MARKERS = _UNKNOWN_MARKERS + (
     "omit",
@@ -151,14 +165,19 @@ _SAFE_LEXICAL_TOKENS = {
     "documented", "documents", "does", "establish", "established", "evidence",
     "for", "from", "fully", "had", "has", "have", "however", "in", "indicate",
     "indicates", "information", "insufficient", "is", "it", "its", "known",
-    "material", "may", "mention", "mentioned", "mentions", "must", "no", "not",
+    "about", "because", "contains", "context", "define", "defined", "directly",
+    "establishes", "exist", "exists", "given", "material", "may", "mention", "mentioned",
+    "mentions", "missing", "must", "no", "not",
     "of", "on", "only", "or", "passage", "passages", "provided", "related",
-    "relevant", "remains", "requested", "s", "say", "says", "selected", "scope", "should",
-    "specified", "state", "stated", "states", "that", "the", "their", "these",
-    "they", "this", "those", "to", "total", "period", "unknown", "was", "were", "what", "while",
-    "with", "would",
+    "omit", "omits", "omitted", "relevant", "remains", "requested", "s",
+    "say", "says", "selected", "scope", "should", "specify", "specifies",
+    "specified", "state", "stated", "states", "supplied", "that", "the",
+    "their", "there", "these", "they", "this", "those", "to", "total",
+    "period", "unclear", "unknown", "unspecified", "was", "were", "what",
+    "while", "with", "within", "would",
     *_MONTHS.keys(),
     *_NUMBER_WORDS.keys(),
+    *_UNIT_ALIASES.keys(),
 }
 _FORBIDDEN_MATCH_STOPWORDS = {"a", "all", "an", "and", "as", "of", "or", "the", "to"}
 _DIRECTIVE_TOKEN_ALIASES = {
@@ -287,6 +306,23 @@ def _constraint_values(values: Sequence[str]) -> tuple[_SemanticValue, ...]:
     return tuple(extracted)
 
 
+def _supports_semantic_value(answer: str, required: _SemanticValue) -> bool:
+    """Accept bounded equivalent ordering such as ``unit count is eight``."""
+
+    if required in _semantic_values(answer):
+        return True
+    if required.kind != "quantity":
+        return False
+    try:
+        required_number, required_unit = required.value.split(" ", 1)
+    except ValueError:
+        return False
+    tokens = _normalize(answer).split()
+    has_number = any(_number(token) == required_number for token in tokens)
+    has_unit = any(_UNIT_ALIASES.get(token) == required_unit for token in tokens)
+    return has_number and has_unit
+
+
 def _has_term(answer: str, terms: Sequence[str]) -> bool:
     answer_tokens = _normalize(answer).split()
     for term in terms:
@@ -393,7 +429,10 @@ def evaluate_grounding_detailed(
         for raw_value in claim.required_values:
             semantic_value = _semantic_values(raw_value)
             if semantic_value:
-                supported = any(value in answer_value_set for value in semantic_value)
+                supported = any(
+                    _supports_semantic_value(answer, value)
+                    for value in semantic_value
+                )
             else:
                 supported = _has_term(normalized_answer, (raw_value,))
                 if not _has_term(cited_evidence, (raw_value,)):
