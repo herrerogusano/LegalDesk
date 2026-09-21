@@ -237,6 +237,10 @@ def build_aws_composition(
             audience=resource_config.audience,
             client_id=resource_config.client_id,
             required_scope=resource_config.required_scope,
+            # CognitoPkceTokenExchange stores only the OAuth access_token.
+            # Do not widen the application boundary to ID tokens merely to
+            # satisfy the verifier's optional dual-token configuration.
+            allowed_token_use=frozenset({"access"}),
         ),
         PyJwtJwksKeyResolver(resource_config.jwks_url),
     )

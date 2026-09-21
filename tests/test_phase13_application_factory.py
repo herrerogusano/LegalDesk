@@ -53,7 +53,8 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
             issuer="https://issuer.example.test",
             client_id="client-id",
             authorization_endpoint="https://issuer.example.test/oauth2/authorize",
-            audience="audience",
+            # Match the real Cognito access-token-only application config.
+            audience=None,
             matter_catalog=("mat_sundial",),
             prompt_path=ROOT / "prompts" / "legaldesk-system.md",
             token_endpoint="https://issuer.example.test/oauth2/token",
@@ -75,6 +76,7 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         self.assertEqual(composition.matter_catalog, ("mat_sundial",))
         self.assertIsNotNone(composition.chat_service)
         self.assertIsNotNone(composition.token_exchange)
+        self.assertEqual(composition.identity_verifier.config.allowed_token_use, frozenset({"access"}))
         resolver.assert_called_once_with("https://issuer.example.test/.well-known/jwks.json")
         self.assertGreaterEqual(client.call_count, 4)
         for call in client.call_args_list:
