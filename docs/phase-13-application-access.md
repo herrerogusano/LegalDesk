@@ -66,3 +66,6 @@ indexing service.
 The loopback HTTP server is a local portfolio entry point, not a production TLS
 edge. Production hosting, shared session persistence, distributed rate limiting,
 automatic abandoned-upload cleanup and long-term Memory are outside this phase.
+JWT signature/claim verification is not a separate token-revocation lookup.
+Do not claim immediate provider-wide token revocation from local JWT validation;
+local session logout and current matter membership checks are separate controls.

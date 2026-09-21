@@ -1,22 +1,27 @@
-# LegalDesk architecture — integration baseline
+# LegalDesk architecture — Phase 13 application
 
-The diagram is the intended topology, not an implemented E2E application.
-Phases 00–12 are complete only in their recorded component/bounded scopes.
-Phase 13 is pending; portfolio/release readiness is not established.
+Phases 00–12 remain complete in their recorded component/bounded scopes.
+Phase 13 composes those services through one loopback HTTP application. Local
+provider-double integration is distinct from live AWS evidence; release status
+remains `NOT_READY_FOR_PROD` until the separately authorized cloud gate.
 
-## Executable baseline
+## Executable application
 
-- Frontend: standalone fictional citation panel, no backend connection.
-- Backend: callable authorization/upload/retrieval/chat services, exercised by
-  tests; no application entry point composes the complete flow.
-- Separated chat: Converse Resolver/Writer adapters and an injected grounding
-  protocol; no productive grounding adapter is wired.
-- Harness: separate minimal-prompt service with M2M Gateway tools and scoped
-  Memory; end-user identity/correlation through outbound tools is unproven.
-- Gateway/MCP/review: component evidence with grant-based authorization.
-- Telemetry: scoped chat and Gateway flows, not a joined application trace.
+- Entry: `python -m legaldesk`, with explicit `--allow-aws` required before any
+  AWS client/JWKS construction. No implicit fake fallback exists in the product.
+- `application.py` constructs concrete adapters; `http_app.py` owns PKCE login,
+  server-held tokens, CSRF protection, matter/conversation authorization and
+  upload, sync, chat, citation, tool, history and audit routes.
+- Chat executes the existing `answer_question` service with concrete Converse
+  Resolver/Writer and Bedrock Guardrail contextual-grounding adapters. Harness
+  is used for explicit metadata/review actions, not as an alternate answer path.
+- Tests replace SDK/provider boundaries, not chat or authorization business
+  logic. The test-only loopback storage server receives the actual presigned PUT;
+  retrieval returns the uploaded fictional bytes after the real sync workflow.
+- The minimal frontend connection and final browser acceptance are tracked in
+  `phase-13-acceptance.md`; never infer browser acceptance from Python tests alone.
 
-## Target topology (not release evidence)
+## Composed topology (live provider behavior still pending)
 
 ```mermaid
 flowchart LR
@@ -27,8 +32,9 @@ flowchart LR
   A --> D[(DynamoDB metadata/membership/review)]
   A --> R[Authorized retrieval filter]
   R --> KB[Knowledge Base + S3 Vectors]
-  A --> C[Retrieve → Guardrails → generation]
-  C --> H[AgentCore Harness/Runtime]
+  R --> C[Resolver → backend status/citations → Writer → grounding]
+  C --> B
+  A -->|explicit user tool action + bound JWT scope| H[AgentCore Harness/Runtime]
   H --> GW[AgentCore Gateway]
   GW --> MCP[MCP metadata tools]
   GW --> L[Review Lambda/tool]
@@ -49,6 +55,16 @@ matter, S3 key, document body, review owner, or memory actor. Gateway and tool
 handlers reauthorize the same scope. Guardrails protect content but do not
 replace deterministic authorization.
 
+The application replaces Harness M2M tool defaults with a fixed remote-MCP
+endpoint and the verified end-user bearer token in transport headers only.
+An opaque, five-minute invocation record in the existing table binds subject,
+matter, Memory actor/session, correlation and action allowlist. The Gateway
+interceptor verifies that binding after its JWT edge and reauthorizes; target
+handlers reload their own grants/membership before reading or writing.
+Repeated model attempts for one review invocation share one idempotent grant.
+JWT signature/expiry checks do not implement immediate IdP revocation lookup;
+membership revocation is checked against server data on each scoped operation.
+
 ## Data and lifecycle
 
 Documents use server-generated IDs and S3 keys. Upload metadata begins at
@@ -57,6 +73,24 @@ expected object exists. Retrieval returns bounded passages and citation IDs;
 the model never receives direct S3 or database credentials. Memory is
 short-term, scoped by authorized actor/session/matter, with long-term writes
 rejected for data minimization.
+
+The full lifecycle is `PENDING_UPLOAD → UPLOADED → PENDING_INGESTION → INDEXED`,
+with `FAILED` on supported failures. A sync is an explicit, bounded data-source
+operation, not a per-document AWS job; the real smoke requires a dedicated
+synthetic source. Pending uploads/ingestion block the current matter's chat with
+`documents_processing`, not `insufficient_evidence`. Abandoned uploads need
+manual reconciliation; automatic cleanup is deliberately not implemented.
+
+Citation inspection uses short-lived opaque application handles, verifies the
+current actor/matter/conversation and indexed document, then returns its exact
+retrieved supporting passage. Citation responses omit S3/internal locations.
+The upload transport necessarily receives a temporary S3 PUT URL, but it is
+not displayed as a source or recorded in application telemetry.
+
+Short-term Memory stores accepted user/assistant exchanges; only application-
+recorded event IDs are returned as history. Harness/tool/rejected outputs in
+the same provider session are not automatically surfaced as accepted history.
+History is not documentary evidence and is not passed into contextual grounding.
 
 Evidence resolution is a separate backend boundary: a schema-constrained
 resolver may return only coverage, conflict, and retrieval-issued supporting
@@ -72,6 +106,14 @@ does not inherit answer-writing, legal-caution, or legacy JSON instructions;
 the writer receives the already validated status and selected evidence. This
 keeps prompt-injection handling from turning into wholesale evidence removal.
 
+Productive grounding calls ApplyGuardrail with the self-contained question,
+selected passages and candidate answer. Missing/malformed assessments or an
+intervention fail closed. Scores are aggregate, not per-citation semantic proof.
+The lexical oracle remains test-only; the independent 14-case holdout is frozen
+and has not been run against real providers. Technical failures return a safe
+operational error with null evidence status; partial documentary support can
+retain citations under `insufficient_evidence`.
+
 ## Operations and trade-offs
 
 Application telemetry is a closed allowlist of correlation, outcome, operation,
@@ -80,6 +122,14 @@ secrets, and document bodies are excluded. The managed Harness ADOT detail is
 disabled after content extraction was observed; the supported audit pointer is
 the application telemetry and native metrics, not an asserted provider-wide
 trace ID.
+
+Each question gets a server UUID; related explicit tool actions use its
+server-owned conversation correlation, never an arbitrary browser value.
+The audit view attaches authorized actor/matter and all three effective prompt
+versions/hashes to redacted stage metadata. It is bounded, process-local demo
+audit, not a durable compliance log. Sessions, citation handles and accepted
+history selectors also expire or disappear on restart; a new conversation is
+then required. The loopback HTTP server is not an internet production server.
 
 S3 Vectors and fixed chunking keep the MVP explainable and cost-conscious, with
 less hierarchy control than a custom index. The final architecture intentionally

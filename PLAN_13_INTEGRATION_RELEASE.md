@@ -2,7 +2,7 @@
 
 ## Status, scope and authority
 
-Checkpoint 0 in progress. Phases 00–12 remain complete within their recorded
+Local checkpoints complete with provider doubles; AWS execution remains gated. Phases 00–12 remain complete within their recorded
 component/bounded scopes, not as proof of an integrated application.
 Release verdict: `NOT_READY_FOR_PROD`; see `docs/release-audit.md`.
 
@@ -124,7 +124,7 @@ Potential resources (historical status only; no live inventory):
 
 | Resource | Evidence / later need |
 |---|---|
-| Harness/underlying Runtime and role | Phase 01/11 retained; identity transport decision pending |
+| Harness/underlying Runtime and role | Phase 01/11 retained; verified-user remote MCP transport defined locally, live behavior pending |
 | Gateway/interceptor/MCP Lambda and Function URL | Phase 08/10/11 retained; reuse |
 | Review Lambda, metadata/membership DynamoDB | Phase 07+ dependencies; verify actual stack/table before reuse |
 | Cognito public/service clients, OAuth provider/managed secret | Phase 08/10 retained; verified-user integration required |
@@ -133,7 +133,8 @@ Potential resources (historical status only; no live inventory):
 | Guardrail/version | Phase 06 smoke torn down; inventory before recreation |
 | Artifact S3 versions, logs, metric filters | Phase 08/11 retained; storage/log/metric costs possible |
 
-Exact budget/cost pending architecture selection; no new service selected.
+Draft caps/cost are recorded in `docs/phase-13-smoke-plan.md`; reconcile with
+the completed application before requesting approval. No new service selected.
 Teardown must inventory dependencies, remove only approved synthetic originals,
 sidecars and vectors in safe order, review versioned artifacts and managed
 secrets, and preserve pre-existing resources unless deletion is authorized.
@@ -146,16 +147,21 @@ prepare—but do not execute—the developer→prod checklist.
 
 ## Definition of done
 
-- [ ] Local E2E application and functional minimal UI.
-- [ ] Verified user reaches tools; integral cross-matter isolation.
-- [ ] Resolver/Writer wired and concrete productive grounding defined.
-- [ ] Technical errors distinct from documentary insufficient_evidence.
-- [ ] Scoped short-term Memory integrated where applicable.
-- [ ] Authorized inspectable citations without internal locations.
-- [ ] E2E correlation and effective prompt metadata.
-- [ ] Integration and complete regression suites green.
-- [ ] Documentation accurately describes demonstrated behavior.
-- [ ] Exact real smoke, estimated maximum cost and teardown prepared.
+- [x] Local E2E application and functional minimal UI.
+- [x] Verified user reaches tools; integral cross-matter isolation locally.
+- [x] Resolver/Writer wired and concrete productive grounding defined.
+- [x] Technical errors distinct from documentary insufficient_evidence.
+- [x] Scoped short-term Memory integrated where applicable.
+- [x] Authorized inspectable citations without internal locations.
+- [x] E2E correlation and effective prompt metadata.
+- [x] Integration and complete regression suites green: 378 tests; 24/24 deterministic evals.
+- [x] Documentation accurately describes demonstrated behavior.
+- [x] Fixed real smoke, proposed budget/request ceilings and teardown prepared.
+
+Offline browser acceptance passes at desktop/mobile sizes, including operational
+error handling. Detailed evidence and remaining production gaps are recorded in
+`docs/phase-13-acceptance.md`. Real provider semantic accuracy and the independent
+holdout remain unverified. No AWS deployment, smoke or prod promotion occurred.
 
 At local completion report architecture, changes, tests, blockers, exact smoke
 and cost estimate; STOP for explicit AWS authorization. Local completion is not

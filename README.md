@@ -7,11 +7,20 @@ a legal product, and it must only use public or wholly fictional documents.
 ## Current status
 
 Phases 00–12 are complete within their recorded component/bounded scopes.
-The release audit is **NOT_READY_FOR_PROD**: the frontend is a static example
-and one integrated application has not been demonstrated. Phase 13
-(`PLAN_13_INTEGRATION_RELEASE.md`) addresses local integration; AWS smoke and
-promotion to prod require later explicit approval. See the
-[release audit](docs/release-audit.md).
+Phase 13 now provides a connected loopback application, demonstrated locally
+through HTTP and browser tests with provider doubles. The release remains
+**NOT_READY_FOR_PROD**: live AWS interoperability and independent model-quality
+validation have not been demonstrated by those doubles. AWS smoke and promotion
+to prod require later explicit approval. See the historical
+[release audit](docs/release-audit.md), the current
+[Phase 13 acceptance ledger](docs/phase-13-acceptance.md), and
+[application run instructions](docs/phase-13-run.md).
+
+The demonstrated local journey is login → matter → presigned upload → verified
+confirmation/indexing → authorized retrieval → Resolver → Writer → productive
+grounding adapter → inspectable citation, with user-scoped Harness/Gateway/MCP
+metadata and review actions, accepted short-term history and correlated audit.
+No Phase 13 AWS resource has been deployed and no production promotion made.
 
 The implemented components cover deterministic authorization, presigned document upload,
 S3 Vectors-backed authorized retrieval, retrieve-then-generate chat with
@@ -70,10 +79,12 @@ tests/       Local unit tests and fictional multi-tenant fixtures
 
 ## Local verification
 
-Requires Python 3.11 or newer. The Phase 00 suite uses only the standard
-library:
+Requires Python 3.11 or newer plus the declared backend/agent dependencies.
+The complete suite includes offline boto3 service-schema checks and signed-JWT
+integration tests (the original Phase 00 subset used only the standard library):
 
 ```bash
+python -m pip install -e '.[aws]' -e agent
 python -m unittest discover -s tests -v
 ```
 

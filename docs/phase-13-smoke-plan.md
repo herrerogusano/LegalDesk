@@ -5,6 +5,13 @@ request limits below with the completed local application before execution.
 Local integration, security tests and complete regression suite must pass.
 Neither a live inventory nor a deployment was performed while preparing this.
 
+The application enforces per-invocation token/iteration limits, bounded sync
+polling and zero SDK retries. The aggregate run ceilings below are operator
+stop limits, **not** an implemented account-wide billing limiter. Before a live
+run, record counters around the approved SDK requests and inspect managed
+Harness usage; if an aggregate cannot be observed/bounded, do not execute it.
+The browser does not automatically retry failed uploads, chat or tools.
+
 ## Scope and entry gates
 
 - Account/region must be explicitly confirmed before any deployment; historical
@@ -28,6 +35,32 @@ Neither a live inventory nor a deployment was performed while preparing this.
   after the separately approved deployment.
 
 ## Single-run sequence
+
+### Fixed fictional inputs (do not tune after observing output)
+
+Generate one text-only, one-page PDF named `fictional-storage-note.pdf` with:
+
+> Synthetic portfolio exercise. Northbridge Archive Ltd provides fictional
+> storage services to Acme Orchard Ltd. Acme Orchard Ltd must pay Northbridge
+> Archive Ltd within 23 calendar days after receipt of an invoice.
+
+Factual question: `How long does Acme Orchard Ltd have to pay after receipt of an invoice?`
+Expected: 23 calendar days, `answerable`, valid citation to this uploaded
+document, inspection displaying the actual supporting payment sentence.
+
+Absent-fact question: `Where is the emergency assembly point?`
+Expected: `insufficient_evidence`, no invented location, no citations when
+none of the retrieved passages materially supports the answer. A provider or
+grounding error does not count as successful documentary absence.
+
+Metadata action: `list_matter_documents` for Matter A. Review action:
+`create_review_task` with `reasonCode=user_requested_review`. Expect exactly
+one persisted OPEN task attributed to User A. Matter B is a distinct synthetic
+matter inaccessible to User A, not a guessed production identifier.
+These inputs are separate from the frozen semantic holdout; this small smoke
+does not execute or establish the holdout's fourteen semantic expectations.
+
+### Execution
 
 1. User A logs in through configured Cognito Authorization Code + PKCE.
 2. Select Matter A; prove the backend-derived user/matter scope.
@@ -69,7 +102,7 @@ Final implementation must expose counters/preflight checks before approval.
 | Gateway lifecycle/discovery/business requests | 40 total; 2 intended business operations |
 | Review creations | 1 successful task |
 | Memory writes | 20 short-term events; 20 read requests |
-| DynamoDB application operations | 100, bounded small items |
+| DynamoDB application operations | 400, bounded small items including repeated server-side authorization |
 | S3 object operations | 30, including cleanup; no full bucket scans |
 | Vector entries | 20 max in dedicated synthetic source/index |
 | New log ingestion | 1 MiB of metadata only |
@@ -116,6 +149,12 @@ are historical, not live status. Prefer existing Cognito, Gateway, Lambda,
 Memory, table and Harness resources after verifying compatibility. Recreate
 KB/vector/source/Guardrail resources only if inventory proves they are absent.
 No custom Runtime, queue, dashboard or additional identity service is selected.
+
+Do not blindly redeploy the original Phase 02 template: it creates both a bucket
+and a table, whereas later phases may retain a separately recreated shared
+metadata table. The approved change set must reuse that verified table and
+restore only the missing source dependencies, without creating a competing
+authorization store or changing tool/table wiring implicitly.
 
 Application invocation bindings reuse the metadata table and expire for
 authorization after five minutes. `expiresAt` validation is not deletion:

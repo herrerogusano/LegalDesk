@@ -10,11 +10,12 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, replace
-from typing import Mapping, Protocol
+from typing import Callable, Mapping, Protocol
 
 from .authorization import (
     AuthorizationDenied,
     AuthorizationStore,
+    RequestContext,
     VerifiedIdentity,
     build_request_context,
 )
@@ -177,7 +178,6 @@ class ChatCitation:
             "citationId": self.citation_id,
             "documentId": self.document_id,
             "documentName": self.document_name,
-            "sourceUri": self.source_uri,
             "pageNumber": self.page_number,
             "section": self.section,
         }
@@ -359,6 +359,7 @@ def answer_question(
     evidence_resolver: EvidenceResolver | None = None,
     answer_writer: AnswerWriter | None = None,
     grounding_validator: GroundingValidator | None = None,
+    authorized_evidence_sink: Callable[[VerifiedIdentity, RequestContext, ChatRequest, ChatResponse, tuple[RetrievedPassage, ...]], None] | None = None,
 ) -> ChatResponse:
     """Load the server prompt, authorize and retrieve, then generate from evidence."""
 
@@ -389,6 +390,8 @@ def answer_question(
         raise AuthorizationDenied("conversation access denied")
 
     request_started_at = time.perf_counter()
+    retrieved_passages: tuple[RetrievedPassage, ...] = ()
+    evidence_sink_called = False
     emit_telemetry(
         telemetry_sink,
         TelemetryEventType.AGENT,
@@ -398,6 +401,35 @@ def answer_question(
     )
 
     def finish(response: ChatResponse) -> ChatResponse:
+        nonlocal evidence_sink_called
+        if (
+            authorized_evidence_sink is not None
+            and not evidence_sink_called
+            and response.operation_status == "ok"
+            and response.citations
+            and retrieved_passages
+        ):
+            evidence_sink_called = True
+            selected_ids = {citation.citation_id for citation in response.citations}
+            selected_passages = tuple(
+                passage for passage in retrieved_passages
+                if passage.citation.citation_id in selected_ids
+            )
+            try:
+                authorized_evidence_sink(
+                    identity,
+                    context,
+                    request,
+                    response,
+                    selected_passages,
+                )
+            except Exception:
+                response = technical_error_response(
+                    prompt_artifact if "prompt_artifact" in locals() else None,
+                    correlation_id=context.correlation_id,
+                    error_code="citation_store_failed",
+                    separated_pipeline=all(item is not None for item in (evidence_resolver, answer_writer, grounding_validator)),
+                )
         response = replace(response, correlation_id=context.correlation_id)
         final_outcome = (
             TelemetryOutcome.BLOCKED
@@ -495,6 +527,7 @@ def answer_question(
                 error_code="retrieval_failed",
             )
         )
+    retrieved_passages = passages
     if not passages:
         return finish(insufficient_evidence_response(prompt_artifact, correlation_id=context.correlation_id))
 

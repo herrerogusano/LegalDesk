@@ -79,6 +79,14 @@ from .guardrails import (
     GroundingGuardrailError,
     GuardrailGroundingValidator,
 )
+from .http_app import (
+    ApplicationComposition,
+    ApplicationTelemetrySink,
+    CitationHandle,
+    LoopbackLegalDeskApp,
+    create_aws_composition,
+    create_http_app,
+)
 from .evidence import (
     AnswerWriter,
     AnswerWriterRequest,
@@ -210,4 +218,10 @@ __all__ = [
     "GroundingGuardrailBlocked",
     "GroundingGuardrailError",
     "GuardrailGroundingValidator",
+    "ApplicationComposition",
+    "ApplicationTelemetrySink",
+    "CitationHandle",
+    "LoopbackLegalDeskApp",
+    "create_aws_composition",
+    "create_http_app",
 ]

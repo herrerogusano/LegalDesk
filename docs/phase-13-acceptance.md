@@ -1,6 +1,6 @@
 # Phase 13 — integration acceptance ledger
 
-Status: **in progress; NOT_READY_FOR_PROD**. No Phase 13 AWS deployment,
+Status: **local integration gate complete; NOT_READY_FOR_PROD**. No Phase 13 AWS deployment,
 inference, ingestion or live smoke has been executed. No prod promotion.
 
 ## Evidence classes
@@ -17,6 +17,8 @@ inference, ingestion or live smoke has been executed. No prod promotion.
 ## Baseline and reproducibility
 
 - Developer baseline: `eedc520abf4044f453f1b251e3fe66cbe0230639`.
+- Reviewed local runtime: Python 3.13.13, boto3/botocore 1.43.97 and PyJWT
+  2.14.0. SDK schema checks are offline; they require the AWS optional dependency.
 - Before changes: 315 tests and 24/24 deterministic evaluations passed.
 - Initial identity transport changes: 324 tests passed locally.
 - Git's Windows checkout converted the system prompt to CRLF, invalidating
@@ -25,6 +27,28 @@ inference, ingestion or live smoke has been executed. No prod promotion.
   prompt semantics, version and historical report expectations were unchanged.
 - The initial transport tests are component evidence, not the final signed-JWT
   HTTP integration gate. Subsequent review findings require regression tests.
+- Reviewed identity/grounding/Harness stream checkpoint: 351 tests passed,
+  deterministic evaluation 24/24 with zero AWS calls. Stream fixtures and the
+  invocation request are validated against the installed botocore schema.
+  This is an intermediate result, not the final HTTP/UI acceptance count.
+
+Final local verification on 2026-09-21:
+
+- Complete Python suite: **378 tests passed**, versus the 315-test baseline.
+- Concrete application journey: one integrated happy-flow test plus 20 HTTP
+  scenario/security regressions; two additional HTTP boundary tests and three
+  factory tests. Other Phase 13 tests cover identity transport, provider stream
+  schemas, productive-grounding contracts, frozen holdout and scoped CORS.
+- Deterministic evaluations: **24/24**, **zero AWS calls**.
+- Python compile checks and Node syntax checks for both frontend scripts pass.
+- Offline Edge/Chromium browser acceptance passes login, selection, presigned
+  PUT/indexing, factual answer, citation passage, MCP, review, history, audit,
+  operational UI error, no-evidence answer and logout. Desktop 1365px and mobile
+  390px screenshots inspected; no horizontal overflow or JavaScript errors.
+- No configured linter/type-check suite exists. Local IaC regression tests pass;
+  no CloudFormation service validation, synth deployment or live diff was run.
+- The browser and Python fixtures use synthetic data only. Their scripted
+  provider responses are not real-model evaluation results.
 
 ## Productive grounding boundary
 
@@ -56,20 +80,70 @@ not a semantic evaluation result.
 
 ## Local release gate
 
-- [ ] One executable application and connected minimal browser UI.
-- [ ] Signed-JWT login and scope preservation through Harness/Gateway/tools.
-- [ ] A/A allow, A/B deny, B/B allow; forged matter/document/session denied.
-- [ ] Actual user attributed as review creator; expired token denied.
-- [ ] Upload confirmation checks storage, then bounded indexing reaches INDEXED.
-- [ ] Processing is distinguishable from missing documentary evidence.
-- [ ] Factual, partial, absent, conflicting and injection-adjacent evidence cases.
-- [ ] Concrete productive grounding, independent frozen holdout and honest limits.
-- [ ] Technical failures never become documentary not_found.
-- [ ] Authorized citation passage inspection without internal locations.
-- [ ] Scoped short-term history; long-term Memory remains disabled.
-- [ ] Correlated stage/tool outcomes and effective prompt metadata, no content logs.
-- [ ] Complete regression, deterministic evaluation and UI verification.
-- [ ] Reconciled real-smoke request limits, resources, budget and teardown.
+### HTTP acceptance scenario map
+
+`test_phase13_integration.py` uses the concrete application factory and a real
+loopback HTTP server with RS256 JWT verification. Only provider/SDK boundaries
+are doubled. The presigned upload performs a separate HTTP PUT; no test changes
+document state manually between upload, confirmation, ingestion and chat.
+`test_phase13_journey_security.py` extends the same composition:
+
+| Required scenario | Local evidence |
+|---|---|
+| Factual grounded response | upload → HEAD confirmation → real sync workflow → Retrieve → Resolver → Writer → Guardrail adapter → response |
+| Partial evidence | scripted provider coverage partial; backend retains valid citation and accepted history |
+| No evidence | empty authorized retrieval, canonical response, no Writer call |
+| Conflict | provider conflict signal, backend ambiguous status with citation |
+| Injection adjacent to fact | untrusted passage stays data; retrieval remains scoped and no tool is invoked |
+| Cross-matter | A/A and B/B allowed; A/B, guessed document and foreign session/citation denied |
+| Processing | UPLOADED document blocks chat before paid provider calls; status is not documentary absence |
+| Model failure | safe operational error, no rejected text or not_found audit |
+| MCP | actual interceptor/grant/MCP handler through a managed-transport double |
+| Review | actual interceptor/grant/Review Lambda handler, creator is signed-in Alice |
+| Expired token | signed token expired beyond configured clock leeway; login and existing session reject |
+| Citation inspection | exact uploaded passage, opaque handle, expiry and membership reauthorization |
+
+Additional regressions reject invented citation IDs, grounding intervention,
+wrong-but-otherwise-allowed tool results and forged operation correlations.
+Every question has a distinct correlation; its tool/audit events retain the
+server-owned question correlation and all three prompt versions/hashes.
+This validates integration contracts, **not** model semantic accuracy or live
+Gateway JWT/IAM behavior. Scripted test-provider answers never enter product code.
+
+- [x] One executable application and connected minimal browser UI.
+- [x] Signed-JWT login and scope preservation through Harness/Gateway/tools locally.
+- [x] A/A allow, A/B deny, B/B allow; forged matter/document/session denied.
+- [x] Actual user attributed as review creator; expired token denied.
+- [x] Upload confirmation checks storage, then bounded indexing reaches INDEXED.
+- [x] Processing is distinguishable from missing documentary evidence.
+- [x] Factual, partial, absent, conflicting and injection-adjacent provider contracts.
+- [x] Concrete productive grounding, independent frozen holdout and honest limits.
+- [x] Technical failures never become documentary not_found.
+- [x] Authorized citation passage inspection without internal locations.
+- [x] Scoped short-term history; long-term Memory remains disabled.
+- [x] Correlated stage/tool outcomes and effective prompt metadata, no content logs.
+- [x] Complete regression, deterministic evaluation and UI verification.
+- [x] Proposed real-smoke request limits, historical resources, budget and teardown.
+
+## Remaining gates and production gaps
+
+The live resource inventory, exact approved change sets/application IAM, real
+Cognito/Harness/Gateway interoperability, ingestion and model/Guardrail quality
+remain unverified. The 14-case independent semantic holdout is unexecuted; local
+tests must not be reported as proof that a real model accepts all paraphrases or
+rejects all contradictions. The proposed smoke is smaller than that holdout.
+
+The loopback server has process-local sessions/audit/citation handles and no
+production TLS hosting or distributed controls. Membership is reread per
+request (audit once per distinct matter); JWT verification is not an IdP
+revocation lookup. Whole-data-source ingestion requires a bounded synthetic
+source. Abandoned uploads and expired grant records need manual reconciliation;
+authorization expiry does not delete DynamoDB rows. Long-term Memory stays off.
+
+No AWS changes/cost were initiated by Phase 13. The smoke plan proposes an
+incremental estimate under USD 2 and a conservative USD 5 approval envelope,
+not a guaranteed account billing cap. Verify inventory, observability of request
+ceilings and teardown targets before any separately authorized execution.
 
 ## Developer to prod checklist — do not execute
 

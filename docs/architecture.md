@@ -2,9 +2,12 @@
 
 ## Initial component flow
 
-This is the intended topology, not evidence of an executable E2E system.
-At the Phase 13 baseline frontend, backend chat and Harness are separate flows;
-see `architecture-final.md` and `release-audit.md`.
+This historical topology is not release evidence. Phase 13 now composes the
+backend services through a loopback HTTP entry point; the exact implemented
+flow and its local/live evidence boundaries are in `architecture-final.md` and
+`phase-13-acceptance.md`. In particular, Resolver/Writer chat executes in the
+backend; Harness handles explicit metadata/review actions. The diagram below
+must not be read as an assertion that Harness implements the chat pipeline.
 
 ```mermaid
 flowchart LR

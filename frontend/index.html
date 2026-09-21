@@ -4,42 +4,75 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
+    <meta name="description" content="Consulta documental autorizada de LegalDesk">
     <title>LegalDesk — respuesta con fuentes</title>
-    <link rel="stylesheet" href="styles.css">
-    <script defer src="citations.js"></script>
+    <link rel="stylesheet" href="/styles.css">
+    <script defer src="/citations.js"></script>
+    <script defer src="/app.js"></script>
   </head>
   <body>
     <header class="masthead">
       <a class="wordmark" href="#main" aria-label="LegalDesk, inicio">LegalDesk<span> / </span>Archivo</a>
-      <p class="environment"><span class="environment-dot" aria-hidden="true"></span> DEMO LOCAL · DATOS FICTICIOS</p>
+      <div class="masthead-actions">
+        <p id="auth-status" class="environment"><span class="environment-dot" aria-hidden="true"></span> Sesión no iniciada</p>
+        <button id="login-button" class="text-button" type="button">Entrar</button>
+        <button id="logout-button" class="text-button" type="button" hidden>Cerrar sesión</button>
+      </div>
     </header>
 
     <main id="main" class="workspace">
       <div class="eyebrow"><span>Consulta documental</span><span class="eyebrow-rule" aria-hidden="true"></span><span>Respuesta fundamentada</span></div>
       <div class="title-row">
         <div>
-          <p class="kicker">EXPEDIENTE DE MUESTRA <span>·</span> SUN-017</p>
+          <p id="matter-kicker" class="kicker">SELECCIONA UN EXPEDIENTE</p>
           <h1>Una respuesta<br>con sus fuentes.</h1>
         </div>
         <div class="folio" aria-label="Vista de citas"><span>VISTA</span><strong>04</strong><span>/ CITAS</span></div>
       </div>
 
-      <section class="question-card" aria-labelledby="question-label">
-        <div class="section-index"><span>01</span><span class="index-line" aria-hidden="true"></span></div>
-        <div>
-          <p id="question-label" class="field-label">PREGUNTA</p>
-          <p class="question-text">¿Cuál es el plazo de pago y desde cuándo empieza a contar?</p>
+      <section class="control-strip" aria-labelledby="matter-label">
+        <div class="control-group">
+          <label id="matter-label" class="field-label" for="matter-select">EXPEDIENTE</label>
+          <select id="matter-select" disabled>
+            <option value="">Inicia sesión para seleccionar</option>
+          </select>
+        </div>
+        <div class="control-group control-group-wide">
+          <label class="field-label" for="document-file">AÑADIR DOCUMENTO</label>
+          <div class="upload-row">
+            <input id="document-file" type="file" accept="application/pdf,text/plain" disabled>
+            <button id="upload-button" class="button" type="button" disabled>Autorizar subida</button>
+          </div>
+          <p id="document-status" class="microcopy" aria-live="polite">Selecciona un expediente para empezar.</p>
         </div>
       </section>
+
+      <section class="question-card" aria-labelledby="question-label">
+        <div class="section-index"><span>01</span><span class="index-line" aria-hidden="true"></span></div>
+        <div class="question-content">
+          <p id="question-label" class="field-label">PREGUNTA</p>
+          <form id="chat-form">
+            <label class="sr-only" for="question">Pregunta documental</label>
+            <textarea id="question" rows="3" maxlength="1000" placeholder="Escribe una pregunta sobre el expediente seleccionado..." disabled required></textarea>
+            <div class="form-actions">
+              <span id="question-count" class="microcopy">0 / 1000</span>
+              <button id="ask-button" class="button button-primary" type="submit" disabled>Consultar</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <p id="app-error" class="app-message app-error" role="alert" hidden></p>
+      <p id="app-status" class="app-message" role="status" aria-live="polite" hidden></p>
 
       <section class="answer-layout" aria-labelledby="answer-label">
         <div class="section-index answer-index"><span>02</span><span class="index-line" aria-hidden="true"></span></div>
         <div class="answer-main">
           <div class="answer-heading">
             <p id="answer-label" class="field-label">RESPUESTA</p>
-            <p id="evidence-status" class="status"><span class="status-mark" aria-hidden="true"></span><span></span></p>
+            <p id="evidence-status" class="status"><span class="status-mark" aria-hidden="true"></span><span>ESPERANDO CONSULTA</span></p>
           </div>
-          <div id="answer" class="answer-copy" aria-live="polite"></div>
+          <div id="answer" class="answer-copy" aria-live="polite"><p>La respuesta aparecerá aquí después de una consulta autorizada.</p></div>
           <div id="disclaimer" class="disclaimer" hidden>
             <span class="disclaimer-mark" aria-hidden="true">i</span>
             <p>Resumen documental, no asesoramiento jurídico. Verifique el texto original y consulte a su profesional legal.</p>
@@ -53,12 +86,39 @@
               <h2 id="sources-heading">Fuentes consultadas</h2>
             </div>
           </div>
-          <p id="empty-citations" class="empty-citations" hidden>No se utilizaron fuentes para esta respuesta.</p>
-          <ol id="citation-list" class="citation-list" aria-label="Citas recuperadas"></ol>
+          <p id="empty-citations" class="empty-citations">Las citas de una respuesta autorizada aparecerán aquí.</p>
+          <ol id="citation-list" class="citation-list" aria-label="Citas recuperadas" hidden></ol>
+          <div id="citation-inspection" class="inspection-panel" hidden>
+            <p class="field-label">PASAJE INSPECCIONADO</p>
+            <p id="inspection-meta" class="citation-meta"></p>
+            <p id="inspection-passage" class="inspection-passage"></p>
+          </div>
           <p class="source-note">Las referencias proceden únicamente de los pasajes recuperados para esta consulta.</p>
         </aside>
       </section>
-      <footer class="page-footer"><span>LEGALDESK <span class="footer-separator">/</span> PROTOTIPO DE INVESTIGACIÓN</span><span>NO CONTIENE DOCUMENTACIÓN REAL</span></footer>
+
+      <section class="secondary-layout" aria-label="Expediente y trazabilidad de la sesión">
+        <section class="panel" aria-labelledby="documents-heading">
+          <div class="panel-heading"><p class="field-label">EXPEDIENTE</p><h2 id="documents-heading">Documentos autorizados</h2></div>
+          <ul id="document-list" class="document-list"><li class="microcopy">Selecciona un expediente para ver sus documentos.</li></ul>
+          <button id="sync-button" class="text-button" type="button" disabled>Sincronizar documentos</button>
+        </section>
+        <section class="panel" aria-labelledby="history-heading">
+          <div class="panel-heading"><p class="field-label">MEMORIA ACOTADA</p><h2 id="history-heading">Historial aceptado</h2></div>
+          <ol id="history-list" class="history-list"><li class="microcopy">El historial de la sesión aparecerá aquí.</li></ol>
+        </section>
+        <section class="panel" aria-labelledby="operator-heading">
+          <div class="panel-heading"><p class="field-label">OPERACIÓN</p><h2 id="operator-heading">Trazabilidad</h2></div>
+          <div class="panel-actions">
+            <button id="metadata-button" class="text-button" type="button" disabled>Metadatos MCP</button>
+            <button id="review-button" class="text-button" type="button" disabled>Solicitar revisión</button>
+            <button id="audit-button" class="text-button" type="button" disabled>Ver auditoría</button>
+          </div>
+          <pre id="operator-output" class="operator-output" aria-live="polite"></pre>
+        </section>
+      </section>
+
+      <footer class="page-footer"><span>LEGALDESK <span class="footer-separator">/</span> ARCHIVO AUTORIZADO</span><span>NO EXPONE RUTAS DE ALMACENAMIENTO</span></footer>
     </main>
   </body>
 </html>

@@ -1,17 +1,14 @@
 # Frontend
 
-Phase 04 adds a no-dependency citation panel at `index.html`. Its sample answer
-and document names are explicitly fictional. The panel can also render a
-backend-shaped response through `window.LegalDeskCitationPanel.renderChatResponse`
-and uses DOM text nodes so answer and citation text is not interpreted as HTML.
-It is a local presentation example; it is not connected to an API, login,
-upload, or persistent conversation store.
+The loopback application serves `index.html` together with `styles.css`,
+`citations.js`, and `app.js`. It uses the server-held session and CSRF token
+returned by `/api/me`; it never stores a JWT in the browser. Matter selection,
+upload authorization, document status, chat, citation inspection, bounded
+history, MCP metadata, review requests, and audit display all use the real
+HTTP API.
 
-Open `index.html` directly or serve this directory locally with
-`python -m http.server 8000`. The layout is responsive, keyboard navigable,
-uses visible focus styles and live answer announcements, and loads no external
-fonts, scripts, or assets. It presents the question, evidence status, response,
-legal disclaimer, and document/page/section citation metadata.
-
-Values submitted by a browser remain untrusted until the backend authorizes
-them. The page's fabricated demonstration response is not a legal source.
+Run the configured LegalDesk loopback entry point rather than opening this file
+directly. The page remains dependency-free, responsive, keyboard navigable,
+uses visible focus styles and live status announcements, and renders all
+backend values as text. Citation inspection receives an expiring server handle
+and does not expose source URIs or storage paths.
