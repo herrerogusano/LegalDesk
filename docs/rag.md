@@ -281,6 +281,12 @@ supplied, S3 URI, page, and section. Browser-facing citations omit tenant/matter
 metadata. Every response currently sets `disclaimerRequired` to true because
 the prototype is not legal advice.
 
+The separated pipeline supersedes the combined generator for new providers.
+Its Evidence Resolver and Answer Writer have independent versioned prompt
+contracts; the backend alone derives `evidenceStatus` and attaches validated
+citations. The combined contract remains only as a compatibility boundary for
+the earlier Phase 05 provider and tests.
+
 Local test coverage includes answerable, ambiguous, insufficient evidence with
 and without cited partial support, empty retrieval/no model call, invalid
 citations, cross-document citations within one matter, cross-matter filtering,

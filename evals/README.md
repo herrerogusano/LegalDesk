@@ -94,3 +94,18 @@ The resolver schema is exposed locally as a Bedrock Converse
 `outputConfig.textFormat` JSON Schema fragment. Server-side citation validation
 remains mandatory. Native provider citations are not enabled because this
 design uses its own `supportingCitationIds` contract.
+
+After the `3/9` real result, runner `5.1.0` isolates the resolver and writer
+with dedicated prompt contracts instead of sending both stages the general
+conversation prompt. It also replaces exact-sentence grounding with a
+fixture-owned typed-claim oracle that verifies claims against cited passage
+text and rejects invented typed or lexical claims, spec/evidence drift, missing
+uncertainty, invalid citations, and declared injection echoes even when
+stopwords are omitted. It is not a general semantic injection detector. Preflight pins the
+exact fixture IDs plus both stage-prompt hashes; the general `1.3.0` prompt is
+recorded only as product-artifact provenance and is not sent to either stage.
+The new local report
+`evals/results/phase12-solution-synthetic-report.json` passes `9/9` with zero
+AWS calls. The next real report path is
+`evals/results/phase12-remediation-resolver-v2-report.json`; it has not been
+executed and is capped at 18 calls with zero retries.

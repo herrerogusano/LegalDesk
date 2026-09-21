@@ -45,6 +45,12 @@ provider shape is based on the local botocore SDK and the reviewed AWS
 documentation; model/region availability and a live response remain a future,
 separately approved smoke.
 
+The general product prompt `1.3.0` is retained in preflight as repository
+provenance, but it is not sent to either separated model stage. The actual
+resolver and writer versions and hashes are independently pinned and preflight
+fails if either changes. The exact nine fixture IDs and ordering are pinned as
+well; category counts alone cannot substitute another sample set.
+
 ## Synthetic debug and real-run proposal
 
 `EVAL_DEBUG_SYNTHETIC=true` enables only the fixture-only local report in
@@ -76,6 +82,57 @@ was executed once with the separated pipeline. The bounded run made 9 resolver
 and 5 writer calls (`14` total), with zero retries, and accepted `3/9`. All
 three factual cases passed; the partial and injection groups remain incomplete.
 No rerun is permitted without separate approval.
+
+## Resolver/writer isolation after the 3/9 run
+
+The `3/9` result identified a concrete prompt-boundary defect: the resolver
+was schema-constrained but still received the broad product conversation
+prompt. That prompt contains answer-writing, legal-caution, refusal, and legacy
+JSON rules, so the model could satisfy the resolver schema while applying the
+wrong semantics—especially by discarding an entire passage that contained an
+embedded instruction.
+
+The local solution gives each model stage a dedicated, versioned contract:
+
+- Evidence Resolver `1.0.0`, SHA-256
+  `af14a60ec2c15e23b0cb1bf36f8374d768e72cad40b90ad2260a988ea9166984`;
+- Answer Writer `1.0.0`, SHA-256
+  `5a03f9b51fa18a3956c3050f3829de73f4b9b8548c1a1aaa868b0ad154adac66`.
+
+The resolver contract says that questions and passages cannot override system
+instructions, while passages remain authoritative factual evidence. It
+explicitly requires ignoring an embedded directive without discarding relevant
+facts from the same passage. Both stages receive their data as JSON rather than
+breakable text delimiters. The writer contract cannot classify evidence or
+choose citations and has status-specific rules for complete, partial, and
+conflicting evidence.
+
+The fixture-owned grounding oracle no longer compares an answer with one
+canonical sentence. It validates typed claims and absence constraints against
+the actual cited passage: required dates, amounts, and quantities must occur in
+both evidence and answer; unsupported typed or lexical claims, missing
+uncertainty, invalid citations, spec/evidence drift, and echoed injection
+directives declared by the fixture (including stopword-shortened echoes) fail
+closed. This does not claim synonym-level detection of arbitrary injection
+paraphrases. The server-side grounding contract also requires the
+validator to account for every supporting citation before those citations can
+reach the final response. The writer-shaped fixture output passes the same
+strict answer-only validator as the Converse adapter. This bounded oracle may
+conservatively reject valid phrasing and is not a claim of general production
+semantic grounding; the production output Guardrail remains an independent
+boundary.
+
+Runner `5.1.0` and the new synthetic report validate this design locally at
+`9/9` with zero AWS calls. A real run has not been made with the dedicated
+stage prompts. It is capped at 9 resolver plus 9 writer calls, one total HTTP
+attempt per stage, zero retries, and a new immutable report path.
+
+The repository exposes the separated path through `answer_question` only when
+resolver, writer, and grounding validator are supplied together; partial wiring
+is rejected. There is no deployed backend composition root in this repository,
+so the bounded runner validates these boundaries but is not evidence of a
+deployed product request end to end. The legacy combined generator remains a
+documented migration adapter, not the target integration.
 
 ## Harness evidence limits
 

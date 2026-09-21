@@ -34,6 +34,7 @@ reports remain immutable.
 | Direct Bedrock two-case follow-up | `evals/results/phase12-direct-bedrock-followup-report.json`: exactly `2/2` model calls, `0` retries, `0/2` accepted; one-time follow-up executed, no rerun permitted without new approval | INCOMPLETE |
 | Prompt policy fix and final two-case runner | `evals/results/phase12-direct-bedrock-final-report.json`: prompt `1.2.0` with the fixed SHA-256, exactly `2/2` calls, `0` retries, `1/2` accepted; factual citation remained insufficient and injection case accepted | INCOMPLETE |
 | Separated evidence-pipeline remediation | `evals/results/phase12-remediation-real-report.json`: prompt `1.3.0`, `9` resolver + `5` writer calls, `0` retries, `3/9` accepted; factual `3/3`, partial `0/3`, injection `0/3` | INCOMPLETE |
+| Dedicated resolver/writer prompt solution | `evals/results/phase12-solution-synthetic-report.json`: stage prompts independently versioned/hashed, claim-to-cited-passage grounding, exact fixture/prompt pinning, `9/9` local with `0` AWS calls; real runner `5.1.0` not executed | PASS (local), INCOMPLETE (real) |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double

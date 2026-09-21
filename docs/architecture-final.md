@@ -49,6 +49,11 @@ returns the canonical not-found response. Retrieved passages are untrusted as
 instructions, but authoritative documentary evidence once authorized by the
 server.
 
+Resolver and writer use independent versioned prompt contracts. The resolver
+does not inherit answer-writing, legal-caution, or legacy JSON instructions;
+the writer receives the already validated status and selected evidence. This
+keeps prompt-injection handling from turning into wholesale evidence removal.
+
 ## Operations and trade-offs
 
 Application telemetry is a closed allowlist of correlation, outcome, operation,

@@ -27,6 +27,9 @@ The separated `1.3.0` remediation was subsequently executed once over nine
 synthetic cases. It used 9 resolver and 5 writer calls (`14` total), zero
 retries, and accepted `3/9`: all factual cases passed, while partial and
 injection cases exposed remaining resolver/grounding gaps.
+The follow-up local fix now isolates resolver and writer prompts and uses a
+claim-to-cited-passage synthetic grounding oracle. Its local regression is `9/9`; the
+updated pipeline has not yet been revalidated against Bedrock.
 
 ## Repository layout
 

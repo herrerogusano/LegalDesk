@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Mapping, Protocol, TypedDict
@@ -18,15 +17,23 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 
 from legaldesk.evidence import (  # noqa: E402
+    ANSWER_WRITER_PROMPT_SHA256,
+    ANSWER_WRITER_PROMPT_VERSION,
     AnswerWriterRequest,
     ConverseAnswerWriter,
     ConverseEvidenceResolver,
     EvidenceResolutionRequest,
+    EVIDENCE_RESOLVER_PROMPT_SHA256,
+    EVIDENCE_RESOLVER_PROMPT_VERSION,
     GroundingContractError,
     validate_evidence_resolution,
     validate_grounding_result,
 )
 from legaldesk.prompts import FileSystemSystemPromptProvider  # noqa: E402
+try:
+    from .grounding_oracle import GroundingSpec, evaluate_grounding  # noqa: E402
+except ImportError:  # Direct script execution.
+    from grounding_oracle import GroundingSpec, evaluate_grounding  # type: ignore[no-redef]  # noqa: E402
 try:
     from .synthetic_debug import SYNTHETIC_CASES  # noqa: E402
 except ImportError:  # Direct script execution.
@@ -39,23 +46,27 @@ MAX_RESOLVER_INVOCATIONS = 9
 MAX_WRITER_INVOCATIONS = 9
 MAX_REAL_MODEL_INVOCATIONS = MAX_RESOLVER_INVOCATIONS + MAX_WRITER_INVOCATIONS
 MAX_PER_GROUP = 3
-RUNNER_VERSION = "4.0.0"
+RUNNER_VERSION = "5.1.0"
 EXPECTED_PROMPT_VERSION = "1.3.0"
 EXPECTED_PROMPT_SHA256 = "de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56"
+EXPECTED_RESOLVER_PROMPT_VERSION = "1.0.0"
+EXPECTED_RESOLVER_PROMPT_SHA256 = "af14a60ec2c15e23b0cb1bf36f8374d768e72cad40b90ad2260a988ea9166984"
+EXPECTED_WRITER_PROMPT_VERSION = "1.0.0"
+EXPECTED_WRITER_PROMPT_SHA256 = "5a03f9b51fa18a3956c3050f3829de73f4b9b8548c1a1aaa868b0ad154adac66"
 RESULTS_ROOT = ROOT / "evals" / "results"
-DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-real-report.json"
+DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-resolver-v2-report.json"
 HISTORICAL_REPORTS = {
     "phase12-remediation-synthetic-report.json",
     "phase12-direct-bedrock-report.json",
     "phase12-direct-bedrock-followup-report.json",
     "phase12-direct-bedrock-final-report.json",
+    "phase12-remediation-real-report.json",
 }
 CASE_GROUPS = {
     "factual": tuple(f"synthetic-factual-{index:02d}" for index in range(1, 4)),
     "partial": tuple(f"synthetic-partial-{index:02d}" for index in range(1, 4)),
     "injection": tuple(f"synthetic-injection-{index:02d}" for index in range(1, 4)),
 }
-_WORD = re.compile(r"[a-z0-9]+")
 
 
 class PlannedCall(TypedDict):
@@ -111,6 +122,13 @@ def _cases() -> tuple[Mapping[str, object], ...]:
         counts[category] += 1  # type: ignore[index]
     if counts != {"factual": 3, "partial": 3, "injection": 3}:
         raise RuntimeError("fixture categories must contain exactly three cases each")
+    expected_ids = tuple(
+        case_id
+        for category_case_ids in CASE_GROUPS.values()
+        for case_id in category_case_ids
+    )
+    if tuple(ids) != expected_ids:
+        raise RuntimeError("fixture IDs or ordering differ from the approved nine-case set")
     return cases
 
 
@@ -119,6 +137,13 @@ def preflight_real_run(output_path: Path | None = None) -> dict[str, object]:
     artifact = FileSystemSystemPromptProvider().load()
     if artifact.version != EXPECTED_PROMPT_VERSION or artifact.sha256 != EXPECTED_PROMPT_SHA256:
         raise RuntimeError("real runner requires the exact approved prompt 1.3.0 artifact")
+    if (
+        EVIDENCE_RESOLVER_PROMPT_VERSION != EXPECTED_RESOLVER_PROMPT_VERSION
+        or EVIDENCE_RESOLVER_PROMPT_SHA256 != EXPECTED_RESOLVER_PROMPT_SHA256
+        or ANSWER_WRITER_PROMPT_VERSION != EXPECTED_WRITER_PROMPT_VERSION
+        or ANSWER_WRITER_PROMPT_SHA256 != EXPECTED_WRITER_PROMPT_SHA256
+    ):
+        raise RuntimeError("real runner requires the exact approved resolver/writer prompts")
     cases = _cases()
     if output_path is not None:
         assert_output_path(output_path)
@@ -130,6 +155,10 @@ def preflight_real_run(output_path: Path | None = None) -> dict[str, object]:
         "model": MODEL_ID,
         "promptVersion": artifact.version,
         "promptHash": artifact.sha256,
+        "resolverPromptVersion": EVIDENCE_RESOLVER_PROMPT_VERSION,
+        "resolverPromptHash": EVIDENCE_RESOLVER_PROMPT_SHA256,
+        "writerPromptVersion": ANSWER_WRITER_PROMPT_VERSION,
+        "writerPromptHash": ANSWER_WRITER_PROMPT_SHA256,
         "totalCases": len(cases),
         "maxResolverInvocations": MAX_RESOLVER_INVOCATIONS,
         "maxWriterInvocations": MAX_WRITER_INVOCATIONS,
@@ -153,19 +182,31 @@ class _BoundedClient:
         return self._client.converse(**kwargs)
 
 
-def _words(value: str) -> set[str]:
-    return set(_WORD.findall(value.casefold()))
-
-
 def _deterministic_grounding(answer: str, case: Mapping[str, object], citation_ids: tuple[str, ...]) -> Mapping[str, object]:
-    """Use a bounded fixture oracle; no third model/Guardrail call is made."""
-    expected = case.get("writer", {})
-    expected_answer = expected.get("answer") if isinstance(expected, Mapping) else None
-    if not isinstance(expected_answer, str) or not isinstance(answer, str):
+    """Use the fixture-declared claim oracle; no third model call is made."""
+    spec = case.get("groundingSpec")
+    passages = case.get("passages")
+    if not isinstance(spec, GroundingSpec) or not isinstance(passages, (list, tuple)):
         return {"grounded": False, "score": 0.0, "matchedCitationIds": []}
-    required = {word for word in _words(expected_answer) if len(word) > 2}
-    grounded = required.issubset(_words(answer)) and bool(citation_ids)
-    return {"grounded": grounded, "score": 0.98 if grounded else 0.0, "matchedCitationIds": list(citation_ids) if grounded else []}
+    available_ids = tuple(
+        item.get("citationId")
+        for item in passages
+        if isinstance(item, Mapping) and isinstance(item.get("citationId"), str)
+    )
+    evidence_by_citation_id = {
+        str(item["citationId"]): str(item["text"])
+        for item in passages
+        if isinstance(item, Mapping)
+        and isinstance(item.get("citationId"), str)
+        and isinstance(item.get("text"), str)
+    }
+    return evaluate_grounding(
+        answer,
+        spec,
+        citation_ids,
+        available_ids,
+        evidence_by_citation_id,
+    )
 
 
 def _error_code(stage: str, exc: Exception) -> str:
@@ -205,8 +246,8 @@ def run_real_evaluation(*, client: RealConverseClient | None = None, output_path
 
     resolver_client = _BoundedClient(client, "resolver", MAX_RESOLVER_INVOCATIONS)
     writer_client = _BoundedClient(client, "writer", MAX_WRITER_INVOCATIONS)
-    resolver = ConverseEvidenceResolver(resolver_client, model_id=MODEL_ID, system_prompt=artifact.content)
-    writer = ConverseAnswerWriter(writer_client, model_id=MODEL_ID, system_prompt=artifact.content)
+    resolver = ConverseEvidenceResolver(resolver_client, model_id=MODEL_ID)
+    writer = ConverseAnswerWriter(writer_client, model_id=MODEL_ID)
     results: list[dict[str, object]] = []
     for case in _cases():
         metadata: dict[str, object] = {
@@ -254,6 +295,10 @@ def run_real_evaluation(*, client: RealConverseClient | None = None, output_path
         "runner": "legaldesk-phase12-remediation-real", "runnerVersion": RUNNER_VERSION,
         "mode": "real-bedrock-bounded", "region": REGION, "model": MODEL_ID,
         "promptVersion": artifact.version, "promptHash": artifact.sha256,
+        "resolverPromptVersion": EVIDENCE_RESOLVER_PROMPT_VERSION,
+        "resolverPromptHash": EVIDENCE_RESOLVER_PROMPT_SHA256,
+        "writerPromptVersion": ANSWER_WRITER_PROMPT_VERSION,
+        "writerPromptHash": ANSWER_WRITER_PROMPT_SHA256,
         "totalCases": len(results), "acceptedCases": sum(bool(item["accepted"]) for item in results),
         "resolverCalls": resolver_client.calls, "writerCalls": writer_client.calls,
         "inferenceCalls": resolver_client.calls + writer_client.calls, "retryCount": 0,

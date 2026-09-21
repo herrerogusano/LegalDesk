@@ -176,3 +176,23 @@ instead of ignoring the embedded instruction while retaining the documented
 fact. No questions, passages, answers, exception messages, tokens, or secrets
 are stored. This validates the factual improvement but leaves partial and
 injection acceptance incomplete; no rerun is permitted without new approval.
+
+### Local solution after the separated-run failure
+
+The follow-up diagnosis found that schema enforcement had constrained the
+resolver's output shape but not its semantic role: it still received the broad
+conversation prompt. Runner `5.1.0` now uses independently versioned resolver
+and writer prompts. The resolver explicitly ignores embedded directives while
+retaining documentary facts from the same passage. The writer cannot choose
+status or citations.
+
+The local acceptance oracle now validates fixture-declared typed claims and
+absence constraints against the cited passages instead of requiring one exact
+sentence. It rejects spec/evidence drift, invented typed or lexical claims,
+missing uncertainty, invalid citations, and echoed injection directives. The
+declared directive check also catches stopword-shortened echoes, but is not a
+general synonym-level injection detector. The preflight pins the exact fixture
+IDs and both stage-prompt hashes. The new synthetic report
+`evals/results/phase12-solution-synthetic-report.json` is `9/9` with zero AWS
+calls. This is not yet real-model evidence; a separately authorized bounded run
+is required before changing the Phase 12 status.

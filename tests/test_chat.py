@@ -266,6 +266,50 @@ class GroundedChatTests(unittest.TestCase):
         self.assertEqual(response.citations, ())
         self.assertEqual(response.evidence_status, EvidenceStatus.INSUFFICIENT_EVIDENCE)
 
+    def test_separated_pipeline_preserves_partial_evidence_and_citation(self) -> None:
+        resolver = FakeEvidenceResolver(
+            {"coverage": "partial", "conflict": False, "supportingCitationIds": ["citation-1"]}
+        )
+        writer = FakeAnswerWriter("El documento menciona un plazo, pero no establece su duración.")
+        grounder = FakeGroundingValidator(
+            {"grounded": True, "score": 0.95, "matchedCitationIds": ["citation-1"]}
+        )
+        response = self.answer(
+            [result("tnt_aurora", "mat_sundial", "doc-one", "The applicable notice period must be respected.")],
+            FakeGenerator(),
+            evidence_resolver=resolver,
+            answer_writer=writer,
+            grounding_validator=grounder,
+        )
+        self.assertEqual(response.evidence_status, EvidenceStatus.INSUFFICIENT_EVIDENCE)
+        self.assertEqual([citation.citation_id for citation in response.citations], ["citation-1"])
+        self.assertEqual(len(writer.requests), 1)
+
+    def test_separated_pipeline_conflict_requires_all_supporting_citations_grounded(self) -> None:
+        resolver = FakeEvidenceResolver(
+            {
+                "coverage": "complete",
+                "conflict": True,
+                "supportingCitationIds": ["citation-1", "citation-2"],
+            }
+        )
+        writer = FakeAnswerWriter("Los documentos indican plazos incompatibles de 10 y 20 días.")
+        incomplete_grounder = FakeGroundingValidator(
+            {"grounded": True, "score": 0.95, "matchedCitationIds": ["citation-1"]}
+        )
+        response = self.answer(
+            [
+                result("tnt_aurora", "mat_sundial", "doc-one", "The deadline is 10 days."),
+                result("tnt_aurora", "mat_sundial", "doc-two", "The deadline is 20 days."),
+            ],
+            FakeGenerator(),
+            evidence_resolver=resolver,
+            answer_writer=writer,
+            grounding_validator=incomplete_grounder,
+        )
+        self.assertEqual(response.answer, INSUFFICIENT_EVIDENCE_ANSWER)
+        self.assertEqual(response.citations, ())
+
     def test_answerable_response_carries_retrieved_citation_and_disclaimer(self) -> None:
         generator = FakeGenerator()
         response = self.answer(
