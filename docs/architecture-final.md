@@ -40,6 +40,15 @@ the model never receives direct S3 or database credentials. Memory is
 short-term, scoped by authorized actor/session/matter, with long-term writes
 rejected for data minimization.
 
+Evidence resolution is a separate backend boundary: a schema-constrained
+resolver may return only coverage, conflict, and retrieval-issued supporting
+citation IDs. The backend derives `answerable`, `ambiguous`, or
+`insufficient_evidence`; a separate Answer Writer produces text and cannot
+change that status or its citations. A `none` resolution skips writing and
+returns the canonical not-found response. Retrieved passages are untrusted as
+instructions, but authoritative documentary evidence once authorized by the
+server.
+
 ## Operations and trade-offs
 
 Application telemetry is a closed allowlist of correlation, outcome, operation,

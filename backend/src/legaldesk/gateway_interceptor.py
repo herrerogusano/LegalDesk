@@ -272,7 +272,40 @@ def _normalize_tools_list_body(body: Mapping[str, object]) -> dict[str, object]:
     return transformed
 
 
-def _safe_error(event: Mapping[str, object], message: str = "access denied") -> dict[str, object]:
+_SAFE_DECISION_CODES = {"CROSS_MATTER", "ACCESS_DENIED", "SERVICE_UNAVAILABLE", "DENY", "ALLOW"}
+
+
+def _safe_decision_metadata(
+    *,
+    decision: str,
+    code: str,
+    target_invoked: bool,
+    tool_name: object = None,
+) -> dict[str, object]:
+    """Return bounded interceptor evidence; never include arbitrary errors/body text."""
+
+    if decision not in {"ALLOW", "DENY"} or code not in _SAFE_DECISION_CODES:
+        decision, code = "DENY", "ACCESS_DENIED"
+    safe_tool = tool_name if isinstance(tool_name, str) and len(tool_name) <= 128 else None
+    return {
+        "authorizationDecision": decision,
+        "authorizationCode": code,
+        "targetInvoked": bool(target_invoked),
+        "toolName": safe_tool,
+        "toolCallId": None,
+        "toolResult": "UNAVAILABLE",
+        "guardrailDecision": "UNAVAILABLE",
+        "stopReason": "UNAVAILABLE",
+        "finalValidation": "UNAVAILABLE",
+    }
+
+
+def _safe_error(
+    event: Mapping[str, object],
+    message: str = "access denied",
+    *,
+    authorization_code: str = "ACCESS_DENIED",
+) -> dict[str, object]:
     body = event.get("mcp")
     gateway_request = body.get("gatewayRequest") if isinstance(body, Mapping) else None
     request_body = gateway_request.get("body") if isinstance(gateway_request, Mapping) else None
@@ -559,6 +592,11 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         "rawJsonMapping": False,
         "rawArgumentsMapping": False,
         "rawMatterPresent": False,
+        "authorizationDecision": "UNKNOWN",
+        "authorizationCode": "UNAVAILABLE",
+        "targetInvoked": False,
+        "toolName": None,
+        "selectorConsistent": False,
     }
     try:
         mcp = event.get("mcp")
@@ -583,6 +621,7 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         audit["rawJsonMapping"] = isinstance(raw_parsed, Mapping)
         raw_params = raw_parsed.get("params") if isinstance(raw_parsed, Mapping) else None
         raw_arguments = raw_params.get("arguments") if isinstance(raw_params, Mapping) else None
+        normalized_raw_arguments: Mapping[str, object] | None = None
         audit["rawArgumentsMapping"] = isinstance(raw_arguments, Mapping)
         try:
             normalized_raw_arguments = _normalize_arguments(raw_arguments)
@@ -595,6 +634,7 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         gateway_arguments = (
             gateway_params.get("arguments") if isinstance(gateway_params, Mapping) else None
         )
+        normalized_gateway_arguments: Mapping[str, object] | None = None
         audit["gatewayArgumentsMapping"] = isinstance(gateway_arguments, Mapping)
         try:
             normalized_gateway_arguments = _normalize_arguments(gateway_arguments)
@@ -603,12 +643,27 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
             )
         except AuthorizationDenied:
             pass
+        raw_selector = normalized_raw_arguments.get("matterId") if normalized_raw_arguments else None
+        body_selector = normalized_gateway_arguments.get("matterId") if normalized_gateway_arguments else None
+        header_selector = (
+            _header_selector(gateway_request.get("headers"), "x-legaldesk-requested-matter-id")
+            if isinstance(gateway_request, Mapping) and isinstance(gateway_request.get("headers"), Mapping)
+            else None
+        )
+        # Gateway may sanitize the transformed body. Absence is therefore
+        # consistent; only an explicit differing selector is inconsistent.
+        audit["selectorConsistent"] = bool(
+            isinstance(raw_selector, str)
+            and (body_selector is None or body_selector == raw_selector)
+            and (header_selector is None or header_selector == raw_selector)
+        )
         try:
             _raw_matter_selector(raw_gateway_request)
             audit["matterSelectorPresent"] = True
         except AuthorizationDenied:
             pass
         audit["method"] = method if method in {"initialize", "tools/list", "tools/call", "ping", "notifications/initialized"} else "other"
+        audit["toolName"] = tool_name if isinstance(tool_name, str) and len(tool_name) <= 128 else None
         if method in {"initialize", "tools/list", "ping", "notifications/initialized"}:
             # MCP capability discovery is not a business-scope operation. The
             # Function URL remains AWS_IAM-restricted; no caller selectors are
@@ -634,22 +689,34 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
             pass
         store = _authorization_store_from_environment()
         if store is None:
-            return _safe_error(event, "service unavailable")
+            audit.update(_safe_decision_metadata(decision="DENY", code="SERVICE_UNAVAILABLE", target_invoked=False, tool_name=tool_name))
+            _LOGGER.warning("gateway authorization unavailable %s", json.dumps(audit, sort_keys=True))
+            return _safe_error(event, "service unavailable", authorization_code="SERVICE_UNAVAILABLE")
         grants = _grant_repository_from_environment()
         if grants is None:
-            return _safe_error(event, "service unavailable")
+            audit.update(_safe_decision_metadata(decision="DENY", code="SERVICE_UNAVAILABLE", target_invoked=False, tool_name=tool_name))
+            _LOGGER.warning("gateway authorization unavailable %s", json.dumps(audit, sort_keys=True))
+            return _safe_error(event, "service unavailable", authorization_code="SERVICE_UNAVAILABLE")
         response = transform_gateway_request(
             event,
             target=target,
             authorization_store=store,
             grant_repository=grants,
         )
+        audit.update(_safe_decision_metadata(decision="ALLOW", code="ALLOW", target_invoked=False, tool_name=tool_name))
         _LOGGER.info("gateway authorization allowed %s", json.dumps(audit, sort_keys=True))
         return response
     except AuthorizationDenied:
+        code = (
+            "CROSS_MATTER"
+            if audit["authorizationParsable"] and audit["matterSelectorPresent"] and audit["selectorConsistent"]
+            else "ACCESS_DENIED"
+        )
+        audit.update(_safe_decision_metadata(decision="DENY", code=code, target_invoked=False, tool_name=tool_name))
         _LOGGER.warning("gateway authorization denied %s", json.dumps(audit, sort_keys=True))
-        return _safe_error(event)
+        return _safe_error(event, authorization_code=code)
     except Exception:
+        audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
         _LOGGER.exception("gateway authorization failed %s", json.dumps(audit, sort_keys=True))
         return _safe_error(event)
 

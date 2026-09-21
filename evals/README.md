@@ -56,14 +56,37 @@ rerun requires new explicit approval. The follow-up helper rejects this
 historical path even when supplied as an absolute path; its CLI default is a
 distinct rerun filename, so the one-time report cannot be overwritten.
 
-That result exposed a prompt-policy issue. The server prompt is now version
-`1.2.0` with hash
-`d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2` and
-preserves the exact JSON/refusal contract while classifying explicitly
-supported facts as `answerable`. The `direct_bedrock_final.py` runner
-requires that prompt, is capped at exactly two calls with zero retries, and
-uses the distinct report path
+That result exposed a prompt-policy issue. The historical
+`direct_bedrock_final.py` runner remains frozen to prompt `1.2.0`, SHA-256
+`d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2`, is
+capped at exactly two calls with zero retries, and uses the distinct report path
 `evals/results/phase12-direct-bedrock-final-report.json`. It was executed once
 with exactly `2/2` attempts and `0` retries; the metadata-only report records
 `acceptedCases=1/2`. Phase 12 remains incomplete and no retry is permitted
 without new explicit authorization.
+
+The current local remediation prompt is version `1.3.0`, SHA-256
+`de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56`.
+It clarifies that authorized document content remains evidence while document
+instructions remain untrusted, and adds the separated writer contract. This
+artifact has not been executed against a real model.
+
+## Remediation runner (local only)
+
+`EVAL_DEBUG_SYNTHETIC=true` enables `synthetic_debug.py`, a fixture-only report
+with synthetic questions, passages, resolver/writer raw and normalized
+outputs, final results, citation IDs, grounding scores, prompt metadata, and
+validation/error codes. It makes zero AWS and inference calls and stores no
+CoT, secrets, or tokens. It cannot read or write
+outside the local `evals/` fixture area and does not alter historical reports.
+`phase12_remediation_runner.py` prints, but does not execute, the proposed
+real subset: three factual, three partial, and three injection samples. The
+separated pipeline requires 9 resolver + 9 writer calls, for a maximum of 18
+model invocations, one attempt per stage and zero retries. Its `--execute`
+flag intentionally refuses. A future real run requires separate approval for
+cost, retention, and synthetic scope.
+
+The resolver schema is exposed locally as a Bedrock Converse
+`outputConfig.textFormat` JSON Schema fragment. Server-side citation validation
+remains mandatory. Native provider citations are not enabled because this
+design uses its own `supportingCitationIds` contract.

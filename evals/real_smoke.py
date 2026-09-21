@@ -19,6 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agent" / "src"))
 
 from legaldesk_agent import HarnessInvoker, HarnessInvocationError, InvokeResult  # noqa: E402
+from legaldesk_agent.trace_evidence import normalize_harness_evidence  # noqa: E402
+try:
+    from .synthetic_debug import synthetic_debug_enabled  # noqa: E402
+except ImportError:  # Direct script execution.
+    from synthetic_debug import synthetic_debug_enabled  # type: ignore[no-redef]  # noqa: E402
 
 
 MAX_INVOCATIONS = 4
@@ -83,6 +88,37 @@ def _classify(case: RealSmokeCase, text: str) -> dict[str, str | None]:
     }
 
 
+def _classify_structured(case: RealSmokeCase, metadata: object) -> dict[str, object] | None:
+    """Accept only explicit allowlisted metadata from the adapter/interceptor."""
+
+    evidence = normalize_harness_evidence(metadata, source_name="harness-adapter")
+    if not evidence.structured:
+        return None
+    if case.category == "cross-matter" and evidence.accepted_cross_matter_deny:
+        return {
+            "outcome": "denied_without_leak",
+            "tool": None,
+            "citationLike": None,
+            "accepted": True,
+            "acceptanceReason": "structured_interceptor_deny",
+        }
+    if case.category == "authorized-metadata" and evidence.authorization_decision == "ALLOW":
+        return {
+            "outcome": "authorized_tool_or_metadata",
+            "tool": evidence.tool_name,
+            "citationLike": None,
+            "accepted": bool(evidence.tool_name),
+            "acceptanceReason": "structured_tool_authorization",
+        }
+    return {
+        "outcome": "inconclusive",
+        "tool": None,
+        "citationLike": None,
+        "accepted": False,
+        "acceptanceReason": "structured_trace_missing_expected_policy_event",
+    }
+
+
 def run_real_smoke(
     harness_arn: str,
     *,
@@ -94,6 +130,8 @@ def run_real_smoke(
 
     if region != REGION:
         raise ValueError("Phase 12 real smoke is restricted to eu-west-1")
+    if synthetic_debug_enabled():
+        raise RuntimeError("EVAL_DEBUG_SYNTHETIC=true permits fixture-only evaluation, not Harness calls")
     if len(CASES) != MAX_INVOCATIONS:
         raise RuntimeError("real smoke case count must equal the hard invocation cap")
     factory = invoker_factory or (lambda arn, selected_region: HarnessInvoker.from_boto3(arn, selected_region))
@@ -105,16 +143,32 @@ def run_real_smoke(
         try:
             # Exactly one call per case.  Do not add retries here or in callers.
             response = invoker.invoke(case.message, session_id=str(session_id))
-            labels = _classify(case, response.text)
+            labels = _classify_structured(
+                case,
+                getattr(response, "structured_metadata", ()),
+            )
+            if labels is None:
+                # Text remains observational only. It is never sent through
+                # the acceptance path, even for historical lexical labels.
+                labels = {
+                    "outcome": "inconclusive",
+                    "tool": None,
+                    "citationLike": None,
+                    "accepted": False,
+                    "acceptanceReason": "structured_trace_missing",
+                }
             outcome = str(labels["outcome"])
+            accepted = bool(labels.get("accepted", False))
             error_code = None
         except HarnessInvocationError:
             outcome = "invocation_error"
-            labels = {"tool": None, "citationLike": None, "acceptanceReason": "invocation_error"}
+            labels = {"tool": None, "citationLike": None, "acceptanceReason": "invocation_error", "accepted": False}
+            accepted = False
             error_code = "harness_invocation_error"
         except Exception:
             outcome = "invocation_error"
-            labels = {"tool": None, "citationLike": None, "acceptanceReason": "invocation_error"}
+            labels = {"tool": None, "citationLike": None, "acceptanceReason": "invocation_error", "accepted": False}
+            accepted = False
             error_code = "unexpected_invocation_error"
         result: dict[str, object] = {
             "caseId": case.case_id,
@@ -122,7 +176,7 @@ def run_real_smoke(
             "expectedOutcome": case.expected,
             "actualOutcome": outcome,
             "passed": outcome == case.expected,
-            "accepted": False,
+            "accepted": accepted,
             "acceptanceReason": labels["acceptanceReason"],
             "tool": labels["tool"],
             "citationLike": labels["citationLike"],

@@ -22,6 +22,28 @@ class _FakeInvoker:
         return type("Result", (), {"text": "Synthetic metadata MCP response for notice.pdf"})()
 
 
+class _StructuredInvoker:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def invoke(self, message: str, *, session_id: str):
+        self.calls.append(message)
+        if "mat_other" in message:
+            metadata = ({
+                "authorizationDecision": "DENY",
+                "authorizationCode": "CROSS_MATTER",
+                "targetInvoked": False,
+            },)
+        elif "mat_sundial" in message:
+            metadata = ({
+                "authorizationDecision": "ALLOW",
+                "toolName": "mcp.list_matter_documents",
+            },)
+        else:
+            metadata = ()
+        return type("Result", (), {"text": "bounded", "structured_metadata": metadata})()
+
+
 class Phase12RealSmokeTests(unittest.TestCase):
     def test_runner_has_exact_cap_no_retries_and_metadata_only_report(self) -> None:
         fake = _FakeInvoker()
@@ -87,6 +109,14 @@ class Phase12RealSmokeTests(unittest.TestCase):
     def test_region_is_fixed_to_eu_west_1(self) -> None:
         with self.assertRaises(ValueError):
             run_real_smoke("arn:synthetic", region="us-east-1", invoker_factory=lambda _arn, _region: _FakeInvoker())
+
+    def test_structured_adapter_metadata_can_accept_authorized_and_cross_matter_cases(self) -> None:
+        invoker = _StructuredInvoker()
+        report = run_real_smoke("arn:synthetic", invoker_factory=lambda _arn, _region: invoker)
+        by_id = {item["caseId"]: item for item in report["cases"]}
+        self.assertTrue(by_id["real-authorized-mcp"]["accepted"])
+        self.assertEqual(by_id["real-cross-matter-deny"]["actualOutcome"], "denied_without_leak")
+        self.assertTrue(by_id["real-cross-matter-deny"]["accepted"])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Prepare the final bounded two-case Bedrock check for prompt version 1.2.0.
+"""Prepare the historical bounded two-case Bedrock check for prompt version 1.2.0.
 
 This runner is intentionally not executed by the local suite. It preserves the
 historical follow-up report while providing a distinct report path for a future
@@ -56,7 +56,7 @@ class CurrentPromptProvider:
     def load(self):
         artifact = self._provider.load()
         if artifact.version != PROMPT_VERSION:
-            raise RuntimeError("final Bedrock runner requires prompt version 1.2.0")
+            raise RuntimeError("historical final runner requires prompt version 1.2.0")
         if artifact.sha256 != CURRENT_PROMPT_SHA256:
             raise RuntimeError("final Bedrock runner requires the exact approved prompt artifact")
         return artifact

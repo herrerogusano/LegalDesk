@@ -93,8 +93,8 @@ class SystemPromptGoldenTests(unittest.TestCase):
 
     def test_prompt_is_versioned_and_bound_to_its_exact_artifact(self) -> None:
         self.assertEqual(self.artifact.prompt_id, "legaldesk-system")
-        self.assertEqual(self.artifact.version, "1.2.0")
-        self.assertEqual(self.artifact.sha256, "d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2")
+        self.assertEqual(self.artifact.version, "1.3.0")
+        self.assertEqual(self.artifact.sha256, "de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56")
         self.assertRegex(self.artifact.sha256, r"^[0-9a-f]{64}$")
         raw_artifact = DEFAULT_SYSTEM_PROMPT_PATH.read_bytes()
         self.assertEqual(self.artifact.sha256, hashlib.sha256(raw_artifact).hexdigest())

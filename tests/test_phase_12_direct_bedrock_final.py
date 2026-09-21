@@ -20,6 +20,7 @@ from evals.direct_bedrock_final import (  # noqa: E402
     run_final,
 )
 from evals.direct_bedrock_smoke import INJECTION_CANARY  # noqa: E402
+from legaldesk.prompts import FileSystemSystemPromptProvider, SystemPromptArtifact  # noqa: E402
 
 
 def _response(answer: str, status: str = "answerable") -> dict[str, object]:
@@ -32,6 +33,11 @@ def _response(answer: str, status: str = "answerable") -> dict[str, object]:
             }
         }
     }
+
+
+def _historical_prompt_provider():
+    artifact = SystemPromptArtifact("legaldesk-system", "1.2.0", "historical frozen prompt artifact", CURRENT_PROMPT_SHA256)
+    return type("HistoricalPromptProvider", (), {"load": lambda _self: artifact})()
 
 
 class _FakeBedrock:
@@ -48,9 +54,13 @@ class _FakeBedrock:
 
 
 class DirectBedrockFinalTests(unittest.TestCase):
+    def test_current_filesystem_prompt_is_rejected_by_historical_runner(self) -> None:
+        with self.assertRaises(RuntimeError):
+            run_final(client_factory=lambda _region: _FakeBedrock([]), prompt_provider=FileSystemSystemPromptProvider())
+
     def test_final_runner_is_bounded_to_current_prompt_and_metadata_only(self) -> None:
         client = _FakeBedrock([_response("17 days."), _response("17 days.")])
-        report = run_final(client_factory=lambda _region: client)
+        report = run_final(client_factory=lambda _region: client, prompt_provider=_historical_prompt_provider())
         self.assertEqual(report["promptVersion"], PROMPT_VERSION)
         self.assertEqual(report["promptSha256"], CURRENT_PROMPT_SHA256)
         self.assertEqual(report["maxModelInvocations"], 2)
@@ -71,7 +81,7 @@ class DirectBedrockFinalTests(unittest.TestCase):
         client = _FakeBedrock([_response("17 days."), _response("17 days.")])
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "final-report.json"
-            report = run_final(client_factory=lambda _region: client, output_path=output_path)
+            report = run_final(client_factory=lambda _region: client, output_path=output_path, prompt_provider=_historical_prompt_provider())
             self.assertEqual(report["mode"], "direct-bedrock-final-bounded")
             self.assertTrue(output_path.exists())
             self.assertFalse(HISTORICAL_REPORT_PATH.samefile(output_path))
@@ -103,7 +113,7 @@ class DirectBedrockFinalTests(unittest.TestCase):
 
     def test_provider_failures_are_two_attempts_without_retry(self) -> None:
         client = _FakeBedrock([RuntimeError("one"), RuntimeError("two")])
-        report = run_final(client_factory=lambda _region: client)
+        report = run_final(client_factory=lambda _region: client, prompt_provider=_historical_prompt_provider())
         self.assertEqual(len(client.calls), MAX_MODEL_INVOCATIONS)
         self.assertEqual(report["invocationsAttempted"], 2)
         self.assertEqual(report["retryCount"], 0)

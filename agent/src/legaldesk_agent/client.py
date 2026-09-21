@@ -87,6 +87,8 @@ class InvokeResult:
     session_id: str
     text: str
     correlation_id: str | None = None
+    # Provider/application metadata only; never raw event bodies or content.
+    structured_metadata: tuple[Mapping[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -160,6 +162,71 @@ def _text_from_events(events: Iterable[Mapping[str, Any]]) -> str:
         if "text" in delta:
             chunks.append(str(delta["text"]))
     return "".join(chunks)
+
+
+_SAFE_TRACE_KEYS = {
+    "authorizationDecision",
+    "authorizationCode",
+    "errorCode",
+    "policyCode",
+    "denyCode",
+    "targetInvoked",
+    "tool",
+    "toolName",
+    "targetTool",
+    "requestId",
+    "traceId",
+    "correlationId",
+    "toolCallId",
+    "toolResult",
+    "guardrailDecision",
+    "stopReason",
+    "finalValidation",
+}
+_SAFE_METADATA_ENUMS = {
+    "authorizationDecision": {"ALLOW", "DENY", "UNKNOWN"},
+    "authorizationCode": {"CROSS_MATTER", "ACCESS_DENIED", "DENY", "UNAUTHORIZED", "ALLOW", "OK", "SUCCESS"},
+    "errorCode": {"CROSS_MATTER", "ACCESS_DENIED", "DENY", "UNAUTHORIZED", "ALLOW", "OK", "SUCCESS"},
+    "policyCode": {"CROSS_MATTER", "ACCESS_DENIED", "DENY", "UNAUTHORIZED", "ALLOW", "OK", "SUCCESS"},
+    "denyCode": {"CROSS_MATTER", "ACCESS_DENIED", "DENY", "UNAUTHORIZED", "ALLOW", "OK", "SUCCESS"},
+    "guardrailDecision": {"ALLOW", "BLOCK", "ANONYMIZE", "ERROR", "UNAVAILABLE"},
+    "stopReason": {"END_TURN", "TOOL_USE", "MAX_TOKENS", "ERROR", "UNAVAILABLE"},
+    "finalValidation": {"VALID", "INVALID", "UNAVAILABLE"},
+    "toolResult": {"SUCCEEDED", "BLOCKED", "ERROR", "UNAVAILABLE"},
+}
+_SAFE_OPAQUE_METADATA_KEYS = {"tool", "toolName", "targetTool", "requestId", "traceId", "correlationId", "toolCallId"}
+_SAFE_OPAQUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+
+
+def _safe_structured_metadata(events: Iterable[Mapping[str, Any]]) -> tuple[Mapping[str, object], ...]:
+    """Copy allowlisted trace fields without retaining event payloads."""
+
+    records: list[Mapping[str, object]] = []
+
+    def collect(value: object) -> None:
+        if not isinstance(value, Mapping):
+            return
+        record: dict[str, object] = {}
+        for key in _SAFE_TRACE_KEYS:
+            item = value.get(key)
+            if key in _SAFE_METADATA_ENUMS and isinstance(item, str) and item.upper() in _SAFE_METADATA_ENUMS[key]:
+                record[key] = item.upper()
+            elif key in _SAFE_OPAQUE_METADATA_KEYS and isinstance(item, str) and _SAFE_OPAQUE.fullmatch(item):
+                record[key] = item
+            elif key == "targetInvoked" and type(item) is bool:
+                record[key] = item
+        if record:
+            records.append(record)
+        for item in value.values():
+            if isinstance(item, Mapping):
+                collect(item)
+            elif isinstance(item, (list, tuple)):
+                for nested in item:
+                    collect(nested)
+
+    for event in events:
+        collect(event)
+    return tuple(records)
 
 
 @dataclass(slots=True)
@@ -240,7 +307,9 @@ class HarnessInvoker:
             stream = response.get("stream")
             if isinstance(stream, (str, bytes, Mapping)) or not isinstance(stream, Iterable):
                 raise ValueError("stream must be iterable")
-            text = _text_from_events(stream)
+            events = list(stream)
+            text = _text_from_events(events)
+            structured_metadata = _safe_structured_metadata(events)
         except HarnessInvocationError:
             _record_agent_event(
                 self.telemetry_sink,
@@ -304,6 +373,7 @@ class HarnessInvoker:
             session_id=effective_session_id,
             text=text,
             correlation_id=effective_correlation_id,
+            structured_metadata=structured_metadata,
         )
 
 

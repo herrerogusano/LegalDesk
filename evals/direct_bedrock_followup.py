@@ -52,6 +52,9 @@ FOLLOW_UP_CASES: tuple[DirectCase, ...] = tuple(
 )
 MAX_MODEL_INVOCATIONS = 2
 TOTAL_CASES = 2
+# Frozen artifact contract for this historical runner. The current filesystem
+# prompt is 1.3.0 and must be rejected; future remediation uses a new runner
+# and report path instead of mutating this historical path.
 CURRENT_PROMPT_VERSION = "1.2.0"
 CURRENT_PROMPT_SHA256 = "d87c5f6469de95979800097858b27f0eb66d96e8618f8808cffc4c2430bdb2e2"
 ROOT = Path(__file__).resolve().parents[1]

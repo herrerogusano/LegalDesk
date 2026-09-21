@@ -4,12 +4,14 @@ Status: local deterministic block complete. The authorized real-model work is
 incomplete: the Harness smoke had `0/4` accepted under structured-trace policy,
 the direct Bedrock smoke had `2/4` accepted with `3` model calls plus one
 local no-evidence case, and the one-time two-case follow-up had `0/2` accepted.
-The follow-up exposed a prompt-policy issue; the local fix is version `1.2.0`.
-The final two-case runner was executed once with the corrected prompt: exactly
+The follow-up exposed a prompt-policy issue; the historical fix was version
+`1.2.0`. The final two-case runner was executed once with that prompt: exactly
 `2/2` model attempts, `0` retries, and `1/2` accepted. The answerable citation
 case remained `insufficient_evidence` without citations; the untrusted-injection
 case was accepted. No retry is permitted without a new, separate approval, so
-the real-model acceptance remains incomplete.
+the real-model acceptance remains incomplete. The subsequent separated-pipeline
+and prompt `1.3.0` remediation exists locally but has not been run against a
+real model; the historical `1.2.0` reports remain immutable.
 
 | Criterion | Evidence | Result |
 |---|---|---|
