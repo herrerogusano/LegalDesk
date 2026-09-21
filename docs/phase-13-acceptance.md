@@ -1,8 +1,9 @@
 # Phase 13 — integration acceptance ledger
 
-Status: **local integration gate complete; NOT_READY_FOR_PROD**. One authorized
-AWS attempt deployed temporary prerequisites but stopped before browser login
-on application factory validation. No inference or ingestion. Temporary
+Status: **local integration gate complete; NOT_READY_FOR_PROD**. Two separately
+authorized AWS attempts stopped before completing login: first at factory
+validation, second during browser login with cause undetermined. No inference
+or ingestion in either attempt. Temporary
 resources removed, shared stacks restored. No prod promotion.
 
 ## Evidence classes
@@ -147,7 +148,12 @@ authorized attempt deployed prerequisites, then stopped before login because
 the default verifier allowed ID tokens without configuring their audience.
 The application factory now explicitly accepts access tokens only, matching
 its PKCE exchange. 394 local tests pass after the fix; the factory regression
-uses the real no-ID-audience configuration. No live rerun was performed.
+uses the real no-ID-audience configuration. A separately authorized second
+attempt passed factory construction but stopped during browser login without
+an observed callback response; the diagnostic did not identify the substep.
+396 local tests passed before this attempt. Both attempt reports are preserved.
+An additional, unexercised JSHandle comparison defect in the browser's indexing
+check was found locally; it does not explain the earlier login failure.
 See `phase-13-live-smoke.md` for execution and verified cleanup. No billed spend
 has been queried; zero inference does not imply zero infrastructure/request cost.
 The smoke plan proposes an

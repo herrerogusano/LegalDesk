@@ -7,6 +7,7 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const { waitForIndexedState } = require("./phase13_live_browser_helpers.cjs");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 const BASE_URL = process.env.LEGALDESK_SMOKE_BASE_URL || "http://localhost:8000";
@@ -19,13 +20,16 @@ const FACTUAL_QUESTION = "How long does Acme Orchard Ltd have to pay after recei
 const ABSENT_QUESTION = "Where is the emergency assembly point?";
 const PAYMENT_TERMS = ["23 calendar days", "receipt of an invoice"];
 let currentPhase = "startup";
+let currentStep = "startup";
 const phaseProgress = Object.create(null);
 const diagnostics = { http: [], factual: null };
+const SAFE_ERROR_TYPES = new Set(["Error", "TimeoutError", "TypeError", "ReferenceError", "RangeError", "AssertionError"]);
 
 class SmokeFailure extends Error {
-  constructor(category) {
+  constructor(category, errorType = "SmokeFailure") {
     super(category);
     this.category = category;
+    this.errorType = errorType;
   }
 }
 
@@ -61,6 +65,7 @@ async function clickFirstVisible(page, selectors, category) {
 
 function beginPhase(name) {
   currentPhase = name;
+  currentStep = name;
   phaseProgress[name] = "started";
 }
 
@@ -69,13 +74,23 @@ function finishPhase(name) {
 }
 
 async function waitForIndexed(page) {
-  const outcome = await page.waitForFunction(() => {
-    const error = document.querySelector("#app-error");
-    if (error && !error.hidden) return "error";
-    if (document.querySelector("#document-list").textContent.includes("INDEXED")) return "indexed";
-    return false;
-  }, null, { timeout: 300_000 });
+  const outcome = await waitForIndexedState(page);
   if (outcome !== "indexed") fail("index_application_error");
+}
+
+function safeErrorType(error) {
+  const name = error && typeof error.name === "string" ? error.name : "";
+  return SAFE_ERROR_TYPES.has(name) ? name : "UnknownError";
+}
+
+async function loginStep(name, action) {
+  currentStep = name;
+  try {
+    return await action();
+  } catch (error) {
+    if (error instanceof SmokeFailure) throw error;
+    throw new SmokeFailure(name, safeErrorType(error));
+  }
 }
 
 async function responseJson(responsePromise, category) {
@@ -133,17 +148,17 @@ async function run() {
     });
 
     beginPhase("login");
-    await page.goto(base.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.locator("#login-button").click();
-    await page.waitForSelector("input[name='username'], input[type='email'], #signInFormUsername", { state: "visible", timeout: 120_000 });
-    await fillFirstVisible(page, ["input[name='username']", "input[type='email']", "#signInFormUsername"], USERNAME, "cognito_username_form");
-    await fillFirstVisible(page, ["input[name='password']", "#signInFormPassword"], PASSWORD, "cognito_password_form");
-    await clickFirstVisible(page, ["button[name='signInSubmitButton']", "input[type='submit']", "button[type='submit']"], "cognito_submit");
-    await page.waitForURL((url) => url.origin === base.origin && ["/", "/index.html"].includes(url.pathname), { timeout: 120_000 });
-    const me = await page.evaluate(async () => {
+    await loginStep("login.goto", () => page.goto(base.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 }));
+    await loginStep("login.click", () => page.locator("#login-button").click());
+    await loginStep("login.form_visible", () => page.waitForSelector("input[name='username'], input[type='email'], #signInFormUsername", { state: "visible", timeout: 120_000 }));
+    await loginStep("login.fill_username", () => fillFirstVisible(page, ["input[name='username']", "input[type='email']", "#signInFormUsername"], USERNAME, "cognito_username_form"));
+    await loginStep("login.fill_password", () => fillFirstVisible(page, ["input[name='password']", "#signInFormPassword"], PASSWORD, "cognito_password_form"));
+    await loginStep("login.submit", () => clickFirstVisible(page, ["button[name='signInSubmitButton']", "input[type='submit']", "button[type='submit']"], "cognito_submit"));
+    await loginStep("login.callback", () => page.waitForURL((url) => url.origin === base.origin && ["/", "/index.html"].includes(url.pathname), { timeout: 120_000 }));
+    const me = await loginStep("login.session_bootstrap", () => page.evaluate(async () => {
       const response = await fetch("/api/me", { credentials: "same-origin" });
       return { status: response.status, body: response.ok ? await response.json() : null };
-    });
+    }));
     if (me.status !== 200 || !me.body || typeof me.body.csrfToken !== "string" || !me.body.csrfToken) fail("session_bootstrap");
     const csrfToken = me.body.csrfToken;
     finishPhase("login");
@@ -262,6 +277,7 @@ run().then((result) => {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }).catch((error) => {
   const category = error instanceof SmokeFailure ? error.category : "smoke_failed";
-  process.stdout.write(`${JSON.stringify({ result: "FAIL", smoke: "phase13-live-browser", phase: currentPhase, category, progress: phaseProgress, diagnostics })}\n`);
+  const errorType = error instanceof SmokeFailure ? error.errorType : safeErrorType(error);
+  process.stdout.write(`${JSON.stringify({ result: "FAIL", smoke: "phase13-live-browser", phase: currentPhase, step: currentStep, category, errorType, progress: phaseProgress, diagnostics })}\n`);
   process.exitCode = 1;
 });

@@ -1,7 +1,20 @@
 """Offline checks of the one-shot operator's security-relevant helpers."""
 import json
+import tempfile
 import unittest
-from phase13_live_smoke import ACCOUNT, BUCKET, HARNESS, REGION, TENANT, session_policy, TrackingSession
+from pathlib import Path
+from phase13_live_smoke import (
+    ACCOUNT,
+    BUCKET,
+    HARNESS,
+    REGION,
+    TENANT,
+    TrackingSession,
+    make_resource_config,
+    offline_factory_preflight,
+    resolve_report_path,
+    session_policy,
+)
 
 
 class LivePreflightTests(unittest.TestCase):
@@ -34,6 +47,26 @@ class LivePreflightTests(unittest.TestCase):
         self.assertEqual(session.client("s3").put_object(Key=f"tenants/{TENANT}/test"), {"ok": True})
         self.assertEqual(provider.calls, ["s3"])
         self.assertEqual(state["objects"], {f"tenants/{TENANT}/test"})
+
+    def test_exact_resource_config_builds_offline_with_access_only_jwt(self):
+        config = make_resource_config()
+        self.assertIsNone(config.audience)
+        result = offline_factory_preflight(config)
+        self.assertEqual(result["allowedTokenUse"], ("access",))
+        self.assertEqual(result["audienceConfigured"], False)
+        self.assertEqual(
+            set(result["providerClientConstructors"]),
+            {"s3", "bedrock-runtime", "bedrock-agent-runtime", "bedrock-agent", "bedrock-agentcore"},
+        )
+
+    def test_new_report_path_is_exclusive_and_cannot_reuse_history(self):
+        with self.assertRaises(RuntimeError):
+            resolve_report_path("fresh-20260922", "build/phase13-smoke/live-result.json")
+        with tempfile.TemporaryDirectory() as directory:
+            existing = Path(directory) / "live-result-fresh-20260922.json"
+            existing.write_text("sentinel", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                resolve_report_path("fresh-20260922", existing)
 
 
 if __name__ == "__main__":

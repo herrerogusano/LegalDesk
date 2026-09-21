@@ -10,12 +10,14 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
 import threading
 from dataclasses import asdict
 from pathlib import Path
+from unittest.mock import patch
 from wsgiref.simple_server import make_server
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,10 +32,17 @@ POOL = "eu-west-1_tHvFPpktv"
 MEMORY = "LegalDeskPhase09-NKV8SZFz5U"
 HARNESS = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:harness/LegalDeskPhase01-7EMjvNs1PC"
 MODEL = "eu.anthropic.claude-sonnet-4-6"
-REPORT = ROOT / "build/phase13-smoke/live-result.json"
+KNOWLEDGE_BASE_ID = "40R8OKAZOR"
+DATA_SOURCE_ID = "A53UDNNEMP"
+GUARDRAIL_IDENTIFIER = "qin0b7t7vmtd"
+GUARDRAIL_VERSION = "1"
+CLIENT_ID = "101hke40t7n5easmh7i3g9265o"
+REPORT = ROOT / "build/phase13-smoke/live-result.json"  # historical sentinel
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_ATTEMPT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 
 
-def session_policy(subjects):
+def session_policy(subjects, *, knowledge_base_id=KNOWLEDGE_BASE_ID, guardrail_identifier=GUARDRAIL_IDENTIFIER):
     """Narrow resource/action intersections; never IAM/control-plane authority."""
     bedrock = f"arn:aws:bedrock:{REGION}:{ACCOUNT}:"
     agentcore = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:"
@@ -47,8 +56,8 @@ def session_policy(subjects):
                   *[f"AUTH#USER#{sub}" for sub in subjects], *[f"AUTH#MATTER#{m}" for m in MATTERS],
                   f"TENANT#{TENANT}#MATTER#*", f"CONVERSATION#{TENANT}#*", "GATEWAY#INVOCATION#*", "GATEWAY#GRANT#*",
               ]}}),
-        allow(["bedrock:Retrieve", "bedrock:StartIngestionJob", "bedrock:GetIngestionJob"], bedrock + "knowledge-base/40R8OKAZOR"),
-        allow("bedrock:ApplyGuardrail", bedrock + "guardrail/qin0b7t7vmtd"),
+        allow(["bedrock:Retrieve", "bedrock:StartIngestionJob", "bedrock:GetIngestionJob"], bedrock + "knowledge-base/" + knowledge_base_id),
+        allow("bedrock:ApplyGuardrail", bedrock + "guardrail/" + guardrail_identifier),
         allow("bedrock:InvokeModel", [bedrock + "inference-profile/" + MODEL,
               "arn:aws:bedrock:eu-*::foundation-model/anthropic.claude-sonnet-4-6"]),
         allow(["bedrock-agentcore:InvokeHarness", "bedrock-agentcore:InvokeAgentRuntime"], HARNESS),
@@ -98,25 +107,159 @@ class TrackingSession:
         return Resource()
 
 
+class _OfflineProvider:
+    """Constructor-only provider double; any operation is a preflight failure."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"offline preflight attempted provider operation: {name}")
+
+
+class _OfflineSession:
+    """Scoped local session used to build the exact composition without AWS."""
+
+    def __init__(self):
+        self.client_services = []
+        self.resource_services = []
+        self.table = _OfflineProvider()
+
+    def client(self, service, **kwargs):
+        self.client_services.append(service)
+        return _OfflineProvider()
+
+    def resource(self, service, **kwargs):
+        self.resource_services.append(service)
+        table = self.table
+
+        class Resource:
+            def Table(self, _name):
+                return table
+
+        return Resource()
+
+
+class _OfflineJwks:
+    def get_signing_key(self, _token):
+        raise AssertionError("offline preflight attempted JWKS resolution")
+
+
+def validate_smoke_refs(*, attempt_id, knowledge_base_id, data_source_id, guardrail_identifier, guardrail_version):
+    if _ATTEMPT_ID.fullmatch(attempt_id or "") is None:
+        raise ValueError("attempt-id must be a bounded identifier")
+    for name, value in {
+        "knowledge-base-id": knowledge_base_id,
+        "data-source-id": data_source_id,
+        "guardrail-identifier": guardrail_identifier,
+        "guardrail-version": guardrail_version,
+    }.items():
+        if _ID.fullmatch(value or "") is None:
+            raise ValueError(f"{name} must be a bounded identifier")
+
+
+def make_resource_config(*, knowledge_base_id=KNOWLEDGE_BASE_ID, data_source_id=DATA_SOURCE_ID,
+                         guardrail_identifier=GUARDRAIL_IDENTIFIER, guardrail_version=GUARDRAIL_VERSION):
+    from legaldesk.application import AWSResourceConfig
+
+    issuer = f"https://cognito-idp.{REGION}.amazonaws.com/{POOL}"
+    domain = "https://legaldesk-phase08-344774635844.auth.eu-west-1.amazoncognito.com"
+    return AWSResourceConfig(
+        region=REGION, metadata_table_name=TABLE, source_bucket_name=BUCKET,
+        knowledge_base_id=knowledge_base_id, data_source_id=data_source_id,
+        guardrail_identifier=guardrail_identifier, guardrail_version=guardrail_version,
+        resolver_model_id=MODEL, writer_model_id=MODEL, harness_arn=HARNESS,
+        gateway_url="https://legaldeskgatewayphase08-f17ddi2woq.gateway.bedrock-agentcore.eu-west-1.amazonaws.com/mcp",
+        memory_id=MEMORY, issuer=issuer, jwks_url=issuer + "/.well-known/jwks.json",
+        client_id=CLIENT_ID, authorization_endpoint=domain + "/oauth2/authorize",
+        token_endpoint=domain + "/oauth2/token", matter_catalog=MATTERS,
+    )
+
+
+def offline_factory_preflight(config):
+    """Build exact application wiring with no network-capable provider object."""
+    from legaldesk.application import build_aws_composition
+    from legaldesk.smoke_budget import SmokeBudget
+
+    session = _OfflineSession()
+    with patch("legaldesk.application.PyJwtJwksKeyResolver", return_value=_OfflineJwks()):
+        composition = build_aws_composition(
+            allow_aws=True, config=config, smoke_budget=SmokeBudget(), boto3_session=session,
+        )
+    if composition.identity_verifier.config.allowed_token_use != frozenset({"access"}):
+        raise AssertionError("composition must accept only OAuth access tokens")
+    return {
+        "providerClientConstructors": tuple(session.client_services),
+        "providerResourceConstructors": tuple(session.resource_services),
+        "allowedTokenUse": ("access",),
+        "audienceConfigured": config.audience is not None,
+    }
+
+
+def resolve_report_path(attempt_id, supplied_path=None):
+    report_path = Path(supplied_path) if supplied_path else ROOT / "build/phase13-smoke" / f"live-result-{attempt_id}.json"
+    report_path = report_path if report_path.is_absolute() else ROOT / report_path
+    report_path = report_path.resolve()
+    if report_path == REPORT.resolve():
+        raise RuntimeError("new smoke report must not reuse the historical sentinel")
+    if attempt_id not in report_path.stem:
+        raise RuntimeError("new smoke report filename must include the attempt id")
+    if report_path.exists():
+        raise RuntimeError("refusing to overwrite an existing smoke report")
+    return report_path
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute-approved-once", action="store_true")
+    parser.add_argument("--attempt-id")
+    parser.add_argument("--knowledge-base-id")
+    parser.add_argument("--data-source-id")
+    parser.add_argument("--guardrail-identifier")
+    parser.add_argument("--guardrail-version", default=GUARDRAIL_VERSION)
+    parser.add_argument("--report-path")
     args = parser.parse_args()
-    policy = session_policy(["a" * 36, "b" * 36])
+    if args.execute_approved_once and not all((args.attempt_id, args.knowledge_base_id, args.data_source_id, args.guardrail_identifier)):
+        parser.error("--execute-approved-once requires --attempt-id, --knowledge-base-id, --data-source-id and --guardrail-identifier")
+    attempt_id = args.attempt_id or "local-preflight"
+    knowledge_base_id = args.knowledge_base_id or KNOWLEDGE_BASE_ID
+    data_source_id = args.data_source_id or DATA_SOURCE_ID
+    guardrail_identifier = args.guardrail_identifier or GUARDRAIL_IDENTIFIER
+    guardrail_version = args.guardrail_version
+    validate_smoke_refs(
+        attempt_id=attempt_id, knowledge_base_id=knowledge_base_id,
+        data_source_id=data_source_id, guardrail_identifier=guardrail_identifier,
+        guardrail_version=guardrail_version,
+    )
+    policy = session_policy(
+        ["a" * 36, "b" * 36], knowledge_base_id=knowledge_base_id,
+        guardrail_identifier=guardrail_identifier,
+    )
     if len(policy) > 2048:
         raise RuntimeError("Session policy exceeds STS inline limit")
     pdf = ROOT / "output/pdf/fictional-storage-note.pdf"
     if hashlib.sha256(pdf.read_bytes()).hexdigest() != "03de0479544250393d9709a1eb4511a1e24332871f06252b8cb4513398d0c17a":
         raise RuntimeError("Frozen smoke PDF has changed")
+    resource_config = make_resource_config(
+        knowledge_base_id=knowledge_base_id, data_source_id=data_source_id,
+        guardrail_identifier=guardrail_identifier, guardrail_version=guardrail_version,
+    )
     if not args.execute_approved_once:
-        print(json.dumps({"mode": "LOCAL_PREFLIGHT", "policyCharacters": len(policy), "awsCalls": 0}))
+        factory = offline_factory_preflight(resource_config)
+        print(json.dumps({
+            "mode": "LOCAL_PREFLIGHT", "attemptId": attempt_id,
+            "policyCharacters": len(policy), "awsCalls": 0,
+            "resourceRefs": {
+                "knowledgeBaseId": knowledge_base_id,
+                "dataSourceId": data_source_id,
+                "guardrailIdentifier": guardrail_identifier,
+                "guardrailVersion": guardrail_version,
+            },
+            "factory": factory,
+        }))
         return 0
-    if REPORT.exists():
-        raise RuntimeError("Refusing to repeat the authorized smoke")
+    report_path = resolve_report_path(attempt_id, args.report_path)
     import boto3
     from boto3.dynamodb.conditions import Attr, Key
     from botocore.config import Config
-    from legaldesk.application import AWSResourceConfig, build_aws_composition
+    from legaldesk.application import build_aws_composition
     from legaldesk.__main__ import QuietRequestHandler
     from legaldesk.http_app import create_http_app
     from legaldesk.smoke_budget import SmokeBudget
@@ -130,10 +273,19 @@ def main():
     state = {"keys": set(), "objects": set(), "memory_scopes": set()}
     created_users, subjects, passwords = [], [], []
     server = thread = None
-    result = {"status": "STARTED", "cleanupErrors": [], "checks": []}
-    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    result = {
+        "status": "STARTED", "attemptId": attempt_id,
+        "resourceRefs": {
+            "knowledgeBaseId": knowledge_base_id,
+            "dataSourceId": data_source_id,
+            "guardrailIdentifier": guardrail_identifier,
+            "guardrailVersion": guardrail_version,
+        },
+        "cleanupErrors": [], "checks": [],
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     # Exclusive sentinel prevents even an interrupted invocation being rerun.
-    with REPORT.open("x", encoding="utf-8") as stream:
+    with report_path.open("x", encoding="utf-8") as stream:
         json.dump(result, stream)
     def save():
         result["budget"] = asdict(budget.snapshot())
@@ -141,10 +293,10 @@ def main():
         result["cleanupKeys"] = [dict(pk=pk, sk=sk) for pk, sk in sorted(state["keys"])]
         result["objectKeys"] = sorted(state["objects"])
         result["memoryScopes"] = sorted(state["memory_scopes"])
-        REPORT.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        report_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     try:
         for i, suffix in enumerate(("a", "b")):
-            username = f"phase13-smoke-{suffix}-20260921"
+            username = f"phase13-smoke-{attempt_id}-{suffix}"
             password = "Q!8a" + secrets.token_urlsafe(24)
             response = cognito.admin_create_user(UserPoolId=POOL, Username=username, MessageAction="SUPPRESS", TemporaryPassword=password,
                 UserAttributes=[{"Name": "email", "Value": username + "@example.invalid"}, {"Name": "email_verified", "Value": "true"}])
@@ -154,7 +306,7 @@ def main():
             passwords.append(password)
             save()
             cognito.admin_set_user_password(UserPoolId=POOL, Username=username, Password=password, Permanent=True)
-            user_id = f"usr_phase13_{suffix}_20260921"
+            user_id = f"usr_phase13_{attempt_id}_{suffix}"
             items = [
                 dict(pk=f"AUTH#USER#{sub}", sk="PROFILE", entityType="User", userId=user_id, verifiedSubject=sub, tenantIds=[TENANT], roles=["member"]),
                 dict(pk=f"AUTH#MATTER#{MATTERS[i]}", sk="PROFILE", entityType="Matter", matterId=MATTERS[i], tenantId=TENANT, name=f"Synthetic smoke {suffix}", authorizedUserIds=[user_id], status="active"),
@@ -163,20 +315,16 @@ def main():
                 budget.call("dynamodb", table.put_item, Item=item, ConditionExpression="attribute_not_exists(pk)")
                 state["keys"].add((item["pk"], item["sk"]))
                 save()
-        policy = session_policy(subjects)
+        policy = session_policy(
+            subjects, knowledge_base_id=knowledge_base_id,
+            guardrail_identifier=guardrail_identifier,
+        )
         if len(policy) > 2048:
             raise RuntimeError("Session policy exceeds limit")
         credentials = operator.client("sts", config=cfg).get_federation_token(Name="LegalDeskPhase13Smoke", DurationSeconds=3600, Policy=policy)["Credentials"]
         restricted = boto3.Session(aws_access_key_id=credentials["AccessKeyId"], aws_secret_access_key=credentials["SecretAccessKey"], aws_session_token=credentials["SessionToken"], region_name=REGION)
         del credentials
-        issuer = f"https://cognito-idp.{REGION}.amazonaws.com/{POOL}"
-        domain = "https://legaldesk-phase08-344774635844.auth.eu-west-1.amazoncognito.com"
-        config = AWSResourceConfig(region=REGION, metadata_table_name=TABLE, source_bucket_name=BUCKET,
-            knowledge_base_id="40R8OKAZOR", data_source_id="A53UDNNEMP", guardrail_identifier="qin0b7t7vmtd", guardrail_version="1",
-            resolver_model_id=MODEL, writer_model_id=MODEL, harness_arn=HARNESS,
-            gateway_url="https://legaldeskgatewayphase08-f17ddi2woq.gateway.bedrock-agentcore.eu-west-1.amazonaws.com/mcp",
-            memory_id=MEMORY, issuer=issuer, jwks_url=issuer + "/.well-known/jwks.json", client_id="101hke40t7n5easmh7i3g9265o",
-            authorization_endpoint=domain + "/oauth2/authorize", token_endpoint=domain + "/oauth2/token", matter_catalog=MATTERS)
+        config = resource_config
         composition = build_aws_composition(allow_aws=True, config=config, smoke_budget=budget, boto3_session=TrackingSession(restricted, state))
         app = create_http_app(composition)
         server = make_server("localhost", 8000, app, handler_class=QuietRequestHandler)
@@ -196,7 +344,7 @@ def main():
         if result["status"] == "PASS":
             response = budget.call("dynamodb", table.query, KeyConditionExpression=Key("pk").eq(f"TENANT#{TENANT}#MATTER#{MATTERS[0]}"), Limit=20)
             reviews = [item for item in response["Items"] if str(item.get("sk", "")).startswith("REVIEW#")]
-            result["reviewVerified"] = len(reviews) == 1 and reviews[0].get("createdByUserId") == "usr_phase13_a_20260921" and reviews[0].get("status") == "open"
+            result["reviewVerified"] = len(reviews) == 1 and reviews[0].get("createdByUserId") == f"usr_phase13_{attempt_id}_a" and reviews[0].get("status") == "open"
             if not result["reviewVerified"]:
                 result["status"] = "FAILED"
     except Exception as exc:

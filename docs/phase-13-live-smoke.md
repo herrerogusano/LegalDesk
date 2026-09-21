@@ -226,3 +226,58 @@ authorization and must rebuild its removed dependencies; do not reset the
 one-shot sentinel to silently repeat this attempt.
 
 Sanitized durable result: `evals/results/phase13-live-smoke-report.json`.
+
+## Attempt 2 — 2026-09-22 (`20260922-02`)
+
+Fresh user approval: "dale", following the proposal of one corrected smoke,
+expected below USD 2 with USD 5 planning margin (not a guaranteed billing cap).
+Same bounded cases, no automatic retries, stop on first failure, no prod promotion.
+The original report/sentinel is preserved. New report:
+`build/phase13-smoke/live-result-20260922-02.json`.
+
+Preflight: exact factory wiring constructed offline with access-only tokens,
+audience unset, scoped provider doubles and stubbed JWKS; zero provider calls.
+Three preflight regression tests passed. Existing shared stacks were verified
+UPDATE_COMPLETE and all three original template backups matched live templates.
+The fictional tenant's S3 prefix was empty; the unrelated KB is excluded.
+
+Temporary dependencies are being recreated through reviewed changesets. Artifact
+prefix: `phase-13/smoke-20260922-02/`; exact version IDs for cleanup:
+
+- review-task.zip: `eKf2HCWse64RV8Ena25rpRPjiodZCaUd`
+- interceptor.zip: `BDawpXkfdnDQ7GbYme9rvUQH2XZ_GIHg`
+- metadata-mcp.zip: `Pyy3wFKSl31XVjBJqKf1psPcviGaBGGL`
+
+### Result and teardown
+
+The single execution stopped during `login`, category `smoke_failed`, before
+any observed callback HTTP response. The diagnostic lacks the failing login
+substep and exception category, so its root cause is **not established**.
+The factory successfully constructed; the previous audience error did not recur.
+Do not attribute this result to the model, retrieval, grounding or the separate
+browser index-check defect identified below.
+
+Application counters: 4 fixture DynamoDB writes; zero S3 operations, ingestion,
+Retrieve, Converse, Guardrail, Harness or Memory operations. Browser login did
+not pass. Cleanup made 9 requests without errors. Subsequent reads verified
+2 synthetic users and 4 rows absent, and an empty fictional source prefix.
+
+Both temporary stacks reached DELETE_COMPLETE. All three shared stacks returned
+to UPDATE_COMPLETE using original templates and Phase 11 artifact versions.
+Original no-CORS configuration verified. Three exact new artifact versions
+deleted after restoration, then HEAD checks confirmed absence. No provider
+billing API used; actual spend remains unknown. No live retry, merge or prod
+promotion. Independent holdout remains unexecuted.
+
+Local review also found an unexercised browser-test defect: Playwright
+`waitForFunction` returns a JSHandle, not its underlying string. Comparing it
+directly with `indexed` would falsely reject successful indexing. Fix and
+regression tests are local-only; they do not turn this attempt into a pass.
+396 local tests passed before execution. Post-attempt checks passed: four
+Python preflight tests, browser helper checks for indexed/error/failed-value
+handles and primitive rejection, browser syntax and git diff checks. Login
+failures now report an allowlisted exception type and a closed substep, without
+exception messages, tokens, URLs or response bodies. No production application
+behavior, IAM or prompts were changed by these post-attempt corrections.
+Sanitized result:
+`evals/results/phase13-live-smoke-20260922-02-report.json`.

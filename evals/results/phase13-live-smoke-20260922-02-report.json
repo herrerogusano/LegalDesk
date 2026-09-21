@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0.0",
+  "date": "2026-09-22",
+  "attemptId": "20260922-02",
+  "baseCommit": "60352e6",
+  "uncommittedChanges": ["tests/phase13_live_smoke.py", "tests/test_phase13_live_preflight.py"],
+  "attempts": 1,
+  "automaticRetries": 0,
+  "result": "STOPPED_DURING_LOGIN",
+  "errorCategory": "smoke_failed",
+  "rootCauseEstablished": false,
+  "callbackResponseObserved": false,
+  "applicationCalls": {
+    "converse": 0,
+    "retrieve": 0,
+    "applyGuardrail": 0,
+    "invokeHarness": 0,
+    "startIngestionJob": 0,
+    "s3ObjectOperations": 0,
+    "memoryOperations": 0
+  },
+  "fixtureDynamoWrites": 4,
+  "fixtureCleanupRequests": 9,
+  "localTestsBeforeExecution": 396,
+  "cleanupVerified": {
+    "syntheticUsersAbsent": 2,
+    "syntheticRowsAbsent": 4,
+    "temporaryStacksDeleted": 2,
+    "sharedStacksRestored": 3,
+    "artifactVersionsAbsent": 3,
+    "originalCorsRestored": true,
+    "syntheticSourcePrefixEmpty": true
+  },
+  "liveEndToEndDemonstrated": false,
+  "independentHoldoutExecuted": false,
+  "prodPromoted": false,
+  "billedCostKnown": false
+}
