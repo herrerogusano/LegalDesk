@@ -144,6 +144,8 @@ Resources:
       Timeout: 10
       Environment:
         Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
           REVIEW_TASK_TABLE_NAME: !Ref ExistingMetadataTableName
           INTERCEPTOR_SCHEMA_VERSION: "1"
 
@@ -162,6 +164,8 @@ Resources:
       Timeout: 10
       Environment:
         Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
           DOCUMENT_METADATA_TABLE_NAME: !Ref ExistingMetadataTableName
           MCP_SCHEMA_VERSION: "1"
 

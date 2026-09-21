@@ -98,6 +98,14 @@ class Phase08GatewayInfrastructureTests(unittest.TestCase):
             self.assertIn(f"  {parameter}:", self.template)
 
     def test_artifacts_and_teardown_are_explicit(self) -> None:
+        for resource in ("GatewayRequestInterceptorFunction", "MetadataMcpFunction"):
+            block = re.split(
+                r"(?m)^  [A-Za-z][A-Za-z0-9]*:\s*$",
+                self.template.split(f"  {resource}:\n", 1)[1],
+                maxsplit=1,
+            )[0]
+            self.assertIn('AWS_MAX_ATTEMPTS: "1"', block)
+            self.assertIn("AWS_RETRY_MODE: standard", block)
         self.assertIn("MetadataMcpCodeVersion", self.template)
         self.assertIn("S3ObjectVersion: !Ref MetadataMcpCodeVersion", self.template)
         self.assertIn("DeletionPolicy: Delete", self.template)

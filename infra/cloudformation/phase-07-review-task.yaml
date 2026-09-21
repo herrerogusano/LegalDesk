@@ -89,6 +89,8 @@ Resources:
       Timeout: 10
       Environment:
         Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
           REVIEW_TASK_TABLE_NAME: !Ref ReviewTaskTableName
           REVIEW_TASK_SCHEMA_VERSION: "1"
       Tags:

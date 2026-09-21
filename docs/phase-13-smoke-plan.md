@@ -22,6 +22,10 @@ Neither a live inventory nor a deployment was performed while preparing this.
 - Disable automatic application/SDK retries (total_max_attempts=1). Harness
   internal behavior is provider-managed: do not assert control of undocumented
   retry behavior; stop if observed counts exceed the approved budget.
+- The versioned Review, interceptor and MCP Lambda configurations set
+  `AWS_MAX_ATTEMPTS=1` / `AWS_RETRY_MODE=standard`. These are pending template
+  changes, not changes to deployed functions; verify their effective values
+  after the separately approved deployment.
 
 ## Single-run sequence
 
@@ -112,6 +116,12 @@ are historical, not live status. Prefer existing Cognito, Gateway, Lambda,
 Memory, table and Harness resources after verifying compatibility. Recreate
 KB/vector/source/Guardrail resources only if inventory proves they are absent.
 No custom Runtime, queue, dashboard or additional identity service is selected.
+
+Application invocation bindings reuse the metadata table and expire for
+authorization after five minutes. `expiresAt` validation is not deletion:
+the current table does not configure DynamoDB TTL. Remove the recorded synthetic
+bindings/grants during approved teardown; automatic abandoned-upload or grant
+cleanup is not implemented in this phase.
 
 Before execution, attach exact stack/resource IDs and decide keep/delete for
 each resource. Cleanup: stop application/inferences; remove authorized smoke

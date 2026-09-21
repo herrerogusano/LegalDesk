@@ -46,6 +46,8 @@ class Phase07ReviewTaskInfrastructureTests(unittest.TestCase):
         # provider-required unreserved floor of 10, so CFN must omit it.
         self.assertIn("REVIEW_TASK_TABLE_NAME: !Ref ReviewTaskTableName", self.template)
         self.assertIn('REVIEW_TASK_SCHEMA_VERSION: "1"', self.template)
+        self.assertIn('AWS_MAX_ATTEMPTS: "1"', self.template)
+        self.assertIn("AWS_RETRY_MODE: standard", self.template)
 
     def test_existing_table_is_parameterized_and_only_idempotency_actions_are_allowed(self) -> None:
         self.assertIn("ReviewTaskTableArn:", self.template)
