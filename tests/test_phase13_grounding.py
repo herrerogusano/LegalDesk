@@ -67,6 +67,19 @@ def contextual_filters(
 
 
 class GroundingAdapterTests(unittest.TestCase):
+    def test_audit_preserves_intervention_and_error_actions(self) -> None:
+        cases = (
+            ({"action": "GUARDRAIL_INTERVENED", "assessments": [contextual_filters(grounding_action="BLOCKED")]}, GroundingGuardrailBlocked, "GUARDRAIL_INTERVENED"),
+            ({"action": "NONE", "assessments": []}, GroundingGuardrailError, "ERROR"),
+        )
+        for response, exception, action in cases:
+            with self.subTest(action=action):
+                events = []
+                validator = GuardrailGroundingValidator(FakeGuardrail(response), GuardrailConfig("g", "1"), audit_sink=SimpleNamespace(record=events.append))
+                with self.assertRaises(exception):
+                    validator.validate(request())
+                self.assertEqual(events[-1].action, action)
+
     def test_provider_contextual_assessment_is_accepted(self) -> None:
         client = FakeGuardrail({
             "action": "NONE",

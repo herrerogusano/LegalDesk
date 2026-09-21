@@ -400,7 +400,7 @@ class GuardrailGroundingValidator:
             grounding_action in _BLOCKING_ASSESSMENT_ACTIONS
             or relevance_action in _BLOCKING_ASSESSMENT_ACTIONS
         ):
-            self._record(correlation_id, GuardrailOutcome.BLOCKED)
+            self._record(correlation_id, GuardrailOutcome.BLOCKED, action=top_action)
             raise GroundingGuardrailBlocked("grounding policy blocked output")
         outputs = _returned_texts(response.get("outputs", ())) if isinstance(response, Mapping) else None
         if outputs is None or outputs:
@@ -514,9 +514,10 @@ class GuardrailGroundingValidator:
         relevance = parsed["RELEVANCE"]
         return top_action, grounding[0], grounding[1], relevance[0], relevance[1], grounding[2], relevance[2]
 
-    def _record(self, correlation_id: str, outcome: GuardrailOutcome) -> None:
+    def _record(self, correlation_id: str, outcome: GuardrailOutcome, *, action: str | None = None) -> None:
+        safe_action = action or ("ERROR" if outcome is GuardrailOutcome.ERROR else "NONE")
         self._audit_sink.record(
-            GuardrailAuditEvent(correlation_id, GuardrailStage.OUTPUT, "NONE", outcome)
+            GuardrailAuditEvent(correlation_id, GuardrailStage.OUTPUT, safe_action, outcome)
         )
         emit_telemetry(
             self._telemetry_sink,
