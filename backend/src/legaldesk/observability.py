@@ -8,11 +8,19 @@ questions, answers, passages, prompts, tokens, secrets, and document bodies.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
+
+
+_SEMVER = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[0-9A-Za-z-]))?"
+    r"(?:\+[0-9A-Za-z-]+)?$"
+)
 
 
 class TelemetryEventType(StrEnum):
@@ -37,6 +45,9 @@ class TelemetryOperation(StrEnum):
     INVOKE_HARNESS = "invoke_harness"
     ANSWER_QUESTION = "answer_question"
     GENERATE_ANSWER = "generate_answer"
+    RESOLVE_EVIDENCE = "resolve_evidence"
+    WRITE_ANSWER = "write_answer"
+    GROUNDING_VALIDATE = "grounding_validate"
     MCP_TOOL_CALL = "mcp_tool_call"
     MCP_REQUEST = "mcp_request"
     KNOWLEDGE_BASE_RETRIEVE = "knowledge_base_retrieve"
@@ -78,6 +89,12 @@ class TelemetryEvent:
     operation: TelemetryOperation | None = None
     count: int | None = None
     error_code: TelemetryErrorCode | None = None
+    prompt_version: str | None = None
+    prompt_sha256: str | None = None
+    resolver_prompt_version: str | None = None
+    resolver_prompt_sha256: str | None = None
+    writer_prompt_version: str | None = None
+    writer_prompt_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.event_type) is not TelemetryEventType:
@@ -104,6 +121,24 @@ class TelemetryEvent:
             raise ValueError("operation is not allowlisted")
         if self.error_code is not None and type(self.error_code) is not TelemetryErrorCode:
             raise ValueError("error_code is not allowlisted")
+        for name in (
+            "prompt_version", "resolver_prompt_version", "writer_prompt_version"
+        ):
+            value = getattr(self, name)
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 64
+                or _SEMVER.fullmatch(value) is None
+            ):
+                raise ValueError(f"{name} is invalid")
+        for name in (
+            "prompt_sha256", "resolver_prompt_sha256", "writer_prompt_sha256"
+        ):
+            value = getattr(self, name)
+            if value is not None and (
+                not isinstance(value, str) or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(f"{name} is invalid")
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -112,7 +147,11 @@ class TelemetryEvent:
             "outcome": self.outcome.value,
             "timestamp_ms": self.timestamp_ms,
         }
-        for name in ("latency_ms", "operation", "count", "error_code"):
+        for name in (
+            "latency_ms", "operation", "count", "error_code", "prompt_version",
+            "prompt_sha256", "resolver_prompt_version", "resolver_prompt_sha256",
+            "writer_prompt_version", "writer_prompt_sha256",
+        ):
             value = getattr(self, name)
             if value is not None:
                 result[name] = value.value if isinstance(value, StrEnum) else value
@@ -180,6 +219,12 @@ def emit_telemetry(
     operation: str | None = None,
     count: int | None = None,
     error_code: TelemetryErrorCode | str | None = None,
+    prompt_version: str | None = None,
+    prompt_sha256: str | None = None,
+    resolver_prompt_version: str | None = None,
+    resolver_prompt_sha256: str | None = None,
+    writer_prompt_version: str | None = None,
+    writer_prompt_sha256: str | None = None,
 ) -> None:
     """Record safe metadata, defaulting to the structured application logger."""
 
@@ -209,6 +254,12 @@ def emit_telemetry(
         operation=normalized_operation,
         count=count,
         error_code=normalized_error_code,
+        prompt_version=prompt_version,
+        prompt_sha256=prompt_sha256,
+        resolver_prompt_version=resolver_prompt_version,
+        resolver_prompt_sha256=resolver_prompt_sha256,
+        writer_prompt_version=writer_prompt_version,
+        writer_prompt_sha256=writer_prompt_sha256,
     )
     (sink or DEFAULT_TELEMETRY_SINK).record(event)
 

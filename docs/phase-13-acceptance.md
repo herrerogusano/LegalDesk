@@ -26,6 +26,34 @@ inference, ingestion or live smoke has been executed. No prod promotion.
 - The initial transport tests are component evidence, not the final signed-JWT
   HTTP integration gate. Subsequent review findings require regression tests.
 
+## Productive grounding boundary
+
+The selected strategy is Bedrock Guardrails contextual grounding for a bounded,
+self-contained documentary question, selected source passages and candidate
+answer. It is not a general conversation-quality evaluator. AWS documents
+aggregate evaluation of source blocks, so a passing score does not attest
+each citation individually. Exact citation IDs and access checks remain
+deterministic backend responsibilities.
+
+Provider limits are 1,000 query characters, 100,000 combined source characters
+and 5,000 response characters. Integration must reject unsupported sizes
+locally, not truncate material evidence silently. Scoped conversation history
+must not become documentary evidence. Broad multi-turn conversational grounding
+is outside this provider's documented supported use cases.
+
+Sources: [contextual grounding behavior and limits](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html),
+[supported languages](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-supported-languages.html).
+Local doubles verify parsing and rejection behavior, not the provider's
+semantic accuracy; the independent holdout remains unexecuted against AWS.
+
+The holdout contains 14 cases, including a role-reversal contradiction and an
+invented citation. Review corrected an unsupported time anchor in the draft
+paraphrase before any prompt modification or provider evaluation. The frozen
+artifact SHA-256 is
+`3f66bf0d43c5667a19f8465300571933ffd7d358cb83c37285126c31bd5fe5cf`;
+`tests/test_phase13_holdout.py` checks its exact bytes. This checksum test is
+not a semantic evaluation result.
+
 ## Local release gate
 
 - [ ] One executable application and connected minimal browser UI.

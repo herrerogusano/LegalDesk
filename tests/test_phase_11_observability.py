@@ -182,25 +182,58 @@ class ObservabilityTests(unittest.TestCase):
         )
         bindings.bind(context, conversation_id=request.conversation_id, session_selector=request.session_id)
         sink = InMemoryTelemetrySink()
-        with self.assertRaises(RuntimeError):
-            answer_question(
-                test_identity("idp|alice-fictional"),
-                request,
-                authorization_store=auth,
-                retrieval_client=FailingRetrievalClient(),
-                knowledge_base_id="kb-fictional",
-                generator=HarnessClient(),  # never reached
-                guardrail_client=GuardrailClient(),
-                guardrail_config=GuardrailConfig("guardrail-fictional", "1"),
-                conversation_binding_store=bindings,
-                correlation_id=CORRELATION_ID,
-                telemetry_sink=sink,
-            )
+        response = answer_question(
+            test_identity("idp|alice-fictional"),
+            request,
+            authorization_store=auth,
+            retrieval_client=FailingRetrievalClient(),
+            knowledge_base_id="kb-fictional",
+            generator=HarnessClient(),  # never reached
+            guardrail_client=GuardrailClient(),
+            guardrail_config=GuardrailConfig("guardrail-fictional", "1"),
+            conversation_binding_store=bindings,
+            correlation_id=CORRELATION_ID,
+            telemetry_sink=sink,
+        )
+        self.assertEqual(response.operation_status, "error")
+        self.assertEqual(response.error_code, "retrieval_failed")
+        self.assertIsNone(response.evidence_status)
         observed = [(event.event_type, event.outcome) for event in sink.events]
         self.assertIn((TelemetryEventType.RETRIEVAL, TelemetryOutcome.STARTED), observed)
         self.assertIn((TelemetryEventType.RETRIEVAL, TelemetryOutcome.ERROR), observed)
         self.assertIn((TelemetryEventType.AGENT, TelemetryOutcome.ERROR), observed)
         self.assertIn((TelemetryEventType.FINAL, TelemetryOutcome.ERROR), observed)
+
+    def test_malformed_retrieval_is_technical_not_documentary_absence(self) -> None:
+        class MalformedRetrievalClient:
+            def retrieve(self, **kwargs: object) -> Mapping[str, object]:
+                return {"retrievalResults": {"malformed": True}}
+
+        from legaldesk.chat import ChatRequest, answer_question
+        from legaldesk.memory import InMemoryConversationBindingStore
+
+        auth = load_authorization_store()
+        bindings = InMemoryConversationBindingStore()
+        request = ChatRequest("conv-malformed", "sess-malformed", "mat_sundial", "synthetic question")
+        context = build_request_context(test_identity("idp|alice-fictional"), "mat_sundial", auth, correlation_id=CORRELATION_ID)
+        bindings.bind(context, conversation_id=request.conversation_id, session_selector=request.session_id)
+        sink = InMemoryTelemetrySink()
+        response = answer_question(
+            test_identity("idp|alice-fictional"), request,
+            authorization_store=auth,
+            retrieval_client=MalformedRetrievalClient(),
+            knowledge_base_id="kb-fictional",
+            generator=HarnessClient(),
+            guardrail_client=GuardrailClient(),
+            guardrail_config=GuardrailConfig("guardrail-fictional", "1"),
+            conversation_binding_store=bindings,
+            correlation_id=CORRELATION_ID,
+            telemetry_sink=sink,
+        )
+        self.assertEqual(response.operation_status, "error")
+        self.assertEqual(response.error_code, "retrieval_failed")
+        self.assertIsNone(response.evidence_status)
+        self.assertNotIn(TelemetryOutcome.NOT_FOUND, [event.outcome for event in sink.events])
 
     def test_malformed_retrieval_normalization_closes_retrieval_and_error_events(self) -> None:
         for malformed_field, malformed_value in (
@@ -226,17 +259,17 @@ class ObservabilityTests(unittest.TestCase):
                         return {"retrievalResults": [result]}
 
                 sink = InMemoryTelemetrySink()
-                passages = search_legal_documents(
-                    test_identity("idp|alice-fictional"),
-                    "mat_sundial",
-                    "synthetic question",
-                    authorization_store=load_authorization_store(),
-                    bedrock_client=MalformedRetrievalClient(),
-                    knowledge_base_id="kb-fictional",
-                    correlation_id=CORRELATION_ID,
-                    telemetry_sink=sink,
-                )
-                self.assertEqual(passages, ())
+                with self.assertRaises(ValueError):
+                    search_legal_documents(
+                        test_identity("idp|alice-fictional"),
+                        "mat_sundial",
+                        "synthetic question",
+                        authorization_store=load_authorization_store(),
+                        bedrock_client=MalformedRetrievalClient(),
+                        knowledge_base_id="kb-fictional",
+                        correlation_id=CORRELATION_ID,
+                        telemetry_sink=sink,
+                    )
                 self.assertEqual(
                     [
                         (event.event_type, event.outcome, event.operation)
