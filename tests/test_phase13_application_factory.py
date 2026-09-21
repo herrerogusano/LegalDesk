@@ -10,10 +10,28 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT / "agent" / "src"))
 
 from legaldesk.application import AWSResourceConfig, build_aws_composition
+from legaldesk.smoke_budget import BudgetedSdkClient, SmokeBudget
 
 
 class _Table:
     pass
+
+
+class _Session:
+    def __init__(self, table, clients):
+        self.table = table
+        self.clients = clients
+        self.resource_calls = []
+        self.client_calls = []
+
+    def resource(self, service_name, **kwargs):
+        self.resource_calls.append((service_name, kwargs))
+        return type("Dynamo", (), {"Table": lambda _self, _name: self.table})()
+
+    def client(self, service_name, **kwargs):
+        self.client_calls.append((service_name, kwargs))
+        client = self.clients.setdefault(service_name, type("ProviderClient", (), {})())
+        return client
 
 
 class Phase13ApplicationFactoryTests(unittest.TestCase):
@@ -103,6 +121,32 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         self.assertIsNot(observed["retrieval_client"], composition.sync_service.client)
         for kwargs in clients.values():
             self.assertEqual(kwargs["config"].retries["total_max_attempts"], 1)
+
+    def test_optional_session_and_smoke_budget_wrap_all_provider_clients(self):
+        table = _Table()
+        clients = {}
+        session = _Session(table, clients)
+        budget = SmokeBudget()
+        with patch("boto3.resource") as global_resource, patch("boto3.client") as global_client, patch("legaldesk.application.PyJwtJwksKeyResolver", return_value=object()):
+            composition = build_aws_composition(
+                allow_aws=True,
+                config=self.config(),
+                smoke_budget=budget,
+                boto3_session=session,
+            )
+        global_resource.assert_not_called()
+        global_client.assert_not_called()
+        self.assertEqual(len(session.resource_calls), 1)
+        self.assertEqual({name for name, _kwargs in session.client_calls}, {
+            "s3", "bedrock-runtime", "bedrock-agent-runtime", "bedrock-agent", "bedrock-agentcore",
+        })
+        self.assertIsInstance(composition.sync_service.client, BudgetedSdkClient)
+        self.assertIsInstance(composition.authorization_store.table, BudgetedSdkClient)
+        self.assertIsInstance(composition.harness_invoker._delegate.client, BudgetedSdkClient)
+        captured = dict(zip(composition.chat_service.__code__.co_freevars, (cell.cell_contents for cell in composition.chat_service.__closure__ or ())))
+        self.assertIsInstance(captured["resolver"].client, BudgetedSdkClient)
+        self.assertIsInstance(captured["writer"].client, BudgetedSdkClient)
+        self.assertIsInstance(captured["grounding"]._client, BudgetedSdkClient)
 
 
 if __name__ == "__main__":

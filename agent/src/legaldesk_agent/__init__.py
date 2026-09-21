@@ -7,6 +7,7 @@ from .client import (
     HarnessInvocationScope,
     HarnessInvoker,
     HarnessToolResult,
+    HarnessUsage,
     InvokeResult,
     new_session_id,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "HarnessInvocationScope",
     "HarnessInvoker",
     "HarnessToolResult",
+    "HarnessUsage",
     "InvokeResult",
     "LocalAgent",
     "new_session_id",

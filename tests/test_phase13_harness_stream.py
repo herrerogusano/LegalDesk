@@ -43,6 +43,40 @@ def tool_stream(*, tool_id="tool-1", name="get_document_metadata", payload=None,
 
 
 class Phase13HarnessStreamTests(unittest.TestCase):
+    def test_provider_usage_is_preserved_as_one_invocation_record(self):
+        client = StreamClient([
+            {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 2, "totalTokens": 12, "cacheReadInputTokens": 3}}},
+        ])
+        result = HarnessInvoker(client, "arn:test").invoke("hello")
+        self.assertIsNotNone(result.usage)
+        self.assertEqual(result.usage.to_dict(), {
+            "inputTokens": 10,
+            "outputTokens": 2,
+            "totalTokens": 12,
+            "cacheReadInputTokens": 3,
+            "cacheWriteInputTokens": 0,
+        })
+
+    def test_repeated_usage_blocks_are_preserved_without_cadence_assumption(self):
+        client = StreamClient([
+            {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 1, "totalTokens": 11}}},
+            {"metadata": {"usage": {"inputTokens": 7, "outputTokens": 2, "totalTokens": 9}}},
+        ])
+        result = HarnessInvoker(client, "arn:test").invoke("hello")
+        self.assertIsNone(result.usage)
+        self.assertEqual([item.input_tokens for item in result.usage_records], [10, 7])
+
+    def test_usage_requires_core_counts(self):
+        client = StreamClient([{"metadata": {"usage": {"totalTokens": 4}}}])
+        with self.assertRaises(HarnessInvocationError):
+            HarnessInvoker(client, "arn:test").invoke("hello")
+
+    def test_malformed_provider_usage_fails_closed(self):
+        for value in (-1, float("nan"), float("inf"), 1.5, True):
+            client = StreamClient([{"metadata": {"usage": {"inputTokens": value}}}])
+            with self.subTest(value=value), self.assertRaises(HarnessInvocationError):
+                HarnessInvoker(client, "arn:test").invoke("hello")
+
     def test_fixtures_match_installed_provider_stream_schema(self):
         from botocore.session import Session
         from botocore.validate import validate_parameters

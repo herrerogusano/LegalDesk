@@ -89,6 +89,45 @@ class HarnessDataPlane(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessUsage:
+    """Validated numeric usage observed in one InvokeHarness stream.
+
+    The installed SDK describes these as invocation token counts but does not
+    document a repeated-block cadence. The adapter therefore accepts exactly
+    one usage block per stream and rejects an ambiguous repeated block. Smoke
+    aggregation happens across separate invocations, never by guessing how a
+    provider stream should be summed.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cache_read_input_tokens",
+            "cache_write_input_tokens",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0 or value > 10**12:
+                raise ValueError(f"{name} is invalid")
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "inputTokens": self.input_tokens,
+            "outputTokens": self.output_tokens,
+            "totalTokens": self.total_tokens,
+            "cacheReadInputTokens": self.cache_read_input_tokens,
+            "cacheWriteInputTokens": self.cache_write_input_tokens,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class InvokeResult:
     session_id: str
     text: str
@@ -98,6 +137,11 @@ class InvokeResult:
     # Structured provider tool results.  Text is never used to infer a tool
     # outcome or identifier.
     tool_results: tuple["HarnessToolResult", ...] = ()
+    # Validated numeric usage only; raw provider metadata is never retained.
+    usage: HarnessUsage | None = None
+    # Preserve each validated provider block when cadence is repeated or
+    # otherwise ambiguous; callers must not fabricate a cross-block total.
+    usage_records: tuple[HarnessUsage, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -567,6 +611,53 @@ def _safe_structured_metadata(events: Iterable[Mapping[str, Any]]) -> tuple[Mapp
     return tuple(records)
 
 
+def _harness_usages(events: Iterable[Mapping[str, Any]]) -> tuple[HarnessUsage, ...]:
+    """Validate SDK-shaped ``metadata.usage`` blocks without guessing cadence.
+
+    Botocore exposes integer token fields but does not define a repeated
+    cumulative versus per-message emission contract. Missing optional cache
+    fields are zero; malformed blocks fail closed. Repeated validated blocks
+    are retained individually so a caller can reject their ambiguous total.
+    """
+
+    observed: list[HarnessUsage] = []
+    names = {
+        "inputTokens": "input_tokens",
+        "outputTokens": "output_tokens",
+        "totalTokens": "total_tokens",
+        "cacheReadInputTokens": "cache_read_input_tokens",
+        "cacheWriteInputTokens": "cache_write_input_tokens",
+    }
+    for event in events:
+        metadata = event.get("metadata") if isinstance(event, Mapping) else None
+        if metadata is None:
+            continue
+        if not isinstance(metadata, Mapping):
+            raise ValueError("Harness metadata is invalid")
+        if "usage" not in metadata:
+            continue
+        usage = metadata.get("usage")
+        if not isinstance(usage, Mapping) or not usage:
+            raise ValueError("Harness usage is invalid")
+        values = {name: 0 for name in names.values()}
+        required = {"inputTokens", "outputTokens", "totalTokens"}
+        if not required.issubset(usage):
+            raise ValueError("Harness usage is missing core counts")
+        recognized = False
+        for provider_name, field_name in names.items():
+            if provider_name not in usage:
+                continue
+            recognized = True
+            value = usage[provider_name]
+            if type(value) is not int or value < 0 or value > 10**12:
+                raise ValueError("Harness usage count is invalid")
+            values[field_name] = value
+        if not recognized:
+            raise ValueError("Harness usage has no known counts")
+        observed.append(HarnessUsage(**values))
+    return tuple(observed)
+
+
 @dataclass(slots=True)
 class HarnessInvoker:
     client: HarnessDataPlane
@@ -686,6 +777,8 @@ class HarnessInvoker:
                 events.append(event)
             text = _text_from_events(events)
             structured_metadata = _safe_structured_metadata(events)
+            usage_records = _harness_usages(events)
+            usage = usage_records[0] if len(usage_records) == 1 else None
             tool_results = _structured_tool_results(
                 events,
                 allowed_tools=(
@@ -757,6 +850,8 @@ class HarnessInvoker:
             correlation_id=effective_correlation_id,
             structured_metadata=structured_metadata,
             tool_results=tool_results,
+            usage=usage,
+            usage_records=usage_records,
         )
 
 

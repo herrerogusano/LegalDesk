@@ -29,6 +29,7 @@ from .memory import AgentCoreMemoryClient, Boto3DynamoConversationBindingStore
 from .prompts import FileSystemSystemPromptProvider
 from .review_tasks import Boto3DynamoReviewTaskRepository
 from .observability import DEFAULT_TELEMETRY_SINK
+from .smoke_budget import BudgetedSdkClient, SmokeBudget
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +159,28 @@ class _SeparatedOnlyGenerator:
         raise RuntimeError("the separated resolver/writer pipeline is required")
 
 
-def build_aws_composition(*, allow_aws: bool, config: AWSResourceConfig | None = None) -> ApplicationComposition:
+class _BudgetedHarnessInvoker:
+    """Consume validated Harness usage without changing default production."""
+
+    def __init__(self, delegate: Any, budget: SmokeBudget) -> None:
+        self._delegate = delegate
+        self._budget = budget
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any:
+        result = self._delegate.invoke(*args, **kwargs)
+        # A repeated/absent usage record is intentionally None and stops the
+        # smoke budget rather than pretending the invocation was free.
+        self._budget.consume_harness_usage(getattr(result, "usage", None))
+        return result
+
+
+def build_aws_composition(
+    *,
+    allow_aws: bool,
+    config: AWSResourceConfig | None = None,
+    smoke_budget: SmokeBudget | None = None,
+    boto3_session: Any | None = None,
+) -> ApplicationComposition:
     """Build the concrete AWS composition behind an explicit cost gate."""
 
     if allow_aws is not True:
@@ -170,19 +192,30 @@ def build_aws_composition(*, allow_aws: bool, config: AWSResourceConfig | None =
         from botocore.config import Config
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("boto3 is required for AWS composition") from exc
+    if smoke_budget is not None and not isinstance(smoke_budget, SmokeBudget):
+        raise TypeError("smoke_budget must be a SmokeBudget")
     resource_config = config or AWSResourceConfig.from_environment()
     sdk_config = Config(retries={"total_max_attempts": 1, "mode": "standard"})
-    dynamodb = boto3.resource("dynamodb", region_name=resource_config.region, config=sdk_config)
+    client_factory = boto3.client if boto3_session is None else boto3_session.client
+    resource_factory = boto3.resource if boto3_session is None else boto3_session.resource
+    dynamodb = resource_factory("dynamodb", region_name=resource_config.region, config=sdk_config)
     table = dynamodb.Table(resource_config.metadata_table_name)
-    s3 = boto3.client("s3", region_name=resource_config.region, config=sdk_config)
-    runtime = boto3.client("bedrock-runtime", region_name=resource_config.region, config=sdk_config)
-    knowledge_base = boto3.client("bedrock-agent-runtime", region_name=resource_config.region, config=sdk_config)
+    s3 = client_factory("s3", region_name=resource_config.region, config=sdk_config)
+    runtime = client_factory("bedrock-runtime", region_name=resource_config.region, config=sdk_config)
+    knowledge_base = client_factory("bedrock-agent-runtime", region_name=resource_config.region, config=sdk_config)
     # Retrieval and ingestion are separate Bedrock APIs.  The runtime client
     # can retrieve from a KB, but Start/GetIngestionJob belong to the control
     # plane (bedrock-agent); accidentally sharing the runtime client would
     # fail only after a paid sync request reaches AWS.
-    ingestion_client = boto3.client("bedrock-agent", region_name=resource_config.region, config=sdk_config)
-    agentcore = boto3.client("bedrock-agentcore", region_name=resource_config.region, config=sdk_config)
+    ingestion_client = client_factory("bedrock-agent", region_name=resource_config.region, config=sdk_config)
+    agentcore = client_factory("bedrock-agentcore", region_name=resource_config.region, config=sdk_config)
+    if smoke_budget is not None:
+        table = BudgetedSdkClient(table, smoke_budget)
+        s3 = BudgetedSdkClient(s3, smoke_budget)
+        runtime = BudgetedSdkClient(runtime, smoke_budget)
+        knowledge_base = BudgetedSdkClient(knowledge_base, smoke_budget)
+        ingestion_client = BudgetedSdkClient(ingestion_client, smoke_budget)
+        agentcore = BudgetedSdkClient(agentcore, smoke_budget)
 
     auth_store = Boto3DynamoAuthorizationStore(resource_config.metadata_table_name, table=table)
     metadata = Boto3DynamoDocumentMetadataRepository(resource_config.metadata_table_name, table=table, boto3_backed=True)
@@ -215,6 +248,8 @@ def build_aws_composition(*, allow_aws: bool, config: AWSResourceConfig | None =
         production_overrides=True,
         system_prompt=({"text": prompt.content},),
     )
+    if smoke_budget is not None:
+        harness = _BudgetedHarnessInvoker(harness, smoke_budget)
     pipeline = DocumentPipeline(auth_store, storage, metadata)
     sync = _BedrockKnowledgeBaseSync(ingestion_client, storage, metadata, auth_store, resource_config)
     composition = ApplicationComposition(
