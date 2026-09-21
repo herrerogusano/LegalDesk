@@ -57,13 +57,14 @@ zero AWS/model calls. Real Harness smoke refuses to run while this flag is enabl
 no output path outside the repository's `evals/` fixture area. Historical
 reports are never modified.
 
-`evals/phase12_remediation_runner.py` only prints a proposal for nine samples:
+`evals/phase12_remediation_runner.py` preflights nine samples:
 three factual, three partial, and three injection cases. Separation requires a
 resolver call plus a writer call per sample, so the maximum is 9 resolver + 9
 writer = 18 model invocations, one attempt each and zero retries. The original
 nine-inference proposal is incompatible with two model stages unless the writer
-is removed or fused; this local proposal refuses `--execute` and a real run
-needs separate approval for model cost, retention, and scope.
+is removed or fused. Real execution requires both `--execute` and
+`--preflight`, fixes SDK retries to one total attempt, and refuses to overwrite
+historical or prior remediation evidence.
 
 That 18-call maximum assumes the post-writer grounding result is supplied by a
 deterministic synthetic evaluation oracle and therefore makes zero provider
@@ -71,7 +72,10 @@ calls. A managed Guardrails contextual-grounding check or a model-based
 grounder would add another independently billable stage and requires a revised
 budget and separate approval. Prompt `1.3.0` (SHA-256
 `de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56`)
-is local and has not yet been validated with a real model.
+was executed once with the separated pipeline. The bounded run made 9 resolver
+and 5 writer calls (`14` total), with zero retries, and accepted `3/9`. All
+three factual cases passed; the partial and injection groups remain incomplete.
+No rerun is permitted without separate approval.
 
 ## Harness evidence limits
 

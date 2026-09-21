@@ -23,6 +23,10 @@ final runner was executed once with exactly `2/2` calls and `0` retries, and
 accepted `1/2`. The factual citation case remained insufficient evidence while
 the untrusted-injection case passed. Phase 12 real-model acceptance remains
 incomplete; no retry is permitted without separate authorization.
+The separated `1.3.0` remediation was subsequently executed once over nine
+synthetic cases. It used 9 resolver and 5 writer calls (`14` total), zero
+retries, and accepted `3/9`: all factual cases passed, while partial and
+injection cases exposed remaining resolver/grounding gaps.
 
 ## Repository layout
 

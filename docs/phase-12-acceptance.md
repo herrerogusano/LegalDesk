@@ -10,8 +10,10 @@ The follow-up exposed a prompt-policy issue; the historical fix was version
 case remained `insufficient_evidence` without citations; the untrusted-injection
 case was accepted. No retry is permitted without a new, separate approval, so
 the real-model acceptance remains incomplete. The subsequent separated-pipeline
-and prompt `1.3.0` remediation exists locally but has not been run against a
-real model; the historical `1.2.0` reports remain immutable.
+and prompt `1.3.0` remediation was executed once: 9 resolver calls plus 5
+writer calls (`14` total), zero retries, and `3/9` accepted. All three factual
+cases passed; partial and injection behavior remains incomplete. Historical
+reports remain immutable.
 
 | Criterion | Evidence | Result |
 |---|---|---|
@@ -31,6 +33,7 @@ real model; the historical `1.2.0` reports remain immutable.
 | Direct Bedrock smoke | `evals/results/phase12-direct-bedrock-report.json`: `3/3` model calls, `0` retries, `2/4` accepted; no-evidence case local | INCOMPLETE |
 | Direct Bedrock two-case follow-up | `evals/results/phase12-direct-bedrock-followup-report.json`: exactly `2/2` model calls, `0` retries, `0/2` accepted; one-time follow-up executed, no rerun permitted without new approval | INCOMPLETE |
 | Prompt policy fix and final two-case runner | `evals/results/phase12-direct-bedrock-final-report.json`: prompt `1.2.0` with the fixed SHA-256, exactly `2/2` calls, `0` retries, `1/2` accepted; factual citation remained insufficient and injection case accepted | INCOMPLETE |
+| Separated evidence-pipeline remediation | `evals/results/phase12-remediation-real-report.json`: prompt `1.3.0`, `9` resolver + `5` writer calls, `0` retries, `3/9` accepted; factual `3/3`, partial `0/3`, injection `0/3` | INCOMPLETE |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double

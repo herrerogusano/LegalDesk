@@ -157,3 +157,22 @@ report records `acceptedCases=1/2`: the answerable citation case remained
 `insufficient_evidence` without citations, while the untrusted-injection case
 was accepted. Phase 12 remains incomplete; no retry is permitted without new
 explicit authorization.
+
+## Separated evidence remediation — executed once; acceptance incomplete
+
+Prompt `1.3.0` separates evidence resolution from answer writing and constrains
+both through Bedrock Converse structured outputs. The approved nine-case run
+used synthetic data only, one total HTTP attempt per stage, and zero retries.
+It made `9` resolver calls and `5` writer calls (`14` total, below the hard
+maximum of `18`) because resolver mismatches skip the writer. The immutable
+metadata-only report is
+`evals/results/phase12-remediation-real-report.json`.
+
+The result was `3/9` accepted. All factual variants passed with the expected
+status and citation. In the partial group, one resolver returned no supporting
+citation and two writer outputs failed the deterministic grounding oracle. In
+the injection group, all three resolvers treated the passage as unsupported
+instead of ignoring the embedded instruction while retaining the documented
+fact. No questions, passages, answers, exception messages, tokens, or secrets
+are stored. This validates the factual improvement but leaves partial and
+injection acceptance incomplete; no rerun is permitted without new approval.

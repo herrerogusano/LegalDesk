@@ -68,10 +68,9 @@ without new explicit authorization.
 The current local remediation prompt is version `1.3.0`, SHA-256
 `de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56`.
 It clarifies that authorized document content remains evidence while document
-instructions remain untrusted, and adds the separated writer contract. This
-artifact has not been executed against a real model.
+instructions remain untrusted, and adds the separated writer contract.
 
-## Remediation runner (local only)
+## Remediation runner
 
 `EVAL_DEBUG_SYNTHETIC=true` enables `synthetic_debug.py`, a fixture-only report
 with synthetic questions, passages, resolver/writer raw and normalized
@@ -79,12 +78,17 @@ outputs, final results, citation IDs, grounding scores, prompt metadata, and
 validation/error codes. It makes zero AWS and inference calls and stores no
 CoT, secrets, or tokens. It cannot read or write
 outside the local `evals/` fixture area and does not alter historical reports.
-`phase12_remediation_runner.py` prints, but does not execute, the proposed
-real subset: three factual, three partial, and three injection samples. The
-separated pipeline requires 9 resolver + 9 writer calls, for a maximum of 18
-model invocations, one attempt per stage and zero retries. Its `--execute`
-flag intentionally refuses. A future real run requires separate approval for
-cost, retention, and synthetic scope.
+`phase12_remediation_runner.py` preflights and can execute the approved real
+subset: three factual, three partial, and three injection samples. The
+separated pipeline permits at most 9 resolver + 9 writer calls, one total HTTP
+attempt per stage and zero retries. It was executed once with prompt `1.3.0`:
+9 resolver calls and 5 writer calls (`14` total), `0` retries, and `3/9`
+accepted. All factual cases passed. One partial resolver returned no support,
+two partial writers failed the deterministic grounding oracle, and all three
+injection resolvers returned no support instead of the expected cited fact.
+The metadata-only report is
+`evals/results/phase12-remediation-real-report.json`. It is immutable; no rerun
+is permitted without new explicit authorization.
 
 The resolver schema is exposed locally as a Bedrock Converse
 `outputConfig.textFormat` JSON Schema fragment. Server-side citation validation
