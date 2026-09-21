@@ -313,6 +313,27 @@ class GatewayInterceptorTests(unittest.TestCase):
         self.assertEqual(response["mcp"]["transformedGatewayResponse"]["statusCode"], 403)
         self.assertNotIn("Authorization", json.dumps(response))
 
+    def test_interceptor_logs_bounded_decision_without_inventing_response_fields(self) -> None:
+        grants = InMemoryGatewayGrantRepository()
+        with patch("legaldesk.gateway_interceptor._authorization_store_from_environment", return_value=self.auth), patch(
+            "legaldesk.gateway_interceptor._grant_repository_from_environment", return_value=grants
+        ):
+            with self.assertLogs("legaldesk.gateway_interceptor", level="WARNING") as denied_logs:
+                denied = gateway_request_interceptor(event(matter="mat_glacier"), object())
+        self.assertNotIn("legaldeskDecision", denied)
+        self.assertIn('"authorizationDecision": "DENY"', denied_logs.output[0])
+        self.assertIn('"authorizationCode": "CROSS_MATTER"', denied_logs.output[0])
+        self.assertIn('"targetInvoked": false', denied_logs.output[0])
+
+        with patch("legaldesk.gateway_interceptor._authorization_store_from_environment", return_value=self.auth), patch(
+            "legaldesk.gateway_interceptor._grant_repository_from_environment", return_value=grants
+        ):
+            with self.assertLogs("legaldesk.gateway_interceptor", level="INFO") as allowed_logs:
+                allowed = gateway_request_interceptor(event(), object())
+        self.assertNotIn("legaldeskDecision", allowed)
+        self.assertIn('"authorizationDecision": "ALLOW"', allowed_logs.output[0])
+        self.assertIn('"targetInvoked": false', allowed_logs.output[0])
+
     def test_gateway_visible_tool_names_map_to_exact_targets(self) -> None:
         expected = {
             "review-task-lambda___create_review_task": GatewayTarget.REVIEW_LAMBDA,

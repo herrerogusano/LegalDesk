@@ -79,6 +79,22 @@ class AgentCorePhase01Tests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessInvocationError, "rejected"):
             HarnessInvoker(client, "arn:test").invoke("hello")
 
+    def test_harness_result_exposes_only_allowlisted_structured_metadata(self) -> None:
+        client = FakeHarnessClient(
+            events=[
+                {"contentBlockDelta": {"delta": {"text": "DENY"}}},
+                {
+                    "authorizationDecision": "DENY",
+                    "authorizationCode": "CROSS_MATTER",
+                    "targetInvoked": False,
+                    "body": "secret body must not be retained",
+                },
+            ]
+        )
+        result = HarnessInvoker(client, "arn:test").invoke("hello")
+        self.assertEqual(result.structured_metadata[0]["authorizationCode"], "CROSS_MATTER")
+        self.assertNotIn("body", repr(result.structured_metadata))
+
     def test_botocore_event_stream_error_is_wrapped(self) -> None:
         client = FakeHarnessClient()
         client.events = FailingEventStream()

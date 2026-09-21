@@ -1,0 +1,38 @@
+{
+  "acceptedCases": 1,
+  "cases": [
+    {
+      "accepted": true,
+      "caseId": "synthetic-partial-03",
+      "category": "partial",
+      "citationIds": [
+        "citation-6"
+      ],
+      "errorCodes": [],
+      "evidenceStatus": "insufficient_evidence",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "validationCodes": [
+        "SOURCE_RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    }
+  ],
+  "historicalReportsImmutable": true,
+  "inferenceCalls": 1,
+  "maxModelInvocations": 1,
+  "metadataOnly": true,
+  "mode": "real-bedrock-bounded",
+  "model": "eu.anthropic.claude-sonnet-4-6",
+  "region": "eu-west-1",
+  "retryCount": 0,
+  "runner": "legaldesk-phase12-writer-targeted",
+  "runnerVersion": "1.0.0",
+  "sourceWriterReportHash": "3bab7aaa56921c4fe7b49ebbc9e19041535de3041b236621c3d0379bb718f3d9",
+  "totalCases": 1,
+  "writerCalls": 1,
+  "writerPromptHash": "3e6142b473d2df1efce4070eada43566d4b831063af3e1230e3cd70e3ae7d0cf",
+  "writerPromptVersion": "1.2.0"
+}

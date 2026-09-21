@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, replace
-from enum import StrEnum
 from typing import Mapping, Protocol
 
 from .authorization import (
@@ -46,6 +45,20 @@ from .retrieval import (
     RetrievedPassage,
     _retrieve_with_context,
 )
+from .evidence import (
+    AnswerWriter,
+    AnswerWriterRequest,
+    EvidenceContractError,
+    GroundingContractError,
+    EvidenceResolutionRequest,
+    EvidenceResolver,
+    EvidenceStatus,
+    GroundingRequest,
+    GroundingValidator,
+    legacy_resolution_from_generation,
+    validate_evidence_resolution,
+    validate_grounding_result,
+)
 
 
 MAX_OPAQUE_ID_LENGTH = 128
@@ -61,12 +74,6 @@ GUARDRAIL_INPUT_BLOCKED_ANSWER = (
 GUARDRAIL_OUTPUT_BLOCKED_ANSWER = (
     "No puedo mostrar esta respuesta porque infringe una política de seguridad."
 )
-
-
-class EvidenceStatus(StrEnum):
-    ANSWERABLE = "answerable"
-    AMBIGUOUS = "ambiguous"
-    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
 
 def _valid_selector(value: object, *, field_name: str) -> str:
@@ -236,7 +243,6 @@ def _validate_generation_response(
         return insufficient_evidence_response(prompt_artifact)
     answer = result.get("answer")
     raw_citation_ids = result.get("citationIds")
-    raw_status = result.get("evidenceStatus")
     if (
         not isinstance(answer, str)
         or not answer.strip()
@@ -245,11 +251,6 @@ def _validate_generation_response(
         or any(not isinstance(item, str) for item in raw_citation_ids)
     ):
         return insufficient_evidence_response(prompt_artifact)
-    try:
-        status = EvidenceStatus(raw_status)
-    except (ValueError, TypeError):
-        return insufficient_evidence_response(prompt_artifact)
-
     retrieved = {passage.citation.citation_id: passage.citation for passage in passages}
     citation_ids = tuple(raw_citation_ids)
     if (
@@ -260,13 +261,21 @@ def _validate_generation_response(
     if not citation_ids:
         return insufficient_evidence_response(prompt_artifact)
 
+    try:
+        resolution = legacy_resolution_from_generation(
+            result,
+            tuple(retrieved),
+        )
+    except (EvidenceContractError, GroundingContractError):
+        return insufficient_evidence_response(prompt_artifact)
+
     return ChatResponse(
         answer=answer.strip(),
         citations=tuple(
             ChatCitation.from_retrieved(retrieved[citation_id])
             for citation_id in citation_ids
         ),
-        evidence_status=status,
+        evidence_status=resolution.evidence_status,
         # Every LegalDesk answer needs the product's legal-advice disclaimer.
         disclaimer_required=True,
         prompt_version=prompt_artifact.version,
@@ -289,6 +298,9 @@ def answer_question(
     prompt_provider: SystemPromptProvider = DEFAULT_SYSTEM_PROMPT_PROVIDER,
     guardrail_audit_sink: GuardrailAuditSink | None = None,
     telemetry_sink: TelemetrySink | None = None,
+    evidence_resolver: EvidenceResolver | None = None,
+    answer_writer: AnswerWriter | None = None,
+    grounding_validator: GroundingValidator | None = None,
 ) -> ChatResponse:
     """Load the server prompt, authorize and retrieve, then generate from evidence."""
 
@@ -300,6 +312,9 @@ def answer_question(
         raise ValueError("identity must be verified")
     if not isinstance(request, ChatRequest):
         raise TypeError("request must be a validated ChatRequest")
+    separated = (evidence_resolver, answer_writer, grounding_validator)
+    if any(item is not None for item in separated) and not all(item is not None for item in separated):
+        raise TypeError("evidence_resolver, answer_writer and grounding_validator must be supplied together")
 
     # This deterministic check must run before any Guardrail sees caller input.
     context = build_request_context(
@@ -422,8 +437,84 @@ def answer_question(
         TelemetryOutcome.STARTED,
         operation="generate_answer",
     )
+    resolved_evidence = None
     try:
-        generated = generator.generate(generation_request)
+        if all(item is not None for item in (evidence_resolver, answer_writer, grounding_validator)):
+            resolution_raw = evidence_resolver.resolve(
+                EvidenceResolutionRequest(
+                    question=question,
+                    evidence=generation_request.evidence,
+                )
+            )
+            resolution = validate_evidence_resolution(
+                resolution_raw,
+                tuple(item.citation.citation_id for item in passages),
+            )
+            resolved_evidence = resolution
+            if not resolution.supporting_citation_ids:
+                # No passage supports the answer.  Do not spend a writer call
+                # and do not let a writer manufacture an answer for none.
+                generated = {
+                    "answer": INSUFFICIENT_EVIDENCE_ANSWER,
+                }
+            else:
+                written = answer_writer.write(
+                    AnswerWriterRequest(
+                        question=question,
+                        evidence=generation_request.evidence,
+                        resolution=resolution,
+                    )
+                )
+                if isinstance(written, str):
+                    answer = written
+                elif isinstance(written, Mapping) and set(written) == {"answer"}:
+                    answer = written.get("answer")
+                else:
+                    raise EvidenceContractError("answer writer returned an unsupported shape")
+                if (
+                    not isinstance(answer, str)
+                    or not answer.strip()
+                    or len(answer) > MAX_ANSWER_LENGTH
+                ):
+                    raise EvidenceContractError("answer writer returned invalid answer text")
+                validate_grounding_result(
+                    grounding_validator.validate(
+                        GroundingRequest(
+                            question=question,
+                            answer=answer.strip(),
+                            evidence=generation_request.evidence,
+                            supporting_citation_ids=resolution.supporting_citation_ids,
+                        )
+                    ),
+                    supporting_citation_ids=resolution.supporting_citation_ids,
+                )
+                generated = {
+                    "answer": answer,
+                }
+        else:
+            # Compatibility boundary for existing Phase 05 generators. New
+            # providers should use the two explicit boundaries above.
+            generated = generator.generate(generation_request)
+    except (EvidenceContractError, GroundingContractError):
+        # Resolver/writer contract violations are untrusted model output, not
+        # provider outages. Fail closed without allowing a malformed answer.
+        emit_telemetry(
+            telemetry_sink,
+            TelemetryEventType.MODEL,
+            context.correlation_id,
+            TelemetryOutcome.ERROR,
+            started_at=model_started_at,
+            operation="generate_answer",
+            error_code="model_failed",
+        )
+        if all(item is not None for item in (evidence_resolver, answer_writer, grounding_validator)):
+            return finish(
+                insufficient_evidence_response(
+                    prompt_artifact,
+                    correlation_id=context.correlation_id,
+                )
+            )
+        raise
     except Exception:
         emit_telemetry(
             telemetry_sink,
@@ -463,7 +554,34 @@ def answer_question(
     )
     if not isinstance(generated, Mapping):
         return finish(insufficient_evidence_response(prompt_artifact, correlation_id=context.correlation_id))
-    response = _validate_generation_response(generated, passages, prompt_artifact)
+    if all(item is not None for item in (evidence_resolver, answer_writer, grounding_validator)):
+        try:
+            if resolved_evidence is None:
+                raise EvidenceContractError("missing validated evidence resolution")
+            answer = generated.get("answer")
+            if not isinstance(answer, str) or not answer.strip() or len(answer) > MAX_ANSWER_LENGTH:
+                raise EvidenceContractError("answer writer returned invalid answer text")
+            response = ChatResponse(
+                answer=answer.strip(),
+                citations=tuple(
+                    ChatCitation.from_retrieved(
+                        next(
+                            passage.citation
+                            for passage in passages
+                            if passage.citation.citation_id == citation_id
+                        )
+                    )
+                    for citation_id in resolved_evidence.supporting_citation_ids
+                ),
+                evidence_status=resolved_evidence.evidence_status,
+                disclaimer_required=True,
+                prompt_version=prompt_artifact.version,
+                prompt_sha256=prompt_artifact.sha256,
+            )
+        except (EvidenceContractError, KeyError, StopIteration, TypeError):
+            return finish(insufficient_evidence_response(prompt_artifact, correlation_id=context.correlation_id))
+    else:
+        response = _validate_generation_response(generated, passages, prompt_artifact)
     if not response.citations:
         return finish(response)
 

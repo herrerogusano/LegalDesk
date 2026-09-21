@@ -10,6 +10,11 @@ from .client import (
 )
 from .local_agent import LocalAgent
 from .tool_router import LegalDeskTool, ToolTarget, select_tool
+from .trace_evidence import (
+    HarnessEvidenceCollector,
+    StructuredHarnessEvidence,
+    normalize_harness_evidence,
+)
 
 __all__ = [
     "AgentTelemetryEvent",
@@ -22,4 +27,7 @@ __all__ = [
     "LegalDeskTool",
     "ToolTarget",
     "select_tool",
+    "HarnessEvidenceCollector",
+    "StructuredHarnessEvidence",
+    "normalize_harness_evidence",
 ]
