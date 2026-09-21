@@ -153,7 +153,16 @@ order while continuing to reject invented typed and lexical claims. The local
 report `evals/results/phase12-solution-v3-synthetic-report.json` passes `9/9`.
 The writer-only follow-up pins the resolver-v3 report by SHA-256, makes no
 resolver calls, caps execution at 9 writer calls with zero retries, and writes
-only metadata to a new immutable path. It has not been executed.
+only metadata to a new immutable path. It was executed once and produced
+`evals/results/phase12-remediation-writer-v1-report.json`: `8/9`, 9 calls, zero
+retries. Only partial-03 failed, with `UNSUPPORTED_LEXICAL_CLAIM`.
+
+The next correction changes no model prompt. The fixture oracle canonicalizes
+only explicit grammatical variants of neutral evidence-relation tokens. It
+does not stem arbitrary words, weaken typed-value checks, or permit invented
+names/entities. The targeted follow-up pins the immutable `8/9` report by a
+canonical JSON hash and permits one call for exactly partial-03, with zero
+retries and metadata-only output. It has not been executed.
 
 The repository exposes the separated path through `answer_question` only when
 resolver, writer, and grounding validator are supplied together; partial wiring

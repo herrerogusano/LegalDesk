@@ -141,6 +141,21 @@ class Phase12RemediationTests(unittest.TestCase):
                 "citation-6",
                 "The document refers to units without specifying the requested quantity.",
             ),
+            (
+                "synthetic-partial-03",
+                "citation-6",
+                "The evidence establishes a reference to units, but the requested quantity is unspecified.",
+            ),
+            (
+                "synthetic-partial-03",
+                "citation-6",
+                "The evidence confirms that units are referenced, but the exact quantity is not specified.",
+            ),
+            (
+                "synthetic-partial-03",
+                "citation-6",
+                "The evidence establishes the existence of units but does not specify how many apply.",
+            ),
         )
         for case_id, citation_id, answer in cases_and_answers:
             with self.subTest(case_id=case_id):

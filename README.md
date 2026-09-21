@@ -39,8 +39,12 @@ resolver and 9 writer calls, zero retries, and accepted `6/9`; importantly, the
 resolver passed `9/9`, isolating all remaining failures to writer/oracle
 phrasing. Writer `1.2.0` now preserves requested values with their units and
 the oracle accepts bounded omission/count paraphrases without accepting
-invented claims. The new local regression is `9/9`. A writer-only follow-up is
-prepared but has not been executed.
+invented claims. The writer-only follow-up used 9 calls, zero retries, and
+accepted `8/9`; only one partial answer remained a conservative lexical false
+negative. A bounded relation-token canonicalizer now covers grammatical forms
+without permitting new names, entities, directives, or typed values. The local
+regression remains `9/9`, and a one-call targeted check is prepared but not
+executed.
 
 ## Repository layout
 

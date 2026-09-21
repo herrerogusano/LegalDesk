@@ -63,6 +63,7 @@ HISTORICAL_REPORTS = {
     "phase12-remediation-real-report.json",
     "phase12-remediation-resolver-v2-report.json",
     "phase12-remediation-resolver-v3-report.json",
+    "phase12-remediation-writer-v1-report.json",
 }
 CASE_GROUPS = {
     "factual": tuple(f"synthetic-factual-{index:02d}" for index in range(1, 4)),

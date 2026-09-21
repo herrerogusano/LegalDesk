@@ -131,6 +131,9 @@ _UNKNOWN_MARKERS = (
     "not defined",
     "does not define",
     "do not define",
+    "not disclosed",
+    "does not disclose",
+    "do not disclose",
     "unspecified",
     "omit",
     "omits",
@@ -165,13 +168,15 @@ _SAFE_LEXICAL_TOKENS = {
     "documented", "documents", "does", "establish", "established", "evidence",
     "for", "from", "fully", "had", "has", "have", "however", "in", "indicate",
     "indicates", "information", "insufficient", "is", "it", "its", "known",
-    "about", "because", "contains", "context", "define", "defined", "directly",
-    "establishes", "exist", "exists", "given", "material", "may", "mention", "mentioned",
+    "about", "because", "clarify", "confirm", "contain", "context", "define",
+    "directly", "disclose", "document", "establish", "exact", "exist",
+    "existence", "explicitly", "given", "how", "identify", "indicate", "list",
+    "many", "material", "may", "mention",
     "mentions", "missing", "must", "no", "not",
     "of", "on", "only", "or", "passage", "passages", "provided", "related",
-    "omit", "omits", "omitted", "relevant", "remains", "requested", "s",
-    "say", "says", "selected", "scope", "should", "specify", "specifies",
-    "specified", "state", "stated", "states", "supplied", "that", "the",
+    "number", "omit", "refer", "relate", "relevant", "remains", "requested",
+    "s", "say", "says", "selected", "set", "scope", "should", "specific",
+    "specify", "state", "supplied", "that", "the",
     "their", "there", "these", "they", "this", "those", "to", "total",
     "period", "unclear", "unknown", "unspecified", "was", "were", "what",
     "while", "with", "within", "would",
@@ -187,6 +192,65 @@ _DIRECTIVE_TOKEN_ALIASES = {
     "info": "data",
     "information": "data",
     "protections": "safeguards",
+}
+_LEXICAL_TOKEN_ALIASES = {
+    "applied": "apply",
+    "applies": "apply",
+    "applicable": "apply",
+    "applying": "apply",
+    "contained": "contain",
+    "contains": "contain",
+    "containing": "contain",
+    "clarified": "clarify",
+    "clarifies": "clarify",
+    "confirmed": "confirm",
+    "confirms": "confirm",
+    "disclosed": "disclose",
+    "discloses": "disclose",
+    "disclosing": "disclose",
+    "documented": "document",
+    "documents": "document",
+    "documenting": "document",
+    "defines": "define",
+    "defining": "define",
+    "established": "establish",
+    "establishes": "establish",
+    "establishing": "establish",
+    "indicated": "indicate",
+    "indicates": "indicate",
+    "indicating": "indicate",
+    "identified": "identify",
+    "identifies": "identify",
+    "listed": "list",
+    "lists": "list",
+    "mentioned": "mention",
+    "mentions": "mention",
+    "mentioning": "mention",
+    "omitted": "omit",
+    "omits": "omit",
+    "omitting": "omit",
+    "provided": "provide",
+    "provides": "provide",
+    "providing": "provide",
+    "quantities": "quantity",
+    "reference": "refer",
+    "referenced": "refer",
+    "references": "refer",
+    "referencing": "refer",
+    "referred": "refer",
+    "referring": "refer",
+    "refers": "refer",
+    "related": "relate",
+    "relates": "relate",
+    "relating": "relate",
+    "specified": "specify",
+    "specifies": "specify",
+    "specifying": "specify",
+    "stated": "state",
+    "states": "state",
+    "stating": "state",
+    "sets": "set",
+    "units": "unit",
 }
 
 
@@ -231,6 +295,10 @@ def _normalize(value: str) -> str:
     value = unicodedata.normalize("NFKC", value).casefold()
     value = value.replace("’", "'").replace("-", " ")
     return " ".join(_TOKEN.findall(value))
+
+
+def _lexical_token(token: str) -> str:
+    return _LEXICAL_TOKEN_ALIASES.get(token, token)
 
 
 def _number(value: str) -> str | None:
@@ -400,11 +468,15 @@ def evaluate_grounding_detailed(
     normalized_answer = _normalize(answer)
     cited_evidence = "\n".join(evidence_by_citation_id[item] for item in cited)
     cited_evidence_values = set(_semantic_values(cited_evidence))
-    cited_evidence_tokens = set(_normalize(cited_evidence).split())
+    cited_evidence_tokens = {
+        _lexical_token(token) for token in _normalize(cited_evidence).split()
+    }
 
     required_semantic: set[_SemanticValue] = set()
     constrained_kinds: set[str] = set()
-    allowed_answer_tokens = set(_SAFE_LEXICAL_TOKENS) | cited_evidence_tokens
+    allowed_answer_tokens = {
+        _lexical_token(token) for token in _SAFE_LEXICAL_TOKENS
+    } | cited_evidence_tokens
     allowed_numeric_tokens: set[str] = set()
     for claim in spec.claims:
         required = _constraint_values(claim.required_values)
@@ -424,7 +496,9 @@ def evaluate_grounding_detailed(
         if claim.subject_terms and not _has_term(cited_evidence, claim.subject_terms):
             return _grounding_failure("EVIDENCE_SUBJECT_MISSING")
         for term in (*claim.subject_terms, *claim.unknown_markers, *claim.allowed_answer_terms):
-            allowed_answer_tokens.update(_normalize(term).split())
+            allowed_answer_tokens.update(
+                _lexical_token(token) for token in _normalize(term).split()
+            )
 
         for raw_value in claim.required_values:
             semantic_value = _semantic_values(raw_value)
@@ -471,7 +545,7 @@ def evaluate_grounding_detailed(
         ordinal = re.fullmatch(r"(?P<number>\d+)(?:st|nd|rd|th)", token)
         if normalized_number is None and ordinal is not None:
             normalized_number = _number(ordinal.group("number"))
-        if token in allowed_answer_tokens:
+        if _lexical_token(token) in allowed_answer_tokens:
             continue
         if normalized_number is not None and normalized_number in allowed_numeric_tokens:
             continue

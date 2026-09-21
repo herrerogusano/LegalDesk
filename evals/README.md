@@ -129,5 +129,14 @@ citations, and directive echoes. The new local report
 AWS calls. `evals.phase12_writer_followup` pins the resolver-v3 report by hash
 and can revalidate all nine writer outputs with at most 9 calls, zero retries,
 and the new metadata-only path
-`evals/results/phase12-remediation-writer-v1-report.json`. It requires new
-explicit authorization.
+`evals/results/phase12-remediation-writer-v1-report.json`. It was executed once
+and recorded `8/9`, 9 calls, and zero retries; only partial-03 failed with
+`UNSUPPORTED_LEXICAL_CLAIM`.
+
+The remaining local change canonicalizes only closed grammatical variants of
+neutral relation tokens while preserving rejection of invented entities,
+typed values, and directives. `evals.phase12_writer_targeted` pins the
+immutable `8/9` report by canonical hash and permits exactly one call for the
+sole failed case. It defaults to
+`evals/results/phase12-remediation-writer-v2-report.json`, uses zero retries,
+stores metadata only, and requires separate authorization.

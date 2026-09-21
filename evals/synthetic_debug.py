@@ -45,6 +45,7 @@ IMMUTABLE_REPORT_NAMES = {
     "phase12-remediation-resolver-v3-report.json",
     "phase12-solution-synthetic-report.json",
     "phase12-solution-v2-synthetic-report.json",
+    "phase12-remediation-writer-v1-report.json",
 }
 
 

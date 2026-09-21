@@ -236,4 +236,18 @@ and echoed directives. The new local report
 `evals/results/phase12-solution-v3-synthetic-report.json` passes `9/9` with zero
 AWS calls. A writer-only runner pins the successful resolver-v3 report by hash
 and can revalidate all nine writer cases with at most 9 calls and zero retries;
-it has not been executed.
+it was executed once. The immutable metadata-only report
+`evals/results/phase12-remediation-writer-v1-report.json` records `8/9`, exactly
+9 calls, and zero retries. Every factual and injection case passed, as did two
+of three partial cases. The sole failure was partial-03 with
+`UNSUPPORTED_LEXICAL_CLAIM`.
+
+The final local correction canonicalizes only a closed set of grammatical
+variants for neutral evidence relations such as `refer`, `establish`,
+`specify`, and `state`. It is not a general stemmer and does not alter subject
+matching, typed values, citations, uncertainty checks, or directive detection.
+Negative controls with invented names/entities, invented quantities, and
+directive echoes remain rejected. A targeted runner pins the `8/9` source
+report by canonical SHA-256 and permits exactly one new writer call for the
+sole failed case, zero retries, and metadata-only output. It has not been
+executed.

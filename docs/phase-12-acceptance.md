@@ -20,7 +20,10 @@ accepted `5/9`: factual `3/3`, injection `2/3`, and partial `0/3`. Stage prompt
 accepted `6/9`. The resolver matched all `9/9`; two partial writer outputs and
 one injection writer output failed the bounded grounding oracle. Writer
 `1.2.0` and the revised local oracle pass `9/9` locally, but the writer-only
-real follow-up remains unexecuted.
+real follow-up accepted `8/9` after 9 calls and zero retries. Its sole failure
+was partial case 03 with `UNSUPPORTED_LEXICAL_CLAIM`. A bounded morphological
+canonicalizer retains all negative controls locally; one targeted real call
+remains unexecuted.
 
 | Criterion | Evidence | Result |
 |---|---|---|
@@ -43,7 +46,8 @@ real follow-up remains unexecuted.
 | Separated evidence-pipeline remediation | `evals/results/phase12-remediation-real-report.json`: prompt `1.3.0`, `9` resolver + `5` writer calls, `0` retries, `3/9` accepted; factual `3/3`, partial `0/3`, injection `0/3` | INCOMPLETE |
 | Dedicated resolver/writer run | `evals/results/phase12-remediation-resolver-v2-report.json`: stage prompts `1.0.0`, `9` resolver + `6` writer calls, `0` retries, `5/9` accepted; factual `3/3`, partial `0/3`, injection `2/3` | INCOMPLETE |
 | Generic resolver remediation | `evals/results/phase12-remediation-resolver-v3-report.json`: resolver `1.1.0`, writer `1.1.0`, `18` calls, `0` retries, `6/9` accepted; resolver resolution matched `9/9`, with three writer/oracle failures | PASS (resolver), INCOMPLETE (writer) |
-| Writer/oracle follow-up | `evals/results/phase12-solution-v3-synthetic-report.json`: writer `1.2.0`, bounded omission/count paraphrases, invented-claim rejection, `9/9` local with `0` AWS calls; writer-only runner capped at 9 calls and not executed | PASS (local), INCOMPLETE (real) |
+| Writer/oracle follow-up | `evals/results/phase12-remediation-writer-v1-report.json`: writer `1.2.0`, `9` calls, `0` retries, `8/9` accepted; sole failure partial-03 `UNSUPPORTED_LEXICAL_CLAIM` | INCOMPLETE |
+| Targeted lexical-oracle follow-up | bounded relational morphology only; local positive and negative controls pass; one-call metadata-only runner pins the immutable `8/9` report by canonical hash | PASS (local), INCOMPLETE (real) |
 
 The deterministic runner is the repeatable regression gate. Its fixed
 deterministic test double
