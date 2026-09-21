@@ -10,8 +10,10 @@ Phases 00–12 are complete within their recorded component/bounded scopes.
 Phase 13 now provides a connected loopback application, demonstrated locally
 through HTTP and browser tests with provider doubles. The release remains
 **NOT_READY_FOR_PROD**: live AWS interoperability and independent model-quality
-validation have not been demonstrated by those doubles. AWS smoke and promotion
-to prod require later explicit approval. See the historical
+validation have not been demonstrated by those doubles. One authorized AWS smoke
+stopped before browser login on a factory configuration error, now fixed locally;
+there was no ingestion/inference, and temporary infrastructure was cleaned up.
+A new live attempt and promotion to prod require separate approval. See the historical
 [release audit](docs/release-audit.md), the current
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md), and
 [application run instructions](docs/phase-13-run.md).
@@ -20,7 +22,8 @@ The demonstrated local journey is login → matter → presigned upload → veri
 confirmation/indexing → authorized retrieval → Resolver → Writer → productive
 grounding adapter → inspectable citation, with user-scoped Harness/Gateway/MCP
 metadata and review actions, accepted short-term history and correlated audit.
-No Phase 13 AWS resource has been deployed and no production promotion made.
+Temporary Phase 13 resources were deployed and removed; shared stacks were
+restored. See the [live-smoke ledger](docs/phase-13-live-smoke.md). No prod promotion.
 
 The implemented components cover deterministic authorization, presigned document upload,
 S3 Vectors-backed authorized retrieval, retrieve-then-generate chat with

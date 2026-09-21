@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "1.0.0",
+  "date": "2026-09-22",
+  "codeCommit": "885579e",
+  "attempts": 1,
+  "automaticRetries": 0,
+  "result": "STOPPED_BEFORE_LOGIN",
+  "errorCategory": "ID_TOKEN_AUDIENCE_REQUIRED_IN_ACCESS_TOKEN_FACTORY",
+  "localCorrection": "APPLICATION_VERIFIER_ACCESS_TOKEN_ONLY",
+  "correctedLiveRerun": false,
+  "applicationCalls": {
+    "converse": 0,
+    "retrieve": 0,
+    "applyGuardrail": 0,
+    "invokeHarness": 0,
+    "startIngestionJob": 0,
+    "s3ObjectOperations": 0,
+    "memoryOperations": 0
+  },
+  "fixtureDynamoWrites": 4,
+  "fixtureCleanupRequests": 9,
+  "localTestsAfterCorrection": 394,
+  "cleanupVerified": {
+    "syntheticUsersAbsent": 2,
+    "syntheticRowsAbsent": 4,
+    "temporaryStacksDeleted": 2,
+    "sharedStacksRestored": 3,
+    "artifactVersionsAbsent": 3,
+    "originalCorsRestored": true
+  },
+  "liveEndToEndDemonstrated": false,
+  "independentHoldoutExecuted": false,
+  "prodPromoted": false,
+  "billedCostKnown": false
+}

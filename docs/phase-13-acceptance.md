@@ -1,7 +1,9 @@
 # Phase 13 — integration acceptance ledger
 
-Status: **local integration gate complete; NOT_READY_FOR_PROD**. No Phase 13 AWS deployment,
-inference, ingestion or live smoke has been executed. No prod promotion.
+Status: **local integration gate complete; NOT_READY_FOR_PROD**. One authorized
+AWS attempt deployed temporary prerequisites but stopped before browser login
+on application factory validation. No inference or ingestion. Temporary
+resources removed, shared stacks restored. No prod promotion.
 
 ## Evidence classes
 
@@ -127,7 +129,7 @@ Gateway JWT/IAM behavior. Scripted test-provider answers never enter product cod
 
 ## Remaining gates and production gaps
 
-The live resource inventory, exact approved change sets/application IAM, real
+The exact approved change sets/application IAM, real
 Cognito/Harness/Gateway interoperability, ingestion and model/Guardrail quality
 remain unverified. The 14-case independent semantic holdout is unexecuted; local
 tests must not be reported as proof that a real model accepts all paraphrases or
@@ -140,7 +142,15 @@ revocation lookup. Whole-data-source ingestion requires a bounded synthetic
 source. Abandoned uploads and expired grant records need manual reconciliation;
 authorization expiry does not delete DynamoDB rows. Long-term Memory stays off.
 
-No AWS changes/cost were initiated by Phase 13. The smoke plan proposes an
+The original local acceptance run initiated no AWS calls. The subsequently
+authorized attempt deployed prerequisites, then stopped before login because
+the default verifier allowed ID tokens without configuring their audience.
+The application factory now explicitly accepts access tokens only, matching
+its PKCE exchange. 394 local tests pass after the fix; the factory regression
+uses the real no-ID-audience configuration. No live rerun was performed.
+See `phase-13-live-smoke.md` for execution and verified cleanup. No billed spend
+has been queried; zero inference does not imply zero infrastructure/request cost.
+The smoke plan proposes an
 incremental estimate under USD 2 and a conservative USD 5 approval envelope,
 not a guaranteed account billing cap. Verify inventory, observability of request
 ceilings and teardown targets before any separately authorized execution.

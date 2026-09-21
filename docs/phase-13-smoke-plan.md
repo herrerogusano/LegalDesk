@@ -1,4 +1,10 @@
-# Phase 13 — proposed real E2E smoke (NOT AUTHORIZED / DO NOT EXECUTE)
+# Phase 13 — real E2E smoke design (one authorized attempt consumed)
+
+Subsequent authorization: the user approved one bounded smoke on 2026-09-21.
+See `phase-13-live-smoke.md` for the live gate, inventory and actual execution
+record. The original design/caps below remain the scope, not proof of execution.
+That attempt stopped before login and its temporary resources were removed.
+Do not execute again from this document; a fresh attempt requires authorization.
 
 This is a preparation document, not an executable approval. Reconcile the
 request limits below with the completed local application before execution.
