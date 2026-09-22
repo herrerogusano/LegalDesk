@@ -137,6 +137,7 @@ teardown procedure.
 ## Further reading
 
 - [Production readiness gate](docs/production-readiness.md)
+- [Guided offline manual demo](docs/phase-13-manual-demo.md)
 - [Phase 13 application run instructions](docs/phase-13-run.md)
 - [Threat model](docs/threat-model.md) and [authorization matrix](docs/authorization-matrix.md)
 - [Frontend boundary](frontend/README.md)
