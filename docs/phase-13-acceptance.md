@@ -7,6 +7,13 @@ Cognito login control. No inference
 or ingestion in either attempt. Temporary
 resources removed, shared stacks restored. No prod promotion.
 
+A third separately authorized smoke passed Cognito, upload, ingestion and both
+RAG cases, including a factual citation. It stopped at the first explicit MCP
+action because Harness returned without a structured tool call. AWS's Harness
+contract makes tool execution model-selected; `allowedTools` is an allowlist,
+not deterministic dispatch. Explicit UI commands need an approved architecture
+change to direct backend→Gateway/MCP invocation before another live smoke.
+
 ## Evidence classes
 
 | Evidence | What it establishes | What it does not establish |
@@ -165,6 +172,11 @@ The smoke plan proposes an
 incremental estimate under USD 2 and a conservative USD 5 approval envelope,
 not a guaranteed account billing cap. Verify inventory, observability of request
 ceilings and teardown targets before any separately authorized execution.
+
+Attempt 3 consumed one bounded real execution: 2 Retrieve, 3 Converse,
+3 Guardrail and 1 Harness call; 4,216 input and 192 output tokens. It did not
+retry. Cleanup and shared-stack restoration were verified. See the immutable
+sanitized attempt report and `phase-13-live-smoke.md` for exact evidence.
 
 ## Developer to prod checklist — do not execute
 

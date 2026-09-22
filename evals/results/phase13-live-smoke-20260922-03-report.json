@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.0.0",
+  "date": "2026-09-22",
+  "attemptId": "20260922-03",
+  "codeCommit": "76b21e8",
+  "attempts": 1,
+  "automaticRetries": 0,
+  "result": "STOPPED_AT_METADATA_TOOL",
+  "passedStages": [
+    "cognito_login",
+    "matter_selection",
+    "presigned_upload",
+    "s3_confirmation",
+    "knowledge_base_ingestion",
+    "factual_rag_with_citation",
+    "citation_inspection",
+    "absent_fact_without_citations"
+  ],
+  "failedStage": "metadata_tool",
+  "errorCategory": "metadata_response",
+  "applicationCalls": {
+    "startIngestionJob": 1,
+    "getIngestionJob": 2,
+    "retrieve": 2,
+    "converse": 3,
+    "applyGuardrail": 3,
+    "invokeHarness": 1,
+    "s3": 5,
+    "dynamodb": 102,
+    "memoryWrites": 4,
+    "memoryReads": 3
+  },
+  "modelUsage": {
+    "inputTokens": 4216,
+    "outputTokens": 192
+  },
+  "factualResult": {
+    "operationStatus": "ok",
+    "evidenceStatus": "answerable",
+    "citationCount": 1
+  },
+  "cleanupVerified": {
+    "cleanupRequests": 25,
+    "cleanupErrors": 0,
+    "syntheticUsersAbsent": 2,
+    "ownedRowsAbsent": 7,
+    "temporaryStacksDeleted": 2,
+    "sharedStacksRestored": 3,
+    "artifactVersionsAbsent": 3,
+    "originalCorsRestored": true,
+    "syntheticSourcePrefixEmpty": true
+  },
+  "liveEndToEndDemonstrated": false,
+  "architectureDecisionRequired": "DETERMINISTIC_BACKEND_TO_GATEWAY_MCP_FOR_EXPLICIT_COMMANDS",
+  "independentHoldoutExecuted": false,
+  "prodPromoted": false,
+  "billedCostKnown": false
+}

@@ -292,3 +292,64 @@ controls without submitting credentials. This correction has not had a new live
 authenticated smoke, so the E2E result remains unproven.
 Sanitized result:
 `evals/results/phase13-live-smoke-20260922-02-report.json`.
+
+## Attempt 3 — 2026-09-22 (`20260922-03`)
+
+Fresh user authorization: one execution with the same request/token/time caps,
+expected below USD 2 and USD 5 planning margin (not a billing guarantee), zero
+automatic retries, stop on first failure and mandatory teardown. No prod promotion.
+The first two reports and sentinels remain immutable; the new report path is
+`build/phase13-smoke/live-result-20260922-03.json`.
+
+Pre-provisioning checks passed: clean Git worktree at commit `76b21e8`, exact
+factory built offline with access-only tokens and no audience, selector/helper
+tests passed, three original template backups matched the deployed templates,
+shared stacks were UPDATE_COMPLETE, synthetic prefix/users/matter seeds were
+absent, and the only existing KB was the unrelated project resource.
+
+### Result and teardown
+
+The single execution passed real Cognito login, Matter A selection, presigned
+upload, S3 confirmation, KB ingestion, factual RAG (`answerable` with one
+citation), citation inspection and the absent-fact path
+(`insufficient_evidence`, zero citations). It then stopped at `metadata_tool`:
+the `/api/mcp` response was non-successful after one successful Harness
+invocation. Review, cross-matter denial and final audit were therefore not run.
+
+Metadata-only application counters: 1 ingestion start, 2 ingestion polls,
+2 Retrieve, 3 Converse, 3 Guardrail, 1 Harness, 5 S3, 102 DynamoDB,
+4 Memory writes and 3 Memory reads; 4,216 model input tokens and 192 output
+tokens. No automatic retry was made.
+
+The evidence isolates an architectural mismatch rather than an IAM/Gateway
+failure. The application created its scoped Harness invocation binding, but no
+Gateway grant or correlated interceptor/target Lambda telemetry appeared.
+Harness completed without a structured tool result, so the backend failed
+closed. AWS documents that Harness tools run only as a result of model reasoning
+and `allowedTools` restricts selection rather than forcing dispatch; InvokeHarness
+has no tool-choice field. An explicit UI command therefore cannot rely on the
+model to call exactly one tool deterministically.
+
+Relevant current AWS references:
+
+- https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-tools.html
+- https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-security.html
+- https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeHarness.html
+
+Recommended architecture decision, not yet implemented: route explicit metadata
+and review commands from the trusted backend directly to Gateway/MCP with the
+verified user's bearer token and existing server-bound matter/correlation data.
+Keep Gateway interceptor/target reauthorization and least privilege. Reserve
+Harness for genuinely agentic, model-selected workflows. Prompting Harness more
+strongly would remain probabilistic and is not the recommended production fix.
+
+Cleanup made 25 bounded requests without reported errors. Subsequent reads
+verified 2 synthetic users and 7 owned rows absent. The two temporary stacks
+reached DELETE_COMPLETE. All three shared stacks returned to UPDATE_COMPLETE
+using their original templates and Phase 11 artifact versions. The original
+no-CORS state, empty fictional source prefix and absence of all three new
+artifact versions were verified. Billing APIs were not used; actual spend is
+unknown. No merge or prod promotion occurred.
+
+Sanitized durable result:
+`evals/results/phase13-live-smoke-20260922-03-report.json`.
