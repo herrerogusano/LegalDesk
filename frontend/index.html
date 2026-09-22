@@ -11,6 +11,7 @@
     <script defer src="/app.js"></script>
   </head>
   <body>
+    <a class="skip-link" href="#main">Saltar al contenido principal</a>
     <header class="masthead">
       <a class="wordmark" href="#main" aria-label="LegalDesk, inicio">LegalDesk<span> / </span>Archivo</a>
       <div class="masthead-actions">
@@ -39,16 +40,52 @@
         </div>
         <div class="control-group control-group-wide">
           <label class="field-label" for="document-file">AÑADIR DOCUMENTO</label>
-          <div class="upload-row">
-            <input id="document-file" type="file" accept="application/pdf,text/plain" disabled>
-            <button id="upload-button" class="button" type="button" disabled>Autorizar subida</button>
+          <div id="upload-workspace" class="upload-workspace" aria-busy="false">
+            <div class="upload-row">
+              <input id="document-file" type="file" accept="application/pdf,text/plain" disabled aria-describedby="selected-file-status upload-helper">
+              <button id="upload-button" class="button" type="button" disabled>Autorizar subida</button>
+            </div>
+            <p id="selected-file-status" class="file-selection" role="status" aria-live="polite">Sin archivo seleccionado.</p>
+            <p id="upload-helper" class="upload-helper">PDF o TXT · hasta 10 MB · el documento queda limitado a este expediente.</p>
+            <div id="upload-progress" class="upload-progress" hidden role="status" aria-live="polite" aria-atomic="true">
+              <p id="upload-progress-message" class="upload-progress-message">Preparando la subida…</p>
+              <ol class="upload-steps" aria-label="Progreso de la subida">
+                <li data-upload-stage="authorize"><span class="step-number" aria-hidden="true">01</span><span>Autorizar</span></li>
+                <li data-upload-stage="upload"><span class="step-number" aria-hidden="true">02</span><span>Subir</span></li>
+                <li data-upload-stage="verify"><span class="step-number" aria-hidden="true">03</span><span>Verificar</span></li>
+                <li data-upload-stage="index"><span class="step-number" aria-hidden="true">04</span><span>Indexar</span></li>
+              </ol>
+            </div>
           </div>
           <p id="document-status" class="microcopy" aria-live="polite">Selecciona un expediente para empezar.</p>
+        </div>
+        <div id="app-messages" class="app-messages" aria-label="Estado de la operación">
+          <p id="app-error" class="app-message app-error" role="alert" aria-live="assertive" aria-atomic="true" hidden></p>
+          <p id="app-status" class="app-message" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+        </div>
+      </section>
+
+      <section class="documents-section" aria-labelledby="documents-heading">
+        <div class="section-index"><span>01</span><span class="index-line" aria-hidden="true"></span></div>
+        <div class="documents-content">
+          <div class="section-heading-row">
+            <div>
+              <p class="field-label">EXPEDIENTE</p>
+              <h2 id="documents-heading">Documentos del expediente</h2>
+            </div>
+            <p id="document-count" class="document-count" aria-live="polite">0 documentos</p>
+          </div>
+          <p class="section-intro">Todos los documentos autorizados para este expediente. Solo los que estén listos podrán fundamentar una respuesta.</p>
+          <ul id="document-list" class="document-list"><li class="microcopy">Selecciona un expediente para ver sus documentos.</li></ul>
+          <div class="document-actions">
+            <button id="sync-button" class="text-button" type="button" disabled hidden aria-describedby="sync-helper">Reintentar indexación</button>
+            <p id="sync-helper" class="sync-helper" hidden>Vuelve a preparar los documentos recibidos o con fallo para consulta.</p>
+          </div>
         </div>
       </section>
 
       <section class="question-card" aria-labelledby="question-label">
-        <div class="section-index"><span>01</span><span class="index-line" aria-hidden="true"></span></div>
+        <div class="section-index"><span>02</span><span class="index-line" aria-hidden="true"></span></div>
         <div class="question-content">
           <p id="question-label" class="field-label">PREGUNTA</p>
           <form id="chat-form">
@@ -62,11 +99,8 @@
         </div>
       </section>
 
-      <p id="app-error" class="app-message app-error" role="alert" hidden></p>
-      <p id="app-status" class="app-message" role="status" aria-live="polite" hidden></p>
-
       <section class="answer-layout" aria-labelledby="answer-label">
-        <div class="section-index answer-index"><span>02</span><span class="index-line" aria-hidden="true"></span></div>
+        <div class="section-index answer-index"><span>03</span><span class="index-line" aria-hidden="true"></span></div>
         <div class="answer-main">
           <div class="answer-heading">
             <p id="answer-label" class="field-label">RESPUESTA</p>
@@ -77,10 +111,17 @@
             <span class="disclaimer-mark" aria-hidden="true">i</span>
             <p>Resumen documental, no asesoramiento jurídico. Verifique el texto original y consulte a su profesional legal.</p>
           </div>
+          <div class="review-request">
+            <div>
+              <p class="field-label">APOYO PROFESIONAL</p>
+              <p id="review-helper" class="review-helper">Pide una revisión humana si la evidencia es insuficiente o la cuestión requiere criterio profesional.</p>
+            </div>
+            <button id="review-button" class="button" type="button" disabled aria-describedby="review-helper">Solicitar revisión humana</button>
+          </div>
         </div>
         <aside class="sources" aria-labelledby="sources-heading">
           <div class="sources-heading-row">
-            <div class="section-index source-index"><span>03</span></div>
+            <div class="section-index source-index"><span>04</span></div>
             <div>
               <p class="field-label">TRAZABILIDAD</p>
               <h2 id="sources-heading">Fuentes consultadas</h2>
@@ -97,25 +138,20 @@
         </aside>
       </section>
 
-      <section class="secondary-layout" aria-label="Expediente y trazabilidad de la sesión">
-        <section class="panel" aria-labelledby="documents-heading">
-          <div class="panel-heading"><p class="field-label">EXPEDIENTE</p><h2 id="documents-heading">Documentos autorizados</h2></div>
-          <ul id="document-list" class="document-list"><li class="microcopy">Selecciona un expediente para ver sus documentos.</li></ul>
-          <button id="sync-button" class="text-button" type="button" disabled>Sincronizar documentos</button>
-        </section>
+      <section class="secondary-layout" aria-label="Actividad de la consulta y diagnóstico técnico">
         <section class="panel" aria-labelledby="history-heading">
-          <div class="panel-heading"><p class="field-label">MEMORIA ACOTADA</p><h2 id="history-heading">Historial aceptado</h2></div>
+          <div class="panel-heading"><p class="field-label">ACTIVIDAD</p><h2 id="history-heading">Actividad de esta consulta</h2></div>
           <ol id="history-list" class="history-list"><li class="microcopy">El historial de la sesión aparecerá aquí.</li></ol>
         </section>
-        <section class="panel" aria-labelledby="operator-heading">
-          <div class="panel-heading"><p class="field-label">OPERACIÓN</p><h2 id="operator-heading">Trazabilidad</h2></div>
+        <details id="technical-diagnostics" class="technical-diagnostics">
+          <summary><span><span class="field-label">OPERACIÓN</span><strong id="operator-heading">Diagnóstico técnico</strong></span><span class="details-hint">MCP · auditoría</span></summary>
+          <p class="diagnostics-intro">Herramientas para soporte y operaciones. Aquí se muestran identificadores y respuestas técnicas, no necesarios para consultar el expediente.</p>
           <div class="panel-actions">
-            <button id="metadata-button" class="text-button" type="button" disabled>Metadatos MCP</button>
-            <button id="review-button" class="text-button" type="button" disabled>Solicitar revisión</button>
-            <button id="audit-button" class="text-button" type="button" disabled>Ver auditoría</button>
+            <button id="metadata-button" class="text-button" type="button" disabled>Consultar metadatos MCP</button>
+            <button id="audit-button" class="text-button" type="button" disabled>Ver auditoría técnica</button>
           </div>
           <pre id="operator-output" class="operator-output" aria-live="polite"></pre>
-        </section>
+        </details>
       </section>
 
       <footer class="page-footer"><span>LEGALDESK <span class="footer-separator">/</span> ARCHIVO AUTORIZADO</span><span>NO EXPONE RUTAS DE ALMACENAMIENTO</span></footer>

@@ -34,6 +34,17 @@ $env:BROWSER_EXECUTABLE = "<existing Chromium or Edge executable>"
 node tests/phase13_manual_browser.cjs http://localhost:41231
 ```
 
+If the native Windows file selector is unreliable, start the helper with:
+
+```powershell
+node tests/phase13_manual_browser.cjs http://localhost:41231 --prepare-demo-file
+```
+
+After login and matter selection, Playwright supplies the same fictional demo
+content from an in-memory buffer; no OneDrive or native file-selector path is
+used. The operator must still click **Autorizar subida**; no upload or other
+business action is automated.
+
 The finite safety check is:
 
 ```powershell
@@ -46,19 +57,23 @@ node tests/phase13_manual_browser_helpers.test.cjs
 1. Click **Entrar**. The fictional local IdP redirect completes the test
    login; no username, password or real identity is used.
 2. Select **Integration Matter** (`matter-integration`).
-3. Choose `tests/fixtures/manual-demo-evidence.txt` and click **Autorizar
-   subida**.
-4. Wait until the document is shown as **INDEXED**.
+3. Choose `tests/fixtures/manual-demo-evidence.txt`, or wait for the in-memory
+   fictional file to appear when using `--prepare-demo-file`, and click
+   **Autorizar subida**.
+4. Wait until the document is shown as **Listo para consultar** and the status
+   banner says **Subida completada. Estado de indexación: Listo para consultar.**
 5. Ask: `What is the inspection period?`
 6. Expect an answer containing **four years** and status `answerable`.
 7. Open the citation and verify the inspected passage is exactly:
    `The inspection period is four years.`
-8. Click **Metadatos MCP** and inspect the authorized document metadata.
-9. Click **Solicitar revisión** and confirm an open `reviewTaskId`.
-10. Click **Ver auditoría** and confirm the session events include chat,
+8. Open **Diagnóstico técnico**, click **Consultar metadatos MCP** and inspect
+   the authorized document metadata.
+9. Click **Solicitar revisión humana** and confirm an open `reviewTaskId` in
+   **Diagnóstico técnico**.
+10. Click **Ver auditoría técnica** and confirm the session events include chat,
     metadata and review creation.
-11. Confirm **Historial aceptado** contains the question and answer, while no
-    storage URL is displayed.
+11. Confirm **Actividad de esta consulta** contains the question and answer,
+    while no storage URL is displayed.
 12. Optionally ask `none: where is the missing emergency assembly point?` and
     expect `insufficient_evidence` with no citation.
 13. Click **Cerrar sesión**, then close the browser and stop Terminal 1 with

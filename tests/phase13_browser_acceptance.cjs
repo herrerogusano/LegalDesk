@@ -28,16 +28,33 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#matter-select").selectOption("matter-integration");
     await page.locator("#question").waitFor({ state: "visible" });
     await page.waitForFunction(() => !document.querySelector("#document-file").disabled);
+    assert.equal(await page.locator("#upload-button").isDisabled(), true);
     await page.locator("#document-file").setInputFiles({ name: "fictional.txt", mimeType: "text/plain", buffer: Buffer.from("The inspection period is four years.") });
+    assert.match(await page.locator("#selected-file-status").innerText(), /fictional\.txt/);
     await page.locator("#upload-button").click();
-    await page.waitForFunction(() => document.querySelector("#document-list").textContent.includes("INDEXED"), { timeout: 15000 });
+    await page.waitForFunction(() => {
+      const status = document.querySelector("#app-status");
+      return status?.dataset.state === "success" && /Subida completada\. Estado de indexación: Listo para consultar\./.test(status.textContent || "");
+    }, { timeout: 15000 });
+    assert.match(await page.locator("#document-list").innerText(), /Listo para consultar/);
+    assert.doesNotMatch(await page.locator("#document-list").innerText(), /[0-9a-f]{8}-[0-9a-f-]{27,}/i);
+    assert.match(await page.locator("#app-status").innerText(), /Subida completada\. Estado de indexación: Listo para consultar\./);
+    assert.equal(await page.locator("#app-status").getAttribute("role"), "status");
+    assert.equal(await page.locator("#app-status").getAttribute("data-state"), "success");
+    assert.equal(await page.locator("#sync-button").isHidden(), true);
+    assert.match(await page.locator("#review-button").innerText(), /Solicitar revisión humana/i);
+    assert.equal(await page.locator("#technical-diagnostics").getAttribute("open"), null);
     await page.locator("#question").fill("What is the inspection period?");
     await page.locator("#ask-button").click();
     await page.waitForFunction(() => document.querySelector("#answer").textContent.includes("four years"));
     await page.locator(".citation-inspect").first().click();
     await page.waitForFunction(() => document.querySelector("#inspection-passage").textContent.includes("four years"));
     assert.equal(await page.locator("#inspection-passage").innerText(), "The inspection period is four years.");
+    assert.match(await page.locator(".citation-title").first().innerText(), /fictional\.txt/);
+    assert.match(await page.locator("#inspection-meta").innerText(), /fictional\.txt · pasaje autorizado/);
+    assert.doesNotMatch(await page.locator(".sources").innerText(), /matter-integration|[0-9a-f]{8}-[0-9a-f-]{27,}/i);
     assert.ok(!(await page.locator("body").innerText()).includes("s3://"));
+    await page.locator("#technical-diagnostics summary").click();
     await page.locator("#metadata-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("fictional.txt"));
     await page.locator("#review-button").click();
@@ -45,10 +62,32 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#audit-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("grounding_validate"));
     assert.ok((await page.locator("#history-list").innerText()).includes("four years"));
+
+    // Validate responsive layout and basic operability without repeating the
+    // authenticated business flow at each viewport.
+    const layouts = [
+      { width: 375, height: 844 },
+      { width: 768, height: 900 },
+      { width: 1024, height: 900 },
+      { width: 1365, height: 1000 },
+      { width: 1440, height: 1000 },
+    ];
+    for (const viewport of layouts) {
+      await page.setViewportSize(viewport);
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+        true,
+        `horizontal overflow at ${viewport.width}px`,
+      );
+      for (const selector of ["#matter-select", "#document-file", "#question", "#ask-button", "#review-button", "#technical-diagnostics summary"]) {
+        assert.equal(await page.locator(selector).isVisible(), true, `${selector} not visible at ${viewport.width}px`);
+      }
+    }
     const artifactDir = process.env.ARTIFACT_DIR || "test-results";
+    await page.setViewportSize({ width: 1365, height: 1000 });
     await page.screenshot({ path: path.join(artifactDir, "phase13-desktop.png"), fullPage: true });
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "mobile horizontal overflow");
+    await page.setViewportSize({ width: 375, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "mobile horizontal overflow");
     await page.screenshot({ path: path.join(artifactDir, "phase13-mobile.png"), fullPage: true });
     // UI error handling is exercised independently of the backend failure
     // scenarios: an operational response must clear the previous answer/cites.
@@ -59,6 +98,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#question").fill("Exercise a local UI operational error.");
     await page.locator("#ask-button").click();
     await page.waitForFunction(() => !document.querySelector("#app-error").hidden);
+    assert.equal(await page.locator("#app-error").getAttribute("data-state"), "error");
     assert.ok(!(await page.locator("#answer").innerText()).includes("four years"));
     assert.equal(await page.locator(".citation-inspect").count(), 0);
     assert.notEqual(await page.locator("#evidence-status").getAttribute("data-status"), "insufficient_evidence");
@@ -70,7 +110,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.waitForFunction(() => document.querySelector("#question").disabled);
     assert.ok(!(await page.locator("#answer").innerText()).includes("four years"));
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ result: "PASS", browser: "Chromium", layouts: [1365, 390], awsCalls: 0, route: "login/upload/index/chat/citation/MCP/review/history/audit/no-evidence/logout" }));
+    console.log(JSON.stringify({ result: "PASS", browser: "Chromium", layouts: [375, 768, 1024, 1365, 1440], awsCalls: 0, route: "login/upload/index/chat/citation/MCP/review/history/audit/no-evidence/logout" }));
   } finally {
     await browser.close();
   }
