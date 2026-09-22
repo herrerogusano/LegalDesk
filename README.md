@@ -1,160 +1,150 @@
 # LegalDesk
 
 LegalDesk is a portfolio project for a grounded, tenant-safe legal-document
-assistant built around Amazon Bedrock AgentCore. It is an educational MVP, not
-a legal product, and it must only use public or wholly fictional documents.
+assistant built on Amazon Bedrock AgentCore. It demonstrates how retrieval,
+authorization, citations, tool calls and bounded agentic workflows can be
+composed without allowing the browser or the model to define access scope.
 
-## Current status
+> **Status: `NOT_READY_FOR_PROD`**
+>
+> This is an educational MVP, not legal advice or a production legal system.
+> Use only public or wholly fictional documents. No public deployment is
+> claimed.
 
-Phases 00–12 are complete within their recorded component/bounded scopes.
-Phase 13 now provides a connected loopback application demonstrated locally and
-by a bounded real AWS browser smoke. The final smoke passed Cognito login,
-presigned upload and verified confirmation, ingestion, factual/absent-evidence
-RAG, citations, deterministic metadata through Gateway→MCP, review creation
-through Gateway→Lambda, cross-matter denial, audit and logout. Harness was not
-used as a router for either explicit action. Earlier attempts exposed and fixed
-factory, hosted-login, Harness-routing, Playwright bootstrap, Gateway tool-name
-and logout-runner defects; their reports remain immutable. All temporary
-infrastructure was removed and shared stacks were restored after each attempt.
-The release is locally hardened but remains **NOT_READY_FOR_PROD** because the
-independent semantic holdout, production TLS hosting, distributed state and
-release controls remain outside this smoke. See the
-[production readiness gate](docs/production-readiness.md), the historical
-[release audit](docs/release-audit.md), the current
-[Phase 13 acceptance ledger](docs/phase-13-acceptance.md), and
-[application run instructions](docs/phase-13-run.md).
+## What it demonstrates
 
-The demonstrated local journey is login → matter → presigned upload → verified
-confirmation/indexing → authorized retrieval → Resolver → Writer → productive
-grounding adapter → inspectable citation, with user-scoped Harness/Gateway/MCP
-agentic support plus deterministic backend/Gateway metadata and review actions,
-accepted short-term history and correlated audit.
-Temporary Phase 13 resources were deployed and removed; shared stacks were
-restored. See the [live-smoke ledger](docs/phase-13-live-smoke.md). No prod promotion.
+- Grounded RAG over authorized passages with exact, inspectable citations.
+- Server-derived tenant, matter, membership and conversation scope.
+- Deterministic metadata and review actions through AgentCore Gateway,
+  MCP and Lambda.
+- AgentCore Harness reserved for genuinely agentic, model-selected workflows.
+- Short-term, actor/session/matter-scoped history; long-term memory is disabled.
+- Redacted, allowlisted application telemetry rather than document or prompt
+  content logging.
 
-The implemented components cover deterministic authorization, presigned document upload,
-S3 Vectors-backed authorized retrieval, retrieve-then-generate chat with
-citations, Guardrails, Gateway → MCP metadata tools, human review tasks,
-short-term Memory, identity isolation, and redacted application telemetry.
-Phase 12 adds 24 deterministic local evaluations across eight security/quality
-categories. No real legal data is permitted. The managed Harness smoke
-historically recorded `0/4` accepted
-structured outcomes; a separate direct Bedrock smoke used `3` model calls plus
-one local no-evidence case and accepted `2/4`; its one-time two-case follow-up
-used exactly `2` additional calls and accepted `0/2`. Both remain incomplete
-evidence, not production legal-quality validation.
-The follow-up prompted a local system-prompt fix to version `1.2.0`; a bounded
-final runner was executed once with exactly `2/2` calls and `0` retries, and
-accepted `1/2`. The factual citation case remained insufficient evidence while
-the untrusted-injection case passed. At that stage, real-model acceptance was
-incomplete and no retry was permitted without separate authorization.
-The separated `1.3.0` remediation was subsequently executed once over nine
-synthetic cases. It used 9 resolver and 5 writer calls (`14` total), zero
-retries, and accepted `3/9`: all factual cases passed, while partial and
-injection cases exposed remaining resolver/grounding gaps.
-The dedicated resolver/writer pipeline was then executed once with stage
-prompts `1.0.0`: 9 resolver plus 6 writer calls (`15` total), zero retries, and
-`5/9` accepted. All factual cases and two injection cases passed. Two partial
-cases were incorrectly classified as having no material support, one partial
-writer failed grounding, and one injection fact was classified as partial.
-The metadata-only report is immutable. Stage prompts `1.1.0` then sharpened
-`partial` versus `none`, preserved facts adjacent to embedded directives, and
-added closed grounding diagnostic codes. Its authorized run used exactly 9
-resolver and 9 writer calls, zero retries, and accepted `6/9`; importantly, the
-resolver passed `9/9`, isolating all remaining failures to writer/oracle
-phrasing. Writer `1.2.0` now preserves requested values with their units and
-the oracle accepts bounded omission/count paraphrases. The release audit also
-reproduced semantic false positives and legitimate-paraphrase false negatives;
-this oracle is not a productive grounding validator. The writer-only follow-up
-used 9 calls, zero retries, and accepted `8/9`; one partial answer failed lexical
-validation, without retained text sufficient to prove why. A bounded
-relation-token canonicalizer covers selected grammatical forms. The local
-regression remains `9/9`. The one-call targeted check then passed `1/1`, giving
-composite staged acceptance of resolver `9/9` and writer `9/9`, with all
-reports metadata-only and all historical failures preserved. This closes the
-Phase 12 bounded real-model subset; it does not claim production legal quality
-or statistical model reliability.
+## Architecture
+
+```mermaid
+flowchart LR
+  B[Browser] --> I[Cognito/OIDC identity]
+  I --> A[Backend authorization\nsealed RequestContext]
+  A --> U[Upload API]
+  U --> S3[(S3 originals)]
+  A --> D[(DynamoDB\nmetadata/membership/review)]
+  A --> R[Authorized retrieval filter]
+  R --> KB[Knowledge Base + S3 Vectors]
+  KB --> Q[Resolver → Writer →\nGuardrails grounding]
+  Q --> B
+  A -->|fixed tools/call| GW[AgentCore Gateway]
+  GW --> MCP[MCP metadata tools]
+  GW --> L[Review Lambda]
+  A -->|agentic only| H[AgentCore Harness/Runtime]
+  A --> M[AgentCore Memory\nshort-term only]
+```
+
+The browser supplies selectors and questions, never authority. The backend
+reloads membership and derives an immutable request scope before retrieval or
+tool access. The model cannot choose a tenant, matter, document, review owner,
+S3 key or memory actor. See the [final architecture](docs/architecture-final.md)
+for the complete trust and data lifecycle.
+
+### Deterministic and agentic routes
+
+- **Grounded answers:** authorized retrieval feeds a schema-constrained
+  Resolver, then an Answer Writer, then contextual grounding. The backend
+  owns status and citation validity.
+- **Explicit UI actions:** metadata and review commands use one fixed
+  backend → Gateway `tools/call` path. Gateway, MCP and the target handler
+  reauthorize the same scope; Harness is not used as the router.
+- **Agentic workflows:** model-selected tool use may go through Harness with
+  the same sealed JWT-bound scope and server-side authorization.
+
+## Security boundaries
+
+- Authorization is deterministic and server-side; `tenantId` and `matterId`
+  from the browser are selectors only.
+- Retrieval is filtered before generation, and citation inspection rechecks
+  actor, matter, conversation and document access.
+- Gateway interceptors and tool handlers reauthorize independently.
+- Guardrails protect content but do not replace authorization.
+- Retrieved documents are treated as untrusted data, not instructions.
+- Sessions, citation handles, audit data and accepted history are bounded
+  process-local demo state; long-term Memory and direct model credentials are
+  not exposed to the browser.
+
+## Verified evidence
+
+- **413 tests passed** in the final local verification.
+- **24/24 deterministic evaluations passed** with zero AWS calls.
+- **Final bounded AWS browser smoke: PASS** for the fixed synthetic journey:
+  Cognito login, presigned upload and indexing, factual and absent-evidence
+  RAG, citations, Gateway → MCP metadata, Gateway → Lambda review, cross-matter
+  denial, audit and logout.
+- Temporary smoke resources were removed and shared stacks restored. The
+  independent 14-case semantic holdout remains unexecuted against AWS.
+
+Evidence classes, acceptance scenarios and remaining gates are recorded in the
+[Phase 13 acceptance ledger](docs/phase-13-acceptance.md). The smoke result is
+integration evidence, not production certification or a claim of broad legal
+accuracy.
+
+## Local verification
+
+The supported local checks require Python 3.11+:
+
+```powershell
+python -m pip install -e '.[aws]' -e agent
+python -B -m unittest discover -s tests -q
+python -m legaldesk --help
+```
+
+Run the deterministic evaluation without AWS or model inference:
+
+```powershell
+python evals/run_evals.py --output evals/results/phase12-local-report.json
+```
+
+For the test-only local browser journey, start the fixture server and then run
+the browser acceptance command described in [Phase 13 run instructions](docs/phase-13-run.md).
+The AWS-backed entry point and its approval boundary are documented there; do
+not enable AWS mode without the separately authorized smoke gate.
 
 ## Repository layout
 
 ```text
-agent/       Agent orchestration (introduced in Phase 01)
-backend/     Domain and deterministic authorization code
-docs/        Architecture, data model, security, and dataset design
-frontend/    Minimal UI boundary and citation panel
-infra/       Reproducible CloudFormation and deployment/teardown commands
-evals/       Synthetic Phase 12 dataset, local runner, and report artifacts
-tests/       Local unit tests and fictional multi-tenant fixtures
+backend/   Domain services, authorization, retrieval and HTTP application
+agent/     AgentCore integration adapters and package
+frontend/  Dependency-free loopback UI and citation panel
+infra/     CloudFormation templates and scoped deployment/teardown notes
+evals/     Synthetic datasets, deterministic runner and evidence reports
+tests/     Unit, integration, security and browser acceptance coverage
+docs/      Architecture, trust boundaries, acceptance and release gates
 ```
 
-## Local verification
+## Limits and cost considerations
 
-Requires Python 3.11 or newer plus the declared backend/agent dependencies.
-The complete suite includes offline boto3 service-schema checks and signed-JWT
-integration tests (the original Phase 00 subset used only the standard library):
+This repository is intentionally a loopback portfolio application, not an
+internet-facing production server. Sessions, citation handles and audit state
+are process-local; production TLS hosting, durable multi-instance state,
+retention/deletion controls, reconciliation jobs, operational SLOs and the
+independent semantic holdout remain release gates.
 
-```bash
-python -m pip install -e '.[aws]' -e agent
-python -m unittest discover -s tests -v
-```
+S3, S3 Vectors, DynamoDB, Bedrock, AgentCore, Lambda and CloudWatch can incur
+charges. Local tests and deterministic evaluations use no AWS calls. Any AWS
+deployment or real-model run requires the documented approval, budget and
+teardown procedure.
 
-Run the Phase 12 deterministic evaluation without AWS or model inference:
+## Further reading
 
-```bash
-python evals/run_evals.py --output evals/results/phase12-local-report.json
-python -m unittest discover -s tests -p 'test_phase_12_evaluation.py' -v
-```
+- [Production readiness gate](docs/production-readiness.md)
+- [Phase 13 application run instructions](docs/phase-13-run.md)
+- [Threat model](docs/threat-model.md) and [authorization matrix](docs/authorization-matrix.md)
+- [Frontend boundary](frontend/README.md)
+- [Infrastructure notes](infra/README.md)
+- [Phase 12 evaluation report](docs/phase-12-evaluation-report.md)
+- [Phase 13 live-smoke ledger](docs/phase-13-live-smoke.md)
+- [What must change before real legal data](docs/what-i-would-change-before-real-legal-data.md)
 
-The bounded real-model smoke is documented in
-[`docs/phase-12-evaluation-report.md`](docs/phase-12-evaluation-report.md) and
-is not a replacement for the deterministic security suite. It consumed exactly
-four Harness attempts, with no retries, and remains incomplete: text-only
-responses cannot prove authorization, refusal, escalation, or tool use.
-
-The latest local run has 24/24 cases passing, 100% citation exactness,
-bounded citation-to-fixture alignment, tool-choice accuracy, and cross-matter
-denial. The alignment figure is not semantic model groundedness. Latency in
-this report is process-local only; it is not a cloud performance SLO.
-
-## Architecture and trust boundaries
-
-The browser is untrusted. Cognito/OIDC or a verified Gateway edge supplies
-identity; the backend reloads membership and derives an immutable request scope.
-Retrieval is metadata-filtered before generation. Gateway tools reauthorize the
-same scope. Memory is short-term and actor/session/matter scoped; long-term
-memory is rejected. Application telemetry is an allowlist of metadata only.
-See [`docs/architecture.md`](docs/architecture.md),
-[`docs/architecture-final.md`](docs/architecture-final.md),
-[`docs/authorization-matrix.md`](docs/authorization-matrix.md), and
-[`docs/threat-model.md`](docs/threat-model.md).
-
-## Setup, deploy, and teardown
-
-Local work requires Python 3.11+ and the dependencies declared by the backend
-and agent packages. Cloud deployment is phase-scoped and must use the documented
-change-set commands under [`infra/`](infra/README.md). Phase 12 itself creates
-no AWS resources. Teardown commands and retained-resource warnings are in
-[`infra/phase-11-commands.md`](infra/phase-11-commands.md) and the phase
-acceptance records.
-
-## Trade-offs, limitations, and cost
-
-This is an educational MVP, not legal advice or a production legal system.
-S3 Vectors and fixed chunking keep the first architecture explainable, at the
-cost of less hierarchical retrieval control. Long-term memory is disabled for
-data minimization. Bedrock/AgentCore inference, Knowledge Base ingestion,
-Memory, Gateway, Lambda, DynamoDB, S3, and CloudWatch can incur charges; the
-Phase 12 deterministic local runner uses zero AWS calls, while the separately
-authorized real-model runners call Bedrock. The managed Harness internal ADOT
-detail is disabled after content extraction was observed; the application
-allowlisted telemetry pointer is the supported operational trace surface.
-
-Before real legal data enters the system, read
-[`docs/what-i-would-change-before-real-legal-data.md`](docs/what-i-would-change-before-real-legal-data.md).
-The five-minute synthetic walkthrough is in
-[`docs/phase-12-walkthrough.md`](docs/phase-12-walkthrough.md).
-The phase acceptance matrix is in
-[`docs/phase-12-acceptance.md`](docs/phase-12-acceptance.md).
-
-Planning and phase constraints are defined in `AGENTS.md`, `MASTER_PLAN.md`,
-and the corresponding `PLAN_XX_*.md` file.
+Historical phase reports and the detailed release chronology remain in `docs/`;
+this README intentionally keeps those operational details out of the project
+summary.
