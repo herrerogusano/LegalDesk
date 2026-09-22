@@ -154,7 +154,7 @@ prepare—but do not execute—the developer→prod checklist.
 - [x] Scoped short-term Memory integrated where applicable.
 - [x] Authorized inspectable citations without internal locations.
 - [x] E2E correlation and effective prompt metadata.
-- [x] Integration and complete regression suites green: 378 tests; 24/24 deterministic evals.
+- [x] Integration and complete regression suites green: 407 tests; 24/24 deterministic evals.
 - [x] Documentation accurately describes demonstrated behavior.
 - [x] Fixed real smoke, proposed budget/request ceilings and teardown prepared.
 

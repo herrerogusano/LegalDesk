@@ -16,6 +16,9 @@ hidden hosted-login control; both defects were fixed locally. A third smoke pass
 login, upload, ingestion and RAG, then exposed that Harness cannot guarantee a
 model-selected tool call for an explicit UI command. ADR-016 now routes those
 commands directly through Gateway. All temporary infrastructure was cleaned up.
+A fourth bounded attempt stopped before browser startup because the launcher did
+not forward the workspace Playwright module path; it made no upload, inference,
+Gateway or Harness call and was not retried. Cleanup/restoration was verified.
 A new live attempt and promotion to prod require separate approval. See the historical
 [release audit](docs/release-audit.md), the current
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md), and

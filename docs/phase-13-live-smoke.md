@@ -358,3 +358,44 @@ unknown. No merge or prod promotion occurred.
 
 Sanitized durable result:
 `evals/results/phase13-live-smoke-20260922-03-report.json`.
+
+## Attempt 4 — 2026-09-22 (`20260922-04`)
+
+The user authorized one further bounded test run after ADR-016, under the same
+under-USD-2 estimate, USD-5 planning margin and residual-risk conditions. Local
+preflight used commit `d4a28f1`; 403 tests, 24/24 deterministic evaluations and
+the offline desktop/mobile browser journey were green. Shared stack templates
+matched their saved originals, the synthetic prefix/users/matter seeds were
+absent and the previous reports remained immutable.
+
+Temporary KB/vector and Guardrail stacks were created from the reviewed Phase
+03/06 templates. Phase 02 received only the no-replacement CORS update; Phase
+07/08 received the current versioned Lambda artifact with one SDK attempt.
+Gateway was `READY` and all three Lambdas were Active/Successful before the
+runner was invoked exactly once.
+
+The run stopped before browser startup. The launcher created its two synthetic
+users and four conditional authorization records, then its Node child exited
+before writing the required metadata-only JSON line. The Python launcher tried
+to index the empty stdout list and recorded `IndexError`. Reproduction without
+AWS established the underlying runner defect: Playwright is provided through
+the workspace dependency bundle, but the live launcher neither required nor
+forwarded `PLAYWRIGHT_MODULE`; the browser script imports Playwright at module
+load, outside its safe error handler. This is not a Cognito, Gateway, IAM, RAG,
+model or grounding result.
+
+Application counters were four fixture DynamoDB writes and zero S3, ingestion,
+Retrieve, Converse, Guardrail, Harness, direct Gateway or Memory operations.
+There was no upload, model input/output or browser login. The attempt was not
+retried.
+
+Internal cleanup reported nine requests and no errors. Independent verification
+found both synthetic users and all four exact rows absent, the source prefix
+empty, both temporary stacks deleted, all three shared stacks restored to their
+exact saved templates/Phase 11 artifact versions, original no-CORS state restored
+and all three attempt artifact versions absent. No billing API was called and
+actual billed cost is unknown. The live direct-Gateway path therefore remains
+unproven; no prod promotion occurred.
+
+Sanitized report:
+`evals/results/phase13-live-smoke-20260922-04-report.json`.

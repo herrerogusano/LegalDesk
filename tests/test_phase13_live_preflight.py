@@ -2,6 +2,7 @@
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from phase13_live_smoke import (
     ACCOUNT,
@@ -12,12 +13,64 @@ from phase13_live_smoke import (
     TrackingSession,
     make_resource_config,
     offline_factory_preflight,
+    browser_runtime_preflight,
+    parse_browser_report,
     resolve_report_path,
     session_policy,
 )
 
 
 class LivePreflightTests(unittest.TestCase):
+    def test_empty_browser_stdout_becomes_closed_failure(self):
+        report = parse_browser_report("", returncode=1)
+        self.assertEqual(report["result"], "FAIL")
+        self.assertEqual(report["category"], "browser_report_missing")
+        self.assertNotIn("stderr", report)
+
+    def test_invalid_browser_json_becomes_closed_failure_without_echo(self):
+        report = parse_browser_report("not-json\nSECRET_TOKEN\n", returncode=1)
+        self.assertEqual(report["result"], "FAIL")
+        self.assertEqual(report["category"], "browser_report_invalid")
+        self.assertNotIn("SECRET_TOKEN", json.dumps(report))
+
+    def test_browser_runtime_preflight_accepts_closed_pass_report(self):
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({
+                    "result": "PASS",
+                    "smoke": "phase13-live-browser",
+                    "phase": "preflight",
+                    "browserExecutable": True,
+                }),
+                stderr="PRIVATE_DIAGNOSTIC",
+            )
+
+        report = browser_runtime_preflight(runner=runner)
+        self.assertEqual(report["phase"], "preflight")
+        self.assertEqual(calls[0][0][-1], "--preflight")
+        self.assertNotIn("AWS_ACCESS_KEY_ID", calls[0][1]["env"])
+
+    def test_browser_runtime_preflight_rejects_missing_runtime_without_stderr(self):
+        def runner(_command, **_kwargs):
+            return SimpleNamespace(
+                returncode=1,
+                stdout=json.dumps({
+                    "result": "FAIL",
+                    "smoke": "phase13-live-browser",
+                    "phase": "preflight",
+                    "category": "playwright_module_unavailable",
+                    "errorType": "UnknownError",
+                }),
+                stderr="PRIVATE_DIAGNOSTIC",
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "browser runtime preflight failed"):
+            browser_runtime_preflight(runner=runner)
+
     def test_application_policy_is_restricted_and_fits_sts(self):
         policy = session_policy(["a" * 36, "b" * 36])
         self.assertLessEqual(len(policy), 2048)

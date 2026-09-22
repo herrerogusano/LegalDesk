@@ -46,7 +46,7 @@ direct backend→Gateway/MCP call; Harness remains reserved for agentic flows.
 
 Final local verification on 2026-09-22:
 
-- Complete Python suite: **403 tests passed**, versus the 315-test baseline.
+- Complete Python suite: **407 tests passed**, versus the 315-test baseline.
 - Concrete application journey: one integrated happy-flow test plus 20 HTTP
   scenario/security regressions; two additional HTTP boundary tests and three
   factory tests. Other Phase 13 tests cover identity transport, provider stream
@@ -184,6 +184,16 @@ sanitized attempt report and `phase-13-live-smoke.md` for exact evidence.
 The post-attempt ADR-016 implementation is local-only and has not yet been
 validated against a live Gateway. A future smoke requires fresh authorization;
 this documentation change does not authorize another AWS run.
+
+Attempt 4 used that fresh authorization but stopped before its browser process
+started: the launcher did not forward the workspace Playwright module path, so
+the Node process produced no JSON report and the Python wrapper recorded an
+`IndexError`. It made four synthetic fixture writes and zero upload, ingestion,
+inference, Harness or direct-Gateway calls. The attempt was not retried. The
+runner now performs a browser/module launch preflight before any AWS write and
+parses empty/malformed child output as a closed diagnostic. Cleanup and exact
+shared-stack restoration were independently verified. The live direct-Gateway
+gate therefore remains pending.
 
 ## Developer to prod checklist — do not execute
 

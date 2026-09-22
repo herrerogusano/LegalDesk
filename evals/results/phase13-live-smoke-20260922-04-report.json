@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0.0",
+  "date": "2026-09-22",
+  "attemptId": "20260922-04",
+  "codeCommit": "d4a28f1",
+  "attempts": 1,
+  "automaticRetries": 0,
+  "result": "STOPPED_BEFORE_BROWSER_START",
+  "passedStages": [],
+  "failedStage": "browser_runner_startup",
+  "errorCategory": "missing_playwright_module_preflight",
+  "rootCauseEstablished": true,
+  "applicationCalls": {
+    "startIngestionJob": 0,
+    "getIngestionJob": 0,
+    "retrieve": 0,
+    "converse": 0,
+    "applyGuardrail": 0,
+    "invokeHarness": 0,
+    "directGateway": 0,
+    "s3": 0,
+    "dynamodb": 4,
+    "memoryWrites": 0,
+    "memoryReads": 0
+  },
+  "modelUsage": {
+    "inputTokens": 0,
+    "outputTokens": 0
+  },
+  "cleanupVerified": {
+    "cleanupRequests": 9,
+    "cleanupErrors": 0,
+    "syntheticUsersAbsent": 2,
+    "ownedRowsAbsent": 4,
+    "temporaryStacksDeleted": 2,
+    "sharedStacksRestored": 3,
+    "artifactVersionsAbsent": 3,
+    "originalCorsRestored": true,
+    "syntheticSourcePrefixEmpty": true
+  },
+  "liveDirectGatewayDemonstrated": false,
+  "independentHoldoutExecuted": false,
+  "prodPromoted": false,
+  "billedCostKnown": false
+}

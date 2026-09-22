@@ -99,7 +99,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 Auditoría: `NOT_READY_FOR_PROD` (ver `docs/release-audit.md`). Fases 00–12
 conservan su aceptación acotada; no certifican readiness de portfolio/E2E.
 
-- [x] Phase 13 local integration (394 tests; 24/24 deterministic evaluations; HTTP/browser E2E with provider doubles; one authorized AWS smoke stopped before login, local fix verified, teardown complete; live E2E unproven, NOT_READY_FOR_PROD)
+- [x] Phase 13 local integration (407 tests; 24/24 deterministic evaluations; HTTP/browser E2E with provider doubles; four bounded AWS attempts recorded, latest stopped before browser startup with zero inference/Gateway calls and verified teardown; live E2E unproven, NOT_READY_FOR_PROD)
 
 - [x] Phase 00
 - [x] Phase 01

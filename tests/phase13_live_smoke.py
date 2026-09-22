@@ -42,6 +42,59 @@ _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _ATTEMPT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 
 
+def parse_browser_report(stdout, *, returncode=0):
+    """Parse only the browser runner's closed JSON envelope.
+
+    The browser process can fail before loading its module, in which case it
+    may emit no stdout at all.  Never retain stderr or an arbitrary output
+    line: the smoke report must contain only a safe closed diagnostic.
+    """
+    del returncode
+    lines = stdout.splitlines() if isinstance(stdout, str) else []
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(payload, dict)
+            and payload.get("smoke") == "phase13-live-browser"
+            and payload.get("result") in {"PASS", "FAIL"}
+        ):
+            return payload
+    return {
+        "result": "FAIL",
+        "smoke": "phase13-live-browser",
+        "phase": "startup",
+        "step": "browser_process",
+        "category": "browser_report_missing" if not lines else "browser_report_invalid",
+        "errorType": "NoReport" if not lines else "InvalidReport",
+    }
+
+
+def browser_runtime_preflight(*, runner=subprocess.run):
+    """Verify Node, Playwright and the browser executable before AWS writes."""
+    child_env = dict(os.environ)
+    for key in list(child_env):
+        if key.startswith("AWS_"):
+            child_env.pop(key)
+    try:
+        completed = runner(
+            ["node", str(ROOT / "tests/phase13_live_browser.cjs"), "--preflight"],
+            cwd=ROOT,
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("browser runtime preflight failed") from exc
+    report = parse_browser_report(completed.stdout, returncode=completed.returncode)
+    if completed.returncode != 0 or report.get("result") != "PASS" or report.get("phase") != "preflight":
+        raise RuntimeError("browser runtime preflight failed")
+    return report
+
+
 def session_policy(subjects, *, knowledge_base_id=KNOWLEDGE_BASE_ID, guardrail_identifier=GUARDRAIL_IDENTIFIER):
     """Narrow resource/action intersections; never IAM/control-plane authority."""
     bedrock = f"arn:aws:bedrock:{REGION}:{ACCOUNT}:"
@@ -256,6 +309,8 @@ def main():
             "factory": factory,
         }))
         return 0
+    # Fail locally before importing AWS clients or creating synthetic users.
+    browser_runtime_preflight()
     report_path = resolve_report_path(attempt_id, args.report_path)
     import boto3
     from boto3.dynamodb.conditions import Attr, Key
@@ -342,7 +397,9 @@ def main():
         child = subprocess.run(["node", str(ROOT / "tests/phase13_live_browser.cjs")], cwd=ROOT, env=child_env, capture_output=True, text=True, timeout=750)
         del child_env
         # Browser runner emits only a closed, metadata-only JSON report.
-        browser_report = json.loads(child.stdout.strip().splitlines()[-1])
+        # Empty/malformed output is a safe failure, never an IndexError and
+        # never a reason to persist stderr or provider diagnostics.
+        browser_report = parse_browser_report(child.stdout, returncode=child.returncode)
         result["browser"] = browser_report
         result["status"] = "PASS" if child.returncode == 0 and browser_report.get("result") == "PASS" else "FAILED"
         if result["status"] == "PASS":

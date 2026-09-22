@@ -8,7 +8,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { findFirstVisible, waitForFirstVisible, waitForIndexedState } = require("./phase13_live_browser_helpers.cjs");
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 const BASE_URL = process.env.LEGALDESK_SMOKE_BASE_URL || "http://localhost:8000";
 const USERNAME = process.env.LEGALDESK_SMOKE_USERNAME;
@@ -73,6 +72,45 @@ function safeErrorType(error) {
   return SAFE_ERROR_TYPES.has(name) ? name : "UnknownError";
 }
 
+function loadChromium() {
+  try {
+    const playwright = require(process.env.PLAYWRIGHT_MODULE || "playwright");
+    if (!playwright || !playwright.chromium) throw new TypeError("playwright chromium unavailable");
+    return playwright.chromium;
+  } catch (error) {
+    throw new SmokeFailure("playwright_module_unavailable", safeErrorType(error));
+  }
+}
+
+async function preflight() {
+  const chromium = loadChromium();
+  let executablePath;
+  try {
+    executablePath = process.env.BROWSER_EXECUTABLE || chromium.executablePath();
+  } catch (error) {
+    throw new SmokeFailure("browser_executable_unavailable", safeErrorType(error));
+  }
+  if (typeof executablePath !== "string" || !executablePath || !fs.existsSync(executablePath)) {
+    throw new SmokeFailure("browser_executable_unavailable", "BrowserExecutableMissing");
+  }
+  let browser;
+  try {
+    browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE || undefined, headless: true });
+  } catch (error) {
+    throw new SmokeFailure("browser_launch_failed", safeErrorType(error));
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+  return {
+    result: "PASS",
+    smoke: "phase13-live-browser",
+    phase: "preflight",
+    runtime: "node",
+    playwrightModule: true,
+    browserExecutable: true,
+  };
+}
+
 async function loginStep(name, action) {
   currentStep = name;
   try {
@@ -105,6 +143,8 @@ function apiResponse(page, pathSuffix, method, category) {
 }
 
 async function run() {
+  if (process.argv.includes("--preflight")) return preflight();
+  const chromium = loadChromium();
   if (!USERNAME || !PASSWORD) fail("missing_credentials");
   if (!fs.existsSync(PDF_PATH)) fail("missing_smoke_pdf");
   const base = new URL(BASE_URL);
