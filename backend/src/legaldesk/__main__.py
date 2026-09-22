@@ -1,7 +1,8 @@
 """Explicit loopback entry point for the LegalDesk application.
 
 The runnable application has no local fake/provider fallback: ``--allow-aws``
-is required before the production composition can construct SDK clients.
+is required before the explicitly configured AWS composition can construct SDK
+clients.  This entry point remains loopback-only and is not a production edge.
 """
 
 from __future__ import annotations

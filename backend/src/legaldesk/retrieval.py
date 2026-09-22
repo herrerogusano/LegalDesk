@@ -31,6 +31,10 @@ from .observability import (
 
 MAX_QUERY_LENGTH = 2_000
 DEFAULT_NUMBER_OF_RESULTS = 5
+# Grounding currently accepts at most 100,000 source characters.  Enforce the
+# provider boundary immediately after retrieval so an unexpectedly large or
+# malformed response cannot be handed to the resolver/writer first.
+MAX_RETRIEVAL_SOURCE_CHARACTERS = 100_000
 
 
 class BedrockKnowledgeBaseClient(Protocol):
@@ -97,8 +101,11 @@ def _normalize_results(
     raw_results = response.get("retrievalResults")
     if not isinstance(raw_results, (list, tuple)):
         raise ValueError("retrievalResults is malformed")
+    if len(raw_results) > DEFAULT_NUMBER_OF_RESULTS:
+        raise ValueError("retrievalResults exceeds the configured result limit")
 
     normalized: list[RetrievedPassage] = []
+    total_source_characters = 0
     for result in raw_results:
         if not isinstance(result, Mapping):
             raise ValueError("retrieval result is malformed")
@@ -121,6 +128,9 @@ def _normalize_results(
         text = content.get("text")
         if document_id is None or not isinstance(text, str) or not text.strip():
             raise ValueError("retrieval result lacks citation fields")
+        total_source_characters += len(text)
+        if total_source_characters > MAX_RETRIEVAL_SOURCE_CHARACTERS:
+            raise ValueError("retrieval sources exceed the grounding limit")
 
         location = result.get("location")
         s3_location = location.get("s3Location") if isinstance(location, Mapping) else None

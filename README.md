@@ -16,9 +16,10 @@ used as a router for either explicit action. Earlier attempts exposed and fixed
 factory, hosted-login, Harness-routing, Playwright bootstrap, Gateway tool-name
 and logout-runner defects; their reports remain immutable. All temporary
 infrastructure was removed and shared stacks were restored after each attempt.
-The release remains **NOT_READY_FOR_PROD** because the independent semantic
-holdout, production hosting/distributed state and prod promotion remain outside
-this smoke. See the historical
+The release is locally hardened but remains **NOT_READY_FOR_PROD** because the
+independent semantic holdout, production TLS hosting, distributed state and
+release controls remain outside this smoke. See the
+[production readiness gate](docs/production-readiness.md), the historical
 [release audit](docs/release-audit.md), the current
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md), and
 [application run instructions](docs/phase-13-run.md).

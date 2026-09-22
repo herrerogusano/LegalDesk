@@ -44,7 +44,8 @@ direct backend→Gateway/MCP call; Harness remains reserved for agentic flows.
 
 Final local verification on 2026-09-22:
 
-- Complete Python suite: **407 tests passed**, versus the 315-test baseline.
+- Complete Python suite after local release hardening: **413 tests passed**,
+  versus the 315-test baseline.
 - Concrete application journey: one integrated happy-flow test plus 20 HTTP
   scenario/security regressions; two additional HTTP boundary tests and three
   factory tests. Other Phase 13 tests cover identity transport, provider stream
@@ -137,6 +138,12 @@ Gateway JWT/IAM behavior. Scripted test-provider answers never enter product cod
 - [x] Proposed real-smoke request limits, historical resources, budget and teardown.
 
 ## Remaining gates and production gaps
+
+The actionable deployment gate is maintained in `production-readiness.md`.
+The hardening pass added fail-closed HTTPS endpoint validation, browser response
+headers and provider-response bounds without making AWS calls or creating
+resources. These controls reduce local risk but do not replace the hosting,
+durable-state, operational and semantic gates below.
 
 The final bounded smoke verified the reviewed change sets, restricted
 application session, Cognito, ingestion, RAG/Guardrail and direct-Gateway

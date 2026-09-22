@@ -1,4 +1,4 @@
-"""Production composition for the LegalDesk loopback/API entry point.
+"""AWS composition for the explicitly gated LegalDesk loopback entry point.
 
 The factory is intentionally explicit: no provider client, JWKS resolver, or
 resource adapter is constructed until ``allow_aws=True`` has been supplied by
@@ -23,7 +23,12 @@ from .gateway_interceptor import Boto3DynamoGatewayGrantRepository
 from .gateway_client import DirectGatewayInvoker
 from .guardrails import GuardrailConfig, GuardrailGroundingValidator
 from .http_app import ApplicationComposition, ApplicationTelemetrySink
-from .identity import OidcTokenVerifier, OidcVerifierConfig, PyJwtJwksKeyResolver
+from .identity import (
+    OidcTokenVerifier,
+    OidcVerifierConfig,
+    PyJwtJwksKeyResolver,
+    validate_https_endpoint,
+)
 from .ingestion import DocumentScopeRef, run_knowledge_base_sync
 from .mcp_server import MCPServer
 from .memory import AgentCoreMemoryClient, Boto3DynamoConversationBindingStore
@@ -56,6 +61,19 @@ class AWSResourceConfig:
     matter_catalog: tuple[str, ...] = ()
     prompt_path: Path | None = None
     token_endpoint: str | None = None
+
+    def __post_init__(self) -> None:
+        # Validate before build_aws_composition imports/constructs any AWS
+        # clients.  These values control outbound requests and OIDC redirects.
+        validate_https_endpoint(self.gateway_url, field_name="gateway_url")
+        validate_https_endpoint(self.jwks_url, field_name="jwks_url")
+        validate_https_endpoint(self.issuer, field_name="issuer")
+        validate_https_endpoint(
+            self.authorization_endpoint, field_name="authorization_endpoint"
+        )
+        if self.token_endpoint is None:
+            raise ValueError("token_endpoint is required")
+        validate_https_endpoint(self.token_endpoint, field_name="token_endpoint")
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "AWSResourceConfig":
@@ -100,7 +118,8 @@ class CognitoPkceTokenExchange:
     """Server-side authorization-code exchange; tokens never reach URLs/logs."""
 
     def __init__(self, endpoint: str, client_id: str) -> None:
-        if not endpoint.startswith("https://") or not client_id:
+        endpoint = validate_https_endpoint(endpoint, field_name="token_endpoint")
+        if not client_id:
             raise ValueError("token endpoint/client ID are invalid")
         self.endpoint, self.client_id = endpoint, client_id
 
@@ -154,14 +173,14 @@ class _BedrockKnowledgeBaseSync:
 
 
 class _SeparatedOnlyGenerator:
-    """Prevent production from silently falling back to the legacy seam."""
+    """Prevent the AWS composition from silently using the legacy seam."""
 
     def generate(self, _request: Any) -> Mapping[str, object]:
         raise RuntimeError("the separated resolver/writer pipeline is required")
 
 
 class _BudgetedHarnessInvoker:
-    """Consume validated Harness usage without changing default production."""
+    """Consume validated Harness usage without changing normal composition."""
 
     def __init__(self, delegate: Any, budget: SmokeBudget) -> None:
         self._delegate = delegate

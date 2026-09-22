@@ -9,7 +9,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT / "agent" / "src"))
 
-from legaldesk.application import AWSResourceConfig, build_aws_composition
+from legaldesk.application import AWSResourceConfig, CognitoPkceTokenExchange, build_aws_composition
 from legaldesk.smoke_budget import BudgetedSdkClient, SmokeBudget
 
 
@@ -67,6 +67,25 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         client.assert_not_called()
         resource.assert_not_called()
         resolver.assert_not_called()
+
+    def test_aws_public_endpoint_configuration_fails_closed(self):
+        fields = {
+            "gateway_url": "http://gateway.example.test/mcp",
+            "jwks_url": "https://user:password@issuer.example.test/jwks.json",
+            "issuer": "https://issuer.example.test#fragment",
+            "authorization_endpoint": "https://issuer.example.test/oauth2/authorize?unsafe=1",
+            "token_endpoint": "https://example.invalid/oauth2/token",
+        }
+        from dataclasses import replace
+
+        for field, value in fields.items():
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    replace(self.config(), **{field: value})
+
+    def test_token_exchange_rejects_non_public_endpoint(self):
+        with self.assertRaises(ValueError):
+            CognitoPkceTokenExchange("https://issuer.example.test/oauth2/token#fragment", "client-id")
 
     def test_factory_constructs_real_adapters_with_retry_disabled_config(self):
         table = _Table()

@@ -12,7 +12,7 @@ import base64
 import hashlib
 import secrets
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from typing import Any, Protocol
 
 from .authorization import AuthorizationDenied, VerifiedIdentity, _IDENTITY_FACTORY_TOKEN
@@ -20,6 +20,39 @@ from .authorization import AuthorizationDenied, VerifiedIdentity, _IDENTITY_FACT
 
 class IdentityVerificationError(AuthorizationDenied):
     """Generic authentication failure that reveals no token or claim data."""
+
+
+def validate_https_endpoint(value: object, *, field_name: str) -> str:
+    """Validate a configured public HTTPS endpoint before any network call.
+
+    Endpoint configuration is an authority boundary: credentials, fragments,
+    query parameters, reserved ``.invalid`` hosts, and malformed URLs must not
+    reach a client constructor or redirect.  Local loopback doubles use their
+    own explicit adapters and do not pass through this AWS configuration gate.
+    """
+
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field_name} must be an HTTPS URL")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F or char == "\\" for char in value):
+        raise ValueError(f"{field_name} contains invalid URL characters")
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        has_credentials = parsed.username is not None or parsed.password is not None
+    except ValueError as exc:
+        raise ValueError(f"{field_name} is malformed") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.netloc
+        or not hostname
+        or has_credentials
+        or parsed.query
+        or parsed.fragment
+        or hostname.lower() == "example.invalid"
+        or hostname.lower().endswith(".invalid")
+    ):
+        raise ValueError(f"{field_name} must be a real HTTPS URL without credentials, query, or fragment")
+    return value
 
 
 def pkce_code_challenge(code_verifier: str) -> str:
@@ -54,8 +87,9 @@ def create_pkce_authorization_request(
 ) -> PkceAuthorizationRequest:
     """Build a public-client Authorization Code + PKCE request."""
 
-    if not isinstance(authorization_endpoint, str) or not authorization_endpoint.startswith("https://"):
-        raise ValueError("authorization_endpoint must be HTTPS")
+    authorization_endpoint = validate_https_endpoint(
+        authorization_endpoint, field_name="authorization_endpoint"
+    )
     if not isinstance(client_id, str) or not client_id.strip():
         raise ValueError("client_id is required")
     if not isinstance(redirect_uri, str) or not redirect_uri.strip():
@@ -85,8 +119,7 @@ class PyJwtJwksKeyResolver:
     """PyJWT JWKS resolver with standard OIDC key rotation support."""
 
     def __init__(self, jwks_url: str, *, cache_jwk_set: bool = True) -> None:
-        if not isinstance(jwks_url, str) or not jwks_url.startswith("https://"):
-            raise ValueError("jwks_url must be HTTPS")
+        jwks_url = validate_https_endpoint(jwks_url, field_name="jwks_url")
         try:
             from jwt import PyJWKClient
         except ImportError as exc:  # pragma: no cover - dependency boundary
@@ -107,8 +140,7 @@ class OidcVerifierConfig:
     leeway_seconds: int = 30
 
     def __post_init__(self) -> None:
-        if not isinstance(self.issuer, str) or not self.issuer.startswith("https://"):
-            raise ValueError("issuer must be HTTPS")
+        validate_https_endpoint(self.issuer, field_name="issuer")
         if self.audience is None and self.client_id is None:
             raise ValueError("audience or client_id is required")
         if self.audience is not None and (
@@ -247,4 +279,5 @@ __all__ = [
     "SigningKeyResolver",
     "create_pkce_authorization_request",
     "pkce_code_challenge",
+    "validate_https_endpoint",
 ]
