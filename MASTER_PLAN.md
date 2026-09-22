@@ -99,7 +99,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 Auditoría: `NOT_READY_FOR_PROD` (ver `docs/release-audit.md`). Fases 00–12
 conservan su aceptación acotada; no certifican readiness de portfolio/E2E.
 
-- [x] Phase 13 integration and bounded live smoke (407 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; independent holdout and prod promotion remain pending, NOT_READY_FOR_PROD)
+- [x] Phase 13 integration, bounded live smoke and local release hardening (413 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; fail-closed endpoint/retrieval hardening; independent holdout, production hosting/distributed state and prod promotion remain pending, NOT_READY_FOR_PROD)
 
 - [x] Phase 00
 - [x] Phase 01

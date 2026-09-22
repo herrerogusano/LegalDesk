@@ -192,6 +192,14 @@ class Phase13HttpAppTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual([item["role"] for item in history["events"]], ["USER", "ASSISTANT"])
 
+    def test_responses_include_browser_security_headers(self):
+        status, _body, headers = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(headers["X-Frame-Options"], "DENY")
+        self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+        self.assertIn("camera=()", headers["Permissions-Policy"])
+
     def test_loopback_http_rejects_foreign_scope_origin_unknown_routes_and_expired_session(self):
         self.login()
         status, _, _ = self.request("POST", "/api/conversations", {"matterId": "matter-a"}, origin="https://evil.test", csrf=self.csrf)

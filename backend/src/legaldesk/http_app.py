@@ -1,8 +1,8 @@
 """Small loopback HTTP composition for the Phase 13 local integration gate.
 
 This module deliberately uses the standard-library WSGI surface.  Provider
-adapters are injected by callers/tests; the production factory is explicitly
-gated and never silently falls back to local fakes.  The browser is a client
+adapters are injected by callers/tests; the explicitly gated AWS composition
+never silently falls back to local fakes.  The browser is a client
 of this boundary, never an authority for identity, tenant, matter, document,
 conversation, correlation, or tool scope.
 """
@@ -199,6 +199,13 @@ class LoopbackLegalDeskApp:
             ("Content-Type", "application/json; charset=utf-8"),
             ("Cache-Control", "no-store"),
             ("Pragma", "no-cache"),
+            # These defaults apply to API errors as well as successful
+            # responses, so a proxy cannot turn an operational failure into a
+            # browser-rendered response or frame the loopback UI.
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Frame-Options", "DENY"),
+            ("Referrer-Policy", "no-referrer"),
+            ("Permissions-Policy", "camera=(), geolocation=(), microphone=()"),
         ]
         try:
             status, body, extra = self._dispatch(environ)

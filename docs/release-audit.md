@@ -37,3 +37,20 @@ Preserve verified identity, bilateral membership, scope-filtered retrieval and
 result rechecks, strict citation IDs, tool grants, review idempotency, scoped
 short-term Memory and redacted logs. Phase 13 owns integration/readiness;
 AWS smoke and prod promotion require later explicit authorization.
+
+## Post-audit closure
+
+Phase 13 subsequently closed the six integration blockers above and completed
+a bounded live browser smoke through Cognito, upload/ingestion, RAG/Guardrail,
+direct Gateway tools, cross-matter denial, audit and logout. Attempts and final
+teardown are documented in `phase-13-live-smoke.md`; ADR-016 records the direct
+Gateway decision. A later local-only hardening pass raised the suite to 413
+tests, bounded retrieval output, validated public endpoints fail-closed and
+added browser response security headers.
+
+The verdict remains `NOT_READY_FOR_PROD`, but for the narrower deployment gates
+listed in `production-readiness.md`: public TLS hosting, durable distributed
+state/audit, cleanup operations, the independent semantic holdout, security and
+privacy operations, and an approved `developer` to `prod` release. The original
+blocker list is retained above as the historical audit baseline, not as the
+current integration state.

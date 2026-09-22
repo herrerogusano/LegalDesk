@@ -178,6 +178,19 @@ class RetrievalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.search(ALICE, "mat_sundial", MalformedClient())  # type: ignore[arg-type]
 
+    def test_provider_cannot_return_more_results_than_the_configured_limit(self) -> None:
+        results = [
+            result("tnt_aurora", "mat_sundial", f"doc-{index}", "Evidence")
+            for index in range(6)
+        ]
+        with self.assertRaises(ValueError):
+            self.search(ALICE, "mat_sundial", FakeKnowledgeBaseClient(results))
+
+    def test_provider_sources_are_bounded_before_downstream_grounding(self) -> None:
+        oversized = result("tnt_aurora", "mat_sundial", "doc-large", "x" * 100_001)
+        with self.assertRaises(ValueError):
+            self.search(ALICE, "mat_sundial", FakeKnowledgeBaseClient([oversized]))
+
     def test_client_cannot_supply_tenant_or_custom_filter(self) -> None:
         client = FakeKnowledgeBaseClient(
             [result("tnt_aurora", "mat_sundial", "doc-sundial", "Authorized evidence.")]

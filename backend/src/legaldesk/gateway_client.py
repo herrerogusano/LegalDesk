@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
-from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from .smoke_budget import SmokeBudget
+from .identity import validate_https_endpoint
 
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
@@ -158,9 +158,7 @@ class DirectGatewayInvoker:
         timeout_seconds: float = 15.0,
         budget: SmokeBudget | None = None,
     ) -> None:
-        parsed = urlsplit(gateway_url)
-        if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("gateway_url must be an HTTPS URL without credentials or query")
+        gateway_url = validate_https_endpoint(gateway_url, field_name="gateway_url")
         if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
             raise ValueError("timeout_seconds is invalid")
         self.gateway_url = gateway_url

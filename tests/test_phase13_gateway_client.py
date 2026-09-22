@@ -143,6 +143,16 @@ class GatewayClientTests(unittest.TestCase):
             )
         self.assertEqual(len(transport.calls), 1)
 
+    def test_gateway_endpoint_rejects_reserved_placeholder_and_credentials(self) -> None:
+        for endpoint in (
+            "https://gateway.invalid/mcp",
+            "https://user:password@gateway.example.test/mcp",
+            "http://gateway.example.test/mcp",
+            "https://gateway.example.test/mcp#fragment",
+        ):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
+                DirectGatewayInvoker(endpoint)
+
     def test_gateway_budget_caps_and_failed_call_latches(self) -> None:
         budget = SmokeBudget(SmokeBudgetLimits(gateway=1))
         invoker = DirectGatewayInvoker(self.binding.gateway_url, transport=_Transport(), budget=budget)
