@@ -83,16 +83,24 @@ class GatewayInterceptorTests(unittest.TestCase):
         self.assertEqual(grant["correlationId"], "8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279")
 
     def test_metadata_context_overwrites_client_headers(self) -> None:
+        request = event()
+        qualified_name = "metadata-mcp___get_document_metadata"
+        request["mcp"]["gatewayRequest"]["body"]["params"]["name"] = qualified_name
+        raw_body = json.loads(request["mcp"]["rawGatewayRequest"]["body"])
+        raw_body["params"]["name"] = qualified_name
+        request["mcp"]["rawGatewayRequest"]["body"] = json.dumps(raw_body)
         response = transform_gateway_request(
-            event(),
+            request,
             target=GatewayTarget.METADATA_MCP,
             authorization_store=self.auth,
             correlation_id_factory=lambda: UUID("8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279"),
         )
-        headers = response["mcp"]["transformedGatewayRequest"]["headers"]
+        transformed = response["mcp"]["transformedGatewayRequest"]
+        headers = transformed["headers"]
         self.assertEqual(headers["x-legaldesk-verified-subject"], "idp|alice-fictional")
         self.assertEqual(headers["x-legaldesk-requested-matter-id"], "mat_sundial")
         self.assertNotIn("Authorization", headers)
+        self.assertEqual(transformed["body"]["params"]["name"], qualified_name)
 
     def test_matter_argument_is_authorized_then_stripped_for_targets(self) -> None:
         request = event()

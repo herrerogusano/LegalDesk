@@ -7,19 +7,18 @@ a legal product, and it must only use public or wholly fictional documents.
 ## Current status
 
 Phases 00–12 are complete within their recorded component/bounded scopes.
-Phase 13 now provides a connected loopback application, demonstrated locally
-through HTTP and browser tests with provider doubles. The release remains
-**NOT_READY_FOR_PROD**: live AWS interoperability and independent model-quality
-validation have not been demonstrated by those doubles. One authorized AWS smoke
-stopped before browser login on a factory configuration error and a second on a
-hidden hosted-login control; both defects were fixed locally. A third smoke passed
-login, upload, ingestion and RAG, then exposed that Harness cannot guarantee a
-model-selected tool call for an explicit UI command. ADR-016 now routes those
-commands directly through Gateway. All temporary infrastructure was cleaned up.
-A fourth bounded attempt stopped before browser startup because the launcher did
-not forward the workspace Playwright module path; it made no upload, inference,
-Gateway or Harness call and was not retried. Cleanup/restoration was verified.
-A new live attempt and promotion to prod require separate approval. See the historical
+Phase 13 now provides a connected loopback application demonstrated locally and
+by a bounded real AWS browser smoke. The final smoke passed Cognito login,
+presigned upload and verified confirmation, ingestion, factual/absent-evidence
+RAG, citations, deterministic metadata through Gateway→MCP, review creation
+through Gateway→Lambda, cross-matter denial, audit and logout. Harness was not
+used as a router for either explicit action. Earlier attempts exposed and fixed
+factory, hosted-login, Harness-routing, Playwright bootstrap, Gateway tool-name
+and logout-runner defects; their reports remain immutable. All temporary
+infrastructure was removed and shared stacks were restored after each attempt.
+The release remains **NOT_READY_FOR_PROD** because the independent semantic
+holdout, production hosting/distributed state and prod promotion remain outside
+this smoke. See the historical
 [release audit](docs/release-audit.md), the current
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md), and
 [application run instructions](docs/phase-13-run.md).

@@ -163,7 +163,7 @@ async function run() {
     page.on("response", response => {
       const url = new URL(response.url());
       if (url.origin !== base.origin) return;
-      const route = ["/callback", "/api/chat", "/confirm", "/sync"].find(value => url.pathname.endsWith(value));
+      const route = ["/callback", "/api/chat", "/api/mcp", "/review", "/api/audit", "/logout", "/confirm", "/sync"].find(value => url.pathname.endsWith(value));
       if (route && diagnostics.http.length < 12) diagnostics.http.push({ route, status: response.status() });
     });
     page.on("request", (request) => {
@@ -278,9 +278,19 @@ async function run() {
     finishPhase("audit");
 
     beginPhase("logout");
-    const logoutResponsePromise = apiResponse(page, "/logout", "POST", "logout_response");
+    // The UI navigates to `/` immediately after logout.  Validate the status
+    // without racing that navigation to read the response body a second time.
+    const logoutResponsePromise = page.waitForResponse((response) => {
+      try {
+        const url = new URL(response.url());
+        return url.origin === base.origin && url.pathname.endsWith("/logout") && response.request().method() === "POST";
+      } catch (_error) {
+        return false;
+      }
+    }, { timeout: 120_000 });
     await page.locator("#logout-button").click();
-    await logoutResponsePromise;
+    const logoutResponse = await logoutResponsePromise;
+    if (!logoutResponse.ok()) fail("logout_response");
     await page.waitForFunction(() => document.querySelector("#question").disabled, null, { timeout: 30_000 });
     finishPhase("logout");
 

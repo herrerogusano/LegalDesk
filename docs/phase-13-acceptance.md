@@ -1,12 +1,10 @@
 # Phase 13 — integration acceptance ledger
 
-Status: **local integration gate complete; NOT_READY_FOR_PROD**. Two separately
-authorized AWS attempts stopped before completing login: first at factory
-validation, second because the browser runner selected a hidden duplicate
-Cognito login control. No inference or ingestion occurred in either attempt.
-A third attempt reached RAG successfully and then exposed the deterministic-tool
-routing mismatch described below. Temporary resources were removed and shared
-stacks restored after every attempt. No prod promotion.
+Status: **integration gate and bounded AWS smoke complete; NOT_READY_FOR_PROD**.
+The final authorized browser smoke passed the complete fixed journey, including
+direct Gateway→MCP metadata and Gateway→Lambda review dispatch, cross-matter
+denial, actor/correlation preservation, audit and logout. Temporary resources
+were removed and shared stacks restored after every attempt. No prod promotion.
 
 A third separately authorized smoke passed Cognito, upload, ingestion and both
 RAG cases, including a factual citation. It stopped at the first explicit MCP
@@ -24,7 +22,7 @@ direct backend→Gateway/MCP call; Harness remains reserved for agentic flows.
 | Local HTTP integration | The application entry point composes identity and business components | Cognito/AWS interoperability or semantic quality of a real model |
 | Deterministic evaluations | Regression against synthetic contracts and expected outcomes | General semantic entailment or legal quality |
 | Historical real-model evaluations | The specific bounded calls recorded in immutable Phase 12 reports | One final integrated E2E run, statistical reliability or the independent holdout |
-| Future AWS smoke | Only the approved cases actually executed through the integrated application | Production certification or broad legal accuracy |
+| Bounded AWS smoke | The approved cases executed through the integrated application and real AWS boundaries | Production certification, broad legal accuracy or the independent holdout |
 
 ## Baseline and reproducibility
 
@@ -140,9 +138,9 @@ Gateway JWT/IAM behavior. Scripted test-provider answers never enter product cod
 
 ## Remaining gates and production gaps
 
-The exact approved change sets/application IAM and real direct-Gateway
-interoperability remain unverified. Cognito, ingestion and bounded RAG/Guardrail
-behavior passed only the third smoke's recorded cases; this is not production
+The final bounded smoke verified the reviewed change sets, restricted
+application session, Cognito, ingestion, RAG/Guardrail and direct-Gateway
+interoperability for its exact synthetic cases. This is not production
 certification. The 14-case independent semantic holdout is unexecuted; local
 tests must not be reported as proof that a real model accepts all paraphrases or
 rejects all contradictions. The proposed smoke is smaller than that holdout.
@@ -181,9 +179,9 @@ Attempt 3 consumed one bounded real execution: 2 Retrieve, 3 Converse,
 retry. Cleanup and shared-stack restoration were verified. See the immutable
 sanitized attempt report and `phase-13-live-smoke.md` for exact evidence.
 
-The post-attempt ADR-016 implementation is local-only and has not yet been
-validated against a live Gateway. A future smoke requires fresh authorization;
-this documentation change does not authorize another AWS run.
+At that point the post-attempt ADR-016 implementation was local-only and had
+not yet been validated against a live Gateway. A later smoke required fresh
+authorization; that documentation change itself did not authorize AWS usage.
 
 Attempt 4 used that fresh authorization but stopped before its browser process
 started: the launcher did not forward the workspace Playwright module path, so
@@ -193,7 +191,21 @@ inference, Harness or direct-Gateway calls. The attempt was not retried. The
 runner now performs a browser/module launch preflight before any AWS write and
 parses empty/malformed child output as a closed diagnostic. Cleanup and exact
 shared-stack restoration were independently verified. The live direct-Gateway
-gate therefore remains pending.
+gate therefore remained pending at that point.
+
+Attempts 5–7 resolved the remaining gate. Attempt 5 passed login, upload,
+ingestion and RAG but showed that the request interceptor rewrote the qualified
+`target___tool` name before AgentCore could route it. The interceptor now
+preserves the qualified name; Gateway performs target routing and presents the
+local name to the downstream MCP target. Attempt 6 demonstrated metadata via
+MCP, review via Lambda, cross-matter denial and audit, then exposed a browser
+runner race that tried to reread the logout JSON body while the UI navigated.
+The runner now validates logout status without consuming that body. Attempt 7
+passed every stage. It recorded 2 Retrieve, 3 Converse, 3 Guardrail, 2 direct
+Gateway calls, zero Harness calls, 2,848 input and 74 output tokens, with zero
+automatic retries. Cleanup removed the synthetic fixtures and temporary stacks,
+restored all shared templates/artifact versions and original no-CORS state, and
+removed all three attempt artifacts. Billing APIs were not queried.
 
 ## Developer to prod checklist — do not execute
 

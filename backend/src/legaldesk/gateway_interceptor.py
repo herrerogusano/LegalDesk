@@ -633,9 +633,12 @@ def transform_gateway_request(
     envelope = InterceptorEnvelope(subject, context.matter_id, context.correlation_id)
     transformed_body = dict(body)
     transformed_params = dict(params)
-    # Gateway-facing names include the target prefix; targets receive the
-    # local MCP/Lambda tool name used by their grant validators.
-    transformed_params["name"] = operation
+    # Preserve the Gateway-visible qualified name. AgentCore uses the
+    # ``target___tool`` prefix to select the target after this interceptor
+    # returns. Lambda targets expose that qualified name through provider
+    # context, while aggregated MCP targets receive their local tool name from
+    # Gateway. Rewriting it here would authorize the call and then make target
+    # routing fail before the target is invoked.
     transformed_arguments = dict(arguments)
     transformed_params["arguments"] = transformed_arguments
     transformed_body["params"] = transformed_params

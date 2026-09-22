@@ -52,8 +52,15 @@ class LocalGatewayTransport:
                 telemetry_sink=self.composition.telemetry_sink,
             )["mcp"]["transformedGatewayRequest"]
             if target == GatewayTarget.METADATA_MCP:
+                # AgentCore keeps the qualified name through request
+                # interception so it can route the call, then forwards the
+                # target-local name to the aggregated remote MCP server.
+                target_body = dict(transformed["body"])
+                target_params = dict(target_body["params"])
+                target_params["name"] = name.split("___", 1)[-1]
+                target_body["params"] = target_params
                 with patch("legaldesk.mcp_server._mcp_repositories_from_environment", return_value=(self.composition.authorization_store, self.composition.metadata_repository)), patch("legaldesk.mcp_server._mcp_grant_repository_from_environment", return_value=self.composition.gateway_grant_repository):
-                    response = mcp_lambda_handler({"headers": transformed["headers"], "body": json.dumps(transformed["body"])}, None)
+                    response = mcp_lambda_handler({"headers": transformed["headers"], "body": json.dumps(target_body)}, None)
                 status = response["statusCode"]
                 payload = json.loads(response["body"])
             else:

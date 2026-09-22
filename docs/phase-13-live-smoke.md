@@ -399,3 +399,42 @@ unproven; no prod promotion occurred.
 
 Sanitized report:
 `evals/results/phase13-live-smoke-20260922-04-report.json`.
+
+## Attempts 5–7 — 2026-09-22
+
+Attempt 5 (`20260922-05`) passed Cognito login, upload, ingestion, factual RAG
+with one citation and absent-evidence RAG with no citations. It stopped on the
+first direct metadata action. The interceptor had authorized the request but
+rewritten `metadata-mcp___list_matter_documents` to the local name before
+AgentCore's post-interceptor target selection, so the MCP target was never
+invoked. Official AgentCore tool-naming/interceptor contracts confirmed that
+the qualified name must survive request interception. The implementation and
+local Gateway double were corrected without widening authorization or IAM.
+
+Attempt 6 (`20260922-06`) proved the correction: metadata reached the remote MCP
+Lambda, review reached the review Lambda, the second matter was denied, the
+verified actor/correlation were retained and audit passed. The persisted review
+was independently verified. The run was marked failed only at logout because
+the browser checker raced the UI navigation while parsing the response body.
+The runner now checks the logout HTTP status without rereading its JSON body;
+offline desktop/mobile logout and the real browser preflight passed.
+
+Attempt 7 (`20260922-07`) passed the entire fixed browser journey: login,
+selection, upload/HEAD confirmation, ingestion, factual RAG/citation inspection,
+absent-evidence RAG, metadata through Gateway→MCP, review through
+Gateway→Lambda, cross-matter denial, audit and logout. Counters were 1 ingestion
+start, 2 ingestion polls, 2 Retrieve, 3 Converse, 3 ApplyGuardrail, 2 direct
+Gateway, 0 Harness, 4 Memory writes, 3 Memory reads, 5 S3 and 118 DynamoDB
+operations; model usage was 2,848 input and 74 output tokens. There were no
+automatic retries.
+
+Every attempt performed cleanup in `finally`. Independent reads after the final
+attempt confirmed both synthetic users absent, the source prefix empty, both
+temporary stacks deleted, all three shared stacks restored to their exact saved
+templates/artifact versions and original no-CORS state, and all three new
+artifact versions deleted. Billing APIs were not called; actual billed cost is
+unknown. Sanitized reports:
+
+- `evals/results/phase13-live-smoke-20260922-05-report.json`
+- `evals/results/phase13-live-smoke-20260922-06-report.json`
+- `evals/results/phase13-live-smoke-20260922-07-report.json`

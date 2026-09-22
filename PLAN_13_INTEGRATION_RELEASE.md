@@ -157,11 +157,14 @@ prepare—but do not execute—the developer→prod checklist.
 - [x] Integration and complete regression suites green: 407 tests; 24/24 deterministic evals.
 - [x] Documentation accurately describes demonstrated behavior.
 - [x] Fixed real smoke, proposed budget/request ceilings and teardown prepared.
+- [x] Bounded real AWS browser smoke passed with explicit metadata/review actions
+  dispatched through Gateway, zero Harness routing and verified teardown.
 
 Offline browser acceptance passes at desktop/mobile sizes, including operational
-error handling. Detailed evidence and remaining production gaps are recorded in
-`docs/phase-13-acceptance.md`. Real provider semantic accuracy and the independent
-holdout remain unverified. No AWS deployment, smoke or prod promotion occurred.
+error handling. A bounded real AWS browser smoke subsequently passed the fixed
+journey and was torn down; detailed evidence and remaining production gaps are
+recorded in `docs/phase-13-acceptance.md`. Broad provider semantic accuracy and
+the independent holdout remain unverified. No prod promotion occurred.
 
 At local completion report architecture, changes, tests, blockers, exact smoke
 and cost estimate; STOP for explicit AWS authorization. Local completion is not
