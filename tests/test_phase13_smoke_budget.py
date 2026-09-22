@@ -103,6 +103,22 @@ class Phase13SmokeBudgetTests(unittest.TestCase):
         self.assertEqual(snapshot.input_tokens, 4)
         self.assertEqual(snapshot.output_tokens, 2)
 
+    def test_gateway_operation_is_counted_and_failed_call_halts(self):
+        budget = SmokeBudget(SmokeBudgetLimits(gateway=2))
+        budget.call("gateway", lambda: {"ok": True})
+        budget.call("gateway", lambda: {"ok": True})
+        self.assertEqual(budget.snapshot().counts["gateway"], 2)
+        with self.assertRaises(SmokeBudgetExceeded):
+            budget.call("gateway", lambda: {"ok": True})
+
+    def test_failed_gateway_call_consumes_slot_and_halts(self):
+        budget = SmokeBudget(SmokeBudgetLimits(gateway=1))
+        with self.assertRaises(RuntimeError):
+            budget.call("gateway", lambda: (_ for _ in ()).throw(RuntimeError("transport")))
+        self.assertEqual(budget.snapshot().counts["gateway"], 1)
+        with self.assertRaises(SmokeBudgetExceeded):
+            budget.call("gateway", lambda: {"ok": True})
+
 
 if __name__ == "__main__":
     unittest.main()

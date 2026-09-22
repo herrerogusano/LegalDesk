@@ -20,6 +20,7 @@ from .authorization import Boto3DynamoAuthorizationStore
 from .documents import Boto3DynamoDocumentMetadataRepository, Boto3S3ObjectStorage, DocumentPipeline
 from .evidence import ConverseAnswerWriter, ConverseEvidenceResolver
 from .gateway_interceptor import Boto3DynamoGatewayGrantRepository
+from .gateway_client import DirectGatewayInvoker
 from .guardrails import GuardrailConfig, GuardrailGroundingValidator
 from .http_app import ApplicationComposition, ApplicationTelemetrySink
 from .identity import OidcTokenVerifier, OidcVerifierConfig, PyJwtJwksKeyResolver
@@ -231,6 +232,10 @@ def build_aws_composition(
     telemetry_sink = ApplicationTelemetrySink(DEFAULT_TELEMETRY_SINK)
     grounding = GuardrailGroundingValidator(runtime, guardrail_config, minimum_score=0.75, telemetry_sink=telemetry_sink)
     memory = AgentCoreMemoryClient(resource_config.memory_id, client=agentcore)
+    gateway_invoker = DirectGatewayInvoker(
+        resource_config.gateway_url,
+        budget=smoke_budget,
+    )
     verifier = OidcTokenVerifier(
         OidcVerifierConfig(
             issuer=resource_config.issuer,
@@ -274,6 +279,7 @@ def build_aws_composition(
         authorization_endpoint=resource_config.authorization_endpoint,
         gateway_url=resource_config.gateway_url,
         harness_invoker=harness,
+        gateway_invoker=gateway_invoker,
         system_prompt=({"text": prompt.content},),
         sync_service=sync,
     )

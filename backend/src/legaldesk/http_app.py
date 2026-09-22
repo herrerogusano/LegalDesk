@@ -138,6 +138,7 @@ class ApplicationComposition:
     public_base_url: str = "http://localhost:8000"
     gateway_url: str = "https://gateway.invalid/mcp"
     harness_invoker: Any = None
+    gateway_invoker: Any = None
     harness_arn: str | None = None
     system_prompt: tuple[Mapping[str, object], ...] = ()
     session_ttl_seconds: int = 3_600
@@ -458,7 +459,7 @@ class LoopbackLegalDeskApp:
                 correlation_id=context.correlation_id,
                 application_action="metadata",
             )
-            result = self._invoke_harness_tool(binding, data, application_action="metadata", expected_tool=tool_name)
+            result = self._invoke_gateway_tool(binding, tool_name=tool_name, arguments=arguments)
             self._audit(identity, matter_id, context.correlation_id, "mcp_metadata")
             self._audit_telemetry(identity, matter_id, context.correlation_id)
             return HTTPStatus.OK, result or {}, []
@@ -672,7 +673,7 @@ class LoopbackLegalDeskApp:
         if expected_correlation is not None:
             context = self._context(identity, matter_id, correlation_id=expected_correlation)
         binding = bind_harness_invocation(bearer_token=session.access_token, gateway_url=self.composition.gateway_url, identity_verifier=self.composition.identity_verifier, requested_matter_id=matter_id, conversation_id=conversation_id, session_selector=session_id, authorization_store=self.composition.authorization_store, conversation_store=self.composition.conversation_store, invocation_repository=self.composition.gateway_grant_repository, correlation_id=context.correlation_id, application_action="review")
-        result = self._invoke_harness_tool(binding, {"action": "create_review_task", "arguments": data}, application_action="review", expected_tool="create_review_task")
+        result = self._invoke_gateway_tool(binding, tool_name="create_review_task", arguments=data)
         payload = result.get("result") if isinstance(result, Mapping) else None
         if not isinstance(payload, Mapping) or not isinstance(payload.get("reviewTaskId"), str) or not isinstance(payload.get("status"), str):
             raise ReviewTaskError("review task unavailable")
@@ -730,6 +731,30 @@ class LoopbackLegalDeskApp:
         if not isinstance(tool_result.payload, Mapping):
             raise HarnessInvocationError("Harness returned an invalid tool payload")
         return {"status": tool_result.status, "tool": tool_result.name, "result": dict(tool_result.payload), "correlationId": scope.correlation_id}
+
+    def _invoke_gateway_tool(self, binding: Any, *, tool_name: str, arguments: Mapping[str, object]) -> dict[str, object]:
+        """Dispatch an explicit user action through Gateway exactly once."""
+
+        if self.composition.gateway_invoker is None:
+            raise RuntimeError("Gateway is not configured")
+        try:
+            result = self.composition.gateway_invoker.invoke(
+                binding,
+                tool_name=tool_name,
+                arguments=dict(arguments),
+            )
+        except Exception:
+            self._audit(binding.identity, binding.matter_id, binding.correlation_id, "gateway_tool_error")
+            self._audit_telemetry(binding.identity, binding.matter_id, binding.correlation_id)
+            raise
+        if not isinstance(result, Mapping) or result.get("status") != "SUCCESS":
+            raise RuntimeError("Gateway returned an invalid tool result")
+        if result.get("tool") != f"@legaldesk_gateway/{'metadata-mcp' if tool_name in {LIST_MATTER_DOCUMENTS, GET_DOCUMENT_METADATA} else 'review-task-lambda'}___{tool_name}":
+            raise RuntimeError("Gateway returned an unexpected tool")
+        payload = result.get("result")
+        if not isinstance(payload, Mapping) or result.get("correlationId") != binding.correlation_id:
+            raise RuntimeError("Gateway returned an invalid tool payload")
+        return {"status": "SUCCESS", "tool": result["tool"], "result": dict(payload), "correlationId": binding.correlation_id}
 
     def _audit(self, identity: VerifiedIdentity, matter_id: str, correlation_id: str, operation: str) -> None:
         self._audit_records.append({"subject": identity.subject, "matterId": matter_id, "correlationId": correlation_id, "operation": operation, "timestampMs": int(time.time() * 1000)})

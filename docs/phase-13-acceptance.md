@@ -3,16 +3,17 @@
 Status: **local integration gate complete; NOT_READY_FOR_PROD**. Two separately
 authorized AWS attempts stopped before completing login: first at factory
 validation, second because the browser runner selected a hidden duplicate
-Cognito login control. No inference
-or ingestion in either attempt. Temporary
-resources removed, shared stacks restored. No prod promotion.
+Cognito login control. No inference or ingestion occurred in either attempt.
+A third attempt reached RAG successfully and then exposed the deterministic-tool
+routing mismatch described below. Temporary resources were removed and shared
+stacks restored after every attempt. No prod promotion.
 
 A third separately authorized smoke passed Cognito, upload, ingestion and both
 RAG cases, including a factual citation. It stopped at the first explicit MCP
 action because Harness returned without a structured tool call. AWS's Harness
 contract makes tool execution model-selected; `allowedTools` is an allowlist,
-not deterministic dispatch. Explicit UI commands need an approved architecture
-change to direct backend→Gateway/MCP invocation before another live smoke.
+not deterministic dispatch. ADR-016 now routes explicit UI commands through a
+direct backend→Gateway/MCP call; Harness remains reserved for agentic flows.
 
 ## Evidence classes
 
@@ -43,9 +44,9 @@ change to direct backend→Gateway/MCP invocation before another live smoke.
   invocation request are validated against the installed botocore schema.
   This is an intermediate result, not the final HTTP/UI acceptance count.
 
-Final local verification on 2026-09-21:
+Final local verification on 2026-09-22:
 
-- Complete Python suite: **378 tests passed**, versus the 315-test baseline.
+- Complete Python suite: **403 tests passed**, versus the 315-test baseline.
 - Concrete application journey: one integrated happy-flow test plus 20 HTTP
   scenario/security regressions; two additional HTTP boundary tests and three
   factory tests. Other Phase 13 tests cover identity transport, provider stream
@@ -109,20 +110,21 @@ document state manually between upload, confirmation, ingestion and chat.
 | Cross-matter | A/A and B/B allowed; A/B, guessed document and foreign session/citation denied |
 | Processing | UPLOADED document blocks chat before paid provider calls; status is not documentary absence |
 | Model failure | safe operational error, no rejected text or not_found audit |
-| MCP | actual interceptor/grant/MCP handler through a managed-transport double |
+| MCP | actual interceptor/grant/MCP handler through an HTTP-shaped local Gateway transport |
 | Review | actual interceptor/grant/Review Lambda handler, creator is signed-in Alice |
 | Expired token | signed token expired beyond configured clock leeway; login and existing session reject |
 | Citation inspection | exact uploaded passage, opaque handle, expiry and membership reauthorization |
 
 Additional regressions reject invented citation IDs, grounding intervention,
-wrong-but-otherwise-allowed tool results and forged operation correlations.
+malformed/error Gateway results and forged operation correlations.
 Every question has a distinct correlation; its tool/audit events retain the
 server-owned question correlation and all three prompt versions/hashes.
 This validates integration contracts, **not** model semantic accuracy or live
 Gateway JWT/IAM behavior. Scripted test-provider answers never enter product code.
 
 - [x] One executable application and connected minimal browser UI.
-- [x] Signed-JWT login and scope preservation through Harness/Gateway/tools locally.
+- [x] Signed-JWT login and scope preservation through the direct Gateway/tools
+  path locally; Harness remains separately scoped for agentic workflows.
 - [x] A/A allow, A/B deny, B/B allow; forged matter/document/session denied.
 - [x] Actual user attributed as review creator; expired token denied.
 - [x] Upload confirmation checks storage, then bounded indexing reaches INDEXED.
@@ -138,9 +140,10 @@ Gateway JWT/IAM behavior. Scripted test-provider answers never enter product cod
 
 ## Remaining gates and production gaps
 
-The exact approved change sets/application IAM, real
-Cognito/Harness/Gateway interoperability, ingestion and model/Guardrail quality
-remain unverified. The 14-case independent semantic holdout is unexecuted; local
+The exact approved change sets/application IAM and real direct-Gateway
+interoperability remain unverified. Cognito, ingestion and bounded RAG/Guardrail
+behavior passed only the third smoke's recorded cases; this is not production
+certification. The 14-case independent semantic holdout is unexecuted; local
 tests must not be reported as proof that a real model accepts all paraphrases or
 rejects all contradictions. The proposed smoke is smaller than that holdout.
 
@@ -177,6 +180,10 @@ Attempt 3 consumed one bounded real execution: 2 Retrieve, 3 Converse,
 3 Guardrail and 1 Harness call; 4,216 input and 192 output tokens. It did not
 retry. Cleanup and shared-stack restoration were verified. See the immutable
 sanitized attempt report and `phase-13-live-smoke.md` for exact evidence.
+
+The post-attempt ADR-016 implementation is local-only and has not yet been
+validated against a live Gateway. A future smoke requires fresh authorization;
+this documentation change does not authorize another AWS run.
 
 ## Developer to prod checklist — do not execute
 

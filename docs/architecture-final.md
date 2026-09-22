@@ -13,8 +13,10 @@ remains `NOT_READY_FOR_PROD` until the separately authorized cloud gate.
   server-held tokens, CSRF protection, matter/conversation authorization and
   upload, sync, chat, citation, tool, history and audit routes.
 - Chat executes the existing `answer_question` service with concrete Converse
-  Resolver/Writer and Bedrock Guardrail contextual-grounding adapters. Harness
-  is used for explicit metadata/review actions, not as an alternate answer path.
+  Resolver/Writer and Bedrock Guardrail contextual-grounding adapters.
+  Explicit metadata/review actions use a deterministic backend→Gateway
+  `tools/call`; Harness remains available for genuinely agentic,
+  model-selected workflows, not as an alternate answer path.
 - Tests replace SDK/provider boundaries, not chat or authorization business
   logic. The test-only loopback storage server receives the actual presigned PUT;
   retrieval returns the uploaded fictional bytes after the real sync workflow.
@@ -34,8 +36,8 @@ flowchart LR
   R --> KB[Knowledge Base + S3 Vectors]
   R --> C[Resolver → backend status/citations → Writer → grounding]
   C --> B
-  A -->|explicit user tool action + bound JWT scope| H[AgentCore Harness/Runtime]
-  H --> GW[AgentCore Gateway]
+  A -->|agentic workflow + bound JWT scope| H[AgentCore Harness/Runtime]
+  A -->|explicit tool action + sealed JWT scope| GW[AgentCore Gateway]
   GW --> MCP[MCP metadata tools]
   GW --> L[Review Lambda/tool]
   A --> M[AgentCore Memory short-term only]
@@ -55,12 +57,13 @@ matter, S3 key, document body, review owner, or memory actor. Gateway and tool
 handlers reauthorize the same scope. Guardrails protect content but do not
 replace deterministic authorization.
 
-The application replaces Harness M2M tool defaults with a fixed remote-MCP
-endpoint and the verified end-user bearer token in transport headers only.
-An opaque, five-minute invocation record in the existing table binds subject,
-matter, Memory actor/session, correlation and action allowlist. The Gateway
-interceptor verifies that binding after its JWT edge and reauthorizes; target
-handlers reload their own grants/membership before reading or writing.
+The application sends explicit metadata/review actions as one fixed remote-MCP
+`tools/call` to Gateway with the verified end-user bearer token in transport
+headers only. Agentic workflows may still use Harness with the same sealed
+binding. An opaque, five-minute invocation record in the existing table binds
+subject, matter, Memory actor/session, correlation and action allowlist. The
+Gateway interceptor verifies that binding after its JWT edge and reauthorizes;
+target handlers reload their own grants/membership before reading or writing.
 Repeated model attempts for one review invocation share one idempotent grant.
 JWT signature/expiry checks do not implement immediate IdP revocation lookup;
 membership revocation is checked against server data on each scoped operation.

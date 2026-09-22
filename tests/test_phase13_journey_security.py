@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 import test_phase13_integration as integrated
 from legaldesk.authorization import authorization_matter_partition_key, authorization_user_partition_key
 from phase13_fixture import FakeTokenExchange
-from phase13_gateway_fixture import invoke_local_gateway
+from legaldesk.gateway_client import GatewayHttpResponse
 
 
 class Phase13JourneySecurityTests(unittest.TestCase):
@@ -155,8 +155,16 @@ class Phase13JourneySecurityTests(unittest.TestCase):
 
     def test_foreign_scope_and_guessed_document_rejected_before_provider(self):
         scope = self.start()
+        transport = self.app.composition.gateway_invoker.transport
+        gateway_count = len(transport.calls)
         status, _, _ = self.request("POST", "/api/chat", {**scope, "matterId": "matter-foreign", "question": "secret?"}, csrf=self.csrf)
         self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/api/mcp", {
+            **scope, "matterId": "matter-foreign", "jsonrpc": "2.0", "id": 1,
+            "method": "tools/call", "params": {"name": "list_matter_documents", "arguments": {}},
+        }, csrf=self.csrf)
+        self.assertEqual(status, 403)
+        self.assertEqual(len(transport.calls), gateway_count)
         status, _, _ = self.request("GET", "/api/matters/matter-integration/documents/guessed-document")
         self.assertEqual(status, 403)
         status, _, _ = self.request("POST", "/api/chat", {**scope, "sessionId": "forged-session", "question": "secret?"}, csrf=self.csrf)
@@ -200,27 +208,36 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(audit["events"], [])
 
-    def tool_router(self, **kwargs):
-        return invoke_local_gateway(self.app.composition, self.fixture.agentcore.invoke_calls, **kwargs)
-
     def test_mcp_review_and_audit_keep_verified_user_and_question_correlation(self):
         scope = self.start()
         document_id = self.upload()
         answer = self.ask(scope)
         origin = answer["correlationId"]
-        with patch.object(self.fixture.agentcore, "invoke_harness", side_effect=self.tool_router):
-            status, metadata, _ = self.request("POST", "/api/mcp", {
-                **scope, "originCorrelationId": origin, "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "list_matter_documents", "arguments": {}},
-            }, csrf=self.csrf)
-            self.assertEqual(status, 200, metadata)
-            self.assertIn(document_id, json.dumps(metadata))
-            self.assertEqual(metadata["correlationId"], origin)
-            status, review, _ = self.request("POST", "/api/matters/matter-integration/review", {
-                "conversationId": scope["conversationId"], "sessionId": scope["sessionId"],
-                "reasonCode": "user_requested_review", "originCorrelationId": origin,
-            }, csrf=self.csrf)
-            self.assertEqual(status, 201, review)
+        status, metadata, _ = self.request("POST", "/api/mcp", {
+            **scope, "originCorrelationId": origin, "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "list_matter_documents", "arguments": {}},
+        }, csrf=self.csrf)
+        self.assertEqual(status, 200, metadata)
+        self.assertIn(document_id, json.dumps(metadata))
+        self.assertEqual(metadata["correlationId"], origin)
+        status, metadata_one, _ = self.request("POST", "/api/mcp", {
+            **scope, "originCorrelationId": origin, "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "get_document_metadata", "arguments": {"documentId": document_id}},
+        }, csrf=self.csrf)
+        self.assertEqual(status, 200, metadata_one)
+        self.assertEqual(metadata_one["correlationId"], origin)
+        self.assertEqual(metadata_one["result"]["document"]["documentId"], document_id)
+        status, review, _ = self.request("POST", "/api/matters/matter-integration/review", {
+            "conversationId": scope["conversationId"], "sessionId": scope["sessionId"],
+            "reasonCode": "user_requested_review", "originCorrelationId": origin,
+        }, csrf=self.csrf)
+        self.assertEqual(status, 201, review)
+        gateway_calls = self.app.composition.gateway_invoker.transport.calls
+        self.assertEqual([call["target"] for call in gateway_calls], ["metadata-mcp", "metadata-mcp", "review-task-lambda"])
+        self.assertTrue(all(call["targetInvoked"] for call in gateway_calls))
+        self.assertTrue(all(call["headers"]["x-legaldesk-correlation-id"] == origin for call in gateway_calls))
+        self.assertTrue(all("Bearer " + self.fixture.token == call["headers"]["Authorization"] for call in gateway_calls))
+        self.assertEqual(self.fixture.agentcore.invoke_calls, [])
         tasks = [item for item in self.fixture.table.items.values() if item.get("entityType") == "ReviewTask"]
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]["createdByUserId"], "user-alice")
@@ -239,14 +256,17 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         self.assertNotIn(self.fixture.token, json.dumps(audit))
         self.assertNotIn("The inspection period is four years.", json.dumps(audit))
 
-    def test_guessed_metadata_and_forged_origin_never_invoke_harness(self):
+    def test_guessed_metadata_and_forged_origin_never_invoke_gateway(self):
         scope = self.start()
+        transport = self.app.composition.gateway_invoker.transport
         for extra, arguments in (({}, {"documentId": "guessed"}), ({"originCorrelationId": "foreign-correlation"}, {"documentId": "guessed"})):
+            gateway_count = len(transport.calls)
             status, _, _ = self.request("POST", "/api/mcp", {
                 **scope, **extra, "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "get_document_metadata", "arguments": arguments},
             }, csrf=self.csrf)
             self.assertEqual(status, 403)
+            self.assertEqual(len(transport.calls), gateway_count)
         self.assertEqual(self.fixture.agentcore.invoke_calls, [])
 
     def test_bob_scope_allow_and_alice_conversation_citation_denied(self):
@@ -298,19 +318,20 @@ class Phase13JourneySecurityTests(unittest.TestCase):
             status, _, _ = self.request("GET", f"/api/citations?handle={answer['citations'][0]['handle']}")
             self.assertEqual(status, 200)
 
-    def test_tool_failure_and_wrong_allowed_tool_result_fail_closed(self):
+    def test_gateway_failure_and_error_result_fail_closed(self):
         scope = self.start()
         self.upload()
         request = {**scope, "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "list_matter_documents", "arguments": {}}}
-        with patch.object(self.fixture.agentcore, "invoke_harness", side_effect=RuntimeError("PRIVATE_TOOL_ERROR")):
+        transport = self.app.composition.gateway_invoker.transport
+        with patch.object(transport, "post", side_effect=RuntimeError("PRIVATE_TOOL_ERROR")):
             status, result, _ = self.request("POST", "/api/mcp", request, csrf=self.csrf)
         self.assertEqual(status, 500)
         self.assertNotIn("PRIVATE_TOOL_ERROR", json.dumps(result))
-        def wrong_tool(**kwargs):
-            result = self.tool_router(**kwargs)
-            result["stream"][1]["contentBlockStart"]["start"]["toolUse"]["name"] = "@legaldesk_gateway/metadata-mcp___get_document_metadata"
-            return result
-        with patch.object(self.fixture.agentcore, "invoke_harness", side_effect=wrong_tool):
+        error_response = GatewayHttpResponse(200, "application/json", json.dumps({
+            "jsonrpc": "2.0", "id": "00000000-0000-4000-8000-000000000001",
+            "result": {"isError": True},
+        }).encode())
+        with patch.object(transport, "post", return_value=error_response):
             status, result, _ = self.request("POST", "/api/mcp", request, csrf=self.csrf)
         self.assertEqual(status, 500)
         self.assertNotIn("insufficient_evidence", json.dumps(result))

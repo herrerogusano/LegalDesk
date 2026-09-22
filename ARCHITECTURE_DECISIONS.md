@@ -183,3 +183,25 @@ Después se pueden valorar:
 - dashboard de evaluación;
 - skills;
 - borrado + reingestión + memory cleanup.
+
+## ADR-016 — Deterministic explicit tools through Gateway
+
+Las acciones explícitas de la UI `get_document_metadata`,
+`list_matter_documents` y `create_review_task` se envían desde el backend a
+AgentCore Gateway mediante un único `POST tools/call` MCP. No se delegan en la
+selección de herramientas de Harness: `allowedTools` limita la selección del
+modelo pero no obliga a que el modelo invoque una herramienta. Harness queda
+reservado para flujos genuinamente agentic en los que la decisión del modelo
+sea parte del producto.
+
+La llamada directa reutiliza el `HarnessInvocationBinding` sellado existente:
+JWT verificado, contexto de matter reconstruido en servidor, grant corto,
+correlación y allowlist. El interceptor Gateway vuelve a autenticar y
+autorizar antes de transformar la petición; MCP/Lambda vuelve a comprobar el
+grant. La ruta falla cerrada, no sigue redirecciones, no reintenta, limita la
+respuesta y reserva el contador `gateway` del presupuesto de smoke.
+
+Esta decisión corrige la evidencia del tercer smoke: la UI alcanzó el backend
+pero Harness terminó sin un tool call estructurado, por lo que no hubo grant,
+interceptor ni Lambda. No añade infraestructura ni sustituye las
+comprobaciones de autorización existentes.

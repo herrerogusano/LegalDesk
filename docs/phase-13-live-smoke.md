@@ -336,12 +336,17 @@ Relevant current AWS references:
 - https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-security.html
 - https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeHarness.html
 
-Recommended architecture decision, not yet implemented: route explicit metadata
+The recommended architecture decision is to route explicit metadata
 and review commands from the trusted backend directly to Gateway/MCP with the
 verified user's bearer token and existing server-bound matter/correlation data.
 Keep Gateway interceptor/target reauthorization and least privilege. Reserve
 Harness for genuinely agentic, model-selected workflows. Prompting Harness more
 strongly would remain probabilistic and is not the recommended production fix.
+
+ADR-016 implements this recommendation locally: explicit metadata/review
+actions use one bounded direct MCP `tools/call`, the existing sealed binding,
+Gateway interceptor and target reauthorization. This local change has not been
+validated against a live Gateway and does not authorize another smoke.
 
 Cleanup made 25 bounded requests without reported errors. Subsequent reads
 verified 2 synthetic users and 7 owned rows absent. The two temporary stacks

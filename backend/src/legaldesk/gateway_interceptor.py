@@ -633,6 +633,9 @@ def transform_gateway_request(
     envelope = InterceptorEnvelope(subject, context.matter_id, context.correlation_id)
     transformed_body = dict(body)
     transformed_params = dict(params)
+    # Gateway-facing names include the target prefix; targets receive the
+    # local MCP/Lambda tool name used by their grant validators.
+    transformed_params["name"] = operation
     transformed_arguments = dict(arguments)
     transformed_params["arguments"] = transformed_arguments
     transformed_body["params"] = transformed_params

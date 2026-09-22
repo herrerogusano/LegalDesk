@@ -245,6 +245,7 @@ def main():
         factory = offline_factory_preflight(resource_config)
         print(json.dumps({
             "mode": "LOCAL_PREFLIGHT", "attemptId": attempt_id,
+            "explicitToolDispatch": "direct_gateway_tools_call",
             "policyCharacters": len(policy), "awsCalls": 0,
             "resourceRefs": {
                 "knowledgeBaseId": knowledge_base_id,
@@ -275,6 +276,9 @@ def main():
     server = thread = None
     result = {
         "status": "STARTED", "attemptId": attempt_id,
+        # Explicit metadata/review buttons use deterministic backend→Gateway
+        # MCP calls; Harness remains reserved for future agentic workflows.
+        "explicitToolDispatch": "direct_gateway_tools_call",
         "resourceRefs": {
             "knowledgeBaseId": knowledge_base_id,
             "dataSourceId": data_source_id,

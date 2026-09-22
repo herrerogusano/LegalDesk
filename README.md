@@ -11,8 +11,11 @@ Phase 13 now provides a connected loopback application, demonstrated locally
 through HTTP and browser tests with provider doubles. The release remains
 **NOT_READY_FOR_PROD**: live AWS interoperability and independent model-quality
 validation have not been demonstrated by those doubles. One authorized AWS smoke
-stopped before browser login on a factory configuration error, now fixed locally;
-there was no ingestion/inference, and temporary infrastructure was cleaned up.
+stopped before browser login on a factory configuration error and a second on a
+hidden hosted-login control; both defects were fixed locally. A third smoke passed
+login, upload, ingestion and RAG, then exposed that Harness cannot guarantee a
+model-selected tool call for an explicit UI command. ADR-016 now routes those
+commands directly through Gateway. All temporary infrastructure was cleaned up.
 A new live attempt and promotion to prod require separate approval. See the historical
 [release audit](docs/release-audit.md), the current
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md), and
@@ -21,7 +24,8 @@ A new live attempt and promotion to prod require separate approval. See the hist
 The demonstrated local journey is login → matter → presigned upload → verified
 confirmation/indexing → authorized retrieval → Resolver → Writer → productive
 grounding adapter → inspectable citation, with user-scoped Harness/Gateway/MCP
-metadata and review actions, accepted short-term history and correlated audit.
+agentic support plus deterministic backend/Gateway metadata and review actions,
+accepted short-term history and correlated audit.
 Temporary Phase 13 resources were deployed and removed; shared stacks were
 restored. See the [live-smoke ledger](docs/phase-13-live-smoke.md). No prod promotion.
 

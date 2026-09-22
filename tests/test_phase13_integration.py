@@ -42,6 +42,12 @@ class Phase13ConcreteIntegrationTests(unittest.TestCase):
 
         with patch("legaldesk.application.DEFAULT_TELEMETRY_SINK", InMemoryTelemetrySink()), patch("boto3.resource", return_value=type("Resource", (), {"Table": lambda _self, _name: self.fixture.table})()), patch("boto3.client", side_effect=client), patch("legaldesk.application.PyJwtJwksKeyResolver", return_value=type("Resolver", (), {"get_signing_key": lambda _self, _token: self.fixture.public_key})()), patch("legaldesk.application.CognitoPkceTokenExchange", FakeTokenExchange):
             composition = build_aws_composition(allow_aws=True, config=self.fixture.config())
+        from legaldesk.gateway_client import DirectGatewayInvoker
+        from phase13_gateway_fixture import LocalGatewayTransport
+        composition.gateway_invoker = DirectGatewayInvoker(
+            composition.gateway_url,
+            transport=LocalGatewayTransport(composition),
+        )
         self.app = create_http_app(composition)
         self.server = make_server("127.0.0.1", 0, self.app, handler_class=_QuietRequestHandler)
         import threading

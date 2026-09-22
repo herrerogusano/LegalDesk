@@ -9,7 +9,6 @@ import threading
 from unittest.mock import patch
 
 from test_phase13_integration import Phase13ConcreteIntegrationTests
-from phase13_gateway_fixture import invoke_local_gateway
 from legaldesk.observability import InMemoryTelemetrySink
 
 
@@ -23,7 +22,6 @@ def main():
     composition.public_base_url = base
     composition.redirect_uri = f"{base}/callback"
     fixture.fixture.put_server.server.allowed_origin = base
-    fixture.fixture.agentcore.invoke_harness = lambda **kwargs: invoke_local_gateway(composition, fixture.fixture.agentcore.invoke_calls, **kwargs)
     print(json.dumps({"baseUrl": base, "pid": os.getpid(), "providers": "LOCAL_DOUBLES_ONLY"}), flush=True)
     try:
         threading.Event().wait()

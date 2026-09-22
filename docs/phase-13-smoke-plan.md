@@ -77,8 +77,10 @@ does not execute or establish the holdout's fourteen semantic expectations.
    status, cited document/page/section and authorized supporting evidence.
 6. Ask the fixed absent-fact question; expect insufficient_evidence without
    fabricated facts/citations. A technical failure is not a successful refusal.
-7. Through the user-scoped Harness→Gateway path, list Matter A metadata.
-8. Through the same path create one review with an explicit user request;
+7. Through a backend-issued, user-scoped direct Gateway `tools/call`, list
+   Matter A metadata. Harness is not used for this deterministic action.
+8. Through the same direct Gateway path create one review with an explicit
+   user request;
    independently verify the persisted creator/matter without reading bodies.
 9. Attempt Matter B as User A. Must deny before business retrieval/mutation.
 10. Inspect the correlation records and effective prompt identities for the
@@ -105,7 +107,7 @@ Final implementation must expose counters/preflight checks before approval.
 | Model output | 512 tokens/attempt; no extended thinking or caching |
 | Budgeted model input, including history/tool overhead | 160,000 tokens total |
 | ApplyGuardrail | 8 requests, at most 20 text units each per enabled filter |
-| Gateway lifecycle/discovery/business requests | 40 total; 2 intended business operations |
+| Direct Gateway `tools/call` requests | 4 total hard cap; 2 intended business operations; no discovery/retry |
 | Review creations | 1 successful task |
 | Memory writes | 20 short-term events; 20 read requests |
 | DynamoDB application operations | 400, bounded small items including repeated server-side authorization |

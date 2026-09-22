@@ -6,7 +6,9 @@ This historical topology is not release evidence. Phase 13 now composes the
 backend services through a loopback HTTP entry point; the exact implemented
 flow and its local/live evidence boundaries are in `architecture-final.md` and
 `phase-13-acceptance.md`. In particular, Resolver/Writer chat executes in the
-backend; Harness handles explicit metadata/review actions. The diagram below
+backend; deterministic metadata/review actions use the backend's direct
+Gateway client, while Harness remains reserved for genuinely agentic,
+model-selected workflows. The diagram below
 must not be read as an assertion that Harness implements the chat pipeline.
 
 ```mermaid
@@ -43,7 +45,7 @@ flowchart LR
   AC --> G
   AC -->|metadata-filtered retrieval| KB
   KB --> S3
-  AC --> GW
+  A -->|sealed binding + direct tools/call| GW
   GW --> MCP
   GW --> L
   MCP --> DB

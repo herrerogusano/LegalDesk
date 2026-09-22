@@ -27,6 +27,10 @@ class SmokeBudgetLimits:
     retrieve: int = 2
     apply_guardrail: int = 8
     invoke_harness: int = 2
+    # Explicit UI actions issue one direct tools/call each; keep four as a
+    # small hard ceiling for the two intended operations plus bounded failure
+    # diagnostics, not a provider-wide account limiter.
+    gateway: int = 4
     create_event: int = 20
     list_events: int = 20
     start_ingestion_job: int = 1
@@ -242,7 +246,7 @@ _METHOD_OPERATIONS = {
     "batch_get_item": "dynamodb",
     "batch_write_item": "dynamodb",
 }
-_OPERATION_LIMITS = frozenset(_METHOD_OPERATIONS.values())
+_OPERATION_LIMITS = frozenset((*_METHOD_OPERATIONS.values(), "gateway"))
 
 
 class BudgetedSdkClient:

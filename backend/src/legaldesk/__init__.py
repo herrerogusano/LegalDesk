@@ -45,6 +45,12 @@ from .gateway_interceptor import (
     InMemoryGatewayGrantRepository,
     gateway_invocation_partition_key,
 )
+from .gateway_client import (
+    DirectGatewayInvoker,
+    GatewayHttpResponse,
+    GatewayInvocationError,
+    UrllibGatewayTransport,
+)
 from .memory import (
     AgentCoreMemoryClient,
     Boto3DynamoConversationBindingStore,
@@ -159,6 +165,10 @@ __all__ = [
     "HarnessInvocationGrant",
     "InMemoryGatewayGrantRepository",
     "gateway_invocation_partition_key",
+    "DirectGatewayInvoker",
+    "GatewayHttpResponse",
+    "GatewayInvocationError",
+    "UrllibGatewayTransport",
     "AgentCoreMemoryClient",
     "Boto3DynamoConversationBindingStore",
     "ConversationBinding",

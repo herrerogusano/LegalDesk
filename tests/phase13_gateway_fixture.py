@@ -7,9 +7,65 @@ It does not establish live IAM or provider interoperability.
 import json
 from unittest.mock import patch
 
+from legaldesk.gateway_client import GatewayHttpResponse
 from legaldesk.gateway_interceptor import GatewayTarget, transform_gateway_request
 from legaldesk.mcp_server import mcp_lambda_handler
 from legaldesk.review_tasks import gateway_lambda_handler
+
+
+class LocalGatewayTransport:
+    """HTTP-shaped local Gateway transport invoking the real target adapters."""
+
+    def __init__(self, composition):
+        self.composition = composition
+        # Keep deterministic Gateway traffic separate from the Harness fake.
+        self.calls = []
+
+    def post(self, url, body, headers, timeout):
+        del timeout
+        call = {"url": url, "body": body, "headers": dict(headers), "targetInvoked": False}
+        self.calls.append(call)
+        identity = self.composition.identity_verifier.verify_authorization_header(headers["Authorization"])
+        assert identity.subject
+        request = json.loads(body.decode("utf-8"))
+        name = request.get("params", {}).get("name")
+        if not isinstance(name, str):
+            return GatewayHttpResponse(400, "application/json", b"{}")
+        if name.startswith(f"{GatewayTarget.REVIEW_LAMBDA.value}___"):
+            target = GatewayTarget.REVIEW_LAMBDA
+        elif name.startswith(f"{GatewayTarget.METADATA_MCP.value}___"):
+            target = GatewayTarget.METADATA_MCP
+        else:
+            return GatewayHttpResponse(403, "application/json", b"{}")
+        event = {
+            "mcp": {
+                "gatewayRequest": {"headers": dict(headers), "body": request},
+                "rawGatewayRequest": {"body": json.dumps(request)},
+            }
+        }
+        try:
+            transformed = transform_gateway_request(
+                event,
+                target=target,
+                authorization_store=self.composition.authorization_store,
+                grant_repository=self.composition.gateway_grant_repository,
+                telemetry_sink=self.composition.telemetry_sink,
+            )["mcp"]["transformedGatewayRequest"]
+            if target == GatewayTarget.METADATA_MCP:
+                with patch("legaldesk.mcp_server._mcp_repositories_from_environment", return_value=(self.composition.authorization_store, self.composition.metadata_repository)), patch("legaldesk.mcp_server._mcp_grant_repository_from_environment", return_value=self.composition.gateway_grant_repository):
+                    response = mcp_lambda_handler({"headers": transformed["headers"], "body": json.dumps(transformed["body"])}, None)
+                status = response["statusCode"]
+                payload = json.loads(response["body"])
+            else:
+                with patch("legaldesk.review_tasks._repositories_from_environment", return_value=(self.composition.review_repository, self.composition.authorization_store)), patch("legaldesk.review_tasks._gateway_grant_repository_from_environment", return_value=self.composition.gateway_grant_repository):
+                    target_payload = gateway_lambda_handler(transformed["body"]["params"]["arguments"], None)
+                status = 403 if "error" in target_payload else 200
+                payload = {"jsonrpc": "2.0", "id": request.get("id"), "result": {"content": [{"type": "text", "text": json.dumps(target_payload)}]}}
+            call["targetInvoked"] = True
+            call["target"] = target.value
+            return GatewayHttpResponse(status, "application/json", json.dumps(payload).encode("utf-8"))
+        except Exception:
+            return GatewayHttpResponse(403, "application/json", b"{}")
 
 
 def invoke_local_gateway(composition, calls, **kwargs):
