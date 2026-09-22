@@ -251,8 +251,14 @@ prefix: `phase-13/smoke-20260922-02/`; exact version IDs for cleanup:
 ### Result and teardown
 
 The single execution stopped during `login`, category `smoke_failed`, before
-any observed callback HTTP response. The diagnostic lacks the failing login
-substep and exception category, so its root cause is **not established**.
+any observed callback HTTP response. Its original diagnostic lacked the failing
+substep and exception category. A subsequent non-mutating reproduction established
+the runner cause: Cognito's hosted page rendered two username/password/submit
+forms, with the first matching controls hidden and the second visible. The old
+compound `waitForSelector(..., state=visible)` selected the first hidden username
+and timed out; the exact old selector reproduced `TimeoutError` with visibility
+`[false, true]`. This is a browser-runner defect, not an authentication, model,
+retrieval or grounding failure.
 The factory successfully constructed; the previous audience error did not recur.
 Do not attribute this result to the model, retrieval, grounding or the separate
 browser index-check defect identified below.
@@ -279,5 +285,10 @@ handles and primitive rejection, browser syntax and git diff checks. Login
 failures now report an allowlisted exception type and a closed substep, without
 exception messages, tokens, URLs or response bodies. No production application
 behavior, IAM or prompts were changed by these post-attempt corrections.
+Login selection now enumerates all matching controls, waits for any actually
+visible element, and fills/clicks that specific locator. A selector-only check
+against the public hosted page selected the visible username, password and submit
+controls without submitting credentials. This correction has not had a new live
+authenticated smoke, so the E2E result remains unproven.
 Sanitized result:
 `evals/results/phase13-live-smoke-20260922-02-report.json`.

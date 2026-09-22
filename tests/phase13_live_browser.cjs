@@ -7,7 +7,7 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
-const { waitForIndexedState } = require("./phase13_live_browser_helpers.cjs");
+const { findFirstVisible, waitForFirstVisible, waitForIndexedState } = require("./phase13_live_browser_helpers.cjs");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 const BASE_URL = process.env.LEGALDESK_SMOKE_BASE_URL || "http://localhost:8000";
@@ -42,25 +42,15 @@ function safeId(value) {
 }
 
 async function fillFirstVisible(page, selectors, value, category) {
-  for (const selector of selectors) {
-    const candidate = page.locator(selector).first();
-    if (await candidate.count() && await candidate.isVisible()) {
-      await candidate.fill(value);
-      return;
-    }
-  }
-  fail(category);
+  const candidate = await findFirstVisible(page, selectors);
+  if (!candidate) fail(category);
+  await candidate.fill(value);
 }
 
 async function clickFirstVisible(page, selectors, category) {
-  for (const selector of selectors) {
-    const candidate = page.locator(selector).first();
-    if (await candidate.count() && await candidate.isVisible()) {
-      await candidate.click();
-      return;
-    }
-  }
-  fail(category);
+  const candidate = await findFirstVisible(page, selectors);
+  if (!candidate) fail(category);
+  await candidate.click();
 }
 
 function beginPhase(name) {
@@ -150,7 +140,7 @@ async function run() {
     beginPhase("login");
     await loginStep("login.goto", () => page.goto(base.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 }));
     await loginStep("login.click", () => page.locator("#login-button").click());
-    await loginStep("login.form_visible", () => page.waitForSelector("input[name='username'], input[type='email'], #signInFormUsername", { state: "visible", timeout: 120_000 }));
+    await loginStep("login.form_visible", () => waitForFirstVisible(page, ["input[name='username']", "input[type='email']", "#signInFormUsername"], { timeout: 120_000 }));
     await loginStep("login.fill_username", () => fillFirstVisible(page, ["input[name='username']", "input[type='email']", "#signInFormUsername"], USERNAME, "cognito_username_form"));
     await loginStep("login.fill_password", () => fillFirstVisible(page, ["input[name='password']", "#signInFormPassword"], PASSWORD, "cognito_password_form"));
     await loginStep("login.submit", () => clickFirstVisible(page, ["button[name='signInSubmitButton']", "input[type='submit']", "button[type='submit']"], "cognito_submit"));

@@ -2,7 +2,8 @@
 
 Status: **local integration gate complete; NOT_READY_FOR_PROD**. Two separately
 authorized AWS attempts stopped before completing login: first at factory
-validation, second during browser login with cause undetermined. No inference
+validation, second because the browser runner selected a hidden duplicate
+Cognito login control. No inference
 or ingestion in either attempt. Temporary
 resources removed, shared stacks restored. No prod promotion.
 
@@ -150,7 +151,11 @@ The application factory now explicitly accepts access tokens only, matching
 its PKCE exchange. 394 local tests pass after the fix; the factory regression
 uses the real no-ID-audience configuration. A separately authorized second
 attempt passed factory construction but stopped during browser login without
-an observed callback response; the diagnostic did not identify the substep.
+an observed callback response. A later read-only reproduction established that
+the hosted page contained hidden and visible duplicate forms: the old selector
+waited on the first hidden username and timed out. The runner now enumerates
+matches and selects the actually visible control, covered locally and checked
+against the public hosted page without submitting credentials.
 396 local tests passed before this attempt. Both attempt reports are preserved.
 An additional, unexercised JSHandle comparison defect in the browser's indexing
 check was found locally; it does not explain the earlier login failure.
