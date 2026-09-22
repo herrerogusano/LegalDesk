@@ -40,6 +40,10 @@ intercepted fictional IdP. Screenshots go to ignored `test-results/`.
 Stop the fixture server with Ctrl+C afterward. This is a test harness, not a
 production login substitute or a model-quality demo.
 
+For a visible browser session in which the operator performs each business
+step, use the [guided offline manual demo](phase-13-manual-demo.md). It reuses
+the same local-only fixture boundary and makes zero AWS calls.
+
 ## Real application — only after separate AWS approval
 
 The entry point is `python -m legaldesk` (also installed as `legaldesk`). It
