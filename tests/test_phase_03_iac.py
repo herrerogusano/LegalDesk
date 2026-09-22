@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import fnmatch
 import unittest
 from pathlib import Path
 
@@ -14,6 +15,26 @@ TEMPLATE = (
 
 
 class Phase03InfrastructureTests(unittest.TestCase):
+    def test_smoke_source_and_permissions_share_a_bounded_tenant_prefix(self) -> None:
+        template = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("Default: tenants/", template)
+        self.assertIn("- !Ref TenantSourcePrefix", template)
+        self.assertIn('s3:prefix: !Sub "${TenantSourcePrefix}*"', template)
+        resources = re.findall(r'!Sub "(arn:[^\n]+/original[^\n]+)"', template)
+        self.assertEqual(len(resources), 4)
+        for resource in resources:
+            self.assertIn("${TenantSourcePrefix}", resource)
+            pattern = resource.replace("${AWS::Partition}", "aws").replace(
+                "${DocumentBucketName}", "fictional-source"
+            ).replace("${TenantSourcePrefix}", "tenants/smoke-one/")
+            extension = resource.rsplit("/", 1)[1]
+            self.assertTrue(fnmatch.fnmatchcase(
+                f"arn:aws:s3:::fictional-source/tenants/smoke-one/matters/a/documents/d/{extension}", pattern
+            ))
+            self.assertFalse(fnmatch.fnmatchcase(
+                f"arn:aws:s3:::fictional-source/tenants/another/matters/a/documents/d/{extension}", pattern
+            ))
+
     def test_knowledge_base_uses_supported_index_arn_configuration(self) -> None:
         template = TEMPLATE.read_text(encoding="utf-8")
         storage = re.search(

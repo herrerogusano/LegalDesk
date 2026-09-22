@@ -94,18 +94,18 @@ def _normalize_results(
     response: Mapping[str, Any], context: RequestContext
 ) -> tuple[RetrievedPassage, ...]:
     context = require_authorized_context(context)
-    raw_results = response.get("retrievalResults", ())
+    raw_results = response.get("retrievalResults")
     if not isinstance(raw_results, (list, tuple)):
-        return ()
+        raise ValueError("retrievalResults is malformed")
 
     normalized: list[RetrievedPassage] = []
     for result in raw_results:
         if not isinstance(result, Mapping):
-            continue
+            raise ValueError("retrieval result is malformed")
         content = result.get("content")
         metadata = result.get("metadata")
         if not isinstance(content, Mapping) or not isinstance(metadata, Mapping):
-            continue
+            raise ValueError("retrieval result content or metadata is malformed")
 
         # Fail closed if scope-bearing metadata is absent or inconsistent.
         if (
@@ -120,7 +120,7 @@ def _normalize_results(
         )
         text = content.get("text")
         if document_id is None or not isinstance(text, str) or not text.strip():
-            continue
+            raise ValueError("retrieval result lacks citation fields")
 
         location = result.get("location")
         s3_location = location.get("s3Location") if isinstance(location, Mapping) else None
@@ -161,7 +161,10 @@ def _normalize_results(
         elif isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
             raise ValueError("retrieval score is malformed")
         else:
-            score = float(raw_score)
+            try:
+                score = float(raw_score)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError("retrieval score is malformed") from exc
             if not isfinite(score):
                 raise ValueError("retrieval score is outside the finite range")
         citation_id = f"citation-{len(normalized) + 1}"
@@ -289,7 +292,7 @@ def _retrieve_with_context(
             operation="knowledge_base_retrieve",
             error_code="retrieval_invalid_response",
         )
-        return ()
+        raise ValueError("retrieval response is malformed")
     try:
         results = _normalize_results(response, context)
     except Exception:
@@ -314,7 +317,7 @@ def _retrieve_with_context(
             operation="knowledge_base_retrieve",
             error_code="retrieval_invalid_response",
         )
-        return ()
+        raise
     emit_telemetry(
         telemetry_sink,
         TelemetryEventType.RETRIEVAL,

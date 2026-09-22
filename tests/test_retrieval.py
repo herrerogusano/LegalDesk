@@ -154,6 +154,30 @@ class RetrievalTests(unittest.TestCase):
             self.search(ALICE, "mat_sundial", FakeKnowledgeBaseClient([missing_scope])), ()
         )
 
+    def test_malformed_provider_envelope_is_technical_failure(self) -> None:
+        class MalformedClient:
+            def retrieve(self, **kwargs: Any) -> Mapping[str, Any]:
+                return {"retrievalResults": {"not": "a list"}}
+
+        with self.assertRaises(ValueError):
+            self.search(ALICE, "mat_sundial", MalformedClient())  # type: ignore[arg-type]
+
+    def test_non_mapping_provider_response_is_technical_failure(self) -> None:
+        class MalformedClient:
+            def retrieve(self, **kwargs: Any) -> Mapping[str, Any]:
+                return []  # type: ignore[return-value]
+
+        with self.assertRaises(ValueError):
+            self.search(ALICE, "mat_sundial", MalformedClient())  # type: ignore[arg-type]
+
+    def test_missing_results_is_not_a_valid_empty_response(self) -> None:
+        class MalformedClient:
+            def retrieve(self, **kwargs: Any) -> Mapping[str, Any]:
+                return {}
+
+        with self.assertRaises(ValueError):
+            self.search(ALICE, "mat_sundial", MalformedClient())  # type: ignore[arg-type]
+
     def test_client_cannot_supply_tenant_or_custom_filter(self) -> None:
         client = FakeKnowledgeBaseClient(
             [result("tnt_aurora", "mat_sundial", "doc-sundial", "Authorized evidence.")]

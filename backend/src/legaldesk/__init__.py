@@ -9,6 +9,11 @@ from .authorization import (
     build_request_context,
     require_authorized_context,
 )
+from .agent_integration import (
+    AuthorizationHeaderVerifier,
+    HarnessInvocationBinding,
+    bind_harness_invocation,
+)
 from .identity import (
     PkceAuthorizationRequest,
     IdentityVerificationError,
@@ -36,7 +41,15 @@ from .mcp_server import MCPServer, handle_metadata_request_for_identity, mcp_lam
 from .gateway_interceptor import (
     Boto3DynamoGatewayGrantRepository,
     GatewayAuthorizationGrant,
+    HarnessInvocationGrant,
     InMemoryGatewayGrantRepository,
+    gateway_invocation_partition_key,
+)
+from .gateway_client import (
+    DirectGatewayInvoker,
+    GatewayHttpResponse,
+    GatewayInvocationError,
+    UrllibGatewayTransport,
 )
 from .memory import (
     AgentCoreMemoryClient,
@@ -66,6 +79,19 @@ from .observability import (
     TelemetryOutcome,
     TelemetrySink,
     emit_telemetry,
+)
+from .guardrails import (
+    GroundingGuardrailBlocked,
+    GroundingGuardrailError,
+    GuardrailGroundingValidator,
+)
+from .http_app import (
+    ApplicationComposition,
+    ApplicationTelemetrySink,
+    CitationHandle,
+    LoopbackLegalDeskApp,
+    create_aws_composition,
+    create_http_app,
 )
 from .evidence import (
     AnswerWriter,
@@ -102,6 +128,9 @@ from .evidence import (
 )
 
 __all__ = [
+    "HarnessInvocationBinding",
+    "AuthorizationHeaderVerifier",
+    "bind_harness_invocation",
     "AuthorizationDenied",
     "Boto3DynamoAuthorizationStore",
     "InMemoryAuthorizationStore",
@@ -133,7 +162,13 @@ __all__ = [
     "mcp_lambda_handler",
     "Boto3DynamoGatewayGrantRepository",
     "GatewayAuthorizationGrant",
+    "HarnessInvocationGrant",
     "InMemoryGatewayGrantRepository",
+    "gateway_invocation_partition_key",
+    "DirectGatewayInvoker",
+    "GatewayHttpResponse",
+    "GatewayInvocationError",
+    "UrllibGatewayTransport",
     "AgentCoreMemoryClient",
     "Boto3DynamoConversationBindingStore",
     "ConversationBinding",
@@ -190,4 +225,13 @@ __all__ = [
     "build_converse_evidence_resolver_request",
     "build_converse_answer_writer_request",
     "answer_writer_output_config",
+    "GroundingGuardrailBlocked",
+    "GroundingGuardrailError",
+    "GuardrailGroundingValidator",
+    "ApplicationComposition",
+    "ApplicationTelemetrySink",
+    "CitationHandle",
+    "LoopbackLegalDeskApp",
+    "create_aws_composition",
+    "create_http_app",
 ]

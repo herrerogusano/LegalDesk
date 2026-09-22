@@ -6,6 +6,11 @@ Parameters:
     Type: String
     Description: Existing Phase 02 document bucket name in this account and region
     AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  TenantSourcePrefix:
+    Type: String
+    Default: tenants/
+    AllowedPattern: '^tenants/([A-Za-z0-9_-]+/)?$'
+    Description: Source prefix; use one dedicated fictional tenant for bounded smoke ingestion
 
 Resources:
   LegalDeskVectorBucket:
@@ -62,15 +67,15 @@ Resources:
                 Resource: !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}"
                 Condition:
                   StringLike:
-                    s3:prefix: "tenants/*"
+                    s3:prefix: !Sub "${TenantSourcePrefix}*"
               - Sid: ReadOnlySupportedOriginalsAndSidecars
                 Effect: Allow
                 Action: s3:GetObject
                 Resource:
-                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/tenants/*/matters/*/documents/*/original.txt"
-                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/tenants/*/matters/*/documents/*/original.txt.metadata.json"
-                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/tenants/*/matters/*/documents/*/original.pdf"
-                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/tenants/*/matters/*/documents/*/original.pdf.metadata.json"
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.txt"
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.txt.metadata.json"
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.pdf"
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.pdf.metadata.json"
               - Sid: InvokeOnlySelectedEmbeddingModel
                 Effect: Allow
                 Action: bedrock:InvokeModel
@@ -119,7 +124,7 @@ Resources:
         S3Configuration:
           BucketArn: !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}"
           InclusionPrefixes:
-            - tenants/
+            - !Ref TenantSourcePrefix
       VectorIngestionConfiguration:
         ChunkingConfiguration:
           ChunkingStrategy: FIXED_SIZE

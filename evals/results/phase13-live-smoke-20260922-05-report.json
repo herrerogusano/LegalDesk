@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0.0",
+  "date": "2026-09-22",
+  "attemptId": "20260922-05",
+  "codeCommit": "658e8d1",
+  "attempts": 1,
+  "automaticRetries": 0,
+  "result": "FAILED",
+  "passedStages": ["login", "matter_selection", "upload_and_index", "factual_chat", "absent_chat"],
+  "failedStage": "metadata_tool",
+  "errorCategory": "gateway_target_routing",
+  "rootCauseEstablished": true,
+  "applicationCalls": {
+    "startIngestionJob": 1,
+    "getIngestionJob": 2,
+    "retrieve": 2,
+    "converse": 3,
+    "applyGuardrail": 3,
+    "invokeHarness": 0,
+    "directGateway": 1,
+    "s3": 5,
+    "dynamodb": 102,
+    "memoryWrites": 4,
+    "memoryReads": 3
+  },
+  "modelUsage": {"inputTokens": 2848, "outputTokens": 74},
+  "cleanupVerified": {
+    "cleanupRequests": 20,
+    "cleanupErrors": 0,
+    "temporaryStacksDeleted": 2,
+    "sharedStacksRestored": 3,
+    "artifactVersionsAbsent": 3,
+    "originalCorsRestored": true,
+    "syntheticSourcePrefixEmpty": true
+  },
+  "liveDirectGatewayDemonstrated": false,
+  "prodPromoted": false,
+  "billedCostKnown": false
+}

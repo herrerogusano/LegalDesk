@@ -8,6 +8,15 @@ Implementar LegalDesk siguiendo `MASTER_PLAN.md` y los `PLAN_XX_*.md`.
 
 No improvisar una arquitectura distinta sin necesidad demostrable.
 
+## Conocimiento reutilizable antes de implementar
+
+Consultar primero el índice compartido
+`C:\Users\herre\OneDrive\Desktop\herrerogusano's vault\04 Knowledge\AI Engineering\AI Engineering.md`
+y sus guías pertinentes de RAG, MCP, grounding, operación AWS y agentes.
+Reutilizar lecciones documentadas sin sustituir el plan/ADR ni ampliar permisos.
+Si el vault no está disponible, indicarlo y no inventar su contenido. Guardar
+aprendizajes generales en las guías existentes y contexto específico en el repo.
+
 # 2. Roles de modelos
 
 ## Supervisor / orchestrator

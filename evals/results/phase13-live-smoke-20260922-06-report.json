@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0.0",
+  "date": "2026-09-22",
+  "attemptId": "20260922-06",
+  "codeCommit": "658e8d1+working-tree",
+  "attempts": 1,
+  "automaticRetries": 0,
+  "result": "PRODUCT_PATH_PASS_RUNNER_FAIL",
+  "passedStages": ["login", "matter_selection", "upload_and_index", "factual_chat", "absent_chat", "metadata_tool", "review_tool", "cross_matter_denial", "audit"],
+  "failedStage": "logout_runner_check",
+  "errorCategory": "navigation_response_body_race",
+  "rootCauseEstablished": true,
+  "applicationCalls": {
+    "startIngestionJob": 1,
+    "getIngestionJob": 2,
+    "retrieve": 2,
+    "converse": 3,
+    "applyGuardrail": 3,
+    "invokeHarness": 0,
+    "directGateway": 2,
+    "s3": 5,
+    "dynamodb": 117,
+    "memoryWrites": 4,
+    "memoryReads": 3
+  },
+  "modelUsage": {"inputTokens": 2848, "outputTokens": 74},
+  "cleanupVerified": {
+    "cleanupRequests": 23,
+    "cleanupErrors": 0,
+    "temporaryStacksDeleted": 2,
+    "sharedStacksRestored": 3,
+    "artifactVersionsAbsent": 3,
+    "originalCorsRestored": true,
+    "syntheticSourcePrefixEmpty": true
+  },
+  "liveDirectGatewayDemonstrated": true,
+  "prodPromoted": false,
+  "billedCostKnown": false
+}

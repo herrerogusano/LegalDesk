@@ -469,6 +469,7 @@ class GroundingRequest:
     answer: str
     evidence: tuple[object, ...]
     supporting_citation_ids: tuple[str, ...]
+    correlation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

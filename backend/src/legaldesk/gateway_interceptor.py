@@ -12,9 +12,11 @@ import base64
 import binascii
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Mapping, Protocol
 from uuid import UUID, uuid4
@@ -50,7 +52,16 @@ class InterceptorEnvelope:
 GATEWAY_GRANT_ENTITY = "GatewayAuthorizationGrant"
 GATEWAY_GRANT_SORT_KEY = "PROFILE"
 GATEWAY_GRANT_TTL_SECONDS = 300
+GATEWAY_INVOCATION_ENTITY = "HarnessInvocationBinding"
+GATEWAY_INVOCATION_TTL_SECONDS = 300
 GATEWAY_TOOL_DELIMITER = "___"
+_APPLICATION_ALLOWED_TOOL_NAMES = frozenset(
+    {
+        "@legaldesk_gateway/metadata-mcp___list_matter_documents",
+        "@legaldesk_gateway/metadata-mcp___get_document_metadata",
+        "@legaldesk_gateway/review-task-lambda___create_review_task",
+    }
+)
 MAX_RAW_GATEWAY_BODY_BYTES = 64 * 1024
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,6 +127,10 @@ class GatewayGrantRepository(Protocol):
 
     def get(self, grant_id: str) -> Mapping[str, object] | None: ...
 
+    def put_invocation(self, grant: "HarnessInvocationGrant") -> None: ...
+
+    def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None: ...
+
 
 def gateway_grant_partition_key(grant_id: str) -> str:
     return f"GATEWAY#GRANT#{grant_id}"
@@ -124,17 +139,29 @@ def gateway_grant_partition_key(grant_id: str) -> str:
 @dataclass(slots=True)
 class InMemoryGatewayGrantRepository:
     grants: dict[str, Mapping[str, object]]
+    invocations: dict[str, Mapping[str, object]]
 
     def __init__(self) -> None:
         self.grants = {}
+        self.invocations = {}
 
     def put(self, grant: GatewayAuthorizationGrant) -> None:
         if grant.grant_id in self.grants:
+            if self.grants[grant.grant_id] == grant.item:
+                return
             raise RuntimeError("grant collision")
         self.grants[grant.grant_id] = grant.item
 
     def get(self, grant_id: str) -> Mapping[str, object] | None:
         return self.grants.get(grant_id)
+
+    def put_invocation(self, grant: "HarnessInvocationGrant") -> None:
+        if grant.invocation_id in self.invocations:
+            raise RuntimeError("invocation collision")
+        self.invocations[grant.invocation_id] = grant.item
+
+    def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None:
+        return self.invocations.get(invocation_id)
 
 
 class Boto3DynamoGatewayGrantRepository:
@@ -151,10 +178,15 @@ class Boto3DynamoGatewayGrantRepository:
         self.table = table
 
     def put(self, grant: GatewayAuthorizationGrant) -> None:
-        self.table.put_item(
-            Item=grant.item,
-            ConditionExpression="attribute_not_exists(pk)",
-        )
+        try:
+            self.table.put_item(
+                Item=grant.item,
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+        except Exception:
+            existing = self.get(grant.grant_id)
+            if existing != grant.item:
+                raise
 
     def get(self, grant_id: str) -> Mapping[str, object] | None:
         response = self.table.get_item(
@@ -163,6 +195,53 @@ class Boto3DynamoGatewayGrantRepository:
         )
         item = response.get("Item") if isinstance(response, Mapping) else None
         return item if isinstance(item, Mapping) else None
+
+    def put_invocation(self, grant: "HarnessInvocationGrant") -> None:
+        self.table.put_item(
+            Item=grant.item,
+            ConditionExpression="attribute_not_exists(pk)",
+        )
+
+    def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None:
+        response = self.table.get_item(
+            Key={"pk": gateway_invocation_partition_key(invocation_id), "sk": GATEWAY_GRANT_SORT_KEY},
+            ConsistentRead=True,
+        )
+        item = response.get("Item") if isinstance(response, Mapping) else None
+        return item if isinstance(item, Mapping) else None
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessInvocationGrant:
+    """Short-lived opaque binding issued by the application for one request."""
+
+    invocation_id: str
+    verified_subject: str
+    requested_matter_id: str
+    correlation_id: str
+    memory_actor_id: str
+    memory_session_id: str
+    allowed_tools: tuple[str, ...]
+    expires_at: int
+
+    @property
+    def item(self) -> dict[str, object]:
+        return {
+            "pk": gateway_invocation_partition_key(self.invocation_id),
+            "sk": GATEWAY_GRANT_SORT_KEY,
+            "entityType": GATEWAY_INVOCATION_ENTITY,
+            "verifiedSubject": self.verified_subject,
+            "requestedMatterId": self.requested_matter_id,
+            "correlationId": self.correlation_id,
+            "memoryActorId": self.memory_actor_id,
+            "memorySessionId": self.memory_session_id,
+            "allowedTools": list(self.allowed_tools),
+            "expiresAt": self.expires_at,
+        }
+
+
+def gateway_invocation_partition_key(invocation_id: str) -> str:
+    return f"GATEWAY#INVOCATION#{invocation_id}"
 
 
 def _decode_verified_subject(authorization: object) -> str:
@@ -245,6 +324,115 @@ def _header_selector(headers: Mapping[object, object], name: str) -> object:
     if len(matches) > 1 and any(value != matches[0] for value in matches[1:]):
         raise AuthorizationDenied("access denied")
     return matches[0] if matches else None
+
+
+def _header_correlation_id(headers: Mapping[object, object]) -> str | None:
+    """Validate an optional application correlation header after auth inputs."""
+
+    value = _header_selector(headers, "x-legaldesk-correlation-id")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AuthorizationDenied("access denied")
+    try:
+        return str(UUID(value))
+    except (ValueError, AttributeError) as exc:
+        raise AuthorizationDenied("access denied") from exc
+
+
+def _header_opaque_id(headers: Mapping[object, object], name: str) -> str | None:
+    value = _header_selector(headers, name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value) > 128:
+        raise AuthorizationDenied("access denied")
+    try:
+        return str(UUID(value))
+    except (ValueError, AttributeError) as exc:
+        raise AuthorizationDenied("access denied") from exc
+
+
+def _resolve_invocation_binding(
+    headers: Mapping[object, object],
+    *,
+    subject: str,
+    matter_id: str,
+    grant_repository: GatewayGrantRepository | None,
+) -> tuple[str | None, str | None, Mapping[str, object] | None]:
+    """Resolve an application-issued scope before accepting its correlation.
+
+    The legacy component path has no invocation ID and retains its generated
+    correlation behavior. Application Harness calls carry an opaque record ID;
+    only the record's subject/matter/memory scope/correlation are authoritative.
+    """
+
+    invocation_id = _header_opaque_id(headers, "x-legaldesk-invocation-id")
+    header_correlation = _header_correlation_id(headers)
+    if invocation_id is None:
+        # A caller-controlled correlation/memory header is never a trusted
+        # application scope. Legacy callers omit all of these headers and get
+        # a newly generated correlation ID.
+        if header_correlation is not None or any(
+            _header_selector(headers, name) is not None
+            for name in (
+                "x-legaldesk-memory-actor-id",
+                "x-legaldesk-memory-session-id",
+            )
+        ):
+            raise AuthorizationDenied("access denied")
+        return None, None, None
+    if grant_repository is None:
+        raise AuthorizationDenied("access denied")
+    try:
+        item = grant_repository.get_invocation(invocation_id)
+    except Exception as exc:
+        raise AuthorizationDenied("access denied") from exc
+    if not isinstance(item, Mapping) or set(item) != {
+        "pk", "sk", "entityType", "verifiedSubject", "requestedMatterId",
+        "correlationId", "memoryActorId", "memorySessionId", "allowedTools",
+        "expiresAt",
+    } or any(
+        (
+            item.get("pk") != gateway_invocation_partition_key(invocation_id),
+            item.get("sk") != GATEWAY_GRANT_SORT_KEY,
+            item.get("entityType") != GATEWAY_INVOCATION_ENTITY,
+        )
+    ):
+        raise AuthorizationDenied("access denied")
+    if (
+        item.get("verifiedSubject") != subject
+        or item.get("requestedMatterId") != matter_id
+        or not isinstance(item.get("correlationId"), str)
+        or not isinstance(item.get("memoryActorId"), str)
+        or not isinstance(item.get("memorySessionId"), str)
+    ):
+        raise AuthorizationDenied("access denied")
+    expires_at = item.get("expiresAt")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float, Decimal)):
+        raise AuthorizationDenied("access denied")
+    if not math.isfinite(float(expires_at)) or float(expires_at) <= time.time():
+        raise AuthorizationDenied("access denied")
+    try:
+        correlation_id = str(UUID(item["correlationId"]))
+    except (ValueError, AttributeError) as exc:
+        raise AuthorizationDenied("access denied") from exc
+    if header_correlation is not None and header_correlation != correlation_id:
+        raise AuthorizationDenied("access denied")
+    allowed_tools = item.get("allowedTools")
+    if (
+        not isinstance(allowed_tools, list)
+        or not allowed_tools
+        or any(tool not in _APPLICATION_ALLOWED_TOOL_NAMES for tool in allowed_tools)
+    ):
+        raise AuthorizationDenied("access denied")
+    for header_name, item_name in (
+        ("x-legaldesk-memory-actor-id", "memoryActorId"),
+        ("x-legaldesk-memory-session-id", "memorySessionId"),
+    ):
+        value = _header_selector(headers, header_name)
+        if value != item[item_name]:
+            raise AuthorizationDenied("access denied")
+    return invocation_id, correlation_id, item
 
 
 def _normalize_tools_list_body(body: Mapping[str, object]) -> dict[str, object]:
@@ -366,9 +554,18 @@ def transform_gateway_request(
     if header_matter_id is not None and header_matter_id != raw_matter_id:
         raise AuthorizationDenied("access denied")
     matter_id = raw_matter_id
-    correlation_id = str(correlation_id_factory())
+    # Application Harness calls must resolve a server-issued binding before
+    # their correlation or Memory headers are accepted. Legacy component
+    # calls retain generated correlation when no invocation ID is present.
+    invocation_id, bound_correlation_id, invocation_record = _resolve_invocation_binding(
+        headers,
+        subject=subject,
+        matter_id=matter_id,
+        grant_repository=grant_repository,
+    )
+    correlation_id = bound_correlation_id or str(correlation_id_factory())
     try:
-        UUID(correlation_id)
+        correlation_id = str(UUID(correlation_id))
     except (ValueError, AttributeError) as exc:
         raise AuthorizationDenied("access denied") from exc
     context = build_request_context(
@@ -381,6 +578,11 @@ def transform_gateway_request(
         raise AuthorizationDenied("access denied")
     started_at = time.perf_counter()
     operation = _local_gateway_tool_name(params.get("name"))
+    application_tool_name = (
+        f"@legaldesk_gateway/{target.value}{GATEWAY_TOOL_DELIMITER}{operation}"
+    )
+    if invocation_record is not None and application_tool_name not in invocation_record["allowedTools"]:
+        raise AuthorizationDenied("access denied")
     emit_telemetry(
         telemetry_sink,
         TelemetryEventType.AGENT,
@@ -431,6 +633,12 @@ def transform_gateway_request(
     envelope = InterceptorEnvelope(subject, context.matter_id, context.correlation_id)
     transformed_body = dict(body)
     transformed_params = dict(params)
+    # Preserve the Gateway-visible qualified name. AgentCore uses the
+    # ``target___tool`` prefix to select the target after this interceptor
+    # returns. Lambda targets expose that qualified name through provider
+    # context, while aggregated MCP targets receive their local tool name from
+    # Gateway. Rewriting it here would authorize the call and then make target
+    # routing fail before the target is invoked.
     transformed_arguments = dict(arguments)
     transformed_params["arguments"] = transformed_arguments
     transformed_body["params"] = transformed_params
@@ -441,19 +649,33 @@ def transform_gateway_request(
         # validation. Reinsert only the already-compared raw selector; the
         # Lambda handler removes it before parsing and never uses it for scope.
         transformed_arguments["matterId"] = raw_matter_id
-        grant_id = str(grant_id_factory())
+        # A user-facing review action is one idempotent capability for this
+        # invocation. Repeated model/tool attempts reuse its invocation ID;
+        # legacy component calls retain a fresh grant per request.
+        grant_id = invocation_id or str(grant_id_factory())
         try:
             UUID(grant_id)
         except (ValueError, AttributeError) as exc:
             del exc
             fail_after_start()
+        invocation_expiry = (
+            invocation_record.get("expiresAt")
+            if isinstance(invocation_record, Mapping)
+            else None
+        )
+        expires_at = (
+            int(invocation_expiry)
+            if isinstance(invocation_expiry, (int, float, Decimal))
+            and not isinstance(invocation_expiry, bool)
+            else int(time.time()) + GATEWAY_GRANT_TTL_SECONDS
+        )
         grant = GatewayAuthorizationGrant(
             grant_id=grant_id,
             verified_subject=envelope.verifiedSubject,
             requested_matter_id=envelope.requestedMatterId,
             correlation_id=envelope.correlationId,
             tool_name="create_review_task",
-            expires_at=int(time.time()) + GATEWAY_GRANT_TTL_SECONDS,
+            expires_at=expires_at,
         )
         try:
             grant_repository.put(grant)
@@ -724,13 +946,17 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
 __all__ = [
     "GatewayTarget",
     "GatewayAuthorizationGrant",
+    "HarnessInvocationGrant",
     "GatewayGrantRepository",
     "Boto3DynamoGatewayGrantRepository",
     "InMemoryGatewayGrantRepository",
     "gateway_grant_partition_key",
+    "gateway_invocation_partition_key",
     "GATEWAY_GRANT_ENTITY",
     "GATEWAY_GRANT_SORT_KEY",
     "GATEWAY_GRANT_TTL_SECONDS",
+    "GATEWAY_INVOCATION_ENTITY",
+    "GATEWAY_INVOCATION_TTL_SECONDS",
     "GATEWAY_TOOL_DELIMITER",
     "InterceptorEnvelope",
     "gateway_request_interceptor",

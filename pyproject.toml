@@ -9,6 +9,9 @@ description = "Grounded, tenant-safe legal assistant portfolio project"
 requires-python = ">=3.11"
 dependencies = ["PyJWT[crypto]>=2.10,<3"]
 
+[project.scripts]
+legaldesk = "legaldesk.__main__:main"
+
 [project.optional-dependencies]
 aws = ["boto3>=1.42,<2"]
 

@@ -1,10 +1,30 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: LegalDesk Phase 02 private document storage and metadata table
 
+Parameters:
+  ApplicationOrigin:
+    Type: String
+    Default: http://localhost:8000
+    AllowedPattern: '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
+    Description: Exact browser application origin allowed to PUT presigned uploads
+
 Resources:
   DocumentBucket:
     Type: AWS::S3::Bucket
     Properties:
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - !Ref ApplicationOrigin
+            AllowedMethods:
+              - PUT
+            AllowedHeaders:
+              - Content-Type
+              - x-amz-meta-tenant-id
+              - x-amz-meta-matter-id
+              - x-amz-meta-document-id
+              - x-amz-server-side-encryption
+            MaxAge: 300
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:

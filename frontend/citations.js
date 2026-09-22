@@ -15,6 +15,10 @@
   }
 
   function renderChatResponse(response) {
+    if (response && ["error", "blocked", "documents_processing"].includes(response.operationStatus)) {
+      renderOperationalState(response.operationStatus);
+      return;
+    }
     if (!response || typeof response !== "object" || typeof response.answer !== "string") {
       throw new TypeError("response must contain a string answer");
     }
@@ -25,6 +29,8 @@
     const list = document.getElementById("citation-list");
     const empty = document.getElementById("empty-citations");
     const citationNumbers = new Map();
+    document.getElementById("citation-inspection").hidden = true;
+    document.getElementById("inspection-passage").textContent = "";
 
     list.replaceChildren();
     answer.replaceChildren();
@@ -41,7 +47,13 @@
       if (citation.pageNumber) details.push(`pág. ${citation.pageNumber}`);
       if (citation.section) details.push(citation.section);
       item.append(element("p", "citation-meta", details.join(" · ")));
-      if (citation.sourceUri) item.append(element("p", "citation-source", citation.sourceUri));
+      if (typeof citation.handle === "string" && citation.handle) {
+        const inspect = element("button", "citation-inspect", "Inspeccionar pasaje");
+        inspect.type = "button";
+        inspect.dataset.handle = citation.handle;
+        inspect.setAttribute("aria-label", `Inspeccionar el pasaje de la cita ${index + 1}`);
+        item.append(inspect);
+      }
       list.append(item);
     });
 
@@ -77,31 +89,28 @@
       : "Fuentes consultadas";
   }
 
-  window.LegalDeskCitationPanel = Object.freeze({ renderChatResponse });
+  function renderOperationalState(operationStatus) {
+    document.getElementById("citation-inspection").hidden = true;
+    document.getElementById("inspection-passage").textContent = "";
+    const answer = document.getElementById("answer");
+    const status = document.getElementById("evidence-status");
+    const disclaimer = document.getElementById("disclaimer");
+    const list = document.getElementById("citation-list");
+    const empty = document.getElementById("empty-citations");
+    answer.replaceChildren();
+    list.replaceChildren();
+    list.hidden = true;
+    empty.hidden = false;
+    disclaimer.hidden = true;
+    const labels = {
+      documents_processing: "DOCUMENTOS EN PROCESAMIENTO",
+      error: "ERROR OPERATIVO",
+      blocked: "OPERACIÓN BLOQUEADA",
+    };
+    status.dataset.status = operationStatus || "";
+    status.querySelector("span:last-child").textContent = labels[operationStatus] || "ESPERANDO CONSULTA";
+    answer.append(element("p", "", labels[operationStatus] || "La respuesta aparecerá aquí después de una consulta autorizada."));
+  }
 
-  const demoResponse = {
-    answer: "El acuerdo establece un plazo de 17 días. El anexo precisa que el cómputo comienza al recibirse la factura.",
-    citations: [
-      {
-        citationId: "citation-1",
-        documentId: "doc-sundial-agreement",
-        documentName: "Acuerdo de servicios — versión ficticia.pdf",
-        sourceUri: "s3://legaldesk-demo/fictional/sundial/agreement.pdf",
-        pageNumber: 4,
-        section: "Payment terms",
-      },
-      {
-        citationId: "citation-2",
-        documentId: "doc-sundial-annex",
-        documentName: "Anexo de facturación — versión ficticia.pdf",
-        sourceUri: "s3://legaldesk-demo/fictional/sundial/annex.pdf",
-        pageNumber: 2,
-        section: "Invoice cycle",
-      },
-    ],
-    evidenceStatus: "answerable",
-    disclaimerRequired: true,
-  };
-
-  document.addEventListener("DOMContentLoaded", () => renderChatResponse(demoResponse));
+  window.LegalDeskCitationPanel = Object.freeze({ renderChatResponse, renderOperationalState });
 })();

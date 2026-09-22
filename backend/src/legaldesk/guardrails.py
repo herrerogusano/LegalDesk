@@ -19,6 +19,15 @@ _LOGGER = logging.getLogger("legaldesk.guardrails")
 _VALID_ACTIONS = {"NONE", "GUARDRAIL_INTERVENED"}
 _BLOCKING_ASSESSMENT_ACTIONS = {"BLOCKED", "BLOCK", "GUARDRAIL_INTERVENED"}
 _NON_BLOCKING_ASSESSMENT_ACTIONS = {"NONE", "ANONYMIZED"}
+_KNOWN_ASSESSMENT_POLICIES = {
+    "automatedReasoningPolicy",
+    "contentPolicy",
+    "contextualGroundingPolicy",
+    "sensitiveInformationPolicy",
+    "topicPolicy",
+    "wordPolicy",
+}
+_ASSESSMENT_METADATA = {"invocationMetrics", "appliedGuardrailDetails"}
 
 
 class GuardrailStage(StrEnum):
@@ -31,6 +40,14 @@ class GuardrailOutcome(StrEnum):
     ANONYMIZED = "anonymized"
     BLOCKED = "blocked"
     ERROR = "error"
+
+
+class GroundingGuardrailError(RuntimeError):
+    """Provider or schema failure while evaluating contextual grounding."""
+
+
+class GroundingGuardrailBlocked(PermissionError):
+    """Provider policy blocked the generated answer."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,6 +309,231 @@ class GuardrailProcessor:
         return GuardrailResult(outcome, content)
 
 
+class GuardrailGroundingValidator:
+    """Concrete grounding adapter backed by Bedrock contextual assessments.
+
+    This is intentionally separate from the lexical test oracle. A provider
+    response must contain a well-formed contextual-grounding filter, score,
+    threshold, and non-blocking action; otherwise the adapter fails closed.
+    """
+
+    performs_output_guardrail = True
+
+    def __init__(
+        self,
+        client: BedrockGuardrailClient,
+        config: GuardrailConfig,
+        *,
+        minimum_score: float = 0.75,
+        audit_sink: GuardrailAuditSink | None = None,
+        telemetry_sink: TelemetrySink | None = None,
+    ) -> None:
+        if isinstance(minimum_score, bool) or not isinstance(minimum_score, (int, float)):
+            raise ValueError("minimum_score is invalid")
+        if not 0.0 <= float(minimum_score) <= 1.0:
+            raise ValueError("minimum_score is invalid")
+        self._client = client
+        self._config = config
+        self._minimum_score = float(minimum_score)
+        self._audit_sink = audit_sink or LoggingGuardrailAuditSink()
+        self._telemetry_sink = telemetry_sink
+
+    def validate(self, request: object) -> Mapping[str, object]:
+        question = getattr(request, "question", None)
+        answer = getattr(request, "answer", None)
+        evidence = getattr(request, "evidence", None)
+        supporting = getattr(request, "supporting_citation_ids", None)
+        if (
+            not isinstance(question, str)
+            or not question.strip()
+            or not isinstance(answer, str)
+            or not answer.strip()
+            or not isinstance(evidence, (list, tuple))
+            or not isinstance(supporting, (list, tuple))
+            or not supporting
+        ):
+            raise GroundingGuardrailError("grounding request is invalid")
+        if len(question) > 1_000 or len(answer) > 5_000:
+            raise GroundingGuardrailError("grounding content exceeds provider limits")
+        evidence_texts: list[str] = []
+        for passage in evidence:
+            text = getattr(passage, "text", None)
+            if not isinstance(text, str) or not text.strip():
+                raise GroundingGuardrailError("grounding evidence is invalid")
+            evidence_texts.append(text)
+        if sum(len(text) for text in evidence_texts) > 100_000:
+            raise GroundingGuardrailError("grounding sources exceed provider limits")
+        content: list[dict[str, object]] = [
+            {"text": {"text": question, "qualifiers": ["query"]}}
+        ]
+        for text in evidence_texts:
+            content.append({"text": {"text": text, "qualifiers": ["grounding_source"]}})
+        content.append({"text": {"text": answer}})
+        correlation_id = getattr(request, "correlation_id", None)
+        if not isinstance(correlation_id, str):
+            correlation_id = "00000000-0000-4000-8000-000000000000"
+        try:
+            response = self._client.apply_guardrail(
+                guardrailIdentifier=self._config.identifier,
+                guardrailVersion=self._config.version,
+                source="OUTPUT",
+                content=content,
+                outputScope="FULL",
+            )
+        except Exception as exc:
+            self._record(correlation_id, GuardrailOutcome.ERROR)
+            raise GroundingGuardrailError("grounding provider failed") from exc
+        try:
+            (
+                top_action,
+                grounding_score,
+                grounding_threshold,
+                relevance_score,
+                relevance_threshold,
+                grounding_action,
+                relevance_action,
+            ) = self._contextual_assessment(response)
+        except Exception as exc:
+            self._record(correlation_id, GuardrailOutcome.ERROR)
+            raise GroundingGuardrailError("grounding assessment is malformed") from exc
+        if top_action == "GUARDRAIL_INTERVENED" or (
+            grounding_action in _BLOCKING_ASSESSMENT_ACTIONS
+            or relevance_action in _BLOCKING_ASSESSMENT_ACTIONS
+        ):
+            self._record(correlation_id, GuardrailOutcome.BLOCKED, action=top_action)
+            raise GroundingGuardrailBlocked("grounding policy blocked output")
+        outputs = _returned_texts(response.get("outputs", ())) if isinstance(response, Mapping) else None
+        if outputs is None or outputs:
+            self._record(correlation_id, GuardrailOutcome.ERROR)
+            raise GroundingGuardrailError("guardrail output is inconsistent with NONE action")
+        if grounding_action != "NONE" or relevance_action != "NONE":
+            self._record(correlation_id, GuardrailOutcome.ERROR)
+            raise GroundingGuardrailError("grounding assessment action is invalid")
+        effective_grounding_threshold = max(self._minimum_score, grounding_threshold)
+        effective_relevance_threshold = max(0.5, relevance_threshold)
+        # The downstream contract's score is grounding confidence. Relevance
+        # has its own threshold and must not be reinterpreted as grounding.
+        score = grounding_score
+        self._record(
+            correlation_id,
+            GuardrailOutcome.ALLOWED
+            if grounding_score >= effective_grounding_threshold
+            and relevance_score >= effective_relevance_threshold
+            else GuardrailOutcome.BLOCKED,
+        )
+        if (
+            grounding_score < effective_grounding_threshold
+            or relevance_score < effective_relevance_threshold
+        ):
+            return {
+                "grounded": False,
+                "score": score,
+                "matchedCitationIds": [],
+            }
+        # Bedrock reports one aggregate score for the tagged source set; it
+        # does not attest entailment independently for each passage. These
+        # IDs therefore preserve the server-selected support set for the
+        # existing contract, rather than claiming per-citation findings.
+        return {
+            "grounded": True,
+            "score": score,
+            "matchedCitationIds": list(supporting),
+        }
+
+    @staticmethod
+    def _contextual_assessment(
+        response: object,
+    ) -> tuple[str, float, float, float, float, str, str]:
+        if not isinstance(response, Mapping) or response.get("action") not in _VALID_ACTIONS:
+            raise ValueError("guardrail response is malformed")
+        top_action = response["action"]
+        assessments = response.get("assessments")
+        if not isinstance(assessments, (list, tuple)):
+            raise ValueError("assessments are missing")
+        for assessment in assessments:
+            if not isinstance(assessment, Mapping):
+                raise ValueError("assessment is malformed")
+            unknown_policies = set(assessment) - (_KNOWN_ASSESSMENT_POLICIES | _ASSESSMENT_METADATA)
+            if unknown_policies:
+                raise ValueError("unknown policy assessment")
+            for policy_name, policy_value in assessment.items():
+                if not isinstance(policy_value, Mapping):
+                    raise ValueError("policy assessment is malformed")
+                if policy_name in _ASSESSMENT_METADATA:
+                    continue
+                if policy_name != "contextualGroundingPolicy":
+                    policy_actions = _assessment_actions(policy_value)
+                    if policy_actions is None or (
+                        not policy_actions and _has_nonempty_policy_payload(policy_value)
+                    ):
+                        raise ValueError("policy assessment action is missing")
+        all_actions = _assessment_actions(assessments)
+        if all_actions is None or any(
+            action not in _NON_BLOCKING_ASSESSMENT_ACTIONS | _BLOCKING_ASSESSMENT_ACTIONS
+            for action in all_actions
+        ):
+            raise ValueError("policy assessment is malformed")
+        if any(action != "NONE" for action in all_actions):
+            # PII/topic/relevance intervention must never be ignored merely
+            # because a contextual grounding filter also returned NONE.
+            return top_action, 0.0, 1.0, 0.0, 1.0, "BLOCKED", "BLOCKED"
+        filters: list[Mapping[str, object]] = []
+        for assessment in assessments:
+            if not isinstance(assessment, Mapping):
+                raise ValueError("assessment is malformed")
+            policy = assessment.get("contextualGroundingPolicy")
+            if policy is None:
+                continue
+            if not isinstance(policy, Mapping) or not isinstance(policy.get("filters"), (list, tuple)):
+                raise ValueError("contextual grounding policy is malformed")
+            for item in policy["filters"]:
+                if not isinstance(item, Mapping) or item.get("type") not in {"GROUNDING", "RELEVANCE"}:
+                    raise ValueError("contextual grounding filter is malformed")
+                filters.append(item)
+        if len(filters) != 2 or {item.get("type") for item in filters} != {"GROUNDING", "RELEVANCE"}:
+            raise ValueError("exactly one grounding and relevance filter are required")
+
+        parsed: dict[str, tuple[float, float, str]] = {}
+        for item in filters:
+            filter_type = item["type"]
+            score = item.get("score")
+            threshold = item.get("threshold")
+            action = item.get("action")
+            if (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or isinstance(threshold, bool)
+                or not isinstance(threshold, (int, float))
+                or not isinstance(action, str)
+                or not 0.0 <= float(score) <= 1.0
+                or not 0.0 <= float(threshold) <= 1.0
+            ):
+                raise ValueError("grounding filter values are malformed")
+            parsed[str(filter_type)] = (float(score), float(threshold), action.upper())
+        grounding = parsed["GROUNDING"]
+        relevance = parsed["RELEVANCE"]
+        return top_action, grounding[0], grounding[1], relevance[0], relevance[1], grounding[2], relevance[2]
+
+    def _record(self, correlation_id: str, outcome: GuardrailOutcome, *, action: str | None = None) -> None:
+        safe_action = action or ("ERROR" if outcome is GuardrailOutcome.ERROR else "NONE")
+        self._audit_sink.record(
+            GuardrailAuditEvent(correlation_id, GuardrailStage.OUTPUT, safe_action, outcome)
+        )
+        emit_telemetry(
+            self._telemetry_sink,
+            TelemetryEventType.GUARDRAIL,
+            correlation_id,
+            {
+                GuardrailOutcome.ALLOWED: TelemetryOutcome.SUCCEEDED,
+                GuardrailOutcome.BLOCKED: TelemetryOutcome.BLOCKED,
+                GuardrailOutcome.ERROR: TelemetryOutcome.ERROR,
+                GuardrailOutcome.ANONYMIZED: TelemetryOutcome.SUCCEEDED,
+            }[outcome],
+            operation=GuardrailStage.OUTPUT.value,
+            error_code=("guardrail_error" if outcome is GuardrailOutcome.ERROR else None),
+        )
+
+
 def _assessment_actions(value: object) -> tuple[str, ...] | None:
     """Collect action fields from Bedrock's nested assessment unions."""
 
@@ -319,6 +561,16 @@ def _assessment_actions(value: object) -> tuple[str, ...] | None:
     if not visit(value):
         return None
     return tuple(actions)
+
+
+def _has_nonempty_policy_payload(value: object) -> bool:
+    """Distinguish a valid empty policy result from malformed populated data."""
+
+    if isinstance(value, Mapping):
+        return any(_has_nonempty_policy_payload(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return bool(value) and any(_has_nonempty_policy_payload(item) for item in value)
+    return value not in (None, "")
 
 
 def _returned_texts(value: object) -> tuple[str, ...] | None:
