@@ -16,13 +16,78 @@
 
   const $ = (id) => document.getElementById(id);
   const controls = ["matter-select", "document-file", "upload-button", "question", "ask-button", "sync-button", "metadata-button", "review-button", "audit-button"];
+  const DOCUMENT_STATUS_LABELS = Object.freeze({
+    PENDING_UPLOAD: "Pendiente de subida",
+    UPLOADED: "Pendiente de indexación",
+    PENDING_INGESTION: "Procesando",
+    INDEXED: "Listo para consultar",
+    FAILED: "Requiere atención",
+  });
+  const UPLOAD_STAGES = Object.freeze(["authorize", "upload", "verify", "index"]);
 
-  function setMessage(message, error) {
+  function setMessage(message, error, tone) {
     const node = $(error ? "app-error" : "app-status");
     const other = $(error ? "app-status" : "app-error");
     node.textContent = message || "";
     node.hidden = !message;
+    node.dataset.state = message ? (error ? "error" : tone || "info") : "";
+    other.dataset.state = "";
     if (message) other.hidden = true;
+  }
+
+  function clearMessages() {
+    ["app-error", "app-status"].forEach((id) => {
+      const node = $(id);
+      node.textContent = "";
+      node.hidden = true;
+      node.dataset.state = "";
+    });
+  }
+
+  function selectedFile() {
+    const input = $("document-file");
+    return input && input.files && input.files.length ? input.files[0] : null;
+  }
+
+  function formatFileSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return "tamaño desconocido";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function renderSelectedFile() {
+    const file = selectedFile();
+    const node = $("selected-file-status");
+    if (!file) {
+      node.textContent = "Sin archivo seleccionado.";
+      node.dataset.state = "empty";
+      return;
+    }
+    node.textContent = `Archivo seleccionado: ${file.name} · ${formatFileSize(file.size)} · ${file.type || "tipo no indicado"}`;
+    node.dataset.state = "selected";
+  }
+
+  function setUploadProgress(stage, message) {
+    const workspace = $("upload-workspace");
+    const progress = $("upload-progress");
+    const status = $("upload-progress-message");
+    const active = UPLOAD_STAGES.includes(stage);
+    progress.hidden = stage === "idle";
+    workspace.setAttribute("aria-busy", active ? "true" : "false");
+    workspace.dataset.state = stage;
+    if (message) status.textContent = message;
+    progress.dataset.state = stage;
+    progress.querySelectorAll("[data-upload-stage]").forEach((step, index) => {
+      const stepStage = step.dataset.uploadStage;
+      const currentIndex = UPLOAD_STAGES.indexOf(stage);
+      const stepState = stage === "complete" || (currentIndex >= 0 && index < currentIndex)
+        ? "complete"
+        : stepStage === stage ? "active" : stage === "error" ? "error" : "pending";
+      step.dataset.state = stepState;
+      if (stepStage === stage) step.setAttribute("aria-current", "step");
+      else step.removeAttribute("aria-current");
+    });
   }
 
   function setOperator(value) {
@@ -48,12 +113,16 @@
 
   function refreshControls() {
     const enabled = Boolean(state.me);
+    const hasFile = Boolean(selectedFile());
+    const retryable = state.documents.some((item) => item && ["UPLOADED", "FAILED"].includes(item.status));
     $("matter-select").disabled = !enabled;
     $("document-file").disabled = !authorized() || state.busy;
-    $("upload-button").disabled = !authorized() || state.busy;
+    $("upload-button").disabled = !authorized() || state.busy || !hasFile;
     $("question").disabled = !authorized() || state.busy;
     $("ask-button").disabled = !authorized() || state.busy;
-    $("sync-button").disabled = !authorized() || state.busy || !state.documents.some((item) => item && ["UPLOADED", "FAILED"].includes(item.status));
+    $("sync-button").disabled = !authorized() || state.busy || !retryable;
+    $("sync-button").hidden = !retryable;
+    $("sync-helper").hidden = !retryable;
     $("metadata-button").disabled = !authorized() || state.busy;
     $("review-button").disabled = !authorized() || state.busy;
     $("audit-button").disabled = !enabled || state.busy;
@@ -93,6 +162,7 @@
   function clearMatterView() {
     $("matter-kicker").textContent = "SELECCIONA UN EXPEDIENTE";
     $("document-status").textContent = "Selecciona un expediente para empezar.";
+    $("document-count").textContent = "0 documentos";
     $("document-list").replaceChildren();
     $("document-list").append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "Selecciona un expediente para ver sus documentos." }));
     $("history-list").replaceChildren();
@@ -103,6 +173,11 @@
     $("empty-citations").hidden = false;
     $("citation-inspection").hidden = true;
     $("operator-output").textContent = "";
+    const fileInput = $("document-file");
+    fileInput.value = "";
+    renderSelectedFile();
+    setUploadProgress("idle");
+    clearMessages();
     $("evidence-status").dataset.status = "";
     $("evidence-status").querySelector("span:last-child").textContent = "ESPERANDO CONSULTA";
     $("question").value = "";
@@ -111,17 +186,21 @@
 
   function renderDocuments(documents) {
     state.documents = Array.isArray(documents) ? documents : [];
-    if (state.documents.some((item) => item && ["UPLOADED", "PENDING_INGESTION", "PENDING_UPLOAD"].includes(item.status))) {
-      $("document-status").textContent = "Documento recibido; todavía se está procesando.";
-    } else if (state.documents.some((item) => item && item.status === "FAILED")) {
-      $("document-status").textContent = "Un documento requiere revisar su fallo de indexación.";
-    } else if (state.documents.some((item) => item && item.status === "INDEXED")) {
-      $("document-status").textContent = "Documento indexado y disponible para consulta.";
-    }
+    const count = state.documents.length;
+    $("document-count").textContent = `${count} ${count === 1 ? "documento" : "documentos"}`;
+    const processing = state.documents.filter((item) => item && ["UPLOADED", "PENDING_INGESTION", "PENDING_UPLOAD"].includes(item.status)).length;
+    const failed = state.documents.filter((item) => item && item.status === "FAILED").length;
+    const indexed = state.documents.filter((item) => item && item.status === "INDEXED").length;
+    if (!count) $("document-status").textContent = "No hay documentos autorizados en este expediente.";
+    else if (failed) $("document-status").textContent = `${failed} ${failed === 1 ? "documento requiere" : "documentos requieren"} atención.`;
+    else if (processing) $("document-status").textContent = `${processing} ${processing === 1 ? "documento se está" : "documentos se están"} preparando para consulta.`;
+    else if (indexed) $("document-status").textContent = `${indexed} ${indexed === 1 ? "documento está" : "documentos están"} listos para consultar.`;
+    else $("document-status").textContent = "Revisa el estado de los documentos del expediente.";
     const list = $("document-list");
     list.replaceChildren();
     if (!state.documents.length) {
-      list.append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "No hay documentos autorizados." }));
+      list.append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "Aún no hay documentos autorizados." }));
+      refreshControls();
       return;
     }
     state.documents.forEach((documentRecord) => {
@@ -130,10 +209,12 @@
       const name = document.createElement("strong");
       name.textContent = typeof documentRecord.name === "string" ? documentRecord.name : "Documento";
       const details = document.createElement("span");
-      details.textContent = `${documentRecord.status || "estado desconocido"} · ${documentRecord.documentId || ""}`;
+      details.textContent = DOCUMENT_STATUS_LABELS[documentRecord.status] || "Estado no disponible";
+      item.dataset.status = documentRecord.status || "unknown";
       item.append(name, details);
       list.append(item);
     });
+    refreshControls();
   }
 
   function renderHistory(events) {
@@ -241,6 +322,7 @@
     const generation = currentGeneration();
     setBusy(true);
     try {
+      setUploadProgress("authorize", "Autorizando subida…");
       setMessage("Autorizando subida…", false);
       const authorization = await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents/upload-authorizations`, {
         method: "POST",
@@ -248,6 +330,7 @@
         signal: state.controller.signal,
       });
       if (!isCurrent(generation)) return;
+      setUploadProgress("upload", "Subiendo documento…");
       const uploadResponse = await fetch(authorization.presignedUrl || authorization.uploadUrl, {
         method: authorization.method || "PUT",
         headers: authorization.headers || {},
@@ -258,14 +341,24 @@
       if (!isCurrent(generation)) return;
       if (!uploadResponse.ok) throw new Error("La subida del documento no se pudo completar.");
       const documentId = authorization.document && authorization.document.documentId;
+      setUploadProgress("verify", "Verificando documento…");
       await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents/${encodeURIComponent(documentId)}/confirm`, { method: "POST", body: "{}", signal: state.controller.signal });
       if (!isCurrent(generation)) return;
+      setUploadProgress("index", "Indexando documento…");
       await api(`/api/matters/${encodeURIComponent(state.matterId)}/sync`, { method: "POST", body: JSON.stringify({ documentIds: [documentId] }), signal: state.controller.signal });
       if (!isCurrent(generation)) return;
-      $("document-status").textContent = "Sincronización solicitada; comprobando estado…";
+      $("document-status").textContent = "Indexando el documento; comprobando estado…";
       await loadDocuments(generation);
+      if (isCurrent(generation)) {
+        const documentRecord = state.documents.find((item) => item && item.documentId === documentId);
+        const status = documentRecord && typeof documentRecord.status === "string" ? documentRecord.status : "UNKNOWN";
+        const humanStatus = DOCUMENT_STATUS_LABELS[status] || "Estado no disponible";
+        setUploadProgress("complete", `Documento listo: ${humanStatus}.`);
+        setMessage(`Subida completada. Estado de indexación: ${humanStatus}.`, false, "success");
+      }
     } catch (error) {
       if (error.name === "AbortError" || !isCurrent(generation)) return;
+      setUploadProgress("error", "La subida necesita atención. Puedes intentarlo de nuevo.");
       setMessage(error.message, true);
     } finally {
       if (isCurrent(generation)) setBusy(false);
@@ -312,7 +405,9 @@
     try {
       const result = await api(`/api/citations?handle=${encodeURIComponent(button.dataset.handle)}`, { signal: state.controller.signal });
       if (!isCurrent(generation)) return;
-      $("inspection-meta").textContent = `${result.documentId || "Documento"} · expediente ${result.matterId || ""}`;
+      // The API response deliberately contains technical IDs for authorization,
+      // but the normal source view should remain intelligible to legal users.
+      $("inspection-meta").textContent = `${button.dataset.documentName || "Documento del expediente"} · pasaje autorizado`;
       $("inspection-passage").textContent = result.passage || "";
       $("citation-inspection").hidden = false;
     } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); }
@@ -360,6 +455,12 @@
     $("login-button").addEventListener("click", () => { window.location.assign("/login"); });
     $("logout-button").addEventListener("click", logout);
     $("matter-select").addEventListener("change", (event) => chooseMatter(event.target.value));
+    $("document-file").addEventListener("change", () => {
+      clearMessages();
+      renderSelectedFile();
+      setUploadProgress("idle");
+      refreshControls();
+    });
     $("upload-button").addEventListener("click", uploadDocument);
     $("chat-form").addEventListener("submit", askQuestion);
     $("question").addEventListener("input", () => { $("question-count").textContent = `${$("question").value.length} / 1000`; });

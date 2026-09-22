@@ -22,6 +22,10 @@ def main():
     composition.public_base_url = base
     composition.redirect_uri = f"{base}/callback"
     fixture.fixture.put_server.server.allowed_origin = base
+    # The fixture JWT expires after ten minutes.  Keep the manual offline
+    # demo usable when the server was started before the guided login by
+    # minting a fresh fictional token for each local code exchange.
+    composition.token_exchange.token_supplier = lambda: fixture.fixture._token("alice")
     print(json.dumps({"baseUrl": base, "pid": os.getpid(), "providers": "LOCAL_DOUBLES_ONLY"}), flush=True)
     try:
         threading.Event().wait()

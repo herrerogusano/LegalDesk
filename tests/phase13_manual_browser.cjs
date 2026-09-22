@@ -26,11 +26,20 @@ function parseBaseUrl(value) {
   return new URL(value);
 }
 
-function printInstructions(baseUrl) {
+function printInstructions(baseUrl, prepareDemoFile) {
   console.log(`[manual-demo] browser open at ${baseUrl}`);
   console.log("[manual-demo] login is completed by the fictional local IdP redirect; no credentials are used.");
   console.log("[manual-demo] perform the business actions manually in the browser; close it or press Ctrl+C to stop.");
+  if (prepareDemoFile) {
+    console.log("[manual-demo] the fictional evidence file will be selected automatically after a matter is chosen; you still authorize the upload.");
+  }
 }
+
+const MANUAL_DEMO_FILE = Object.freeze({
+  name: "manual-demo-evidence.txt",
+  mimeType: "text/plain",
+  buffer: Buffer.from("The inspection period is four years.", "utf8"),
+});
 
 function runPreflight(baseUrl) {
   assert.equal(isLoopbackUrl(baseUrl.toString()), true);
@@ -51,6 +60,7 @@ function runPreflight(baseUrl) {
 
 async function main() {
   const baseUrl = parseBaseUrl(process.argv[2]);
+  const prepareDemoFile = process.argv.includes("--prepare-demo-file");
   if (process.argv.includes("--preflight")) {
     runPreflight(baseUrl);
     return;
@@ -93,7 +103,19 @@ async function main() {
     console.error(`[manual-demo] page error: ${errorType}`);
   });
   await page.goto(baseUrl.toString(), { waitUntil: "domcontentloaded" });
-  printInstructions(baseUrl.toString());
+  printInstructions(baseUrl.toString(), prepareDemoFile);
+
+  if (prepareDemoFile) {
+    void page.waitForFunction(() => !document.querySelector("#document-file")?.disabled)
+      .then(() => page.locator("#document-file").setInputFiles(MANUAL_DEMO_FILE))
+      .then(() => console.log("[manual-demo] fictional evidence file selected; click Autorizar subida when ready."))
+      .catch((error) => {
+        if (!closing) {
+          const errorType = error && typeof error.name === "string" ? error.name : "UnknownError";
+          console.error(`[manual-demo] could not prepare fictional evidence: ${errorType}`);
+        }
+      });
+  }
 
   await new Promise((resolve) => {
     browser.on("disconnected", resolve);

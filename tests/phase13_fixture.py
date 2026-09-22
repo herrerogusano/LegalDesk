@@ -249,12 +249,16 @@ class FakeTokenExchange:
     token: str = ""
 
     def __init__(self, _endpoint: str, _client_id: str) -> None:
-        pass
+        # The manual demo may install a local-only supplier so a server kept
+        # open for a guided session does not reuse its startup JWT forever.
+        # The default remains the static token used by integration/security
+        # tests, including their expired-token scenarios.
+        self.token_supplier = None
 
     def exchange(self, code: str, *, code_verifier: str, redirect_uri: str) -> str:
         if code != "integration-code" or not code_verifier or not redirect_uri:
             raise ValueError("token exchange failed")
-        return self.token
+        return self.token_supplier() if self.token_supplier is not None else self.token
 
 
 class Phase13ProviderFixture:

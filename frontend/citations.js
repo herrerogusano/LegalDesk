@@ -30,6 +30,7 @@
     const empty = document.getElementById("empty-citations");
     const citationNumbers = new Map();
     document.getElementById("citation-inspection").hidden = true;
+    document.getElementById("inspection-meta").textContent = "";
     document.getElementById("inspection-passage").textContent = "";
 
     list.replaceChildren();
@@ -41,16 +42,21 @@
       item.id = `source-${index + 1}`;
       item.tabIndex = -1;
       item.dataset.citationId = citation.citationId;
-      const title = citation.documentName || citation.documentId || "Documento sin nombre";
+      // IDs remain in the response for server-side handles and validation, but
+      // are never exposed in the normal citation view.
+      const title = typeof citation.documentName === "string" && citation.documentName.trim()
+        ? citation.documentName.trim()
+        : "Documento del expediente";
       item.append(element("p", "citation-title", title));
-      const details = [citation.documentId];
+      const details = [];
       if (citation.pageNumber) details.push(`pág. ${citation.pageNumber}`);
       if (citation.section) details.push(citation.section);
-      item.append(element("p", "citation-meta", details.join(" · ")));
+      item.append(element("p", "citation-meta", details.length ? details.join(" · ") : "Pasaje recuperado del expediente"));
       if (typeof citation.handle === "string" && citation.handle) {
         const inspect = element("button", "citation-inspect", "Inspeccionar pasaje");
         inspect.type = "button";
         inspect.dataset.handle = citation.handle;
+        inspect.dataset.documentName = title;
         inspect.setAttribute("aria-label", `Inspeccionar el pasaje de la cita ${index + 1}`);
         item.append(inspect);
       }
@@ -91,6 +97,7 @@
 
   function renderOperationalState(operationStatus) {
     document.getElementById("citation-inspection").hidden = true;
+    document.getElementById("inspection-meta").textContent = "";
     document.getElementById("inspection-passage").textContent = "";
     const answer = document.getElementById("answer");
     const status = document.getElementById("evidence-status");

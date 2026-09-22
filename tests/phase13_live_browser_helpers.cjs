@@ -31,7 +31,7 @@ async function waitForIndexedState(page) {
   const handle = await page.waitForFunction(() => {
     const error = document.querySelector("#app-error");
     if (error && !error.hidden) return "error";
-    if (document.querySelector("#document-list").textContent.includes("INDEXED")) return "indexed";
+    if (document.querySelector('#document-list .document-item[data-status="INDEXED"]')) return "indexed";
     return false;
   }, null, { timeout: 300_000 });
   if (!handle || typeof handle.jsonValue !== "function") {

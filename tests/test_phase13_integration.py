@@ -140,6 +140,16 @@ class Phase13ConcreteIntegrationTests(unittest.TestCase):
         self.assertTrue(any(event.get("operation") == "chat" for event in audit["events"]))
         self.assertFalse(any("fictional integration evidence" in json.dumps(event) for event in audit["events"]))
 
+    def test_manual_demo_token_supplier_refreshes_expired_startup_token(self):
+        # The browser server installs this supplier after composition creation;
+        # exercise the same seam without starting a second long-lived server.
+        stale = self.fixture._token("alice", expired=True)
+        fresh = self.fixture._token("alice")
+        FakeTokenExchange.token = stale
+        self.app.composition.token_exchange.token_supplier = lambda: fresh
+
+        self.login()
+
 
 if __name__ == "__main__":
     unittest.main()
