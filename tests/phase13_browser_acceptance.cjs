@@ -61,9 +61,39 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#metadata-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("fictional.txt"));
     await page.locator("#review-reason").selectOption("user_requested_review");
+    await page.locator("#review-note").fill("Revisar el cómputo con criterio profesional.");
+    const dueAtBeforeSubmit = await page.locator("#review-due-at").inputValue();
+    let reviewPostSeen = false;
+    await page.route("**/api/matters/matter-integration/reviews", async route => {
+      if (route.request().method() === "POST" && !reviewPostSeen) {
+        reviewPostSeen = true;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      await route.continue();
+    });
+    const reviewResponsePromise = page.waitForResponse(response => response.url().includes("/api/matters/matter-integration/reviews") && response.request().method() === "POST");
     await page.locator("#review-button").click();
+    await page.waitForFunction(() => {
+      const button = document.querySelector("#review-button");
+      return button?.textContent === "Guardando…" && button.disabled && button.getAttribute("aria-busy") === "true";
+    });
+    const reviewResponse = await reviewResponsePromise;
+    const createdReview = await reviewResponse.json();
+    assert.equal(reviewPostSeen, true);
+    assert.equal(typeof createdReview.reviewTaskId, "string");
     await page.waitForFunction(() => document.querySelector("#app-status").textContent.includes("Revisión guardada en estado Pendiente"));
     await page.waitForFunction(() => document.querySelector("#reviews-pending").textContent.includes("Pendiente"));
+    assert.equal(await page.locator("#review-note").inputValue(), "");
+    assert.equal(await page.locator("#review-reason").inputValue(), "user_requested_review");
+    assert.equal(await page.locator("#review-due-at").inputValue(), dueAtBeforeSubmit);
+    await page.waitForFunction((reviewTaskId) => {
+      const details = Array.from(document.querySelectorAll("#reviews-pending details[data-review-id]"))
+        .find(candidate => candidate.dataset.reviewId === reviewTaskId);
+      return details && details.querySelector("summary") === document.activeElement && details.closest(".review-item")?.classList.contains("review-item--new");
+    }, createdReview.reviewTaskId);
+    assert.equal(await page.locator(`#reviews-pending details[data-review-id="${createdReview.reviewTaskId}"]`).count(), 1);
+    assert.equal(await page.locator("#review-button").textContent(), "Guardar para revisión");
+    assert.equal(await page.locator("#review-button").getAttribute("aria-busy"), null);
     assert.doesNotMatch(await page.locator("#operator-output").innerText(), /reviewTaskId/);
     const firstReview = page.locator("#reviews-pending details").first();
     await firstReview.click();

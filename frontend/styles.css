@@ -184,6 +184,11 @@ textarea { resize: vertical; margin-top: 8px; min-height: 92px; font: 19px/1.45 
 .review-item[data-urgency="soon"] { border-left: 4px solid var(--navy); }
 .review-item[data-urgency="on-track"] { border-left: 4px solid var(--green); }
 .review-item[data-urgency="resolved"] { border-left: 4px solid var(--muted); }
+.review-item--new { border-color: var(--oxblood); box-shadow: 0 0 0 3px rgb(120 58 61 / 16%); animation: review-task-highlight 1.8s ease-out both; }
+@keyframes review-task-highlight {
+  0% { background: rgb(246 232 220 / 92%); box-shadow: 0 0 0 3px rgb(120 58 61 / 25%); }
+  100% { background: rgb(250 248 242 / 72%); box-shadow: 0 0 0 0 rgb(120 58 61 / 0%); }
+}
 .review-item summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 11px 13px; cursor: pointer; list-style: none; }
 .review-item summary::-webkit-details-marker { display: none; }
 .review-item summary::after { content: "+"; color: var(--oxblood); font: 600 18px/1 var(--body); }
@@ -319,4 +324,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  .review-item--new { animation: none; background: rgb(246 232 220 / 92%); box-shadow: 0 0 0 3px rgb(120 58 61 / 16%); }
 }

@@ -472,6 +472,45 @@
     $("review-reason").value = reason;
   }
 
+  function hasValidReviewDueDate(value) {
+    const due = dateOnly(value);
+    if (!due) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return due.getTime() >= today.getTime();
+  }
+
+  function resetReviewFormAfterSubmit(reasonCode, dueAt) {
+    const reason = $("review-reason");
+    if (reason && REVIEW_REASON_LABELS[reasonCode]) reason.value = reasonCode;
+    const note = $("review-note");
+    if (note) note.value = "";
+    const due = $("review-due-at");
+    if (!due) return;
+    if (hasValidReviewDueDate(dueAt)) {
+      due.value = dueAt;
+      return;
+    }
+    due.value = "";
+    setDefaultReviewDueDate();
+  }
+
+  function focusNewReview(reviewTaskId) {
+    if (typeof reviewTaskId !== "string" || !reviewTaskId) return;
+    const details = Array.from(document.querySelectorAll("#reviews-section details[data-review-id]"))
+      .find((candidate) => candidate.dataset.reviewId === reviewTaskId);
+    const item = details && details.closest(".review-item");
+    const summary = details && details.querySelector("summary");
+    if (!item || !summary) return;
+
+    item.classList.remove("review-item--new");
+    item.classList.add("review-item--new");
+    const reducedMotion = Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    item.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+    try { summary.focus({ preventScroll: true }); } catch (_error) { summary.focus(); }
+    window.setTimeout(() => item.classList.remove("review-item--new"), reducedMotion ? 900 : 1800);
+  }
+
   async function loadDocuments(generation) {
     const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents`, { signal: state.controller.signal });
     if (!isCurrent(generation)) return;
@@ -675,17 +714,35 @@
   async function requestReview() {
     if (!authorized() || state.busy) return;
     const generation = currentGeneration();
+    const reviewButton = $("review-button");
+    const reviewButtonLabel = reviewButton ? reviewButton.textContent : "Guardar para revisión";
+    const reasonCode = $("review-reason").value;
     const dueAt = $("review-due-at").value;
     const note = $("review-note").value.trim();
     if (!$("review-reason").value || !dueAt) return setMessage("Indica un motivo y una fecha objetivo para guardar la revisión.", true);
+    if (reviewButton) {
+      reviewButton.textContent = "Guardando…";
+      reviewButton.disabled = true;
+      reviewButton.setAttribute("aria-busy", "true");
+    }
     setBusy(true);
     try {
-      const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews`, { method: "POST", body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, reasonCode: $("review-reason").value, note, dueAt, originCorrelationId: state.correlationId, idempotencyKey: `${state.conversationId}:${state.correlationId}:review` }), signal: state.controller.signal });
+      const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews`, { method: "POST", body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, reasonCode, note, dueAt, originCorrelationId: state.correlationId, idempotencyKey: `${state.conversationId}:${state.correlationId}:review` }), signal: state.controller.signal });
       if (isCurrent(generation)) {
-        setMessage(`Revisión guardada en estado Pendiente. Fecha objetivo: ${formatReviewDate(dueAt)}. No se ha asignado ni notificado automáticamente.`, false, "success");
+        resetReviewFormAfterSubmit(reasonCode, dueAt);
         await loadReviews(generation);
+        if (isCurrent(generation)) {
+          setMessage(`Revisión guardada en estado Pendiente. Fecha objetivo: ${formatReviewDate(dueAt)}. No se ha asignado ni notificado automáticamente.`, false, "success");
+          focusNewReview(result && result.reviewTaskId);
+        }
       }
-    } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
+    } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally {
+      if (reviewButton) {
+        reviewButton.textContent = reviewButtonLabel;
+        reviewButton.removeAttribute("aria-busy");
+      }
+      if (isCurrent(generation)) setBusy(false);
+    }
   }
 
   async function updateReviewTask(reviewTaskId, status, resolutionNote) {
