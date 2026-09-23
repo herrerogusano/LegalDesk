@@ -100,6 +100,15 @@ from .state import (
     InMemoryEphemeralStateStore,
     SessionRecord,
 )
+from .reconciliation import (
+    GatewayReconciliationCandidate,
+    IngestionReconciliationCandidate,
+    IngestionReconciliationScope,
+    ReconciliationItem,
+    ReconciliationReport,
+    ReconciliationScope,
+    ReconciliationService,
+)
 from .api_gateway import lambda_handler as api_gateway_lambda_handler
 from .evidence import (
     AnswerWriter,
@@ -247,5 +256,12 @@ __all__ = [
     "IngestionOperationRecord",
     "InMemoryEphemeralStateStore",
     "SessionRecord",
+    "GatewayReconciliationCandidate",
+    "IngestionReconciliationCandidate",
+    "IngestionReconciliationScope",
+    "ReconciliationItem",
+    "ReconciliationReport",
+    "ReconciliationScope",
+    "ReconciliationService",
     "api_gateway_lambda_handler",
 ]

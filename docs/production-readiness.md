@@ -33,8 +33,9 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
 4. **P14-G4 — bounded reconciliation.** Automated, authorized reconciliation
    handles abandoned `PENDING_UPLOAD`, stale ingestion and expired Gateway
    grants/invocations, with bounded queries, idempotent transitions and an
-   operator runbook. DynamoDB TTL is not treated as an authorization or exact
-   deletion guarantee.
+   operator runbook. The local candidate-driven implementation and procedure
+   are in [`docs/phase-14-reconciliation-runbook.md`](phase-14-reconciliation-runbook.md).
+   DynamoDB TTL is not treated as an authorization or exact deletion guarantee.
 5. **P14-G5 — independent semantic evidence.** The frozen 14-case semantic
    holdout runs against the exact release candidate and receives independent
    review. The lexical oracle, deterministic suite and earlier bounded smoke

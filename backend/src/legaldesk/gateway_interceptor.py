@@ -131,9 +131,13 @@ class GatewayGrantRepository(Protocol):
 
     def get(self, grant_id: str) -> Mapping[str, object] | None: ...
 
+    def delete(self, grant_id: str) -> None: ...
+
     def put_invocation(self, grant: "HarnessInvocationGrant") -> None: ...
 
     def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None: ...
+
+    def delete_invocation(self, invocation_id: str) -> None: ...
 
 
 def gateway_grant_partition_key(grant_id: str) -> str:
@@ -159,6 +163,9 @@ class InMemoryGatewayGrantRepository:
     def get(self, grant_id: str) -> Mapping[str, object] | None:
         return self.grants.get(grant_id)
 
+    def delete(self, grant_id: str) -> None:
+        self.grants.pop(grant_id, None)
+
     def put_invocation(self, grant: "HarnessInvocationGrant") -> None:
         if grant.invocation_id in self.invocations:
             raise RuntimeError("invocation collision")
@@ -166,6 +173,9 @@ class InMemoryGatewayGrantRepository:
 
     def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None:
         return self.invocations.get(invocation_id)
+
+    def delete_invocation(self, invocation_id: str) -> None:
+        self.invocations.pop(invocation_id, None)
 
 
 class Boto3DynamoGatewayGrantRepository:
@@ -200,6 +210,11 @@ class Boto3DynamoGatewayGrantRepository:
         item = response.get("Item") if isinstance(response, Mapping) else None
         return item if isinstance(item, Mapping) else None
 
+    def delete(self, grant_id: str) -> None:
+        self.table.delete_item(
+            Key={"pk": gateway_grant_partition_key(grant_id), "sk": GATEWAY_GRANT_SORT_KEY}
+        )
+
     def put_invocation(self, grant: "HarnessInvocationGrant") -> None:
         self.table.put_item(
             Item=grant.item,
@@ -213,6 +228,11 @@ class Boto3DynamoGatewayGrantRepository:
         )
         item = response.get("Item") if isinstance(response, Mapping) else None
         return item if isinstance(item, Mapping) else None
+
+    def delete_invocation(self, invocation_id: str) -> None:
+        self.table.delete_item(
+            Key={"pk": gateway_invocation_partition_key(invocation_id), "sk": GATEWAY_GRANT_SORT_KEY}
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -71,6 +71,15 @@ class RecordingDynamoTable:
         raise AssertionError("state store must never scan")
 
 
+class OperationIndexDynamoTable(RecordingDynamoTable):
+    def query(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(("query", dict(kwargs)))
+        names = kwargs.get("ExpressionAttributeNames", {})
+        if "operationId" in names.values():
+            return {"Items": [{"operationId": "ing-indexed", "expiresAt": 200.0}]}
+        return super().query(**kwargs)
+
+
 def _session() -> SessionRecord:
     return SessionRecord(VerifiedIdentity("alice"), "access-secret", "csrf", 10_000)
 
@@ -242,6 +251,26 @@ class Phase14StateTests(unittest.TestCase):
             replace(operation, status="INDEXED", provider_status="COMPLETE", updated_at=100.0)
         )
         self.assertIsNone(store.get_ingestion_operation_for_document_set(operation.document_set_key))
+        self.assertFalse(any(name == "scan" for name, _kwargs in table.calls))
+
+    def test_dynamo_ingestion_scope_index_is_bounded_and_never_scans(self) -> None:
+        table = OperationIndexDynamoTable()
+        store = DynamoDBEphemeralStateStore("existing-metadata", table=table, clock=lambda: 100.0)
+        operation = IngestionOperationRecord(
+            operation_id="ing-indexed", idempotency_key="retry-a", subject="alice", tenant_id="tenant-a",
+            matter_id="matter-a", document_ids=("doc-a",), correlation_id="corr-a", ingestion_job_id="job-a",
+            status="PENDING", provider_status="IN_PROGRESS", created_at=0.0, updated_at=0.0, expires_at=200.0,
+        )
+        store.put_ingestion_operation(operation)
+        self.assertEqual(
+            store.list_ingestion_operations_for_scope(
+                subject="alice", tenant_id="tenant-a", matter_id="matter-a", limit=1
+            )[0].operation_id,
+            "ing-indexed",
+        )
+        query_calls = [kwargs for name, kwargs in table.calls if name == "query"]
+        self.assertTrue(any(kwargs.get("Limit") == 1 for kwargs in query_calls))
+        self.assertTrue(any("ProjectionExpression" in kwargs for kwargs in query_calls))
         self.assertFalse(any(name == "scan" for name, _kwargs in table.calls))
 
 

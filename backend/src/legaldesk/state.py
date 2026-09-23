@@ -149,6 +149,10 @@ class EphemeralStateStore(Protocol):
 
     def get_ingestion_operation_for_document_set(self, document_set_key: str) -> IngestionOperationRecord | None: ...
 
+    def list_ingestion_operations_for_scope(
+        self, *, subject: str, tenant_id: str, matter_id: str, limit: int
+    ) -> tuple[IngestionOperationRecord, ...]: ...
+
     def update_ingestion_operation(self, record: IngestionOperationRecord) -> None: ...
 
     def delete_ingestion_operation(self, record: IngestionOperationRecord) -> None: ...
@@ -186,6 +190,7 @@ class InMemoryEphemeralStateStore:
         self.ingestion_operations: dict[str, IngestionOperationRecord] = {}
         self.ingestion_idempotency: dict[tuple[str, str, str, str], str] = {}
         self.active_ingestion_document_sets: dict[str, str] = {}
+        self.ingestion_scope_index: dict[tuple[str, str, str], set[str]] = {}
         self.audit_records: list[dict[str, object]] = []
 
     def bound_state(self) -> None:
@@ -217,6 +222,11 @@ class InMemoryEphemeralStateStore:
             key: operation_id
             for key, operation_id in self.active_ingestion_document_sets.items()
             if operation_id in self.ingestion_operations
+        }
+        self.ingestion_scope_index = {
+            scope: {operation_id for operation_id in operation_ids if operation_id in self.ingestion_operations}
+            for scope, operation_ids in self.ingestion_scope_index.items()
+            if any(operation_id in self.ingestion_operations for operation_id in operation_ids)
         }
         if len(self.oauth_states) >= 256:
             raise RuntimeError("too many pending login attempts")
@@ -334,6 +344,7 @@ class InMemoryEphemeralStateStore:
         self.ingestion_operations[record.operation_id] = record
         self.ingestion_idempotency[idempotency_key] = record.operation_id
         self.active_ingestion_document_sets[record.document_set_key] = record.operation_id
+        self.ingestion_scope_index.setdefault((record.subject, record.tenant_id, record.matter_id), set()).add(record.operation_id)
 
     def get_ingestion_operation(self, operation_id: str) -> IngestionOperationRecord | None:
         record = self.ingestion_operations.get(operation_id)
@@ -353,6 +364,19 @@ class InMemoryEphemeralStateStore:
         operation_id = self.active_ingestion_document_sets.get(document_set_key)
         return self.get_ingestion_operation(operation_id) if operation_id else None
 
+    def list_ingestion_operations_for_scope(
+        self, *, subject: str, tenant_id: str, matter_id: str, limit: int
+    ) -> tuple[IngestionOperationRecord, ...]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 0 < limit <= 100:
+            raise ValueError("ingestion operation query limit is invalid")
+        operation_ids = tuple(self.ingestion_scope_index.get((subject, tenant_id, matter_id), ()))[:limit]
+        operations = tuple(
+            operation
+            for operation_id in operation_ids
+            if (operation := self.get_ingestion_operation(operation_id)) is not None
+        )
+        return operations
+
     def update_ingestion_operation(self, record: IngestionOperationRecord) -> None:
         existing = self.ingestion_operations.get(record.operation_id)
         if existing is None or existing.expires_at <= self.clock():
@@ -362,12 +386,16 @@ class InMemoryEphemeralStateStore:
         ):
             raise ValueError("ingestion operation binding cannot change")
         self.ingestion_operations[record.operation_id] = record
+        self.ingestion_scope_index.setdefault((record.subject, record.tenant_id, record.matter_id), set()).add(record.operation_id)
         if record.status in {"INDEXED", "FAILED"} and self.active_ingestion_document_sets.get(record.document_set_key) == record.operation_id:
             self.active_ingestion_document_sets.pop(record.document_set_key, None)
+        if record.status in {"INDEXED", "FAILED"}:
+            self.ingestion_scope_index.get((record.subject, record.tenant_id, record.matter_id), set()).discard(record.operation_id)
 
     def delete_ingestion_operation(self, record: IngestionOperationRecord) -> None:
         self.ingestion_operations.pop(record.operation_id, None)
         self.ingestion_idempotency.pop((record.subject, record.tenant_id, record.matter_id, record.idempotency_key), None)
+        self.ingestion_scope_index.get((record.subject, record.tenant_id, record.matter_id), set()).discard(record.operation_id)
         if self.active_ingestion_document_sets.get(record.document_set_key) == record.operation_id:
             self.active_ingestion_document_sets.pop(record.document_set_key, None)
 
@@ -694,6 +722,25 @@ class DynamoDBEphemeralStateStore:
         }
 
     @classmethod
+    def _operation_scope_item(cls, record: IngestionOperationRecord) -> dict[str, object]:
+        return {
+            **cls._key("INGESTION_SCOPE", (record.subject, record.tenant_id, record.matter_id), f"OP#{record.operation_id}"),
+            "entityType": "P14IngestionScopeIndex",
+            "operationId": record.operation_id,
+            "subject": record.subject,
+            "tenantId": record.tenant_id,
+            "matterId": record.matter_id,
+            "expiresAt": record.expires_at,
+            "ttl": max(1, int(record.expires_at)),
+        }
+
+    def _delete_owned_ingestion_item(self, key: dict[str, str], operation_id: str) -> None:
+        response = self.table.get_item(Key=key, ConsistentRead=True)
+        item = response.get("Item") if isinstance(response, Mapping) else None
+        if isinstance(item, Mapping) and item.get("operationId") == operation_id:
+            self.table.delete_item(Key=key)
+
+    @classmethod
     def _operation_from_item(cls, item: Mapping[str, object]) -> IngestionOperationRecord | None:
         expires_at = cls._expires(item)
         values = tuple(
@@ -767,6 +814,10 @@ class DynamoDBEphemeralStateStore:
                 },
                 ConditionExpression="attribute_not_exists(pk)",
             )
+            self.table.put_item(
+                Item=self._operation_scope_item(record),
+                ConditionExpression="attribute_not_exists(pk)",
+            )
         except Exception:
             self.table.delete_item(Key=self._key("INGESTION_OPERATION", record.operation_id, "RECORD"))
             idempotency_key = {"pk": self._pk("INGESTION_IDEMPOTENCY", (record.subject, record.tenant_id, record.matter_id, record.idempotency_key)), "sk": "RECORD"}
@@ -774,6 +825,19 @@ class DynamoDBEphemeralStateStore:
             existing_item = existing.get("Item") if isinstance(existing, Mapping) else None
             if isinstance(existing_item, Mapping) and existing_item.get("operationId") == record.operation_id:
                 self.table.delete_item(Key=idempotency_key)
+            active_key = {"pk": self._pk("INGESTION_ACTIVE", record.document_set_key), "sk": "RECORD"}
+            active = self.table.get_item(Key=active_key, ConsistentRead=True)
+            active_item = active.get("Item") if isinstance(active, Mapping) else None
+            if isinstance(active_item, Mapping) and active_item.get("operationId") == record.operation_id:
+                self.table.delete_item(Key=active_key)
+            scope_key = self._key(
+                "INGESTION_SCOPE", (record.subject, record.tenant_id, record.matter_id),
+                f"OP#{record.operation_id}",
+            )
+            scope_item_response = self.table.get_item(Key=scope_key, ConsistentRead=True)
+            scope_item = scope_item_response.get("Item") if isinstance(scope_item_response, Mapping) else None
+            if isinstance(scope_item, Mapping) and scope_item.get("operationId") == record.operation_id:
+                self.table.delete_item(Key=scope_key)
             raise
 
     def get_ingestion_operation(self, operation_id: str) -> IngestionOperationRecord | None:
@@ -808,17 +872,69 @@ class DynamoDBEphemeralStateStore:
             return None
         return self.get_ingestion_operation(operation_id)
 
+    def list_ingestion_operations_for_scope(
+        self, *, subject: str, tenant_id: str, matter_id: str, limit: int
+    ) -> tuple[IngestionOperationRecord, ...]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 0 < limit <= 100:
+            raise ValueError("ingestion operation query limit is invalid")
+        from boto3.dynamodb.conditions import Key
+
+        response = self.table.query(
+            KeyConditionExpression=(
+                Key("pk").eq(self._pk("INGESTION_SCOPE", (subject, tenant_id, matter_id)))
+                & Key("sk").begins_with("OP#")
+            ),
+            ProjectionExpression="#operationId, #expiresAt",
+            ExpressionAttributeNames={"#operationId": "operationId", "#expiresAt": "expiresAt"},
+            Limit=limit,
+            ConsistentRead=True,
+        )
+        items = response.get("Items", ()) if isinstance(response, Mapping) else ()
+        now = self.clock()
+        operations: list[IngestionOperationRecord] = []
+        for item in items:
+            if not isinstance(item, Mapping) or self._expires(item) is None or self._expires(item) <= now:
+                continue
+            operation_id = item.get("operationId")
+            if isinstance(operation_id, str):
+                operation = self.get_ingestion_operation(operation_id)
+                if operation is not None and (
+                    operation.subject, operation.tenant_id, operation.matter_id
+                ) == (subject, tenant_id, matter_id):
+                    operations.append(operation)
+        return tuple(operations)
+
     def update_ingestion_operation(self, record: IngestionOperationRecord) -> None:
         self.table.put_item(Item=self._operation_item(record), ConditionExpression="attribute_exists(pk)")
         if record.status in {"INDEXED", "FAILED"}:
-            self.table.delete_item(Key={"pk": self._pk("INGESTION_ACTIVE", record.document_set_key), "sk": "RECORD"})
+            self._delete_owned_ingestion_item(
+                {"pk": self._pk("INGESTION_ACTIVE", record.document_set_key), "sk": "RECORD"},
+                record.operation_id,
+            )
+            self._delete_owned_ingestion_item(
+                self._key(
+                    "INGESTION_SCOPE", (record.subject, record.tenant_id, record.matter_id),
+                    f"OP#{record.operation_id}",
+                ),
+                record.operation_id,
+            )
 
     def delete_ingestion_operation(self, record: IngestionOperationRecord) -> None:
         self.table.delete_item(Key=self._key("INGESTION_OPERATION", record.operation_id, "RECORD"))
         self.table.delete_item(
             Key={"pk": self._pk("INGESTION_IDEMPOTENCY", (record.subject, record.tenant_id, record.matter_id, record.idempotency_key)), "sk": "RECORD"}
         )
-        self.table.delete_item(Key={"pk": self._pk("INGESTION_ACTIVE", record.document_set_key), "sk": "RECORD"})
+        self._delete_owned_ingestion_item(
+            {"pk": self._pk("INGESTION_ACTIVE", record.document_set_key), "sk": "RECORD"},
+            record.operation_id,
+        )
+        self._delete_owned_ingestion_item(
+            self._key(
+                "INGESTION_SCOPE", (record.subject, record.tenant_id, record.matter_id),
+                f"OP#{record.operation_id}",
+            ),
+            record.operation_id,
+        )
 
     def append_audit(self, record: Mapping[str, object]) -> None:
         subject = record.get("subject")

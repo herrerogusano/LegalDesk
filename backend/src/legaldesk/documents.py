@@ -102,7 +102,9 @@ class DocumentMetadataRepository(Protocol):
         self, *, tenant_id: str, matter_id: str, document_id: str
     ) -> Document | None: ...
 
-    def list_for_scope(self, *, tenant_id: str, matter_id: str) -> Sequence[Document]: ...
+    def list_for_scope(
+        self, *, tenant_id: str, matter_id: str, limit: int | None = None
+    ) -> Sequence[Document]: ...
 
 
 def document_partition_key(tenant_id: str, matter_id: str) -> str:
@@ -634,12 +636,15 @@ class InMemoryDocumentMetadataRepository:
     ) -> Document | None:
         return self.documents.get((tenant_id, matter_id, document_id))
 
-    def list_for_scope(self, *, tenant_id: str, matter_id: str) -> tuple[Document, ...]:
-        return tuple(
+    def list_for_scope(
+        self, *, tenant_id: str, matter_id: str, limit: int | None = None
+    ) -> tuple[Document, ...]:
+        documents = tuple(
             document
             for (stored_tenant, stored_matter, _), document in self.documents.items()
             if stored_tenant == tenant_id and stored_matter == matter_id
         )
+        return documents if limit is None else documents[:limit]
 
 
 class Boto3S3ObjectStorage:
@@ -780,7 +785,9 @@ class Boto3DynamoDocumentMetadataRepository:
         item = response.get("Item")
         return _document_from_item(item) if item else None
 
-    def list_for_scope(self, *, tenant_id: str, matter_id: str) -> tuple[Document, ...]:
+    def list_for_scope(
+        self, *, tenant_id: str, matter_id: str, limit: int | None = None
+    ) -> tuple[Document, ...]:
         documents: list[Document] = []
         if self._boto3_backed:
             from boto3.dynamodb.conditions import Key
@@ -801,9 +808,15 @@ class Boto3DynamoDocumentMetadataRepository:
             "KeyConditionExpression": key_condition,
             "ConsistentRead": True,
         }
+        if limit is not None:
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+                raise ValueError("document query limit must be positive")
+            query_kwargs["Limit"] = limit
         while True:
             response = self.table.query(**query_kwargs)
             documents.extend(_document_from_item(item) for item in response.get("Items", ()))
+            if limit is not None and len(documents) >= limit:
+                return tuple(documents[:limit])
             last_key = response.get("LastEvaluatedKey")
             if not last_key:
                 break
