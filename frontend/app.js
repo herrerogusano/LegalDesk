@@ -27,6 +27,8 @@
     FAILED: "Requiere atención",
   });
   const UPLOAD_STAGES = Object.freeze(["authorize", "upload", "verify", "index"]);
+  const INGESTION_MAX_POLLS = 20;
+  const INGESTION_POLL_DELAY_MS = 1500;
   const REVIEW_STATUS_LABELS = Object.freeze({ open: "Pendiente", in_review: "En revisión", closed: "Resuelta" });
   const REVIEW_REASON_LABELS = Object.freeze({
     user_requested_review: "Necesito criterio profesional",
@@ -597,6 +599,45 @@
     }
   }
 
+  function waitForIngestionPoll(signal) {
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(resolve, INGESTION_POLL_DELAY_MS);
+      if (!signal) return;
+      if (signal.aborted) {
+        window.clearTimeout(timer);
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+        return;
+      }
+      signal.addEventListener("abort", () => {
+        window.clearTimeout(timer);
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      }, { once: true });
+    });
+  }
+
+  async function startAndPollIngestion(documentIds, generation) {
+    const idempotencyKey = window.crypto && window.crypto.randomUUID
+      ? window.crypto.randomUUID()
+      : `ingestion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const started = await api(`/api/matters/${encodeURIComponent(state.matterId)}/ingestions`, {
+      method: "POST",
+      body: JSON.stringify({ documentIds, idempotencyKey }),
+      signal: state.controller.signal,
+    });
+    const operationId = started && started.operationId;
+    if (typeof operationId !== "string" || !operationId) throw new Error("La indexación no pudo iniciar.");
+    for (let attempt = 0; attempt < INGESTION_MAX_POLLS; attempt += 1) {
+      if (!isCurrent(generation)) return null;
+      if (attempt > 0) await waitForIngestionPoll(state.controller.signal);
+      setUploadProgress("index", `Indexando documento… (${attempt + 1}/${INGESTION_MAX_POLLS})`);
+      const status = await api(`/api/matters/${encodeURIComponent(state.matterId)}/ingestions/${encodeURIComponent(operationId)}`, { signal: state.controller.signal });
+      if (!isCurrent(generation)) return null;
+      if (status && status.operationStatus === "documents_indexed") return status;
+      if (status && status.operationStatus === "documents_failed") throw new Error("La indexación falló. Puedes reintentarlo cuando el documento figure como pendiente.");
+    }
+    throw new Error("La indexación está tardando más de lo esperado. Puedes volver a intentarlo cuando el estado se actualice.");
+  }
+
   async function uploadDocument() {
     if (state.busy) return;
     const file = $("document-file").files[0];
@@ -627,7 +668,7 @@
       await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents/${encodeURIComponent(documentId)}/confirm`, { method: "POST", body: "{}", signal: state.controller.signal });
       if (!isCurrent(generation)) return;
       setUploadProgress("index", "Indexando documento…");
-      await api(`/api/matters/${encodeURIComponent(state.matterId)}/sync`, { method: "POST", body: JSON.stringify({ documentIds: [documentId] }), signal: state.controller.signal });
+      await startAndPollIngestion([documentId], generation);
       if (!isCurrent(generation)) return;
       $("document-status").textContent = "Indexando el documento; comprobando estado…";
       await loadDocuments(generation);
@@ -814,7 +855,7 @@
       setBusy(true);
       try {
         setMessage("Solicitando sincronización…", false);
-        await api(`/api/matters/${encodeURIComponent(state.matterId)}/sync`, { method: "POST", body: JSON.stringify({ documentIds }), signal: state.controller.signal });
+        await startAndPollIngestion(documentIds, generation);
         if (!isCurrent(generation)) return;
         setMessage("Sincronización solicitada; el estado se actualizará al consultar.", false);
         await loadDocuments(generation);

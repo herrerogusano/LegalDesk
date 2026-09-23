@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -12,6 +13,7 @@ from legaldesk.http_app import ApplicationComposition, LoopbackLegalDeskApp
 from legaldesk.state import (
     CitationHandle,
     DynamoDBEphemeralStateStore,
+    IngestionOperationRecord,
     InMemoryEphemeralStateStore,
     SessionRecord,
 )
@@ -26,7 +28,10 @@ class RecordingDynamoTable:
     def put_item(self, *, Item: dict[str, object], **kwargs: object) -> dict[str, object]:
         self.calls.append(("put_item", dict(kwargs)))
         key = (str(Item["pk"]), str(Item["sk"]))
-        if kwargs.get("ConditionExpression") and key in self.items:
+        condition = str(kwargs.get("ConditionExpression", ""))
+        if "attribute_not_exists" in condition and key in self.items:
+            raise RuntimeError("conditional check failed")
+        if "attribute_exists" in condition and key not in self.items:
             raise RuntimeError("conditional check failed")
         self.items[key] = dict(Item)
         return {}
@@ -187,6 +192,57 @@ class Phase14StateTests(unittest.TestCase):
         _key, identity_session = app._session({"HTTP_COOKIE": "legaldesk_session=selector"})
         self.assertEqual(identity_session.identity.subject, "alice")
         self.assertEqual(verifier.calls, 1)
+
+    def test_dynamo_ingestion_operation_requires_valid_expiry(self) -> None:
+        table = RecordingDynamoTable()
+        store = DynamoDBEphemeralStateStore("existing-metadata", table=table, clock=lambda: 100.0)
+        operation = IngestionOperationRecord(
+            operation_id="ing_opaque", idempotency_key="retry-a", subject="alice", tenant_id="tenant-a",
+            matter_id="matter-a", document_ids=("doc-a",), correlation_id="corr-a", ingestion_job_id="job-a",
+            status="PENDING", provider_status="STARTING", created_at=100.0, updated_at=100.0, expires_at=200.0,
+        )
+        store.put_ingestion_operation(operation)
+        key = (store._key("INGESTION_OPERATION", operation.operation_id, "RECORD")["pk"], "RECORD")
+        table.items[key].pop("expiresAt")
+        self.assertIsNone(store.get_ingestion_operation(operation.operation_id))
+        table.items[key]["expiresAt"] = "not-a-timestamp"
+        self.assertIsNone(store.get_ingestion_operation(operation.operation_id))
+
+    def test_dynamo_ingestion_operation_job_id_combination_is_fail_closed(self) -> None:
+        table = RecordingDynamoTable()
+        store = DynamoDBEphemeralStateStore("existing-metadata", table=table, clock=lambda: 100.0)
+        operation = IngestionOperationRecord(
+            operation_id="ing_starting", idempotency_key="retry-a", subject="alice", tenant_id="tenant-a",
+            matter_id="matter-a", document_ids=("doc-a",), correlation_id="corr-a", ingestion_job_id="",
+            status="STARTING", provider_status="STARTING", created_at=100.0, updated_at=100.0, expires_at=200.0,
+        )
+        store.put_ingestion_operation(operation)
+        key = (store._key("INGESTION_OPERATION", operation.operation_id, "RECORD")["pk"], "RECORD")
+        self.assertEqual(store.get_ingestion_operation(operation.operation_id).ingestion_job_id, "")
+        table.items[key]["status"] = "PENDING"
+        self.assertIsNone(store.get_ingestion_operation(operation.operation_id))
+        table.items[key]["status"] = "STARTING"
+        table.items[key]["providerStatus"] = "IN_PROGRESS"
+        self.assertIsNone(store.get_ingestion_operation(operation.operation_id))
+        table.items[key]["providerStatus"] = "STARTING"
+        table.items[key]["ingestionJobId"] = "   "
+        self.assertIsNone(store.get_ingestion_operation(operation.operation_id))
+
+    def test_active_ingestion_document_set_is_a_bounded_point_binding(self) -> None:
+        table = RecordingDynamoTable()
+        store = DynamoDBEphemeralStateStore("existing-metadata", table=table, clock=lambda: 100.0)
+        operation = IngestionOperationRecord(
+            operation_id="ing_active", idempotency_key="retry-a", subject="alice", tenant_id="tenant-a",
+            matter_id="matter-a", document_ids=("doc-a",), correlation_id="corr-a", ingestion_job_id="job-a",
+            status="PENDING", provider_status="STARTING", created_at=100.0, updated_at=100.0, expires_at=200.0,
+        )
+        store.put_ingestion_operation(operation)
+        self.assertEqual(store.get_ingestion_operation_for_document_set(operation.document_set_key).operation_id, operation.operation_id)
+        store.update_ingestion_operation(
+            replace(operation, status="INDEXED", provider_status="COMPLETE", updated_at=100.0)
+        )
+        self.assertIsNone(store.get_ingestion_operation_for_document_set(operation.document_set_key))
+        self.assertFalse(any(name == "scan" for name, _kwargs in table.calls))
 
 
 if __name__ == "__main__":

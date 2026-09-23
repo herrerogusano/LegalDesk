@@ -96,6 +96,7 @@ from .http_app import (
 from .state import (
     DynamoDBEphemeralStateStore,
     EphemeralStateStore,
+    IngestionOperationRecord,
     InMemoryEphemeralStateStore,
     SessionRecord,
 )
@@ -243,6 +244,7 @@ __all__ = [
     "create_http_app",
     "DynamoDBEphemeralStateStore",
     "EphemeralStateStore",
+    "IngestionOperationRecord",
     "InMemoryEphemeralStateStore",
     "SessionRecord",
     "api_gateway_lambda_handler",

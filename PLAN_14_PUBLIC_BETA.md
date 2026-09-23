@@ -95,7 +95,15 @@ audit records. Preserve existing durable review tasks and conversation bindings.
 Split ingestion start from status observation. Add bounded, idempotent
 reconciliation for abandoned `PENDING_UPLOAD`, stale ingestion, and expired
 Gateway grant/invocation records. Do not use unbounded scans or treat TTL as a
-guaranteed deletion deadline.
+guaranteed deletion deadline. The public application exposes
+`POST /api/matters/{matterId}/ingestions` and
+`GET /api/matters/{matterId}/ingestions/{operationId}`; the legacy synchronous
+`/sync` helper remains operator/loopback-only. A public start returns `202`
+with a server-owned opaque operation ID and bounded client polling never waits
+inside the request for Bedrock. Ambiguous provider starts and post-start
+metadata failures retain the active canonical subject/tenant/matter/document
+set binding and known job ID for recovery; that binding is cleared only after
+a safe terminal transition or explicit reconciliation.
 
 ### P14-4 — Security, privacy and document lifecycle
 

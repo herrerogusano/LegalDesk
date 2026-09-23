@@ -38,7 +38,10 @@ class FakeDynamoTable:
     def put_item(self, *, Item: Mapping[str, object], **kwargs: object) -> Mapping[str, object]:
         self.calls.append(("put_item", dict(Item)))
         key = (str(Item["pk"]), str(Item["sk"]))
-        if kwargs.get("ConditionExpression") and key in self.items:
+        condition = str(kwargs.get("ConditionExpression", ""))
+        if "attribute_not_exists" in condition and key in self.items:
+            raise RuntimeError("conditional check failed")
+        if "attribute_exists" in condition and key not in self.items:
             raise RuntimeError("conditional check failed")
         self.items[key] = dict(Item)
         return {}

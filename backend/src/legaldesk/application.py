@@ -30,7 +30,7 @@ from .identity import (
     PyJwtJwksKeyResolver,
     validate_https_endpoint,
 )
-from .ingestion import DocumentScopeRef, run_knowledge_base_sync
+from .ingestion import AsyncKnowledgeBaseIngestionService, DocumentScopeRef, run_knowledge_base_sync
 from .mcp_server import MCPServer
 from .memory import AgentCoreMemoryClient, Boto3DynamoConversationBindingStore
 from .prompts import FileSystemSystemPromptProvider
@@ -256,6 +256,26 @@ class _BedrockKnowledgeBaseSync:
         )
 
 
+class _BedrockAsyncKnowledgeBaseIngestion:
+    """Public start/status seam over the existing Bedrock adapters."""
+
+    def __init__(self, client: Any, storage: Any, metadata: Any, state_store: Any, config: AWSResourceConfig) -> None:
+        self.service = AsyncKnowledgeBaseIngestionService(
+            client=client,
+            object_verifier=storage,
+            metadata_repository=metadata,
+            state_store=state_store,
+            knowledge_base_id=config.knowledge_base_id,
+            data_source_id=config.data_source_id,
+        )
+
+    def start(self, **kwargs: Any) -> Any:
+        return self.service.start(**kwargs)
+
+    def status(self, **kwargs: Any) -> Any:
+        return self.service.status(**kwargs)
+
+
 class _SeparatedOnlyGenerator:
     """Prevent the AWS composition from silently using the legacy seam."""
 
@@ -363,7 +383,9 @@ def build_aws_composition(
     if smoke_budget is not None:
         harness = _BudgetedHarnessInvoker(harness, smoke_budget)
     pipeline = DocumentPipeline(auth_store, storage, metadata)
+    state_store = DynamoDBEphemeralStateStore(resource_config.metadata_table_name, table=table)
     sync = _BedrockKnowledgeBaseSync(ingestion_client, storage, metadata, auth_store, resource_config)
+    async_ingestion = _BedrockAsyncKnowledgeBaseIngestion(ingestion_client, storage, metadata, state_store, resource_config)
     composition = ApplicationComposition(
         identity_verifier=verifier,
         token_exchange=CognitoPkceTokenExchange(resource_config.token_endpoint, resource_config.client_id) if resource_config.token_endpoint else None,
@@ -377,7 +399,7 @@ def build_aws_composition(
         gateway_grant_repository=grant_repository,
         memory=memory,
         telemetry_sink=telemetry_sink,
-        state_store=DynamoDBEphemeralStateStore(resource_config.metadata_table_name, table=table),
+        state_store=state_store,
         matter_catalog=resource_config.matter_catalog,
         oauth_client_id=resource_config.client_id,
         authorization_endpoint=resource_config.authorization_endpoint,
@@ -386,6 +408,7 @@ def build_aws_composition(
         gateway_invoker=gateway_invoker,
         system_prompt=({"text": prompt.content},),
         sync_service=sync,
+        ingestion_service=async_ingestion,
         public_base_url=resource_config.public_base_url,
         redirect_uri=resource_config.redirect_uri or f"{resource_config.public_base_url.rstrip('/')}/callback",
         allowed_hosts=frozenset(resource_config.allowed_hosts),

@@ -35,7 +35,7 @@ from .documents import (
 )
 from .domain.models import Document, DocumentStatus
 from .identity import PkceAuthorizationRequest, create_pkce_authorization_request
-from .ingestion import KnowledgeBaseSyncResult, run_knowledge_base_sync
+from .ingestion import IngestionConflictError, KnowledgeBaseSyncResult, run_knowledge_base_sync
 from .mcp_server import GET_DOCUMENT_METADATA, LIST_MATTER_DOCUMENTS, MCPServer
 from .memory import ConversationBindingStore, MemoryScope, derive_memory_scope_for_identity
 from .observability import InMemoryTelemetrySink, TelemetrySink
@@ -51,6 +51,7 @@ from .state import (
     CitationHandle,
     EphemeralStateStore,
     InMemoryEphemeralStateStore,
+    IngestionOperationRecord,
     SessionRecord,
 )
 
@@ -92,6 +93,12 @@ class SyncService(Protocol):
     def __call__(self, *, identity: VerifiedIdentity, matter_id: str, document_ids: tuple[str, ...], correlation_id: str) -> Any: ...
 
 
+class AsyncIngestionService(Protocol):
+    def start(self, **kwargs: Any) -> IngestionOperationRecord: ...
+
+    def status(self, **kwargs: Any) -> IngestionOperationRecord: ...
+
+
 class ApplicationTelemetrySink:
     """Forward safe events to the operator sink and retain a bounded audit view."""
 
@@ -126,6 +133,7 @@ class ApplicationComposition:
     authorized_evidence_sink: AuthorizedEvidenceSink | None = None
     chat_accepts_evidence_sink: bool = False
     sync_service: SyncService | None = None
+    ingestion_service: AsyncIngestionService | None = None
     telemetry_sink: TelemetrySink | None = None
     matter_catalog: tuple[str, ...] = ()
     authorization_endpoint: str = "https://example.invalid/oauth2/authorize"
@@ -254,6 +262,8 @@ class LoopbackLegalDeskApp:
             headers.extend(extra)
         except AuthorizationDenied:
             status, body = HTTPStatus.FORBIDDEN, {"error": "access_denied"}
+        except IngestionConflictError:
+            status, body = HTTPStatus.CONFLICT, {"error": "ingestion_operation_conflict"}
         except (DocumentValidationError, ValueError, KeyError):
             status, body = HTTPStatus.BAD_REQUEST, {"error": "invalid_request"}
         except DocumentError:
@@ -440,7 +450,46 @@ class LoopbackLegalDeskApp:
                 context = self._context(identity, matter_id)
                 document = self.composition.document_pipeline.confirm_upload(identity, matter_id, parts[5], correlation_id=context.correlation_id)
                 return HTTPStatus.OK, {"document": self._document(document)}, []
+            if method == "POST" and len(parts) == 5 and parts[4] == "ingestions":
+                if self.composition.ingestion_service is None:
+                    raise RuntimeError("async ingestion is not configured")
+                data = self._body(environ)
+                ids = data.get("documentIds")
+                idempotency_key = data.get("idempotencyKey") or environ.get("HTTP_IDEMPOTENCY_KEY")
+                if (
+                    not isinstance(ids, list) or not 1 <= len(ids) <= 20
+                    or any(not isinstance(item, str) or not item or len(item) > 128 for item in ids)
+                    or len(set(ids)) != len(ids)
+                    or not isinstance(idempotency_key, str) or not idempotency_key or len(idempotency_key) > 128
+                ):
+                    raise ValueError("ingestion request is invalid")
+                context = self._context(identity, matter_id)
+                operation = self.composition.ingestion_service.start(
+                    subject=identity.subject,
+                    tenant_id=context.tenant_id,
+                    matter_id=context.matter_id,
+                    document_ids=tuple(ids),
+                    correlation_id=context.correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+                return HTTPStatus.ACCEPTED, self._ingestion_operation(operation), []
+            if method == "GET" and len(parts) == 6 and parts[4] == "ingestions":
+                if self.composition.ingestion_service is None:
+                    raise RuntimeError("async ingestion is not configured")
+                operation_id = parts[5]
+                if not operation_id or len(operation_id) > 128 or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in operation_id):
+                    raise ValueError("operation ID is invalid")
+                context = self._context(identity, matter_id)
+                operation = self.composition.ingestion_service.status(
+                    operation_id=operation_id,
+                    subject=identity.subject,
+                    tenant_id=context.tenant_id,
+                    matter_id=context.matter_id,
+                )
+                return HTTPStatus.OK, self._ingestion_operation(operation), []
             if method == "POST" and len(parts) == 5 and parts[4] == "sync":
+                if self.composition.public_mode:
+                    raise AuthorizationDenied("synchronous ingestion is not a public route")
                 data = self._body(environ)
                 ids = data.get("documentIds", [])
                 if not isinstance(ids, list) or not 1 <= len(ids) <= 20 or any(not isinstance(item, str) for item in ids):
@@ -1051,6 +1100,24 @@ class LoopbackLegalDeskApp:
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return [LoopbackLegalDeskApp._safe_result(item) for item in value[:32]]
         return None
+
+    @staticmethod
+    def _ingestion_operation(operation: IngestionOperationRecord) -> Mapping[str, object]:
+        operation_status = {
+            "INDEXED": "documents_indexed",
+            "FAILED": "documents_failed",
+        }.get(operation.status, "documents_processing")
+        return {
+            "operationId": operation.operation_id,
+            "operationStatus": operation_status,
+            "providerStatus": operation.provider_status,
+            "documentIds": list(operation.document_ids),
+            "matterId": operation.matter_id,
+            "correlationId": operation.correlation_id,
+            "documentsUpdated": operation.documents_updated,
+            "failedDocumentCount": operation.failed_document_count,
+            "expiresAt": operation.expires_at,
+        }
 
     @staticmethod
     def _safe_event(value: object) -> Mapping[str, object]:
