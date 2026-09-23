@@ -130,6 +130,9 @@ class ReviewTask:
     due_at: date | None = None
     closed_at: datetime | None = None
     resolution_note: str = ""
+    # Operator retention may strip workflow/user text while retaining a
+    # bounded metadata record for auditability.
+    archived_at: datetime | None = None
 
     @property
     def reason_code(self) -> str:

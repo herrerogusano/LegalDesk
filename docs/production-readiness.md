@@ -31,7 +31,12 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    physical quarantine outside the Bedrock source prefix,
    malware/content validation and quarantine, incident response, and
    deletion/export controls are approved and tested. No real legal/client data
-   is admitted by the beta policy.
+   is admitted by the beta policy. The local governance boundary is
+   operator-only, metadata-export-only, bounded and fail-closed; it does not
+   constitute approval of public destructive routes or a production export
+   destination. Retrieval also revalidates every vector's live metadata;
+   deletion remains `indexCleanupPending` until bounded Knowledge Base cleanup
+   evidence exists.
 4. **P14-G4 — bounded reconciliation.** Automated, authorized reconciliation
    handles abandoned `PENDING_UPLOAD`, stale ingestion and expired Gateway
    grants/invocations, with bounded queries, idempotent transitions and an

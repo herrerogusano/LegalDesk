@@ -20,6 +20,7 @@ from .authorization import (
     build_request_context,
 )
 from .memory import ConversationBindingStore
+from .documents import DocumentMetadataRepository
 from .observability import (
     TelemetryEventType,
     TelemetryOutcome,
@@ -360,6 +361,7 @@ def answer_question(
     answer_writer: AnswerWriter | None = None,
     grounding_validator: GroundingValidator | None = None,
     authorized_evidence_sink: Callable[[VerifiedIdentity, RequestContext, ChatRequest, ChatResponse, tuple[RetrievedPassage, ...]], None] | None = None,
+    metadata_repository: DocumentMetadataRepository | None = None,
 ) -> ChatResponse:
     """Load the server prompt, authorize and retrieve, then generate from evidence."""
 
@@ -509,6 +511,7 @@ def answer_question(
             bedrock_client=retrieval_client,
             knowledge_base_id=knowledge_base_id,
             telemetry_sink=telemetry_sink,
+            metadata_repository=metadata_repository,
         )
     except Exception:
         emit_telemetry(

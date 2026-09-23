@@ -117,6 +117,18 @@ from .malware_scan import (
     MalwareScanError,
     MalwareScanEventHandler,
 )
+from .data_governance import (
+    GovernanceAuthorizationError,
+    GovernanceError,
+    GovernanceFailure,
+    GovernanceLimitError,
+    GovernanceReport,
+    MAX_EXPORT_BYTES,
+    MAX_GOVERNANCE_RECORDS,
+    OperatorDataGovernanceService,
+    OperatorScope,
+    authorize_operator_scope,
+)
 from .evidence import (
     AnswerWriter,
     AnswerWriterRequest,
@@ -276,4 +288,14 @@ __all__ = [
     "MALWARE_SCAN_TAG_KEY",
     "MalwareScanError",
     "MalwareScanEventHandler",
+    "GovernanceAuthorizationError",
+    "GovernanceError",
+    "GovernanceFailure",
+    "GovernanceLimitError",
+    "GovernanceReport",
+    "MAX_EXPORT_BYTES",
+    "MAX_GOVERNANCE_RECORDS",
+    "OperatorDataGovernanceService",
+    "OperatorScope",
+    "authorize_operator_scope",
 ]

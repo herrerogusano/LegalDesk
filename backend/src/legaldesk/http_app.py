@@ -1045,7 +1045,12 @@ class LoopbackLegalDeskApp:
         return {"status": "SUCCESS", "tool": result["tool"], "result": dict(payload), "correlationId": binding.correlation_id}
 
     def _audit(self, identity: VerifiedIdentity, matter_id: str, correlation_id: str, operation: str) -> None:
-        self.state_store.append_audit({"subject": identity.subject, "matterId": matter_id, "correlationId": correlation_id, "operation": operation, "timestampMs": int(time.time() * 1000)})
+        record: dict[str, object] = {"subject": identity.subject, "matterId": matter_id, "correlationId": correlation_id, "operation": operation, "timestampMs": int(time.time() * 1000)}
+        try:
+            record["tenantId"] = self._context(identity, matter_id).tenant_id
+        except Exception:
+            pass
+        self.state_store.append_audit(record)
 
     def _audit_telemetry(self, identity: VerifiedIdentity, matter_id: str, correlation_id: str) -> None:
         sink = self.composition.telemetry_sink
@@ -1059,7 +1064,12 @@ class LoopbackLegalDeskApp:
                 safe = dict(event)
             else:
                 continue
-            self.state_store.append_audit({"subject": identity.subject, "matterId": matter_id, **safe})
+            record: dict[str, object] = {"subject": identity.subject, "matterId": matter_id, **safe}
+            try:
+                record["tenantId"] = self._context(identity, matter_id).tenant_id
+            except Exception:
+                pass
+            self.state_store.append_audit(record)
 
     def _citation(self, identity: VerifiedIdentity, handle: str):
         record = self.state_store.get_citation(handle, subject=identity.subject)
@@ -1126,7 +1136,7 @@ class LoopbackLegalDeskApp:
             value = value.to_dict()
         if not isinstance(value, Mapping):
             return {}
-        allowed = {"subject", "matterId", "event_type", "outcome", "operation", "error_code", "correlation_id", "timestamp_ms", "latency_ms", "count", "prompt_version", "prompt_sha256", "resolver_prompt_version", "resolver_prompt_sha256", "writer_prompt_version", "writer_prompt_sha256", "correlationId", "timestampMs"}
+        allowed = {"subject", "tenantId", "matterId", "event_type", "outcome", "operation", "error_code", "correlation_id", "timestamp_ms", "latency_ms", "count", "prompt_version", "prompt_sha256", "resolver_prompt_version", "resolver_prompt_sha256", "writer_prompt_version", "writer_prompt_sha256", "correlationId", "timestampMs"}
         return {str(key): item for key, item in value.items() if key in allowed and isinstance(item, (str, int, float, bool))}
 
 

@@ -43,7 +43,7 @@ ConversationRecord = tuple[str, str, str, str]
 ReviewCandidateRecord = tuple[float, dict[str, object]]
 _CONVERSATION_TTL_SECONDS = 7 * 24 * 60 * 60
 _SAFE_AUDIT_FIELDS = frozenset({
-    "subject", "matterId", "correlationId", "operation", "timestampMs",
+    "subject", "tenantId", "matterId", "correlationId", "operation", "timestampMs",
     "event_type", "outcome", "latency_ms", "count", "error_code",
     "correlation_id", "timestamp_ms", "prompt_version", "prompt_sha256",
     "resolver_prompt_version", "resolver_prompt_sha256",
@@ -160,6 +160,10 @@ class EphemeralStateStore(Protocol):
     def append_audit(self, record: Mapping[str, object]) -> None: ...
 
     def list_audit(self, subject: str, *, limit: int = 1_000) -> tuple[dict[str, object], ...]: ...
+
+    def delete_scope_state(
+        self, *, subject: str, tenant_id: str, matter_id: str, limit: int
+    ) -> int: ...
 
 
 def _digest(*parts: object) -> str:
@@ -411,6 +415,49 @@ class InMemoryEphemeralStateStore:
     def list_audit(self, subject: str, *, limit: int = 1_000) -> tuple[dict[str, object], ...]:
         return tuple(item for item in self.audit_records if item.get("subject") == subject)[-max(1, min(limit, 1_000)) :]
 
+    def delete_scope_state(
+        self, *, subject: str, tenant_id: str, matter_id: str, limit: int
+    ) -> int:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("state deletion limit is invalid")
+        scope = (subject, tenant_id, matter_id)
+        operation_ids = tuple(
+            self.ingestion_scope_index.get(scope, set())
+        )
+        if len(operation_ids) > limit:
+            raise ValueError("state deletion limit exceeded")
+        for operation_id in operation_ids:
+            operation = self.ingestion_operations.get(operation_id)
+            if operation is not None:
+                self.delete_ingestion_operation(operation)
+        removed = len(operation_ids)
+        if self.accepted_history_ids.pop(scope, None) is not None:
+            removed += 1
+        if self.accepted_review_candidates.pop(scope, None) is not None:
+            removed += 1
+        for conversation_id, record in tuple(self.conversation_selectors.items()):
+            if record[:3] == scope:
+                self.conversation_selectors.pop(conversation_id, None)
+                self.conversation_correlations.pop(conversation_id, None)
+                removed += 1
+        for handle, citation in tuple(self.citation_handles.items()):
+            if (citation.subject, citation.tenant_id, citation.matter_id) == scope:
+                self.citation_handles.pop(handle, None)
+                removed += 1
+        self.citation_links = {
+            key: handle for key, handle in self.citation_links.items()
+            if handle in self.citation_handles
+        }
+        self.audit_records = [
+            item for item in self.audit_records
+            if not (
+                item.get("subject") == subject
+                and item.get("tenantId") == tenant_id
+                and item.get("matterId") == matter_id
+            )
+        ]
+        return removed
+
 
 class DynamoDBEphemeralStateStore:
     """Namespaced DynamoDB state adapter for the existing metadata table."""
@@ -418,7 +465,7 @@ class DynamoDBEphemeralStateStore:
     _PREFIX = "LEGALDESK#P14#STATE#"
     _AUDIT_ALLOWED = _SAFE_AUDIT_FIELDS
     _AUDIT_FIELDS = (
-        "subject", "matterId", "correlationId", "operation", "timestampMs",
+        "subject", "tenantId", "matterId", "correlationId", "operation", "timestampMs",
         "event_type", "outcome", "latency_ms", "count", "error_code",
         "correlation_id", "timestamp_ms", "prompt_version", "prompt_sha256",
         "resolver_prompt_version", "resolver_prompt_sha256",
@@ -966,6 +1013,40 @@ class DynamoDBEphemeralStateStore:
         )
         items = response.get("Items", ()) if isinstance(response, Mapping) else ()
         return tuple(dict(item) for item in items if isinstance(item, Mapping))
+
+    def delete_scope_state(
+        self, *, subject: str, tenant_id: str, matter_id: str, limit: int
+    ) -> int:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("state deletion limit is invalid")
+        removed = 0
+        from boto3.dynamodb.conditions import Key
+
+        history_pk = self._pk("HISTORY", (subject, tenant_id, matter_id))
+        history = self.table.query(
+            KeyConditionExpression=Key("pk").eq(history_pk) & Key("sk").begins_with("EVENT#"),
+            ProjectionExpression="#pk,#sk",
+            ExpressionAttributeNames={"#pk": "pk", "#sk": "sk"},
+            Limit=limit + 1,
+            ConsistentRead=True,
+        )
+        history_items = history.get("Items", ()) if isinstance(history, Mapping) else ()
+        if len(history_items) > limit:
+            raise ValueError("state deletion limit exceeded")
+        for item in history_items:
+            if isinstance(item, Mapping) and isinstance(item.get("pk"), str) and isinstance(item.get("sk"), str):
+                self.table.delete_item(Key={"pk": item["pk"], "sk": item["sk"]})
+                removed += 1
+        self.table.delete_item(Key=self._key("REVIEW_CANDIDATE", (subject, tenant_id, matter_id), "RECORD"))
+        operations = self.list_ingestion_operations_for_scope(
+            subject=subject, tenant_id=tenant_id, matter_id=matter_id, limit=min(limit, 100)
+        )
+        if len(operations) >= limit:
+            raise ValueError("state deletion limit exceeded")
+        for operation in operations:
+            self.delete_ingestion_operation(operation)
+            removed += 1
+        return removed
 
 
 __all__ = [

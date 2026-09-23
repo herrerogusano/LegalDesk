@@ -297,6 +297,12 @@ class ReviewTaskRepository(Protocol):
         resolution_note: str = "",
     ) -> ReviewTask: ...
 
+    def delete(self, *, context: RequestContext, review_task_id: str) -> None: ...
+
+    def archive_closed(
+        self, *, context: RequestContext, older_than: datetime, limit: int = MAX_REVIEW_TASKS
+    ) -> tuple[ReviewTask, ...]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class AuthorizedToolEnvelope:
@@ -416,6 +422,42 @@ class InMemoryReviewTaskRepository:
         updated = _transition_task(current, status=status, resolution_note=resolution_note)
         self.tasks[key] = updated
         return updated
+
+    def delete(self, *, context: RequestContext, review_task_id: str) -> None:
+        context = require_authorized_context(context)
+        self.tasks.pop((context.tenant_id, context.matter_id, review_task_id), None)
+
+    def archive_closed(
+        self, *, context: RequestContext, older_than: datetime, limit: int = MAX_REVIEW_TASKS
+    ) -> tuple[ReviewTask, ...]:
+        context = require_authorized_context(context)
+        if not isinstance(older_than, datetime) or older_than.tzinfo is None:
+            raise ReviewTaskValidationError("retention cutoff is invalid")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_REVIEW_TASKS:
+            raise ReviewTaskValidationError("limit is invalid")
+        candidates = [
+            task for (tenant_id, matter_id, _), task in self.tasks.items()
+            if tenant_id == context.tenant_id
+            and matter_id == context.matter_id
+            and task.status is ReviewTaskStatus.CLOSED
+            and task.closed_at is not None
+            and task.closed_at <= older_than
+            and task.archived_at is None
+        ][:limit]
+        archived: list[ReviewTask] = []
+        now = datetime.now(timezone.utc)
+        for task in candidates:
+            updated = replace(
+                task,
+                snapshot=None,
+                note="",
+                resolution_note="",
+                archived_at=now,
+                updated_at=now,
+            )
+            self.tasks[(task.tenant_id, task.matter_id, task.review_task_id)] = updated
+            archived.append(updated)
+        return tuple(archived)
 
 
 def _transition_task(task: ReviewTask, *, status: ReviewTaskStatus, resolution_note: str = "") -> ReviewTask:
@@ -1129,6 +1171,8 @@ class Boto3DynamoReviewTaskRepository:
             item["closedAt"] = task.closed_at.isoformat()
         if task.resolution_note:
             item["resolutionNote"] = task.resolution_note
+        if task.archived_at is not None:
+            item["archivedAt"] = task.archived_at.isoformat()
         return item
 
     @staticmethod
@@ -1160,6 +1204,7 @@ class Boto3DynamoReviewTaskRepository:
             updated_at = datetime.fromisoformat(item["updatedAt"])
             due_at = date.fromisoformat(item["dueAt"]) if item.get("dueAt") else None
             closed_at = datetime.fromisoformat(item["closedAt"]) if item.get("closedAt") else None
+            archived_at = datetime.fromisoformat(item["archivedAt"]) if item.get("archivedAt") else None
         except (ValueError, TypeError) as exc:
             raise ReviewTaskPersistenceError("review task store unavailable") from exc
         if created_at.tzinfo is None or updated_at.tzinfo is None:
@@ -1170,6 +1215,8 @@ class Boto3DynamoReviewTaskRepository:
         if not isinstance(note, str) or len(note) > MAX_REVIEW_NOTE_LENGTH or not isinstance(resolution_note, str) or len(resolution_note) > MAX_RESOLUTION_NOTE_LENGTH:
             raise ReviewTaskPersistenceError("review task store unavailable")
         if closed_at is not None and closed_at.tzinfo is None:
+            raise ReviewTaskPersistenceError("review task store unavailable")
+        if archived_at is not None and archived_at.tzinfo is None:
             raise ReviewTaskPersistenceError("review task store unavailable")
         return ReviewTask(
             review_task_id=item["reviewTaskId"],
@@ -1186,6 +1233,7 @@ class Boto3DynamoReviewTaskRepository:
             due_at=due_at,
             closed_at=closed_at,
             resolution_note=resolution_note,
+            archived_at=archived_at,
         )
 
     def get(self, *, context: RequestContext, review_task_id: str) -> ReviewTask | None:
@@ -1224,7 +1272,7 @@ class Boto3DynamoReviewTaskRepository:
             raise ReviewTaskValidationError("limit is invalid")
         try:
             from boto3.dynamodb.conditions import Key
-            projection = "#pk,#sk,#entityType,#tenantId,#matterId,#reviewTaskId,#createdByUserId,#reason,#status,#correlationId,#createdAt,#updatedAt,#note,#dueAt,#closedAt,#resolutionNote"
+            projection = "#pk,#sk,#entityType,#tenantId,#matterId,#reviewTaskId,#createdByUserId,#reason,#status,#correlationId,#createdAt,#updatedAt,#note,#dueAt,#closedAt,#resolutionNote,#archivedAt"
             response = self.table.query(
                 KeyConditionExpression=Key("pk").eq(review_task_partition_key(context.tenant_id, context.matter_id)) & Key("sk").begins_with("REVIEW#"),
                 Limit=limit,
@@ -1233,7 +1281,7 @@ class Boto3DynamoReviewTaskRepository:
                 ExpressionAttributeNames={
                     "#pk": "pk", "#sk": "sk", "#entityType": "entityType", "#tenantId": "tenantId", "#matterId": "matterId",
                     "#reviewTaskId": "reviewTaskId", "#createdByUserId": "createdByUserId", "#reason": "reason", "#status": "status",
-                    "#correlationId": "correlationId", "#createdAt": "createdAt", "#updatedAt": "updatedAt", "#note": "note",
+                    "#correlationId": "correlationId", "#createdAt": "createdAt", "#updatedAt": "updatedAt", "#note": "note", "#archivedAt": "archivedAt",
                     "#dueAt": "dueAt", "#closedAt": "closedAt", "#resolutionNote": "resolutionNote",
                 },
             )
@@ -1289,6 +1337,56 @@ class Boto3DynamoReviewTaskRepository:
         except Exception as exc:
             raise ReviewTaskPersistenceError("review task store unavailable") from exc
         return updated
+
+    def delete(self, *, context: RequestContext, review_task_id: str) -> None:
+        context = require_authorized_context(context)
+        try:
+            self.table.delete_item(
+                Key={
+                    "pk": review_task_partition_key(context.tenant_id, context.matter_id),
+                    "sk": review_task_sort_key(review_task_id),
+                },
+                ConditionExpression="#entity = :entity AND #tenant = :tenant AND #matter = :matter",
+                ExpressionAttributeNames={"#entity": "entityType", "#tenant": "tenantId", "#matter": "matterId"},
+                ExpressionAttributeValues={":entity": "ReviewTask", ":tenant": context.tenant_id, ":matter": context.matter_id},
+            )
+        except Exception as exc:
+            if self.get(context=context, review_task_id=review_task_id) is not None:
+                raise ReviewTaskPersistenceError("review task deletion failed") from exc
+
+    def archive_closed(
+        self, *, context: RequestContext, older_than: datetime, limit: int = MAX_REVIEW_TASKS
+    ) -> tuple[ReviewTask, ...]:
+        context = require_authorized_context(context)
+        if not isinstance(older_than, datetime) or older_than.tzinfo is None:
+            raise ReviewTaskValidationError("retention cutoff is invalid")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_REVIEW_TASKS:
+            raise ReviewTaskValidationError("limit is invalid")
+        candidates = self.list(context=context, limit=limit)
+        archived: list[ReviewTask] = []
+        now = datetime.now(timezone.utc)
+        for task in candidates:
+            if (
+                task.status is not ReviewTaskStatus.CLOSED
+                or task.closed_at is None
+                or task.closed_at > older_than
+                or task.archived_at is not None
+            ):
+                continue
+            updated = replace(task, snapshot=None, note="", resolution_note="", archived_at=now, updated_at=now)
+            try:
+                self.table.update_item(
+                    Key={"pk": review_task_partition_key(context.tenant_id, context.matter_id), "sk": review_task_sort_key(task.review_task_id)},
+                    UpdateExpression="SET #archivedAt = :archivedAt, #updatedAt = :updatedAt REMOVE #snapshot, #note, #resolutionNote",
+                    ExpressionAttributeNames={"#archivedAt": "archivedAt", "#updatedAt": "updatedAt", "#snapshot": "snapshot", "#note": "note", "#resolutionNote": "resolutionNote", "#status": "status", "#matterId": "matterId"},
+                    ExpressionAttributeValues={":archivedAt": now.isoformat(), ":updatedAt": now.isoformat(), ":expectedStatus": ReviewTaskStatus.CLOSED.value, ":expectedMatter": context.matter_id},
+                    ConditionExpression="#status = :expectedStatus AND #matterId = :expectedMatter AND attribute_not_exists(#archivedAt)",
+                    ReturnValues="NONE",
+                )
+            except Exception as exc:
+                raise ReviewTaskPersistenceError("review task archival failed") from exc
+            archived.append(updated)
+        return tuple(archived)
 
 
 __all__ = [

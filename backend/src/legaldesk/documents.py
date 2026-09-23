@@ -125,6 +125,10 @@ class DocumentMetadataRepository(Protocol):
         self, *, tenant_id: str, matter_id: str, limit: int | None = None
     ) -> Sequence[Document]: ...
 
+    def delete_for_scope(
+        self, *, tenant_id: str, matter_id: str, document_id: str
+    ) -> None: ...
+
 
 def document_partition_key(tenant_id: str, matter_id: str) -> str:
     return f"TENANT#{tenant_id}#MATTER#{matter_id}"
@@ -765,6 +769,13 @@ class InMemoryDocumentMetadataRepository:
         )
         return documents if limit is None else documents[:limit]
 
+    def delete_for_scope(
+        self, *, tenant_id: str, matter_id: str, document_id: str
+    ) -> None:
+        if self.fail:
+            raise DocumentMetadataError("fictional metadata failure")
+        self.documents.pop((tenant_id, matter_id, document_id), None)
+
 
 class Boto3S3ObjectStorage:
     """Small boto3 adapter; boto3 is imported only when this adapter is used."""
@@ -1037,6 +1048,38 @@ class Boto3DynamoDocumentMetadataRepository:
                 break
             query_kwargs["ExclusiveStartKey"] = last_key
         return tuple(documents)
+
+    def delete_for_scope(
+        self, *, tenant_id: str, matter_id: str, document_id: str
+    ) -> None:
+        key = {
+            "pk": document_partition_key(tenant_id, matter_id),
+            "sk": document_sort_key(document_id),
+        }
+        try:
+            self.table.delete_item(
+                Key=key,
+                ConditionExpression="#entity = :entity AND #tenant = :tenant AND #matter = :matter AND #document = :document",
+                ExpressionAttributeNames={
+                    "#entity": "entityType",
+                    "#tenant": "tenantId",
+                    "#matter": "matterId",
+                    "#document": "documentId",
+                },
+                ExpressionAttributeValues={
+                    ":entity": "Document",
+                    ":tenant": tenant_id,
+                    ":matter": matter_id,
+                    ":document": document_id,
+                },
+            )
+        except Exception as exc:
+            # A concurrent/idempotent retry may already have removed it.  A
+            # point read distinguishes that safe outcome from a live failure.
+            if self.get_for_scope(
+                tenant_id=tenant_id, matter_id=matter_id, document_id=document_id
+            ) is not None:
+                raise DocumentMetadataError("document metadata deletion failed") from exc
 
 
 def _document_from_item(item: Mapping[str, Any]) -> Document:

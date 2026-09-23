@@ -120,6 +120,18 @@ idempotent duplicate handling, schema-consistent `scanStatus`/verdict parsing,
 conditional lifecycle transitions, and no cross-matter promotion. Keep
 synthetic/public-only fixtures in tests and smoke runs.
 
+The local operator governance slice adds sealed operator scopes, bounded
+metadata-only export, exact document/matter deletion of canonical/quarantine
+objects and metadata, known-scope state cleanup where indexed interfaces
+allow, and closed-review archival that strips workflow text. It is not a
+public destructive endpoint and does not close the deployment gate: operator
+identity, export destination, legal holds, backup retention, and exact
+production deletion evidence remain approval requirements. Deletion first
+tombstones metadata to block stale vectors; retrieval revalidates every result
+against live `INDEXED` + malware-clean metadata. Bedrock vector removal is a
+separate bounded sync/reconciliation evidence item and is reported as
+`indexCleanupPending` until proven.
+
 ### P14-5 — Independent semantic release evidence
 
 Execute and independently review the frozen 14-case semantic holdout against

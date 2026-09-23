@@ -443,6 +443,7 @@ def build_aws_composition(
             prompt_provider=prompt_provider,
             telemetry_sink=composition.telemetry_sink,
             authorized_evidence_sink=authorized_evidence_sink,
+            metadata_repository=metadata,
         )
 
     composition.chat_service = chat_service

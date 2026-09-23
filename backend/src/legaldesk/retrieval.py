@@ -21,6 +21,8 @@ from .authorization import (
     build_request_context,
     require_authorized_context,
 )
+from .documents import DocumentMetadataRepository
+from .domain.models import DocumentStatus, MalwareScanStatus
 from .observability import (
     TelemetryEventType,
     TelemetryOutcome,
@@ -206,6 +208,7 @@ def search_legal_documents(
     knowledge_base_id: str,
     correlation_id: str | None = None,
     telemetry_sink: TelemetrySink | None = None,
+    metadata_repository: DocumentMetadataRepository | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     """Authorize a matter, retrieve with a server-built filter, and normalize.
 
@@ -225,6 +228,7 @@ def search_legal_documents(
         bedrock_client=bedrock_client,
         knowledge_base_id=knowledge_base_id,
         telemetry_sink=telemetry_sink,
+        metadata_repository=metadata_repository,
     )
 
 
@@ -235,6 +239,7 @@ def _retrieve_with_context(
     bedrock_client: BedrockKnowledgeBaseClient,
     knowledge_base_id: str,
     telemetry_sink: TelemetrySink | None = None,
+    metadata_repository: DocumentMetadataRepository | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     """Retrieve only with the RequestContext just authorized by the server."""
 
@@ -305,6 +310,22 @@ def _retrieve_with_context(
         raise ValueError("retrieval response is malformed")
     try:
         results = _normalize_results(response, context)
+        if metadata_repository is not None:
+            for passage in results:
+                document = metadata_repository.get_for_scope(
+                    tenant_id=context.tenant_id,
+                    matter_id=context.matter_id,
+                    document_id=passage.citation.document_id,
+                )
+                if (
+                    document is None
+                    or document.status is not DocumentStatus.INDEXED
+                    or document.malware_scan_status is not MalwareScanStatus.CLEAN
+                ):
+                    # A stale vector can remain after object/metadata
+                    # deletion until the next KB sync. Never pass it to a
+                    # resolver/writer: fail closed for the whole response.
+                    raise ValueError("retrieval result document is unavailable")
     except Exception:
         # Provider-shaped content is untrusted.  A malformed score/page or
         # another normalization failure must close the started retrieval span
