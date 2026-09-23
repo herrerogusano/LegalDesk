@@ -120,6 +120,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
         true,
         `horizontal overflow at ${viewport.width}px`,
       );
+      if (viewport.width >= 1365) {
+        const workspaceWidth = await page.locator(".workspace").evaluate(element => element.getBoundingClientRect().width);
+        assert.ok(
+          workspaceWidth >= viewport.width * 0.8,
+          `desktop workspace should use the available width at ${viewport.width}px (got ${workspaceWidth}px)`,
+        );
+        assert.ok(
+          workspaceWidth < viewport.width,
+          `desktop workspace should retain outer gutters at ${viewport.width}px`,
+        );
+      }
       for (const selector of ["#matter-select", "#document-file", "#question", "#ask-button", "#review-button", "#technical-diagnostics summary"]) {
         assert.equal(await page.locator(selector).isVisible(), true, `${selector} not visible at ${viewport.width}px`);
       }
