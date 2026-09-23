@@ -9,7 +9,7 @@ from typing import Any, Mapping
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
 from legaldesk.documents import InMemoryDocumentMetadataRepository
-from legaldesk.domain.models import Document, DocumentStatus
+from legaldesk.domain.models import Document, DocumentStatus, MalwareScanStatus
 from legaldesk.ingestion import DocumentScopeRef, run_knowledge_base_sync
 
 
@@ -30,6 +30,7 @@ def uploaded_document() -> Document:
         document_date="2099-01-01",
         confidentiality="fictional-internal",
         status=DocumentStatus.UPLOADED,
+        malware_scan_status=MalwareScanStatus.CLEAN,
         file_size_bytes=100,
     )
 
@@ -46,6 +47,7 @@ def second_uploaded_document() -> Document:
         document_date="2099-01-01",
         confidentiality="fictional-internal",
         status=DocumentStatus.UPLOADED,
+        malware_scan_status=MalwareScanStatus.CLEAN,
         file_size_bytes=100,
     )
 

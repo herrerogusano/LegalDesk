@@ -40,6 +40,10 @@ tools must reject raw browser scope and accept only the server-built context.
 - S3 original: `tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original.txt`
   or `original.pdf`, chosen from the validated media type. Bedrock metadata is
   stored beside it as `{source-key}.metadata.json` and never embedded as text.
+- Public upload quarantine: `quarantine/tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original.txt`
+  or `.pdf`. `Document.s3Key` remains the canonical source key and
+  `quarantineS3Key` is the server-owned upload key. The Bedrock data source
+  includes only `tenants/`, never `quarantine/`.
 - Metadata partition: `TENANT#{tenantId}#MATTER#{matterId}`
 - Authorization User record: `pk=AUTH#USER#{verifiedSubject}`, `sk=PROFILE`
 - Authorization Matter record: `pk=AUTH#MATTER#{matterId}`, `sk=PROFILE`
@@ -61,3 +65,15 @@ tools must reject raw browser scope and accept only the server-built context.
 - Memory actor/session namespaces include the authorized user and matter only
   through the server-side derivation; raw tenant, user, matter, or browser
   selectors are never sent as AgentCore IDs.
+
+## Public document safety gate
+
+`Document` stores `quarantineS3Key`, `malwareScanStatus`, `malwareScanETag`, and
+`malwareScanVersionId`. New uploads start as `PENDING`; only a corroborated
+`NO_THREATS_FOUND` result can create the Bedrock metadata sidecar and promote
+`PENDING_UPLOAD` to `UPLOADED`. Ingestion rejects every document whose scan is
+not clean, regardless of its lifecycle status. Threat, unsupported, access
+denied, and failed results delete the original/sidecar and persist `FAILED`.
+Missing, malformed, cross-scope, stale-object, or uncorroborated events fail
+closed without promotion. TTL/retention and production quarantine policy are
+operational concerns; they are not authorization checks.

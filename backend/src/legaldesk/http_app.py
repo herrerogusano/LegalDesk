@@ -359,6 +359,7 @@ class LoopbackLegalDeskApp:
             "name": document.name,
             "mediaType": document.media_type,
             "status": document.status.value,
+            "malwareScanStatus": document.malware_scan_status.value,
             "fileSizeBytes": document.file_size_bytes,
             "documentDate": document.document_date,
         }

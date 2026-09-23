@@ -35,6 +35,17 @@ class DocumentStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class MalwareScanStatus(StrEnum):
+    """Server-owned malware gate; only a clean result permits indexing."""
+
+    PENDING = "PENDING"
+    CLEAN = "NO_THREATS_FOUND"
+    THREATS_FOUND = "THREATS_FOUND"
+    UNSUPPORTED = "UNSUPPORTED"
+    ACCESS_DENIED = "ACCESS_DENIED"
+    FAILED = "FAILED"
+
+
 # Kept as a compatibility name for callers that used the Phase 00 draft.
 IngestionStatus = DocumentStatus
 
@@ -76,6 +87,10 @@ class Document:
     status: DocumentStatus = DocumentStatus.PENDING_UPLOAD
     file_size_bytes: int = 0
     uploaded_at: datetime = field(default_factory=utc_now)
+    quarantine_s3_key: str | None = None
+    malware_scan_status: MalwareScanStatus = MalwareScanStatus.PENDING
+    malware_scan_etag: str | None = None
+    malware_scan_version_id: str | None = None
 
     @property
     def ingestion_status(self) -> DocumentStatus:

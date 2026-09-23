@@ -110,6 +110,13 @@ from .reconciliation import (
     ReconciliationService,
 )
 from .api_gateway import lambda_handler as api_gateway_lambda_handler
+from .malware_scan import (
+    EVENT_DETAIL_TYPE,
+    EVENT_SOURCE,
+    MALWARE_SCAN_TAG_KEY,
+    MalwareScanError,
+    MalwareScanEventHandler,
+)
 from .evidence import (
     AnswerWriter,
     AnswerWriterRequest,
@@ -264,4 +271,9 @@ __all__ = [
     "ReconciliationScope",
     "ReconciliationService",
     "api_gateway_lambda_handler",
+    "EVENT_DETAIL_TYPE",
+    "EVENT_SOURCE",
+    "MALWARE_SCAN_TAG_KEY",
+    "MalwareScanError",
+    "MalwareScanEventHandler",
 ]

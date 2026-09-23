@@ -23,7 +23,7 @@ from .authorization import (
     build_request_context,
     require_authorized_context,
 )
-from .domain.models import Document, DocumentStatus, utc_now
+from .domain.models import Document, DocumentStatus, MalwareScanStatus, utc_now
 
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
@@ -54,6 +54,10 @@ class DocumentMetadataError(DocumentError):
     """Metadata persistence failed during the upload lifecycle."""
 
 
+class DocumentConcurrencyError(DocumentError):
+    """A conditional document transition lost a race; callers fail closed."""
+
+
 @dataclass(frozen=True, slots=True)
 class UploadRequest:
     """Untrusted upload fields normalized at the service boundary."""
@@ -79,6 +83,8 @@ class ObjectStorage(Protocol):
 
     def delete_object(self, *, key: str) -> None: ...
 
+    def copy_object(self, *, source_key: str, destination_key: str) -> None: ...
+
     def generate_presigned_put_url(
         self,
         *,
@@ -90,12 +96,25 @@ class ObjectStorage(Protocol):
 
     def head_object(self, *, key: str) -> Mapping[str, Any]: ...
 
+    def get_object_tagging(self, *, key: str) -> Mapping[str, str]: ...
+
 
 class DocumentMetadataRepository(Protocol):
     def save(self, document: Document) -> None: ...
 
     def update_status(
         self, *, tenant_id: str, matter_id: str, document_id: str, status: DocumentStatus
+    ) -> Document: ...
+
+    def apply_malware_scan_result(
+        self,
+        *,
+        tenant_id: str,
+        matter_id: str,
+        document_id: str,
+        result_status: MalwareScanStatus,
+        etag: str | None,
+        version_id: str | None,
     ) -> Document: ...
 
     def get_for_scope(
@@ -133,6 +152,14 @@ def build_document_key(
         f"tenants/{context.tenant_id}/matters/{context.matter_id}/"
         f"documents/{document_id}/original{extension}"
     )
+
+
+def build_quarantine_document_key(
+    context: RequestContext, document_id: str, media_type: str
+) -> str:
+    """Build an upload-only key outside the Knowledge Base source prefix."""
+
+    return f"quarantine/{build_document_key(context, document_id, media_type)}"
 
 
 def _validate_text(value: str, field_name: str) -> None:
@@ -269,6 +296,50 @@ def _upload_headers(document: Document) -> dict[str, str]:
     }
 
 
+def validate_uploaded_object(
+    object_storage: ObjectStorage, document: Document, *, key: str | None = None
+) -> Mapping[str, Any]:
+    """Validate the server-owned object before any lifecycle promotion."""
+
+    try:
+        head = object_storage.head_object(key=key or document.s3_key)
+    except Exception as exc:
+        raise DocumentStorageError("uploaded object was not found") from exc
+    content_length = head.get("ContentLength")
+    if (
+        not isinstance(content_length, int)
+        or isinstance(content_length, bool)
+        or content_length <= 0
+        or content_length > MAX_DOCUMENT_BYTES
+        or content_length != document.file_size_bytes
+    ):
+        raise DocumentStorageError("uploaded object size is invalid")
+    if head.get("ContentType") != document.media_type:
+        raise DocumentStorageError("uploaded object media type is invalid")
+    stored_metadata = head.get("Metadata")
+    if not isinstance(stored_metadata, Mapping) or any(
+        stored_metadata.get(name) != value
+        for name, value in _safe_metadata(document).items()
+    ):
+        raise DocumentStorageError("uploaded object metadata is invalid")
+    return head
+
+
+def write_bedrock_metadata_sidecar(object_storage: ObjectStorage, document: Document) -> None:
+    """Write the indexing sidecar only after a trusted clean scan result."""
+
+    sidecar = build_bedrock_metadata_sidecar(document)
+    try:
+        object_storage.put_object(
+            key=f"{document.s3_key}.metadata.json",
+            body=sidecar,
+            media_type="application/json",
+            metadata={"document-id": document.document_id},
+        )
+    except Exception as exc:
+        raise DocumentStorageError("document metadata sidecar could not be stored") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class UploadAuthorization:
     """Server-owned document details and the URL for the client's PUT."""
@@ -284,7 +355,7 @@ class UploadAuthorization:
 
     @property
     def s3_key(self) -> str:
-        return self.document.s3_key
+        return self.document.quarantine_s3_key or self.document.s3_key
 
     @property
     def presigned_url(self) -> str:
@@ -300,6 +371,8 @@ class DocumentPipeline:
     metadata_repository: DocumentMetadataRepository
     id_factory: Callable[[], UUID] = uuid4
     clock: Callable[[], datetime] = utc_now
+    require_malware_scan: bool = False
+    quarantine_uploads: bool = False
 
     def initiate_upload(
         self,
@@ -329,6 +402,7 @@ class DocumentPipeline:
             raise DocumentValidationError("presigned URL expiry is outside the allowed range")
         document_id = str(self.id_factory())
         key = build_document_key(context, document_id, request.media_type)
+        upload_key = build_quarantine_document_key(context, document_id, request.media_type) if self.quarantine_uploads else key
         document = Document(
             document_id=document_id,
             matter_id=context.matter_id,
@@ -342,6 +416,8 @@ class DocumentPipeline:
             status=DocumentStatus.PENDING_UPLOAD,
             file_size_bytes=request.file_size_bytes or 0,
             uploaded_at=self.clock(),
+            quarantine_s3_key=upload_key if self.quarantine_uploads else None,
+            malware_scan_status=MalwareScanStatus.PENDING,
         )
         build_bedrock_metadata_attributes(document)
         try:
@@ -350,7 +426,7 @@ class DocumentPipeline:
             raise DocumentMetadataError("document metadata persistence failed") from exc
         try:
             upload_url = self.object_storage.generate_presigned_put_url(
-                key=key,
+                key=upload_key,
                 media_type=document.media_type,
                 metadata=_safe_metadata(document),
                 expires_in=expires_in,
@@ -390,45 +466,30 @@ class DocumentPipeline:
         )
         if document is None:
             raise DocumentError("document not found")
+        upload_key = document.quarantine_s3_key or document.s3_key
+        if document.status is DocumentStatus.FAILED:
+            raise DocumentValidationError("document is not pending upload")
+        if document.status is DocumentStatus.UPLOADED:
+            validate_uploaded_object(self.object_storage, document)
+            return document
         if document.status is not DocumentStatus.PENDING_UPLOAD:
             raise DocumentValidationError("document is not pending upload")
-        try:
-            head = self.object_storage.head_object(key=document.s3_key)
-        except Exception as exc:
-            raise DocumentStorageError("uploaded object was not found") from exc
-        content_length = head.get("ContentLength")
-        if (
-            not isinstance(content_length, int)
-            or isinstance(content_length, bool)
-            or content_length <= 0
-            or content_length > MAX_DOCUMENT_BYTES
-            or content_length != document.file_size_bytes
-        ):
-            raise DocumentStorageError("uploaded object size is invalid")
-        if head.get("ContentType") != document.media_type:
-            raise DocumentStorageError("uploaded object media type is invalid")
-        stored_metadata = head.get("Metadata")
-        if not isinstance(stored_metadata, Mapping) or any(
-            stored_metadata.get(name) != value
-            for name, value in _safe_metadata(document).items()
-        ):
-            raise DocumentStorageError("uploaded object metadata is invalid")
-        sidecar = build_bedrock_metadata_sidecar(document)
-        try:
-            self.object_storage.put_object(
-                key=f"{document.s3_key}.metadata.json",
-                body=sidecar,
-                media_type="application/json",
-                metadata={"document-id": document.document_id},
-            )
-        except Exception as exc:
-            raise DocumentStorageError("document metadata sidecar could not be stored") from exc
-        return self.metadata_repository.update_status(
+        validate_uploaded_object(self.object_storage, document, key=upload_key)
+        if self.require_malware_scan:
+            # The object is structurally valid but remains non-indexable until
+            # the server-side GuardDuty result handler records a clean verdict.
+            return document
+        write_bedrock_metadata_sidecar(self.object_storage, document)
+        promoted = self.metadata_repository.update_status(
             tenant_id=context.tenant_id,
             matter_id=context.matter_id,
             document_id=document.document_id,
             status=DocumentStatus.UPLOADED,
         )
+        if promoted.malware_scan_status is not MalwareScanStatus.CLEAN:
+            promoted = replace(promoted, malware_scan_status=MalwareScanStatus.CLEAN)
+            self.metadata_repository.save(promoted)
+        return promoted
 
     def upload(
         self,
@@ -459,7 +520,7 @@ class DocumentPipeline:
             raise
         try:
             self.object_storage.put_object(
-                key=document.s3_key,
+                key=authorization.s3_key,
                 body=direct_request.body,
                 media_type=direct_request.media_type,
                 metadata=_safe_metadata(document),
@@ -544,6 +605,7 @@ _ALLOWED_STATUS_TRANSITIONS: dict[DocumentStatus, frozenset[DocumentStatus]] = {
 class InMemoryObjectStorage:
     objects: dict[str, bytes]
     metadata: dict[str, dict[str, str]]
+    tags: dict[str, dict[str, str]]
     fail: bool = False
     fail_delete: bool = False
     presigned_urls: dict[str, str] = field(default_factory=dict)
@@ -551,6 +613,7 @@ class InMemoryObjectStorage:
     def __init__(self, *, fail: bool = False, fail_delete: bool = False) -> None:
         self.objects = {}
         self.metadata = {}
+        self.tags = {}
         self.fail = fail
         self.fail_delete = fail_delete
         self.presigned_urls = {}
@@ -573,6 +636,25 @@ class InMemoryObjectStorage:
             raise RuntimeError("fictional cleanup failure")
         self.objects.pop(key, None)
         self.metadata.pop(key, None)
+        self.tags.pop(key, None)
+
+    def copy_object(self, *, source_key: str, destination_key: str) -> None:
+        if self.fail or source_key not in self.objects:
+            raise RuntimeError("fictional storage copy failure")
+        self.objects[destination_key] = self.objects[source_key]
+        self.metadata[destination_key] = dict(self.metadata[source_key])
+        if source_key in self.tags:
+            self.tags[destination_key] = dict(self.tags[source_key])
+
+    def get_object_tagging(self, *, key: str) -> Mapping[str, str]:
+        if key not in self.objects:
+            raise KeyError(key)
+        return dict(self.tags.get(key, {}))
+
+    def set_object_tags(self, *, key: str, tags: Mapping[str, str]) -> None:
+        if key not in self.objects:
+            raise KeyError(key)
+        self.tags[key] = dict(tags)
 
     def generate_presigned_put_url(
         self,
@@ -631,6 +713,43 @@ class InMemoryDocumentMetadataRepository:
         self.documents[key] = updated
         return updated
 
+    def apply_malware_scan_result(
+        self,
+        *,
+        tenant_id: str,
+        matter_id: str,
+        document_id: str,
+        result_status: MalwareScanStatus,
+        etag: str | None,
+        version_id: str | None,
+    ) -> Document:
+        if self.fail:
+            raise RuntimeError("fictional metadata failure")
+        key = (tenant_id, matter_id, document_id)
+        current = self.documents.get(key)
+        if current is None:
+            raise DocumentConcurrencyError("document transition conflict")
+        target_status = (
+            DocumentStatus.UPLOADED
+            if result_status is MalwareScanStatus.CLEAN
+            else DocumentStatus.FAILED
+        )
+        if current.status is target_status and current.malware_scan_status is result_status:
+            if current.malware_scan_etag == etag and current.malware_scan_version_id == version_id:
+                return current
+            raise DocumentConcurrencyError("document transition conflict")
+        if current.status is not DocumentStatus.PENDING_UPLOAD or current.malware_scan_status is not MalwareScanStatus.PENDING:
+            raise DocumentConcurrencyError("document transition conflict")
+        updated = replace(
+            current,
+            status=target_status,
+            malware_scan_status=result_status,
+            malware_scan_etag=etag,
+            malware_scan_version_id=version_id,
+        )
+        self.documents[key] = updated
+        return updated
+
     def get_for_scope(
         self, *, tenant_id: str, matter_id: str, document_id: str
     ) -> Document | None:
@@ -678,6 +797,15 @@ class Boto3S3ObjectStorage:
     def delete_object(self, *, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket_name, Key=key)
 
+    def copy_object(self, *, source_key: str, destination_key: str) -> None:
+        self.client.copy_object(
+            Bucket=self.bucket_name,
+            CopySource={"Bucket": self.bucket_name, "Key": source_key},
+            Key=destination_key,
+            MetadataDirective="COPY",
+            ServerSideEncryption="AES256",
+        )
+
     def generate_presigned_put_url(
         self,
         *,
@@ -701,6 +829,22 @@ class Boto3S3ObjectStorage:
 
     def head_object(self, *, key: str) -> Mapping[str, Any]:
         return self.client.head_object(Bucket=self.bucket_name, Key=key)
+
+    def get_object_tagging(self, *, key: str) -> Mapping[str, str]:
+        response = self.client.get_object_tagging(Bucket=self.bucket_name, Key=key)
+        if not isinstance(response, Mapping) or not isinstance(response.get("TagSet"), list):
+            raise DocumentStorageError("object tags are invalid")
+        result: dict[str, str] = {}
+        for item in response["TagSet"]:
+            if (
+                not isinstance(item, Mapping)
+                or not isinstance(item.get("Key"), str)
+                or not isinstance(item.get("Value"), str)
+                or item["Key"] in result
+            ):
+                raise DocumentStorageError("object tags are invalid")
+            result[item["Key"]] = item["Value"]
+        return result
 
 
 class Boto3DynamoDocumentMetadataRepository:
@@ -736,11 +880,15 @@ class Boto3DynamoDocumentMetadataRepository:
             "documentId": document.document_id,
             "name": document.name,
             "s3Key": document.s3_key,
+            "quarantineS3Key": document.quarantine_s3_key,
             "mediaType": document.media_type,
             "jurisdiction": document.jurisdiction,
             "documentDate": document.document_date,
             "confidentiality": document.confidentiality,
             "status": document.status.value,
+            "malwareScanStatus": document.malware_scan_status.value,
+            "malwareScanETag": document.malware_scan_etag,
+            "malwareScanVersionId": document.malware_scan_version_id,
             "fileSizeBytes": document.file_size_bytes,
             "uploadedAt": document.uploaded_at.isoformat(),
         }
@@ -771,6 +919,73 @@ class Boto3DynamoDocumentMetadataRepository:
             ConditionExpression="#status = :expected_status",
         )
         return _document_from_item({**item, "status": status.value})
+
+    def apply_malware_scan_result(
+        self,
+        *,
+        tenant_id: str,
+        matter_id: str,
+        document_id: str,
+        result_status: MalwareScanStatus,
+        etag: str | None,
+        version_id: str | None,
+    ) -> Document:
+        key = {"pk": document_partition_key(tenant_id, matter_id), "sk": document_sort_key(document_id)}
+        response = self.table.get_item(Key=key, ConsistentRead=True)
+        item = response.get("Item")
+        if not item:
+            raise DocumentConcurrencyError("document transition conflict")
+        current = _document_from_item(item)
+        target_status = DocumentStatus.UPLOADED if result_status is MalwareScanStatus.CLEAN else DocumentStatus.FAILED
+        if current.status is target_status and current.malware_scan_status is result_status:
+            if current.malware_scan_etag == etag and current.malware_scan_version_id == version_id:
+                return current
+            raise DocumentConcurrencyError("document transition conflict")
+        if current.status is not DocumentStatus.PENDING_UPLOAD or current.malware_scan_status is not MalwareScanStatus.PENDING:
+            raise DocumentConcurrencyError("document transition conflict")
+        names = {"#status": "status", "#scan": "malwareScanStatus"}
+        values: dict[str, Any] = {
+            ":status": target_status.value,
+            ":scan": result_status.value,
+            ":expected_status": DocumentStatus.PENDING_UPLOAD.value,
+            ":expected_scan": MalwareScanStatus.PENDING.value,
+        }
+        set_parts = ["#status = :status", "#scan = :scan"]
+        remove_parts: list[str] = []
+        if etag is None:
+            names["#etag"] = "malwareScanETag"
+            remove_parts.append("#etag")
+        else:
+            names["#etag"] = "malwareScanETag"
+            values[":etag"] = etag
+            set_parts.append("#etag = :etag")
+        if version_id is None:
+            names["#version"] = "malwareScanVersionId"
+            remove_parts.append("#version")
+        else:
+            names["#version"] = "malwareScanVersionId"
+            values[":version"] = version_id
+            set_parts.append("#version = :version")
+        expression = "SET " + ", ".join(set_parts)
+        if remove_parts:
+            expression += " REMOVE " + ", ".join(remove_parts)
+        try:
+            self.table.update_item(
+                Key=key,
+                UpdateExpression=expression,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ConditionExpression="#status = :expected_status AND #scan = :expected_scan",
+            )
+        except Exception as exc:
+            raise DocumentConcurrencyError("document transition conflict") from exc
+        return replace(
+            current,
+            status=target_status,
+            malware_scan_status=result_status,
+            malware_scan_etag=etag,
+            malware_scan_version_id=version_id,
+        )
 
     def get_for_scope(
         self, *, tenant_id: str, matter_id: str, document_id: str
@@ -831,11 +1046,15 @@ def _document_from_item(item: Mapping[str, Any]) -> Document:
         tenant_id=str(item["tenantId"]),
         name=str(item["name"]),
         s3_key=str(item["s3Key"]),
+        quarantine_s3_key=item.get("quarantineS3Key") if isinstance(item.get("quarantineS3Key"), str) else None,
         media_type=str(item["mediaType"]),
         jurisdiction=str(item["jurisdiction"]),
         document_date=str(item["documentDate"]),
         confidentiality=str(item["confidentiality"]),
         status=DocumentStatus(item["status"]),
+        malware_scan_status=MalwareScanStatus(item.get("malwareScanStatus", MalwareScanStatus.PENDING.value)),
+        malware_scan_etag=item.get("malwareScanETag") if isinstance(item.get("malwareScanETag"), str) else None,
+        malware_scan_version_id=item.get("malwareScanVersionId") if isinstance(item.get("malwareScanVersionId"), str) else None,
         file_size_bytes=int(item.get("fileSizeBytes", 0)),
         uploaded_at=datetime.fromisoformat(str(item["uploadedAt"])),
     )

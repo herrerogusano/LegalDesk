@@ -382,7 +382,13 @@ def build_aws_composition(
     )
     if smoke_budget is not None:
         harness = _BudgetedHarnessInvoker(harness, smoke_budget)
-    pipeline = DocumentPipeline(auth_store, storage, metadata)
+    pipeline = DocumentPipeline(
+        auth_store,
+        storage,
+        metadata,
+        require_malware_scan=resource_config.public_mode,
+        quarantine_uploads=resource_config.public_mode,
+    )
     state_store = DynamoDBEphemeralStateStore(resource_config.metadata_table_name, table=table)
     sync = _BedrockKnowledgeBaseSync(ingestion_client, storage, metadata, auth_store, resource_config)
     async_ingestion = _BedrockAsyncKnowledgeBaseIngestion(ingestion_client, storage, metadata, state_store, resource_config)

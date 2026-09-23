@@ -268,3 +268,39 @@ recursos ni autoriza AWS, inferencia, datos legales reales o promoción
 `developer → prod`. Esas acciones requieren
 los gates y el envelope de coste de `PLAN_14_PUBLIC_BETA.md` y
 `docs/phase-14-cost-operations.md`.
+
+## ADR-019 — Malware gate before public indexing
+
+En la beta pública un objeto recién subido permanece en `PENDING_UPLOAD` y no
+puede ser seleccionado para ingesta hasta que el resultado de GuardDuty Malware
+Protection sea `NO_THREATS_FOUND`. En public mode, el PUT usa físicamente
+`quarantine/tenants/...`, fuera del prefijo `tenants/` de la data source; así un
+job Bedrock de otro documento no puede ingerir un upload pendiente. El handler
+solo acepta esa quarantine key, copia server-side al key canónico bajo
+`tenants/`, escribe allí el sidecar y elimina la quarantine después de la
+transición condicional. El modo loopback conserva el key canónico por
+compatibilidad. El handler local/production-safe acepta solo
+el evento EventBridge exacto (`source=aws.guardduty`, detail-type
+`GuardDuty Malware Protection Object Scan Result`, account, región, bucket y
+key configurados). Además valida el esquema oficial: `detail.scanStatus` es
+`COMPLETED`, `SKIPPED` o `FAILED`, y el veredicto se obtiene de
+`detail.scanResultDetails.scanResultStatus`, con combinaciones coherentes y
+razones acotadas. Resuelve tenant/matter/document desde metadata server-side,
+y vuelve a comprobar `HEAD` de S3, tamaño, Content-Type, metadata, tag
+`GuardDutyMalwareScanStatus` y ETag/version cuando están disponibles. Un
+evento limpio para un objeto cambiado no promociona el documento.
+
+`THREATS_FOUND`, `UNSUPPORTED`, `ACCESS_DENIED` y `FAILED` son terminales: el
+objeto y su sidecar se eliminan según la política de beta y el registro queda
+en `FAILED`; errores de corroboración o eventos forjados no mutan metadata.
+La promoción y el fallo terminal usan una operación de metadata atómica y
+condicional (`PENDING_UPLOAD + PENDING` como precondición); una carrera pierde
+cerrada y no puede resucitar ni sobreescribir una transición de reconciliación.
+Resultados repetidos son idempotentes y un resultado limpio fuera de orden no
+puede resucitar un documento terminal. Si la limpieza posterior a una
+transición falla, el documento queda no indexable y un evento repetido reintenta
+la limpieza. La composición pública activa el gate;
+el modo loopback conserva fixtures locales y no representa una autorización de
+despliegue. La integración EventBridge/IAM/GuardDuty y cualquier cuarentena
+durable siguen siendo gates de infraestructura separados, sin llamadas AWS en
+esta fase.

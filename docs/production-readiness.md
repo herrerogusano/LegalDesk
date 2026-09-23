@@ -27,6 +27,8 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    dictionaries are not a production source of truth.
 3. **P14-G3 — security, privacy and document lifecycle.** A formal
    security/privacy review, beta data classification and retention policy,
+   exact GuardDuty Malware Protection event + S3 `HEAD`/tag corroboration,
+   physical quarantine outside the Bedrock source prefix,
    malware/content validation and quarantine, incident response, and
    deletion/export controls are approved and tested. No real legal/client data
    is admitted by the beta policy.

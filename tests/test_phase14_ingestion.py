@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 
 from legaldesk.authorization import AuthorizationDenied
 from legaldesk.documents import InMemoryDocumentMetadataRepository
-from legaldesk.domain.models import Document, DocumentStatus
+from legaldesk.domain.models import Document, DocumentStatus, MalwareScanStatus
 from legaldesk.ingestion import AsyncKnowledgeBaseIngestionService, IngestionConflictError
 from legaldesk.http_app import ApplicationComposition, LoopbackLegalDeskApp
 from legaldesk.state import InMemoryEphemeralStateStore, IngestionOperationRecord
@@ -29,6 +29,7 @@ def _document(document_id: str = DOCUMENT_ID, status: DocumentStatus = DocumentS
         s3_key=f"tenants/{TENANT}/matters/{MATTER}/documents/{document_id}/original.txt",
         media_type="text/plain", jurisdiction="fictional", document_date="2099-01-01",
         confidentiality="fictional", status=status, file_size_bytes=10,
+        malware_scan_status=MalwareScanStatus.CLEAN,
     )
 
 

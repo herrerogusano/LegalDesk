@@ -14,7 +14,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from .documents import DocumentMetadataRepository
-from .domain.models import Document, DocumentStatus
+from .domain.models import Document, DocumentStatus, MalwareScanStatus
 from .authorization import AuthorizationDenied
 from .state import EphemeralStateStore, IngestionOperationRecord, ingestion_document_set_key
 
@@ -92,6 +92,8 @@ def validate_ingestion_documents(
             raise ValueError("a selected document is not present in the requested scope")
         if document.status not in {DocumentStatus.UPLOADED, DocumentStatus.FAILED}:
             raise ValueError("a selected document is not ready for a new ingestion attempt")
+        if document.malware_scan_status is not MalwareScanStatus.CLEAN:
+            raise ValueError("a selected document has no clean malware scan")
         documents.append(document)
 
     for document in documents:

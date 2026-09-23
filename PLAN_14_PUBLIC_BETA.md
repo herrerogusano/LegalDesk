@@ -109,8 +109,16 @@ a safe terminal transition or explicit reconciliation.
 
 Complete the beta data classification, retention/deletion/export policy,
 incident response and operator runbook. Add malware/content validation and a
-quarantine boundary before indexing. Keep synthetic/public-only fixtures in
-tests and smoke runs.
+quarantine boundary before indexing. Public uploads remain `PENDING_UPLOAD`
+under a physical `quarantine/` prefix excluded from the Bedrock data source,
+until an exact GuardDuty Malware Protection result is corroborated by a fresh
+object `HEAD`, server-owned metadata, and the `GuardDutyMalwareScanStatus` tag;
+only `NO_THREATS_FOUND` copies to the canonical source prefix and creates the
+indexing sidecar. Threat, unsupported,
+access-denied, and failed results delete/quarantine and persist `FAILED`, with
+idempotent duplicate handling, schema-consistent `scanStatus`/verdict parsing,
+conditional lifecycle transitions, and no cross-matter promotion. Keep
+synthetic/public-only fixtures in tests and smoke runs.
 
 ### P14-5 — Independent semantic release evidence
 
@@ -149,8 +157,9 @@ Phase 14 is complete only when every criterion below has release evidence:
    cleanup cannot cross tenant/matter boundaries and does not rely solely on
    eventual TTL deletion.
 6. **Document safety/privacy:** malware/content validation, quarantine,
-   retention, deletion/export, incident response, and review-task archival rules
-   are approved and tested for the fictional/public beta data class.
+   exact event/HEAD/tag corroboration, retention, deletion/export, incident
+   response, and review-task archival rules are approved and tested for the
+   fictional/public beta data class.
 7. **Semantic holdout:** all 14 frozen cases run against the release candidate;
    an independent reviewer signs the immutable metadata-only result and the
    approved threshold is met or the release is rejected.
