@@ -48,8 +48,22 @@ class FakeDynamoTable:
         key = (str(Key["pk"]), str(Key["sk"]))
         if key not in self.items:
             raise RuntimeError("missing item")
-        self.items[key]["status"] = ExpressionAttributeValues[":status"]
+        if ":status" in ExpressionAttributeValues:
+            self.items[key]["status"] = ExpressionAttributeValues[":status"]
+        if ":correlation" in ExpressionAttributeValues:
+            self.items[key]["correlationId"] = ExpressionAttributeValues[":correlation"]
         return {}
+
+    def delete_item(self, *, Key: Mapping[str, str], **kwargs: object) -> Mapping[str, object]:
+        self.calls.append(("delete_item", dict(Key)))
+        key = (str(Key["pk"]), str(Key["sk"]))
+        item = self.items.get(key)
+        if kwargs.get("ConditionExpression") and item is None:
+            raise RuntimeError("conditional check failed")
+        if item is None:
+            return {}
+        del self.items[key]
+        return {"Attributes": dict(item)} if kwargs.get("ReturnValues") == "ALL_OLD" else {}
 
     def query(self, **kwargs: object) -> Mapping[str, object]:
         self.calls.append(("query", {}))

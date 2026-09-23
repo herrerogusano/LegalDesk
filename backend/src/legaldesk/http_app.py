@@ -15,7 +15,7 @@ import json
 import secrets
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from pathlib import Path, PurePosixPath
@@ -46,6 +46,12 @@ from .review_tasks import (
     ReviewReasonCode,
     MAX_REVIEW_NOTE_LENGTH,
     default_due_at,
+)
+from .state import (
+    CitationHandle,
+    EphemeralStateStore,
+    InMemoryEphemeralStateStore,
+    SessionRecord,
 )
 
 
@@ -99,26 +105,6 @@ class ApplicationTelemetrySink:
         return self.local.by_correlation_id(correlation_id)
 
 
-@dataclass(frozen=True, slots=True)
-class SessionRecord:
-    identity: VerifiedIdentity
-    access_token: str = field(repr=False)
-    csrf_token: str = field(repr=False)
-    expires_at: float
-
-
-@dataclass(frozen=True, slots=True)
-class CitationHandle:
-    handle: str
-    subject: str
-    tenant_id: str
-    matter_id: str
-    conversation_id: str
-    document_id: str | None
-    passage: str
-    expires_at: float
-
-
 @dataclass(slots=True)
 class ApplicationComposition:
     """All application dependencies; no provider is constructed implicitly."""
@@ -152,12 +138,15 @@ class ApplicationComposition:
     session_ttl_seconds: int = 3_600
     allowed_hosts: frozenset[str] = frozenset({"localhost", "127.0.0.1"})
     allowed_origins: frozenset[str] = frozenset({"http://localhost:8000", "http://127.0.0.1:8000"})
+    state_store: EphemeralStateStore | None = None
 
     def __post_init__(self) -> None:
         if not self.matter_catalog or len(self.matter_catalog) > 64 or any(not isinstance(item, str) or not item or len(item) > 128 for item in self.matter_catalog):
             raise ValueError("matter_catalog must be configured; catalog scans are forbidden")
         if self.telemetry_sink is None:
             self.telemetry_sink = InMemoryTelemetrySink()
+        if self.state_store is None:
+            self.state_store = InMemoryEphemeralStateStore()
         if self.review_repository is None:
             self.review_repository = InMemoryReviewTaskRepository()
         if self.gateway_grant_repository is None:
@@ -169,38 +158,56 @@ class LoopbackLegalDeskApp:
 
     def __init__(self, composition: ApplicationComposition) -> None:
         self.composition = composition
-        self.sessions: dict[str, SessionRecord] = {}
-        self.oauth_states: dict[str, tuple[str, float]] = {}
-        self.citation_handles: dict[str, CitationHandle] = {}
-        self._citation_links: dict[tuple[str, str, str, str], str] = {}
-        self._conversation_selectors: dict[str, tuple[str, str, str, str]] = {}
-        self._conversation_correlations: dict[str, str] = {}
-        self._accepted_history_ids: dict[tuple[str, str, str], list[str]] = {}
-        self._accepted_review_candidates: dict[tuple[str, str, str], tuple[float, dict[str, object]]] = {}
-        self._audit_records: list[dict[str, object]] = []
+        self.state_store = composition.state_store
+
+    # Compatibility views for the existing offline tests.  The application
+    # itself uses only the injected store; these are available only because the
+    # in-memory store intentionally exposes its fixture state.
+    @property
+    def sessions(self) -> dict[str, SessionRecord]:
+        return self._memory_store().sessions
+
+    @property
+    def oauth_states(self) -> dict[str, tuple[str, float]]:
+        return self._memory_store().oauth_states
+
+    @property
+    def citation_handles(self) -> dict[str, CitationHandle]:
+        return self._memory_store().citation_handles
+
+    @property
+    def _citation_links(self) -> dict[tuple[str, str, str, str], str]:
+        return self._memory_store().citation_links
+
+    @property
+    def _conversation_selectors(self) -> dict[str, tuple[str, str, str, str]]:
+        return self._memory_store().conversation_selectors
+
+    @property
+    def _conversation_correlations(self) -> dict[str, str]:
+        return self._memory_store().conversation_correlations
+
+    @property
+    def _accepted_history_ids(self) -> dict[tuple[str, str, str], list[str]]:
+        return self._memory_store().accepted_history_ids
+
+    @property
+    def _accepted_review_candidates(self) -> dict[tuple[str, str, str], tuple[float, dict[str, object]]]:
+        return self._memory_store().accepted_review_candidates
+
+    @property
+    def _audit_records(self) -> list[dict[str, object]]:
+        return self._memory_store().audit_records
+
+    def _memory_store(self) -> InMemoryEphemeralStateStore:
+        if not isinstance(self.state_store, InMemoryEphemeralStateStore):
+            raise AttributeError("process-local state views are unavailable for durable stores")
+        return self.state_store
 
     def _bound_state(self) -> None:
-        """Bound server-side ephemeral state before accepting another item."""
+        """Bound server-side state through the injected state store."""
 
-        now = time.time()
-        for key, record in tuple(self.oauth_states.items()):
-            if record[1] <= now:
-                self.oauth_states.pop(key, None)
-        for key, record in tuple(self.sessions.items()):
-            if record.expires_at <= now:
-                self.sessions.pop(key, None)
-        for key, record in tuple(self.citation_handles.items()):
-            if record.expires_at <= now:
-                self.citation_handles.pop(key, None)
-        for key, handle in tuple(self._citation_links.items()):
-            if handle not in self.citation_handles:
-                self._citation_links.pop(key, None)
-        if len(self.oauth_states) >= 256:
-            raise RuntimeError("too many pending login attempts")
-        if len(self.sessions) >= 256:
-            raise RuntimeError("too many sessions")
-        if len(self.citation_handles) >= 1_024:
-            raise RuntimeError("too many citation handles")
+        self.state_store.bound_state()
 
     def __call__(self, environ: Mapping[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
         status = HTTPStatus.OK
@@ -269,9 +276,8 @@ class LoopbackLegalDeskApp:
         if cookie is None:
             raise AuthorizationDenied("access denied")
         key = cookie.value
-        record = self.sessions.get(key)
-        if record is None or record.expires_at <= time.time():
-            self.sessions.pop(key, None)
+        record = self.state_store.get_session(key)
+        if record is None:
             raise AuthorizationDenied("access denied")
         try:
             # Re-verify on every request so token expiry and claim/signature
@@ -280,7 +286,7 @@ class LoopbackLegalDeskApp:
                 f"Bearer {record.access_token}"
             )
         except Exception as exc:
-            self.sessions.pop(key, None)
+            self.state_store.delete_session(key)
             raise AuthorizationDenied("access denied") from exc
         return key, SessionRecord(identity, record.access_token, record.csrf_token, record.expires_at)
 
@@ -341,7 +347,7 @@ class LoopbackLegalDeskApp:
         if path == PurePosixPath("/logout") and method == "POST":
             key, session = self._session(environ)
             self._request_guards(environ, session=session, mutating=True)
-            self.sessions.pop(key, None)
+            self.state_store.delete_session(key)
             return HTTPStatus.OK, {"ok": True}, [("Set-Cookie", f"{SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax")]
         key, session = self._session(environ)
         mutating = method not in _SAFE_METHODS
@@ -368,12 +374,13 @@ class LoopbackLegalDeskApp:
             if not isinstance(matter_id, str):
                 raise ValueError("matterId is required")
             context = self._context(identity, matter_id)
-            if len(self._conversation_selectors) >= 256:
-                raise RuntimeError("too many conversations")
             conversation_id, selector = str(uuid4()), f"s-{secrets.token_urlsafe(24)}"
             self.composition.conversation_store.bind(context, conversation_id=conversation_id, session_selector=selector)
-            self._conversation_selectors[conversation_id] = (identity.subject, context.tenant_id, context.matter_id, selector)
-            self._conversation_correlations[conversation_id] = context.correlation_id
+            self.state_store.bind_conversation(
+                conversation_id,
+                (identity.subject, context.tenant_id, context.matter_id, selector),
+                context.correlation_id,
+            )
             self._audit(identity, context.matter_id, context.correlation_id, "conversation_created")
             return HTTPStatus.CREATED, {"conversationId": conversation_id, "sessionId": selector, "matterId": context.matter_id, "correlationId": context.correlation_id, "csrfToken": session.csrf_token}, []
         if len(parts) >= 4 and parts[1:3] == ("api", "matters"):
@@ -462,7 +469,7 @@ class LoopbackLegalDeskApp:
             if not self.composition.conversation_store.is_bound(context=context, conversation_id=conversation_id, session_selector=session_id):
                 raise AuthorizationDenied("conversation access denied")
             origin_correlation = data.pop("originCorrelationId", None)
-            expected_correlation = self._conversation_correlations.get(conversation_id)
+            expected_correlation = self.state_store.get_conversation_correlation(conversation_id)
             if origin_correlation is not None and origin_correlation != expected_correlation:
                 raise AuthorizationDenied("operation correlation is not owned")
             if expected_correlation is not None:
@@ -493,7 +500,7 @@ class LoopbackLegalDeskApp:
             # Reauthorize each distinct matter once for this request, not once
             # per telemetry event. Never cache membership across requests.
             matter_access: dict[str, bool] = {}
-            for item in self._audit_records:
+            for item in self.state_store.list_audit(identity.subject, limit=1_000):
                 if item.get("subject") != identity.subject:
                     continue
                 matter_id = item.get("matterId")
@@ -517,7 +524,7 @@ class LoopbackLegalDeskApp:
             client_id=self.composition.oauth_client_id,
             redirect_uri=self.composition.redirect_uri,
         )
-        self.oauth_states[request.state] = (request.code_verifier, time.time() + 600)
+        self.state_store.put_oauth_state(request.state, request.code_verifier, time.time() + 600)
         return HTTPStatus.FOUND, {}, [
             ("Location", request.authorization_url),
             ("Set-Cookie", f"{STATE_COOKIE}={request.state}; Max-Age=600; Path=/callback; HttpOnly; SameSite=Lax"),
@@ -527,14 +534,18 @@ class LoopbackLegalDeskApp:
         query = parse_qs(str(environ.get("QUERY_STRING", "")))
         state, code = query.get("state", [""])[0], query.get("code", [""])[0]
         cookie = self._cookies(environ).get(STATE_COOKIE)
-        record = self.oauth_states.pop(state, None)
-        if not state or not code or cookie is None or cookie.value != state or record is None or record[1] <= time.time() or self.composition.token_exchange is None:
+        record = (
+            self.state_store.consume_oauth_state(state)
+            if state and cookie is not None and cookie.value == state
+            else None
+        )
+        if not state or not code or cookie is None or cookie.value != state or record is None or self.composition.token_exchange is None:
             raise AuthorizationDenied("login failed")
         token = self.composition.token_exchange.exchange(code, code_verifier=record[0], redirect_uri=self.composition.redirect_uri)
         identity = self.composition.identity_verifier.verify_authorization_header(f"Bearer {token}")
         key, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         self._bound_state()
-        self.sessions[key] = SessionRecord(identity, token, csrf, time.time() + self.composition.session_ttl_seconds)
+        self.state_store.put_session(key, SessionRecord(identity, token, csrf, time.time() + self.composition.session_ttl_seconds))
         return HTTPStatus.FOUND, {}, [("Location", "/"), ("Set-Cookie", f"{SESSION_COOKIE}={key}; Max-Age={self.composition.session_ttl_seconds}; Path=/; HttpOnly; SameSite=Lax"), ("Set-Cookie", f"{STATE_COOKIE}=; Max-Age=0; Path=/callback; HttpOnly; SameSite=Lax")]
 
     def _authorize_upload(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str):
@@ -552,7 +563,7 @@ class LoopbackLegalDeskApp:
         context = self._context(identity, matter_id)
         if not self.composition.conversation_store.is_bound(context=context, conversation_id=conversation_id, session_selector=session_id):
             raise AuthorizationDenied("conversation access denied")
-        self._conversation_correlations[conversation_id] = context.correlation_id
+        self.state_store.set_conversation_correlation(conversation_id, context.correlation_id)
         if self.composition.chat_service is None:
             raise RuntimeError("chat service is not configured")
         documents = self.composition.document_pipeline.list_documents(identity, matter_id, correlation_id=context.correlation_id)
@@ -569,7 +580,12 @@ class LoopbackLegalDeskApp:
         citations = safe.get("citations")
         if isinstance(citations, list):
             safe["citations"] = [
-                dict(self._safe_citation(item, identity, context.matter_id, conversation_id), handle=self._citation_links.get((identity.subject, conversation_id, context.correlation_id, str(item.get("citationId")))))
+                dict(
+                    self._safe_citation(item, identity, context.matter_id, conversation_id),
+                    handle=self.state_store.get_citation_link(
+                        (identity.subject, conversation_id, context.correlation_id, str(item.get("citationId")))
+                    ),
+                )
                 for item in citations
             ]
         if (
@@ -607,10 +623,9 @@ class LoopbackLegalDeskApp:
     ) -> None:
         """Keep only a bounded server-derived candidate for the next create.
 
-        This local map is a Phase 13 limitation: production needs a durable,
-        distributed accepted-answer record before horizontal scaling. The
-        review Lambda still persists the validated snapshot atomically when a
-        task is created.
+        The injected store makes this candidate durable across app instances;
+        the review Lambda still persists the validated snapshot atomically when
+        a task is created.
         """
 
         citations: list[dict[str, object]] = []
@@ -620,7 +635,11 @@ class LoopbackLegalDeskApp:
                 if not isinstance(raw, Mapping):
                     continue
                 handle_id = raw.get("handle")
-                handle = self.citation_handles.get(handle_id) if isinstance(handle_id, str) else None
+                handle = (
+                    self.state_store.get_citation(handle_id, subject=identity.subject)
+                    if isinstance(handle_id, str)
+                    else None
+                )
                 passage = handle.passage if handle is not None else None
                 document_id = raw.get("documentId")
                 if not isinstance(document_id, str) or not isinstance(passage, str):
@@ -647,14 +666,10 @@ class LoopbackLegalDeskApp:
             "citations": citations,
         }
         key = (identity.subject, conversation_id, correlation_id)
-        self._accepted_review_candidates[key] = (time.time() + REVIEW_CANDIDATE_TTL_SECONDS, candidate)
-        now = time.time()
-        for stale_key, (expires_at, _value) in list(self._accepted_review_candidates.items()):
-            if expires_at <= now:
-                self._accepted_review_candidates.pop(stale_key, None)
-        if len(self._accepted_review_candidates) > 256:
-            oldest = next(iter(self._accepted_review_candidates))
-            self._accepted_review_candidates.pop(oldest, None)
+        self.state_store.put_review_candidate(
+            key,
+            (time.time() + REVIEW_CANDIDATE_TTL_SECONDS, candidate),
+        )
 
     def _remember_history_event(self, subject: str, conversation_id: str, session_id: str, event: object) -> None:
         event_id = getattr(event, "event_id", None)
@@ -665,12 +680,7 @@ class LoopbackLegalDeskApp:
                 event_id = nested.get("eventId")
         if not isinstance(event_id, str) or not event_id or len(event_id) > 256:
             return
-        key = (subject, conversation_id, session_id)
-        accepted = self._accepted_history_ids.setdefault(key, [])
-        if event_id not in accepted:
-            accepted.append(event_id)
-        if len(accepted) > 200:
-            del accepted[: len(accepted) - 200]
+        self.state_store.add_history_event((subject, conversation_id, session_id), event_id)
 
     def _store_authorized_evidence(self, identity: VerifiedIdentity, context: Any, request: Any, response: Any, passages: tuple[Any, ...]) -> None:
         if len(passages) > 32:
@@ -685,11 +695,13 @@ class LoopbackLegalDeskApp:
                 raise ValueError("citation passage is malformed")
             handle_id = secrets.token_urlsafe(24)
             handle = CitationHandle(handle_id, identity.subject, context.tenant_id, context.matter_id, request.conversation_id, document_id, text, time.time() + 300)
-            self.citation_handles[handle_id] = handle
-            self._citation_links[(identity.subject, request.conversation_id, context.correlation_id, citation_id)] = handle_id
+            self.state_store.put_citation(
+                handle,
+                citation_key=(identity.subject, request.conversation_id, context.correlation_id, citation_id),
+            )
 
     def _history(self, environ: Mapping[str, Any], identity: VerifiedIdentity, conversation_id: str):
-        record = self._conversation_selectors.get(conversation_id)
+        record = self.state_store.get_conversation(conversation_id)
         query = parse_qs(str(environ.get("QUERY_STRING", "")))
         requested_session = query.get("sessionId", [None])[0]
         if record is None or record[0] != identity.subject:
@@ -707,7 +719,7 @@ class LoopbackLegalDeskApp:
         if self.composition.memory is None:
             return HTTPStatus.OK, {"events": []}, []
         scope = derive_memory_scope_for_identity(identity, matter_id, conversation_id, selector, self.composition.authorization_store, self.composition.conversation_store, correlation_id=context.correlation_id)
-        accepted_ids = self._accepted_history_ids.get((identity.subject, conversation_id, selector), [])
+        accepted_ids = self.state_store.list_history_ids((identity.subject, conversation_id, selector))
         if self.composition.memory.__class__.__name__.startswith("InMemory"):
             raw = self.composition.memory.list_events(scope)
             events = [{"eventId": item.event_id, "role": item.role, "text": item.text, "timestamp": item.event_timestamp.isoformat()} for item in raw if item.event_id in accepted_ids]
@@ -760,7 +772,7 @@ class LoopbackLegalDeskApp:
         context = self._context(identity, matter_id)
         if not self.composition.conversation_store.is_bound(context=context, conversation_id=conversation_id, session_selector=session_id):
             raise AuthorizationDenied("conversation access denied")
-        expected_correlation = self._conversation_correlations.get(conversation_id)
+        expected_correlation = self.state_store.get_conversation_correlation(conversation_id)
         if origin_correlation is not None and origin_correlation != expected_correlation:
             raise AuthorizationDenied("operation correlation is not owned")
         if expected_correlation is not None:
@@ -800,12 +812,10 @@ class LoopbackLegalDeskApp:
             raise ValueError("review note is invalid")
         conversation_id, session_id = data.get("conversationId"), data.get("sessionId")
         context, binding = self._review_binding(identity, matter_id, session, conversation_id, session_id, data.get("originCorrelationId"))
-        candidate_entry = self._accepted_review_candidates.get((identity.subject, conversation_id, context.correlation_id))
-        if not candidate_entry or candidate_entry[0] <= time.time():
-            self._accepted_review_candidates.pop((identity.subject, conversation_id, context.correlation_id), None)
-            candidate = None
-        else:
-            candidate = candidate_entry[1]
+        candidate_entry = self.state_store.get_review_candidate(
+            (identity.subject, conversation_id, context.correlation_id)
+        )
+        candidate = candidate_entry[1] if candidate_entry else None
         if not isinstance(candidate, Mapping):
             # No accepted server-side answer means there is no review task to
             # create; client-supplied snapshots are deliberately ignored.
@@ -946,9 +956,7 @@ class LoopbackLegalDeskApp:
         return {"status": "SUCCESS", "tool": result["tool"], "result": dict(payload), "correlationId": binding.correlation_id}
 
     def _audit(self, identity: VerifiedIdentity, matter_id: str, correlation_id: str, operation: str) -> None:
-        self._audit_records.append({"subject": identity.subject, "matterId": matter_id, "correlationId": correlation_id, "operation": operation, "timestampMs": int(time.time() * 1000)})
-        if len(self._audit_records) > 1_000:
-            del self._audit_records[: len(self._audit_records) - 1_000]
+        self.state_store.append_audit({"subject": identity.subject, "matterId": matter_id, "correlationId": correlation_id, "operation": operation, "timestampMs": int(time.time() * 1000)})
 
     def _audit_telemetry(self, identity: VerifiedIdentity, matter_id: str, correlation_id: str) -> None:
         sink = self.composition.telemetry_sink
@@ -962,18 +970,16 @@ class LoopbackLegalDeskApp:
                 safe = dict(event)
             else:
                 continue
-            self._audit_records.append({"subject": identity.subject, "matterId": matter_id, **safe})
-        if len(self._audit_records) > 1_000:
-            del self._audit_records[: len(self._audit_records) - 1_000]
+            self.state_store.append_audit({"subject": identity.subject, "matterId": matter_id, **safe})
 
     def _citation(self, identity: VerifiedIdentity, handle: str):
-        record = self.citation_handles.get(handle)
-        if record is None or record.expires_at <= time.time() or record.subject != identity.subject:
+        record = self.state_store.get_citation(handle, subject=identity.subject)
+        if record is None or record.expires_at <= time.time():
             raise AuthorizationDenied("citation access denied")
         context = self._context(identity, record.matter_id)
         if context.tenant_id != record.tenant_id:
             raise AuthorizationDenied("citation access denied")
-        conversation = self._conversation_selectors.get(record.conversation_id)
+        conversation = self.state_store.get_conversation(record.conversation_id)
         if conversation is None or conversation[0] != identity.subject or conversation[2] != record.matter_id:
             raise AuthorizationDenied("citation access denied")
         if not self.composition.conversation_store.is_bound(context=context, conversation_id=record.conversation_id, session_selector=conversation[3]):

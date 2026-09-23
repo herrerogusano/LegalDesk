@@ -93,6 +93,12 @@ from .http_app import (
     create_aws_composition,
     create_http_app,
 )
+from .state import (
+    DynamoDBEphemeralStateStore,
+    EphemeralStateStore,
+    InMemoryEphemeralStateStore,
+    SessionRecord,
+)
 from .evidence import (
     AnswerWriter,
     AnswerWriterRequest,
@@ -234,4 +240,8 @@ __all__ = [
     "LoopbackLegalDeskApp",
     "create_aws_composition",
     "create_http_app",
+    "DynamoDBEphemeralStateStore",
+    "EphemeralStateStore",
+    "InMemoryEphemeralStateStore",
+    "SessionRecord",
 ]

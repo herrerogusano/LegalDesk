@@ -36,6 +36,7 @@ from .prompts import FileSystemSystemPromptProvider
 from .review_tasks import Boto3DynamoReviewTaskRepository
 from .observability import DEFAULT_TELEMETRY_SINK
 from .smoke_budget import BudgetedSdkClient, SmokeBudget
+from .state import DynamoDBEphemeralStateStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +294,7 @@ def build_aws_composition(
         gateway_grant_repository=grant_repository,
         memory=memory,
         telemetry_sink=telemetry_sink,
+        state_store=DynamoDBEphemeralStateStore(resource_config.metadata_table_name, table=table),
         matter_catalog=resource_config.matter_catalog,
         oauth_client_id=resource_config.client_id,
         authorization_endpoint=resource_config.authorization_endpoint,
