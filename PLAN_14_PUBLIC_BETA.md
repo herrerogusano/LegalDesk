@@ -32,9 +32,14 @@ Browser -- HTTPS --> CloudFront custom domain + ACM (+ approved edge limits)
        redacted CloudWatch telemetry --------------------+
 ```
 
-The public origin is one approved HTTPS hostname. CloudFront routes static
-assets to a private S3 bucket and `/callback` plus `/api/*` to an API Gateway
-HTTP API integration. The application keeps OAuth tokens server-side and
+The browser public origin is one approved HTTPS hostname. CloudFront routes
+static assets to a private S3 bucket and `/login`, `/callback`, `/logout` plus
+`/api/*` to an API Gateway HTTP API integration. The API origin host is an
+explicit separate allowlist because an API Gateway integration can observe its
+own origin/custom-domain `Host`, not the viewer host. CloudFront must inject
+and overwrite the fixed `X-LegalDesk-Trusted-Edge` marker; its secret value is
+configured without logging or output, and direct execute-api requests without
+the marker fail. The application keeps OAuth tokens server-side and
 validates the Cognito access token, issuer, scope and expiry. No browser value
 establishes tenant, matter, document, conversation, correlation, or tool scope.
 

@@ -99,6 +99,7 @@ from .state import (
     InMemoryEphemeralStateStore,
     SessionRecord,
 )
+from .api_gateway import lambda_handler as api_gateway_lambda_handler
 from .evidence import (
     AnswerWriter,
     AnswerWriterRequest,
@@ -244,4 +245,5 @@ __all__ = [
     "EphemeralStateStore",
     "InMemoryEphemeralStateStore",
     "SessionRecord",
+    "api_gateway_lambda_handler",
 ]

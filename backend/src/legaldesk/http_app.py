@@ -15,7 +15,7 @@ import json
 import secrets
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from pathlib import Path, PurePosixPath
@@ -61,6 +61,8 @@ REVIEW_CANDIDATE_TTL_SECONDS = 15 * 60
 SESSION_COOKIE = "legaldesk_session"
 STATE_COOKIE = "legaldesk_oauth_state"
 CSRF_HEADER = "HTTP_X_CSRF_TOKEN"
+TRUSTED_EDGE_HEADER = "X-LegalDesk-Trusted-Edge"
+TRUSTED_EDGE_ENVIRON = "legaldesk.edge_verified"
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
@@ -139,10 +141,25 @@ class ApplicationComposition:
     allowed_hosts: frozenset[str] = frozenset({"localhost", "127.0.0.1"})
     allowed_origins: frozenset[str] = frozenset({"http://localhost:8000", "http://127.0.0.1:8000"})
     state_store: EphemeralStateStore | None = None
+    secure_cookies: bool = False
+    public_mode: bool = False
+    trusted_edge_value: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self.matter_catalog or len(self.matter_catalog) > 64 or any(not isinstance(item, str) or not item or len(item) > 128 for item in self.matter_catalog):
             raise ValueError("matter_catalog must be configured; catalog scans are forbidden")
+        if self.public_mode:
+            if not self.secure_cookies or not self.public_base_url.startswith("https://"):
+                raise ValueError("public_mode requires an HTTPS base URL and secure cookies")
+            if self.redirect_uri != f"{self.public_base_url.rstrip('/')}/callback":
+                raise ValueError("public_mode requires the exact /callback redirect URI")
+            if not self.allowed_hosts or not self.allowed_origins:
+                raise ValueError("public_mode requires exact API host and browser origin allowlists")
+            public_origin = self.public_base_url.rstrip("/")
+            if self.allowed_origins != frozenset({public_origin}):
+                raise ValueError("public_mode browser origin allowlist must match the public origin exactly")
+            if not isinstance(self.trusted_edge_value, str) or not self.trusted_edge_value or any(ord(char) < 0x21 or ord(char) > 0x7E for char in self.trusted_edge_value):
+                raise ValueError("public_mode requires a valid trusted-edge marker")
         if self.telemetry_sink is None:
             self.telemetry_sink = InMemoryTelemetrySink()
         if self.state_store is None:
@@ -222,7 +239,14 @@ class LoopbackLegalDeskApp:
             ("X-Frame-Options", "DENY"),
             ("Referrer-Policy", "no-referrer"),
             ("Permissions-Policy", "camera=(), geolocation=(), microphone=()"),
+            ("X-Permitted-Cross-Domain-Policies", "none"),
+            ("Cross-Origin-Opener-Policy", "same-origin"),
+            ("Cross-Origin-Resource-Policy", "same-origin"),
         ]
+        if self.composition.public_mode:
+            # CloudFront owns the final CSP response policy because upload
+            # hosts are deployment-specific; do not invent a broad CSP here.
+            headers.append(("Strict-Transport-Security", "max-age=31536000; includeSubDomains"))
         try:
             status, body, extra = self._dispatch(environ)
             if any(name.lower() == "content-type" for name, _value in extra):
@@ -271,6 +295,12 @@ class LoopbackLegalDeskApp:
         cookies.load(environ.get("HTTP_COOKIE", ""))
         return cookies
 
+    def _set_cookie(self, name: str, value: str, *, max_age: int, path: str = "/") -> str:
+        flags = [f"{name}={value}", f"Max-Age={max_age}", f"Path={path}", "HttpOnly", "SameSite=Lax"]
+        if self.composition.secure_cookies:
+            flags.append("Secure")
+        return "; ".join(flags)
+
     def _session(self, environ: Mapping[str, Any]) -> tuple[str, SessionRecord]:
         cookie = self._cookies(environ).get(SESSION_COOKIE)
         if cookie is None:
@@ -291,12 +321,17 @@ class LoopbackLegalDeskApp:
         return key, SessionRecord(identity, record.access_token, record.csrf_token, record.expires_at)
 
     def _request_guards(self, environ: Mapping[str, Any], *, session: SessionRecord | None, mutating: bool) -> None:
-        host = str(environ.get("HTTP_HOST", "localhost")).split(":", 1)[0].lower()
+        if self.composition.public_mode and environ.get(TRUSTED_EDGE_ENVIRON) is not True:
+            raise AuthorizationDenied("trusted edge required")
+        raw_host = str(environ.get("HTTP_HOST", "localhost")).lower()
+        host = raw_host if self.composition.public_mode else raw_host.split(":", 1)[0]
         if host not in self.composition.allowed_hosts:
             raise AuthorizationDenied("invalid host")
         origin = environ.get("HTTP_ORIGIN")
         if origin and origin not in self.composition.allowed_origins:
             raise AuthorizationDenied("invalid origin")
+        if self.composition.public_mode and mutating and origin not in self.composition.allowed_origins:
+            raise AuthorizationDenied("exact origin is required")
         if mutating:
             if session is None:
                 raise AuthorizationDenied("access denied")
@@ -348,7 +383,7 @@ class LoopbackLegalDeskApp:
             key, session = self._session(environ)
             self._request_guards(environ, session=session, mutating=True)
             self.state_store.delete_session(key)
-            return HTTPStatus.OK, {"ok": True}, [("Set-Cookie", f"{SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax")]
+            return HTTPStatus.OK, {"ok": True}, [("Set-Cookie", self._set_cookie(SESSION_COOKIE, "", max_age=0))]
         key, session = self._session(environ)
         mutating = method not in _SAFE_METHODS
         self._request_guards(environ, session=session, mutating=mutating)
@@ -527,7 +562,7 @@ class LoopbackLegalDeskApp:
         self.state_store.put_oauth_state(request.state, request.code_verifier, time.time() + 600)
         return HTTPStatus.FOUND, {}, [
             ("Location", request.authorization_url),
-            ("Set-Cookie", f"{STATE_COOKIE}={request.state}; Max-Age=600; Path=/callback; HttpOnly; SameSite=Lax"),
+            ("Set-Cookie", self._set_cookie(STATE_COOKIE, request.state, max_age=600, path="/callback")),
         ]
 
     def _callback(self, environ: Mapping[str, Any]) -> tuple[HTTPStatus, Mapping[str, Any], list[tuple[str, str]]]:
@@ -546,7 +581,11 @@ class LoopbackLegalDeskApp:
         key, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         self._bound_state()
         self.state_store.put_session(key, SessionRecord(identity, token, csrf, time.time() + self.composition.session_ttl_seconds))
-        return HTTPStatus.FOUND, {}, [("Location", "/"), ("Set-Cookie", f"{SESSION_COOKIE}={key}; Max-Age={self.composition.session_ttl_seconds}; Path=/; HttpOnly; SameSite=Lax"), ("Set-Cookie", f"{STATE_COOKIE}=; Max-Age=0; Path=/callback; HttpOnly; SameSite=Lax")]
+        return HTTPStatus.FOUND, {}, [
+            ("Location", "/"),
+            ("Set-Cookie", self._set_cookie(SESSION_COOKIE, key, max_age=self.composition.session_ttl_seconds)),
+            ("Set-Cookie", self._set_cookie(STATE_COOKIE, "", max_age=0, path="/callback")),
+        ]
 
     def _authorize_upload(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str):
         data = self._body(environ)

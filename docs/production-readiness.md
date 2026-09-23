@@ -63,8 +63,12 @@ release verdict remains `NOT_READY_FOR_PROD`.
   or 100,000 aggregate source characters before resolver/writer processing.
 - Every HTTP response includes `no-store`, `nosniff`, frame denial, a
   no-referrer policy and a restrictive permissions policy.
-- CSP and HSTS are intentionally not asserted by the loopback server: HSTS is
-  meaningful only at the TLS edge, while the final CSP must enumerate the
-  approved presigned-upload hosts rather than use an unsafe broad rule.
+- The loopback server remains HTTP-only, while public mode emits HSTS and the
+  final CloudFront response policy must still enumerate approved
+  presigned-upload hosts rather than use an unsafe broad CSP rule.
+- Public mode separates the browser origin allowlist from approved API origin
+  hosts and requires a constant-time-checked trusted-edge marker. CloudFront
+  must inject/overwrite that marker without exposing it in IaC outputs or
+  logs; direct API Gateway origin calls without it are denied.
 - No AWS call, resource creation, deployment or inference is part of this local
   hardening pass.

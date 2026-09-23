@@ -12,9 +12,10 @@ import json
 import os
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from .authorization import Boto3DynamoAuthorizationStore
 from .documents import Boto3DynamoDocumentMetadataRepository, Boto3S3ObjectStorage, DocumentPipeline
@@ -62,6 +63,13 @@ class AWSResourceConfig:
     matter_catalog: tuple[str, ...] = ()
     prompt_path: Path | None = None
     token_endpoint: str | None = None
+    public_base_url: str = "http://localhost:8000"
+    redirect_uri: str | None = None
+    allowed_hosts: tuple[str, ...] = ()
+    allowed_origins: tuple[str, ...] = ()
+    secure_cookies: bool = False
+    public_mode: bool = False
+    trusted_edge_value: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         # Validate before build_aws_composition imports/constructs any AWS
@@ -75,6 +83,64 @@ class AWSResourceConfig:
         if self.token_endpoint is None:
             raise ValueError("token_endpoint is required")
         validate_https_endpoint(self.token_endpoint, field_name="token_endpoint")
+        if not isinstance(self.public_base_url, str) or not self.public_base_url.strip():
+            raise ValueError("public_base_url is required")
+        try:
+            base = urlsplit(self.public_base_url)
+            hostname = base.hostname
+        except ValueError as exc:
+            raise ValueError("public_base_url is malformed") from exc
+        if (
+            base.scheme not in {"http", "https"}
+            or not base.netloc
+            or not hostname
+            or base.username is not None
+            or base.password is not None
+            or base.path not in {"", "/"}
+            or base.query
+            or base.fragment
+        ):
+            raise ValueError("public_base_url must be an origin without credentials, path, query, or fragment")
+        local_origin = hostname.lower() in {"localhost", "127.0.0.1"}
+        if self.public_mode and (base.scheme != "https" or local_origin):
+            raise ValueError("public_mode requires a non-loopback HTTPS public_base_url")
+        if self.public_mode:
+            validate_https_endpoint(self.public_base_url, field_name="public_base_url")
+        if self.public_mode and not self.secure_cookies:
+            raise ValueError("public_mode requires secure_cookies")
+        if self.public_mode and not self.allowed_hosts:
+            raise ValueError("public_mode requires explicit API origin hosts")
+        if self.public_mode and not self.allowed_origins:
+            raise ValueError("public_mode requires explicit browser origins")
+        if self.public_mode and (not isinstance(self.trusted_edge_value, str) or not self.trusted_edge_value or any(ord(char) < 0x21 or ord(char) > 0x7E for char in self.trusted_edge_value)):
+            raise ValueError("public_mode requires a valid trusted-edge marker")
+        if self.secure_cookies and base.scheme != "https":
+            raise ValueError("secure_cookies requires an HTTPS public_base_url")
+        origin = f"{base.scheme}://{base.netloc}"
+        redirect_uri = self.redirect_uri or f"{origin}/callback"
+        if redirect_uri != f"{origin}/callback":
+            raise ValueError("redirect_uri must be the exact public /callback URI")
+        if self.allowed_hosts:
+            hosts = tuple(self.allowed_hosts)
+        elif local_origin:
+            hosts = ("localhost", "127.0.0.1")
+        else:
+            hosts = (hostname.lower(),)
+        if self.allowed_origins:
+            origins = tuple(self.allowed_origins)
+        elif local_origin and self.public_base_url.rstrip("/") == "http://localhost:8000":
+            origins = ("http://localhost:8000", "http://127.0.0.1:8000")
+        else:
+            origins = (origin,)
+        if not all(isinstance(value, str) and value and value == value.strip() and "," not in value for value in hosts):
+            raise ValueError("allowed_hosts must contain exact host values")
+        if not all(isinstance(value, str) and value and value == value.strip() and "," not in value for value in origins):
+            raise ValueError("allowed_origins must contain exact origin values")
+        if self.public_mode and origins != (origin,):
+            raise ValueError("public_mode browser origin allowlist must match the public origin exactly")
+        object.__setattr__(self, "redirect_uri", redirect_uri)
+        object.__setattr__(self, "allowed_hosts", hosts)
+        object.__setattr__(self, "allowed_origins", origins)
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "AWSResourceConfig":
@@ -90,6 +156,16 @@ class AWSResourceConfig:
         if not catalog or len(catalog) > 64 or any(len(item) > 128 for item in catalog):
             raise ValueError("LEGALDESK_MATTER_CATALOG is required; authorization scans are forbidden")
         prompt = values.get("LEGALDESK_SYSTEM_PROMPT_PATH")
+        def boolean(name: str, default: bool = False) -> bool:
+            raw = values.get(name, str(default).lower()).strip().lower()
+            if raw not in {"true", "false"}:
+                raise ValueError(f"{name} must be true or false")
+            return raw == "true"
+
+        def csv(name: str) -> tuple[str, ...]:
+            raw = values.get(name, "")
+            return tuple(item.strip() for item in raw.split(",") if item.strip())
+
         return cls(
             region=values.get("AWS_REGION", "eu-west-1"),
             metadata_table_name=required("LEGALDESK_METADATA_TABLE_NAME"),
@@ -112,6 +188,13 @@ class AWSResourceConfig:
             matter_catalog=catalog,
             prompt_path=Path(prompt) if prompt else None,
             token_endpoint=required("LEGALDESK_OIDC_TOKEN_ENDPOINT"),
+            public_base_url=values.get("LEGALDESK_PUBLIC_BASE_URL", "http://localhost:8000"),
+            redirect_uri=values.get("LEGALDESK_REDIRECT_URI") or None,
+            allowed_hosts=csv("LEGALDESK_ALLOWED_HOSTS"),
+            allowed_origins=csv("LEGALDESK_ALLOWED_ORIGINS"),
+            secure_cookies=boolean("LEGALDESK_SECURE_COOKIES"),
+            public_mode=boolean("LEGALDESK_PUBLIC_MODE"),
+            trusted_edge_value=values.get("LEGALDESK_TRUSTED_EDGE_VALUE") or None,
         )
 
 
@@ -303,6 +386,13 @@ def build_aws_composition(
         gateway_invoker=gateway_invoker,
         system_prompt=({"text": prompt.content},),
         sync_service=sync,
+        public_base_url=resource_config.public_base_url,
+        redirect_uri=resource_config.redirect_uri or f"{resource_config.public_base_url.rstrip('/')}/callback",
+        allowed_hosts=frozenset(resource_config.allowed_hosts),
+        allowed_origins=frozenset(resource_config.allowed_origins),
+        secure_cookies=resource_config.secure_cookies,
+        public_mode=resource_config.public_mode,
+        trusted_edge_value=resource_config.trusted_edge_value,
     )
     from .chat import ChatRequest, answer_question
 
