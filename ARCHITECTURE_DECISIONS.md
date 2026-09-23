@@ -224,3 +224,47 @@ límite de despliegue distribuido; la task creada sí es durable. Esta cola no e
 AgentCore long-term Memory. No se asignan personas ni se emiten notificaciones
 automáticas, y la política posterior al cierre queda como gap de producción
 explícito.
+
+## ADR-018 — Beta pública autenticada y topología de hosting
+
+**Decisión aprobada para la planificación de Phase 14:** publicar únicamente
+una beta autenticada para documentos ficticios o públicos, sin signup anónimo ni
+alta self-service de tenants/memberships. Los usuarios Cognito y sus
+pertenencias a matters se provisionan y autorizan en backend antes del uso.
+
+La topología objetivo es:
+
+`Browser HTTPS → CloudFront (ACM, edge limits) → private S3 frontend (OAC)`
+
+con `/callback` y `/api/*` dirigidos por CloudFront a un **API Gateway HTTP
+API → Lambda application adapter**. El backend conserva los tokens OAuth
+server-side, valida issuer/scope/expiry y mantiene las decisiones de
+autorización deterministas existentes. S3 de documentos sigue privado y solo
+emite URLs PUT prefirmadas de corta duración.
+
+La aplicación deja de depender de estado de proceso. Como primera opción,
+sessions, OAuth state, citation handles, conversation correlations, accepted
+history/review candidates y redacted audit records reutilizan la tabla
+DynamoDB de metadata mediante prefijos de entidad explícitos, escrituras
+condicionales, proyecciones acotadas y permisos IAM por recurso/prefijo. Una
+tabla separada sigue siendo una alternativa si la revisión de seguridad exige
+aislar tokens o pasajes; requiere una decisión y coste documentados. La
+expiración se comprueba en aplicación; TTL solo ayuda a limpiar y no es una
+decisión de autorización.
+
+La ingesta se convierte en asíncrona: el request inicia un job acotado y el
+cliente observa un status separado. Ningún request público espera el polling
+de Bedrock. La reconciliación de uploads abandonados, ingestas atascadas y
+grants expirados es un proceso bounded y autorizado; no se usan scans
+ilimitados ni TTL como garantía de borrado.
+
+La seguridad de origen es exacta: hostname HTTPS único aprobado, cookies
+`Secure; HttpOnly; SameSite=Lax`, CSP con hosts de upload explícitos, HSTS en
+la edge, CORS S3 exacto, límites de body/rate y sin S3 público. WAF es una
+opción separada de coste y aprobación; no sustituye authorization backend.
+
+Esta decisión aprueba el diseño y la implementación local, pero no crea
+recursos ni autoriza AWS, inferencia, datos legales reales o promoción
+`developer → prod`. Esas acciones requieren
+los gates y el envelope de coste de `PLAN_14_PUBLIC_BETA.md` y
+`docs/phase-14-cost-operations.md`.

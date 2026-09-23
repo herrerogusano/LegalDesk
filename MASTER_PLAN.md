@@ -24,6 +24,7 @@ Cada fase agrega una capacidad y deja tests que protegen lo aprendido.
 | 11 | `PLAN_11_DEPLOY_OBSERVABILITY.md` | IaC, traces, metrics, correlation IDs, teardown | 10 |
 | 12 | `PLAN_12_EVALUATION_DEMO.md` | 20+ evals, README, demo, final audit | 11 |
 | 13 | `PLAN_13_INTEGRATION_RELEASE.md` | integración E2E local y preparación de release | 00–12 |
+| 14 | `PLAN_14_PUBLIC_BETA.md` | arquitectura y gates para beta pública autenticada | 13 |
 
 ## Milestones
 
@@ -53,11 +54,12 @@ Fases 09–10.
 Memoria, identidad y aislamiento comprobados.
 
 ### M6 — Portfolio readiness (pendiente)
-Fases 11–13.
+Fases 11–14.
 
 Fases 11–12 acreditan componentes, evaluación acotada y checklist de demo,
 no una aplicación integrada. Fase 13 integra y verifica el recorrido local.
-Smoke AWS y promoción a prod requieren autorización posterior.
+Fase 14 define la topología de beta pública autenticada y sus gates, pero no
+certifica todavía el despliegue, la operación ni la promoción a prod.
 
 ## Reglas de avance
 
@@ -97,9 +99,18 @@ No confiar en el LLM para ninguna decisión de acceso.
 ## Estado
 
 Auditoría: `NOT_READY_FOR_PROD` (ver `docs/release-audit.md`). Fases 00–12
-conservan su aceptación acotada; no certifican readiness de portfolio/E2E.
+conservan su aceptación acotada; Fase 13 conserva su evidencia integrada y
+Fase 14 tiene aprobadas la planificación, arquitectura e implementación local.
+No hay autorización de despliegue AWS ni promoción a prod.
 
 - [x] Phase 13 integration, bounded live smoke and local release hardening (413 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; fail-closed endpoint/retrieval hardening; independent holdout, production hosting/distributed state and prod promotion remain pending, NOT_READY_FOR_PROD)
+
+- [ ] Phase 14 authenticated public beta architecture and production gates
+  (`PLAN_14_PUBLIC_BETA.md`): planning tranche approved for CloudFront + private
+  S3 frontend + API Gateway HTTP API + Lambda application, durable DynamoDB
+  state, asynchronous ingestion, exact-origin security, and pre-provisioned
+  authenticated users only; local implementation is in progress, while AWS
+  deployment, holdout execution, and prod promotion remain pending.
 
 - [x] Phase 00
 - [x] Phase 01

@@ -1,0 +1,156 @@
+# PLAN 14 — Authenticated public beta architecture and production gates
+
+## Status, scope and authority
+
+Status: **planning/architecture and local implementation approved; AWS
+deployment pending**.
+
+The approved product scope is an authenticated public beta for fictional or
+public documents only. It is not a legal-data service and it does not assume
+anonymous signup, self-service tenant creation, or real client data. Users and
+matter memberships are provisioned and authorized server-side before use.
+
+This plan follows Phase 13 and preserves the existing AgentCore, Cognito,
+Gateway, Memory, Bedrock, S3 and DynamoDB boundaries. It authorizes local
+implementation and tests, but it does not authorize AWS calls, infrastructure
+creation, inference, or release promotion.
+
+## Approved target architecture
+
+```text
+Browser -- HTTPS --> CloudFront custom domain + ACM (+ approved edge limits)
+                       |                    |
+                       |                    +--> private S3 frontend bucket (OAC)
+                       +--> API Gateway HTTP API --> Lambda application adapter
+                                                       |
+       Cognito public PKCE client ---------------------+
+       existing private source S3 ---------------------+
+       existing metadata/auth/state DynamoDB -----------+
+       existing Bedrock KB/S3 Vectors/Guardrail --------+
+       existing AgentCore Gateway/MCP/Review ------------+
+       existing short-term Memory -----------------------+
+       redacted CloudWatch telemetry --------------------+
+```
+
+The public origin is one approved HTTPS hostname. CloudFront routes static
+assets to a private S3 bucket and `/callback` plus `/api/*` to an API Gateway
+HTTP API integration. The application keeps OAuth tokens server-side and
+validates the Cognito access token, issuer, scope and expiry. No browser value
+establishes tenant, matter, document, conversation, correlation, or tool scope.
+
+The existing metadata table is the initial durable-state target. New item
+prefixes must be explicit and least-privilege scoped for sessions, OAuth state,
+citation handles, conversation correlations, accepted review candidates,
+accepted history IDs, and redacted audit records. Sensitive token/citation
+material must be protected at rest and excluded from logs. Application expiry
+checks remain authoritative; DynamoDB TTL is cleanup assistance, not an access
+control.
+
+Ingestion becomes asynchronous: the public request starts a bounded job and
+returns an operation identifier; a separate status operation observes the job
+and applies the existing document lifecycle. No public request waits for the
+Bedrock polling loop. Abandoned uploads, stuck ingestion, and expired grants
+are handled by a bounded reconciliation operation.
+
+Exact-origin controls are required: secure cookies, restrictive CSP naming the
+approved presigned-upload host(s), exact S3 CORS, HSTS at the TLS edge, API
+body/rate limits, no redirects from the application transport, and no public
+S3 access. WAF remains an explicit cost/approval choice, not an implicit
+security substitute for backend authorization.
+
+## Non-goals
+
+- No anonymous access or public signup.
+- No real legal/client documents, legal advice, or broad legal-quality claim.
+- No long-term AgentCore Memory.
+- No replacement of deterministic backend authorization with Cognito groups,
+  model instructions, Guardrails, or edge policy.
+- No new region, multi-region replication, custom vector store, or unrelated
+  product features.
+
+## Work packages
+
+### P14-1 — Public edge and identity configuration
+
+Design and implement the CloudFront/S3/API Gateway/Lambda deployment boundary,
+public callback/logout configuration, secure cookies, CSP/HSTS, exact CORS,
+edge request limits, and health/readiness behavior. Keep Cognito users and
+memberships pre-provisioned; do not add anonymous signup.
+
+### P14-2 — Durable state and stateless application operation
+
+Replace process-local sources of truth with DynamoDB repositories using
+namespaced items, conditional writes, bounded projections, and application
+expiry checks. Cover sessions/OAuth state, citation handles, conversation
+selectors/correlations, accepted history IDs, review candidates, and redacted
+audit records. Preserve existing durable review tasks and conversation bindings.
+
+### P14-3 — Asynchronous ingestion and reconciliation
+
+Split ingestion start from status observation. Add bounded, idempotent
+reconciliation for abandoned `PENDING_UPLOAD`, stale ingestion, and expired
+Gateway grant/invocation records. Do not use unbounded scans or treat TTL as a
+guaranteed deletion deadline.
+
+### P14-4 — Security, privacy and document lifecycle
+
+Complete the beta data classification, retention/deletion/export policy,
+incident response and operator runbook. Add malware/content validation and a
+quarantine boundary before indexing. Keep synthetic/public-only fixtures in
+tests and smoke runs.
+
+### P14-5 — Independent semantic release evidence
+
+Execute and independently review the frozen 14-case semantic holdout against
+the exact release candidate, with a pre-approved model/profile, prompt hashes,
+request ceilings, and metadata-only immutable reporting.
+
+### P14-6 — SLO, budget and release operations
+
+Define SLOs, alarms, budget alerts, dashboards/queries, backups, recovery,
+change-set deployment, rollback, teardown, and ownership of retained shared
+resources. Keep production promotion closed until all gates have attached
+evidence.
+
+## Acceptance criteria
+
+Phase 14 is complete only when every criterion below has release evidence:
+
+1. **Public transport:** an HTTPS browser journey succeeds through the approved
+   CloudFront hostname; OAuth callback/logout are public and exact; cookies are
+   secure, HttpOnly and same-site; CSP, HSTS, S3 CORS and edge limits are
+   verified; no anonymous route or signup exists.
+2. **Scope and identity:** only pre-provisioned Cognito users/memberships work;
+   matter/tenant/document/session/correlation values from the browser remain
+   selectors; A→A and B→B allow while A→B, forged selectors, expired tokens,
+   and foreign citations deny before business reads/writes.
+3. **Durable state:** restart and multi-instance tests preserve valid sessions,
+   OAuth state, conversations, citations, accepted history/review candidates,
+   and redacted audit pointers; expired/replayed state fails closed; no token,
+   full prompt, answer, passage, document body, or secret reaches logs.
+4. **Ingestion:** start/status is asynchronous and bounded; lifecycle remains
+   `PENDING_UPLOAD → UPLOADED → PENDING_INGESTION → INDEXED` (or `FAILED`);
+   retries are idempotent and no public request waits on Bedrock polling.
+5. **Reconciliation:** stale uploads/ingestion/grants are found through bounded
+   authorized queries, cleaned or marked safely, and covered by a runbook;
+   cleanup cannot cross tenant/matter boundaries and does not rely solely on
+   eventual TTL deletion.
+6. **Document safety/privacy:** malware/content validation, quarantine,
+   retention, deletion/export, incident response, and review-task archival rules
+   are approved and tested for the fictional/public beta data class.
+7. **Semantic holdout:** all 14 frozen cases run against the release candidate;
+   an independent reviewer signs the immutable metadata-only result and the
+   approved threshold is met or the release is rejected.
+8. **Operations/release:** SLO metrics and alarms, budget alerts, recovery and
+   rollback are exercised with synthetic faults; change-set/IaC review,
+   retained-resource ownership, and teardown evidence are complete.
+9. **Cost gate:** the final resource inventory, numeric cost envelope, request
+   limits, retention period, and teardown targets are approved before any AWS
+   deployment or real-model evaluation.
+
+## Stop conditions
+
+Stop and request an ADR/user decision if the implementation requires a
+different public hosting topology, new region, anonymous signup, real legal
+data, long-term Memory, a new authorization source, broad IAM permissions, or
+an unbounded/uncosted AWS operation. Do not begin a later plan automatically.

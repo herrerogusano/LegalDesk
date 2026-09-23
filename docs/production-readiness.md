@@ -10,29 +10,48 @@ calls.
 
 This status deliberately does not mean that the loopback application can be
 exposed to legal users. Promotion from `developer` to `prod` must remain closed
-until all of the following deployment gates have evidence attached to the
-release:
+until all Phase 14 acceptance gates below have evidence attached to the release.
+These gates apply to the approved authenticated public beta only: fictional or
+public documents, pre-provisioned Cognito users, and no anonymous/public signup.
 
-1. An approved TLS hosting architecture with a public OAuth callback, secure
-   cookies, a restrictive CSP for the selected upload hosts, and reviewed edge
-   request limits.
-2. Durable, multi-instance storage for sessions, OAuth state, citation handles
-   and audit records. Process-local dictionaries are not an acceptable
-   production source of truth.
-3. A formal security/privacy review, data classification and retention policy,
-   malware/content validation, incident response and deletion/export controls.
-4. Automated reconciliation for abandoned `PENDING_UPLOAD` documents and
-   expired Gateway grants, with bounded permissions and an operator runbook.
-5. Execution and independent review of the frozen 14-case semantic holdout
-   against the release candidate. The lexical oracle and earlier bounded smoke
+1. **P14-G1 — public edge and identity.** An approved CloudFront + private S3
+   frontend + API Gateway HTTP API + Lambda deployment exists with a public
+   HTTPS OAuth callback, secure cookies, restrictive CSP naming the exact
+   presigned-upload host(s), HSTS at the edge, exact S3 CORS, reviewed edge
+   limits, and no anonymous/public signup. Ingestion start/status is
+   asynchronous and no public request waits on the Bedrock polling loop.
+2. **P14-G2 — durable state and authorization.** Sessions, OAuth state, citation
+   handles, conversation correlations, accepted history/review candidates and
+   redacted audit records survive restart and multi-instance routing. Expiry,
+   replay, cross-matter and foreign-citation checks fail closed; process-local
+   dictionaries are not a production source of truth.
+3. **P14-G3 — security, privacy and document lifecycle.** A formal
+   security/privacy review, beta data classification and retention policy,
+   malware/content validation and quarantine, incident response, and
+   deletion/export controls are approved and tested. No real legal/client data
+   is admitted by the beta policy.
+4. **P14-G4 — bounded reconciliation.** Automated, authorized reconciliation
+   handles abandoned `PENDING_UPLOAD`, stale ingestion and expired Gateway
+   grants/invocations, with bounded queries, idempotent transitions and an
+   operator runbook. DynamoDB TTL is not treated as an authorization or exact
+   deletion guarantee.
+5. **P14-G5 — independent semantic evidence.** The frozen 14-case semantic
+   holdout runs against the exact release candidate and receives independent
+   review. The lexical oracle, deterministic suite and earlier bounded smoke
    are not substitutes for this gate.
-6. Production SLOs, alarms, budgets, recovery procedures and a verified
-   deployment/rollback plan.
+6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
+   recovery procedures, backup/retention ownership, verified deployment and
+   rollback, and shared-resource teardown evidence are complete.
+7. **P14-G7 — cost and deployment authority.** The final inventory, numeric cost
+   envelope, request/model/retention ceilings, IaC change set and exact
+   teardown targets are approved before any AWS deployment, real-model
+   evaluation, or promotion.
 
 The loopback entry point rejects non-loopback hosts and is intentionally not a
-production server. Creating the hosting and durable-state design is an
-architectural change and may create billable AWS resources, so it requires an
-approved ADR and cost envelope before implementation. Until then the honest
+production server. ADR-018 and `PLAN_14_PUBLIC_BETA.md` approve the target
+design only; implementation, IaC, AWS deployment and inference remain gated by
+P14-G1 through P14-G7. The cost inventory and operational procedure are in
+`docs/phase-14-cost-operations.md`. Until all gates have evidence, the honest
 release verdict remains `NOT_READY_FOR_PROD`.
 
 ## Local hardening evidence
