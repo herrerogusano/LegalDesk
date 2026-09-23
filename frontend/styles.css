@@ -88,7 +88,13 @@ a { color: inherit; }
 .environment { display: flex; align-items: center; gap: 9px; color: var(--muted); margin: 0; }
 .environment-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--oxblood); }
 
-.workspace { width: min(1120px, calc(100% - 48px)); margin: 0 auto; padding: 51px 0 24px; }
+.workspace {
+  /* Keep the application shell generous on desktop while the prose blocks
+     below retain their own readable line-length limits. */
+  width: min(1480px, calc(100% - clamp(36px, 5vw, 96px)));
+  margin: 0 auto;
+  padding: 51px 0 24px;
+}
 
 .eyebrow { display: flex; align-items: center; gap: 13px; color: var(--oxblood); }
 .eyebrow-rule { width: 38px; height: 1px; background: var(--line); }
@@ -156,7 +162,7 @@ textarea { resize: vertical; margin-top: 8px; min-height: 92px; font: 19px/1.45 
 .status-mark { width: 6px; height: 6px; border: 1px solid currentColor; transform: rotate(45deg); }
 .status[data-status="ambiguous"] { color: var(--oxblood); }
 .status[data-status="insufficient_evidence"] { color: var(--muted); }
-.answer-copy { margin-top: 18px; font: 400 21px/1.58 var(--display); letter-spacing: -.012em; }
+.answer-copy { max-width: 72ch; margin-top: 18px; font: 400 21px/1.58 var(--display); letter-spacing: -.012em; }
 .answer-copy p { margin: 0 0 13px; }
 .inline-citation { display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; margin: 0 2px; border: 1px solid #b9ada0; border-radius: 50%; color: var(--oxblood); background: transparent; font: 700 10px/1 var(--body); text-decoration: none; vertical-align: .28em; transition: background-color .16s ease, color .16s ease; }
 .inline-citation:hover, .inline-citation:focus-visible { background: var(--oxblood); color: white; outline: 2px solid transparent; }

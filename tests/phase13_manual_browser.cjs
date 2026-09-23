@@ -70,6 +70,7 @@ async function main() {
   const browser = await chromium.launch({
     executablePath: process.env.BROWSER_EXECUTABLE,
     headless: false,
+    args: ["--start-maximized"],
   });
   let closing = false;
   const finish = async () => {
@@ -83,7 +84,9 @@ async function main() {
     process.exitCode = 0;
   });
 
-  const context = await browser.newContext({ viewport: { width: 1365, height: 1000 } });
+  // Follow the native maximized window instead of constraining the demo to a
+  // fixed Playwright viewport. Automated acceptance keeps explicit viewports.
+  const context = await browser.newContext({ viewport: null });
   await context.route("**/*", async (route) => {
     const requestUrl = route.request().url();
     if (isFictionalIdpAuthorize(requestUrl)) {

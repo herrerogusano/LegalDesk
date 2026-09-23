@@ -1,6 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   callbackLocation,
   isFictionalIdpAuthorize,
@@ -18,4 +20,7 @@ assert.equal(
   callbackLocation("http://localhost:41231", "state with spaces"),
   "http://localhost:41231/callback?state=state+with+spaces&code=integration-code",
 );
+const manualBrowserSource = fs.readFileSync(path.join(__dirname, "phase13_manual_browser.cjs"), "utf8");
+assert.match(manualBrowserSource, /args:\s*\["--start-maximized"\]/);
+assert.match(manualBrowserSource, /newContext\(\{ viewport: null \}\)/);
 console.log(JSON.stringify({ result: "PASS", test: "manual-browser-helpers" }));
