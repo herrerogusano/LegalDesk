@@ -62,7 +62,10 @@ Resources:
                 Resource: !Ref ReviewTaskTableArn
               - Sid: CreateReviewTask
                 Effect: Allow
-                Action: dynamodb:PutItem
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
                 Resource: !Ref ReviewTaskTableArn
               - Sid: WriteScopedExecutionLogs
                 Effect: Allow
@@ -92,7 +95,7 @@ Resources:
           AWS_MAX_ATTEMPTS: "1"
           AWS_RETRY_MODE: standard
           REVIEW_TASK_TABLE_NAME: !Ref ReviewTaskTableName
-          REVIEW_TASK_SCHEMA_VERSION: "1"
+          REVIEW_TASK_SCHEMA_VERSION: "2"
       Tags:
         - Key: Project
           Value: LegalDesk

@@ -113,10 +113,31 @@
           </div>
           <div class="review-request">
             <div>
-              <p class="field-label">APOYO PROFESIONAL</p>
-              <p id="review-helper" class="review-helper">Pide una revisión humana si la evidencia es insuficiente o la cuestión requiere criterio profesional.</p>
+              <p class="field-label">SEGUIMIENTO</p>
+              <p id="review-helper" class="review-helper">Guarda esta respuesta aceptada en la cola del expediente. La fecha objetivo orienta el trabajo; no envía avisos ni asigna una persona automáticamente.</p>
+              <div class="review-form-grid">
+                <div class="control-group">
+                  <label class="field-label" for="review-reason">MOTIVO</label>
+                  <select id="review-reason" aria-describedby="review-form-helper" disabled>
+                    <option value="user_requested_review">Necesito criterio profesional</option>
+                    <option value="insufficient_evidence">Falta evidencia suficiente</option>
+                    <option value="ambiguous_evidence">La evidencia es ambigua</option>
+                    <option value="material_legal_judgment">Requiere juicio jurídico material</option>
+                    <option value="safety_escalation">Escalado de seguridad</option>
+                  </select>
+                </div>
+                <div class="control-group">
+                  <label class="field-label" for="review-due-at">FECHA OBJETIVO</label>
+                  <input id="review-due-at" type="date" aria-describedby="review-form-helper" disabled>
+                </div>
+                <div class="control-group control-group-wide">
+                  <label class="field-label" for="review-note">NOTA OPCIONAL</label>
+                  <textarea id="review-note" rows="2" maxlength="2000" placeholder="Añade contexto breve, sin copiar el documento." aria-describedby="review-form-helper" disabled></textarea>
+                </div>
+              </div>
+              <p id="review-form-helper" class="review-helper">Se guardará la última respuesta aceptada y sus pasajes citados, no el documento completo.</p>
             </div>
-            <button id="review-button" class="button" type="button" disabled aria-describedby="review-helper">Solicitar revisión humana</button>
+            <button id="review-button" class="button" type="button" disabled aria-describedby="review-helper">Guardar para revisión</button>
           </div>
         </div>
         <aside class="sources" aria-labelledby="sources-heading">
@@ -138,13 +159,44 @@
         </aside>
       </section>
 
+      <section id="reviews-section" class="reviews-section" aria-labelledby="reviews-heading">
+        <div class="section-index"><span>04A</span><span class="index-line" aria-hidden="true"></span></div>
+        <div class="reviews-content">
+          <div class="section-heading-row">
+            <div>
+              <p class="field-label">SEGUIMIENTO</p>
+              <h2 id="reviews-heading">Revisiones del expediente</h2>
+            </div>
+            <p id="reviews-summary" class="document-count" aria-live="polite">0 pendientes</p>
+          </div>
+          <p class="section-intro">Consulta aquí las revisiones pendientes y resueltas del expediente. Cada detalle carga la respuesta guardada solo cuando se abre.</p>
+          <div class="review-queues">
+            <div>
+              <h3>Revisiones pendientes</h3>
+              <ol id="reviews-pending" class="review-list"><li class="microcopy">Selecciona un expediente para ver revisiones.</li></ol>
+            </div>
+            <div>
+              <h3>Revisiones resueltas</h3>
+              <ol id="reviews-resolved" class="review-list"><li class="microcopy">Aún no hay revisiones resueltas.</li></ol>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="secondary-layout" aria-label="Actividad de la consulta y diagnóstico técnico">
         <section class="panel" aria-labelledby="history-heading">
           <div class="panel-heading"><p class="field-label">ACTIVIDAD</p><h2 id="history-heading">Actividad de esta consulta</h2></div>
           <ol id="history-list" class="history-list"><li class="microcopy">El historial de la sesión aparecerá aquí.</li></ol>
         </section>
         <details id="technical-diagnostics" class="technical-diagnostics">
-          <summary><span><span class="field-label">OPERACIÓN</span><strong id="operator-heading">Diagnóstico técnico</strong></span><span class="details-hint">MCP · auditoría</span></summary>
+          <summary class="diagnostics-summary">
+            <span class="diagnostics-summary-content">
+              <span class="field-label">OPERACIÓN</span>
+              <strong id="operator-heading">Diagnóstico técnico</strong>
+              <span class="details-state"><span class="details-state-closed">Mostrar herramientas</span><span class="details-state-open">Ocultar herramientas</span></span>
+            </span>
+            <span class="details-summary-side"><span class="details-hint">2 herramientas · MCP y auditoría</span><svg class="details-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m5 7 5 5 5-5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path></svg></span>
+          </summary>
           <p class="diagnostics-intro">Herramientas para soporte y operaciones. Aquí se muestran identificadores y respuestas técnicas, no necesarios para consultar el expediente.</p>
           <div class="panel-actions">
             <button id="metadata-button" class="text-button" type="button" disabled>Consultar metadatos MCP</button>

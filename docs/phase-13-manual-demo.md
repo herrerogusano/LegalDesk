@@ -67,19 +67,26 @@ node tests/phase13_manual_browser_helpers.test.cjs
 7. Open the citation and verify the inspected passage is exactly:
    `The inspection period is four years.`
 8. Open **Diagnóstico técnico**, click **Consultar metadatos MCP** and inspect
-   the authorized document metadata.
-9. Click **Solicitar revisión humana** and confirm an open `reviewTaskId` in
-   **Diagnóstico técnico**.
-10. Click **Ver auditoría técnica** and confirm the session events include chat,
+   the authorized document metadata. The panel is for MCP metadata and audit
+   diagnostics only, not the review workflow.
+9. In **Revisiones del expediente**, choose a reason/date and click **Guardar
+   para revisión**. Confirm the new item appears as **Pendiente** with a due
+   date and the saved question, answer and citations. No person is assigned or
+   notified automatically.
+10. Optionally mark the item **En revisión** and close it with a useful
+    resolution note; reload/select the matter to verify the durable queue.
+11. Click **Ver auditoría técnica** and confirm the session events include chat,
     metadata and review creation.
-11. Confirm **Actividad de esta consulta** contains the question and answer,
+12. Confirm **Actividad de esta consulta** contains the question and answer,
     while no storage URL is displayed.
-12. Optionally ask `none: where is the missing emergency assembly point?` and
+13. Optionally ask `none: where is the missing emergency assembly point?` and
     expect `insufficient_evidence` with no citation.
-13. Click **Cerrar sesión**, then close the browser and stop Terminal 1 with
+14. Click **Cerrar sesión**, then close the browser and stop Terminal 1 with
     Ctrl+C.
 
 The local fixture exposes one authorized matter. Cross-matter denial is
 covered by the automated security tests and live smoke; this manual-only
 helper deliberately adds no UI control or API shortcut for an unauthorized
-matter.
+matter. Before a task is created, the accepted-answer candidate is held only
+in the local process for a short bounded window; after creation the validated
+snapshot is durable in the existing review-task record.

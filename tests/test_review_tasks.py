@@ -4,6 +4,7 @@ import sys
 import unittest
 import os
 import time
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -38,9 +39,13 @@ from legaldesk.review_tasks import (
     build_request_context,
     create_review_task,
     create_review_task_for_identity,
+    default_due_at,
     gateway_lambda_handler,
+    get_review_task,
+    list_review_tasks,
     lambda_handler,
     parse_review_task_input,
+    update_review_task,
 )
 import legaldesk.review_tasks as review_tasks
 
@@ -65,7 +70,7 @@ class ReviewTaskToolTests(unittest.TestCase):
         schema = CREATE_REVIEW_TASK_TOOL_SCHEMA
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(schema["required"], ["reasonCode"])
-        self.assertEqual(set(schema["properties"]), {"reasonCode", "idempotencyKey"})
+        self.assertEqual(set(schema["properties"]), {"reasonCode", "idempotencyKey", "note", "dueAt", "snapshot"})
         with self.assertRaises(ReviewTaskValidationError):
             parse_review_task_input({"reasonCode": "user_requested_review", "matterId": "mat_glacier"})
         with self.assertRaises(ReviewTaskValidationError):
@@ -84,6 +89,44 @@ class ReviewTaskToolTests(unittest.TestCase):
         self.assertEqual(task.created_by_user_id, "usr_alice")
         self.assertEqual(task.reason_code, "material_legal_judgment")
         self.assertEqual(task.correlation_id, CORRELATION_ID)
+
+    def test_workflow_snapshot_due_date_list_get_and_fail_closed_close(self) -> None:
+        repository = InMemoryReviewTaskRepository()
+        snapshot = {
+            "question": "¿Qué plazo aplica?",
+            "answer": "El plazo indicado es el de la resolución citada.",
+            "evidenceStatus": "answerable",
+            "promptVersion": "phase13-v1",
+            "citations": [{"documentId": "doc-fictional", "documentName": "Resolución ficticia", "pageNumber": 2, "section": "Plazos", "passage": "El plazo será de diez días."}],
+        }
+        due_at = (date.today() + timedelta(days=5)).isoformat()
+        created = create_review_task(context(), {"reasonCode": "insufficient_evidence", "note": "Comprobar el cómputo.", "dueAt": due_at, "snapshot": snapshot}, repository=repository)
+        self.assertEqual(created["status"], ReviewTaskStatus.OPEN.value)
+        self.assertEqual(created["dueAt"], due_at)
+        listed = list_review_tasks(context(), {"limit": 10}, repository=repository)
+        self.assertEqual(len(listed["tasks"]), 1)
+        self.assertNotIn("snapshot", listed["tasks"][0])
+        task_id = listed["tasks"][0]["reviewTaskId"]
+        fetched = get_review_task(context(), {"reviewTaskId": task_id}, repository=repository)
+        self.assertEqual(fetched["snapshot"], snapshot)
+        with self.assertRaises(ReviewTaskValidationError):
+            update_review_task(context(), {"reviewTaskId": task_id, "status": "CLOSED"}, repository=repository)
+        in_review = update_review_task(context(), {"reviewTaskId": task_id, "status": "in_review"}, repository=repository)
+        self.assertEqual(in_review["status"], ReviewTaskStatus.IN_REVIEW.value)
+        closed = update_review_task(context(), {"reviewTaskId": task_id, "status": "closed", "resolutionNote": "Se verificó el plazo con la fuente."}, repository=repository)
+        self.assertEqual(closed["status"], ReviewTaskStatus.CLOSED.value)
+        self.assertIsNotNone(closed["closedAt"])
+
+    def test_workflow_snapshot_bounds_and_cross_matter_scope(self) -> None:
+        repository = InMemoryReviewTaskRepository()
+        base = {"question": "q", "answer": "a", "evidenceStatus": "answerable", "citations": [{"documentId": "doc-fictional", "passage": "p"}]}
+        with self.assertRaises(ReviewTaskValidationError):
+            create_review_task(context(), {"reasonCode": "user_requested_review", "snapshot": {**base, "answer": "x" * 9000}}, repository=repository)
+        created = create_review_task(context(), {"reasonCode": "user_requested_review", "snapshot": base}, repository=repository)
+        self.assertEqual(created["dueAt"], default_due_at().isoformat())
+        with self.assertRaises(ReviewTaskValidationError):
+            get_review_task(context("mat_other"), {"reviewTaskId": created["reviewTaskId"]}, repository=repository)
+        self.assertEqual(list_review_tasks(context("mat_other"), {"limit": 10}, repository=repository)["tasks"], [])
 
     def test_identity_adapter_rejects_unknown_or_cross_matter_before_persist(self) -> None:
         repository = InMemoryReviewTaskRepository()
@@ -299,6 +342,35 @@ class ReviewTaskToolTests(unittest.TestCase):
                         context=context(), review_task_id="review-expected"
                     )
 
+    def test_dynamo_list_uses_projection_and_no_n_plus_one_gets(self) -> None:
+        class FakeTable:
+            def __init__(self, item: dict[str, object]) -> None:
+                self.item = item
+                self.query_kwargs = None
+                self.get_calls = 0
+
+            def query(self, **kwargs: object) -> dict[str, object]:
+                self.query_kwargs = kwargs
+                return {"Items": [self.item]}
+
+            def get_item(self, **_: object) -> dict[str, object]:
+                self.get_calls += 1
+                raise AssertionError("list must not issue N+1 get_item reads")
+
+        item = {
+            "pk": "TENANT#tnt_aurora#MATTER#mat_sundial", "sk": "REVIEW#review-projected", "entityType": "ReviewTask",
+            "tenantId": "tnt_aurora", "matterId": "mat_sundial", "reviewTaskId": "review-projected", "createdByUserId": "usr_alice",
+            "reason": "user_requested_review", "status": "open", "correlationId": CORRELATION_ID,
+            "createdAt": "2026-01-01T00:00:00+00:00", "updatedAt": "2026-01-01T00:00:00+00:00", "dueAt": "2026-01-08",
+        }
+        table = FakeTable(item)
+        records = Boto3DynamoReviewTaskRepository("table", table=table).list(context=context(), limit=10)
+        self.assertEqual(len(records), 1)
+        self.assertIsNotNone(table.query_kwargs)
+        self.assertIn("ProjectionExpression", table.query_kwargs)
+        self.assertNotIn("snapshot", table.query_kwargs["ProjectionExpression"])
+        self.assertEqual(table.get_calls, 0)
+
     def test_persistence_failure_returns_safe_handler_error(self) -> None:
         class BrokenRepository:
             def get(self, **_: Any) -> None:
@@ -418,7 +490,7 @@ class ReviewTaskToolTests(unittest.TestCase):
             context(),
             {
                 "reasonCode": "user_requested_review",
-                "idempotencyKey": f"gateway-{grant.grant_id}",
+                "idempotencyKey": f"gateway-{grant.correlation_id}",
             },
             repository=InMemoryReviewTaskRepository(),
         )

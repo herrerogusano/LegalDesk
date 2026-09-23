@@ -24,6 +24,9 @@ _TOOLS = {
     "list_matter_documents": "metadata-mcp___list_matter_documents",
     "get_document_metadata": "metadata-mcp___get_document_metadata",
     "create_review_task": "review-task-lambda___create_review_task",
+    "list_review_tasks": "review-task-lambda___list_review_tasks",
+    "get_review_task": "review-task-lambda___get_review_task",
+    "update_review_task": "review-task-lambda___update_review_task",
 }
 
 
@@ -174,21 +177,65 @@ class DirectGatewayInvoker:
         arguments: Mapping[str, object],
         request_id: str | None = None,
     ) -> dict[str, object]:
-        from legaldesk_agent import HarnessInvocationScope
-
-        scope = HarnessInvocationScope.from_derived(binding)
+        # Deterministic UI actions do not enter Harness, so validating their
+        # binding through the agent package would incorrectly make the model's
+        # tool allowlist the application router. Accept only the same sealed
+        # backend capability and build its fixed transport headers directly.
+        if (
+            type(binding).__module__ != "legaldesk.agent_integration"
+            or type(binding).__name__ != "HarnessInvocationBinding"
+        ):
+            raise GatewayInvocationError("gateway_invalid_binding")
+        is_sealed = getattr(binding, "_is_sealed", None)
+        if not callable(is_sealed) or not is_sealed():
+            raise GatewayInvocationError("gateway_invalid_binding")
+        binding_gateway_url = getattr(binding, "gateway_url", None)
+        if binding_gateway_url != self.gateway_url:
+            raise GatewayInvocationError("gateway_invalid_binding")
+        allowed_tools = getattr(binding, "allowed_tools", None)
         qualified_name = _TOOLS.get(tool_name)
-        if qualified_name is None or f"@legaldesk_gateway/{qualified_name}" not in scope.allowed_tools:
+        if (
+            qualified_name is None
+            or not isinstance(allowed_tools, tuple)
+            or f"@legaldesk_gateway/{qualified_name}" not in allowed_tools
+        ):
             raise GatewayInvocationError("gateway_tool_denied")
         if not isinstance(arguments, Mapping):
             raise GatewayInvocationError("gateway_invalid_arguments")
+        bearer_token = getattr(binding, "bearer_token", None)
+        matter_id = getattr(binding, "matter_id", None)
+        correlation_id = getattr(binding, "correlation_id", None)
+        invocation_id = getattr(binding, "invocation_id", None)
+        memory_scope = getattr(binding, "memory_scope", None)
+        memory_is_sealed = getattr(memory_scope, "_is_sealed", None)
+        if (
+            not isinstance(bearer_token, str)
+            or not bearer_token
+            or len(bearer_token) > 16_384
+            or any(char in bearer_token for char in "\r\n")
+            or not isinstance(matter_id, str)
+            or not matter_id
+            or len(matter_id) > 128
+            or not callable(memory_is_sealed)
+            or not memory_is_sealed()
+        ):
+            raise GatewayInvocationError("gateway_invalid_binding")
+        try:
+            correlation_id = str(UUID(correlation_id))
+            invocation_id = str(UUID(invocation_id))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise GatewayInvocationError("gateway_invalid_binding") from exc
+        actor_id = getattr(memory_scope, "actor_id", None)
+        memory_session_id = getattr(memory_scope, "session_id", None)
+        if not isinstance(actor_id, str) or not actor_id or not isinstance(memory_session_id, str) or not memory_session_id:
+            raise GatewayInvocationError("gateway_invalid_binding")
         request_id = request_id or str(uuid4())
         try:
             request_id = str(UUID(request_id))
         except (ValueError, TypeError, AttributeError) as exc:
             raise GatewayInvocationError("gateway_invalid_request") from exc
         request_arguments = dict(arguments)
-        request_arguments["matterId"] = scope.matter_id
+        request_arguments["matterId"] = matter_id
         request = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -196,7 +243,10 @@ class DirectGatewayInvoker:
             "params": {"name": qualified_name, "arguments": request_arguments},
         }
         body = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        headers = scope.gateway_headers()
+        headers_factory = getattr(binding, "gateway_headers", None)
+        if not callable(headers_factory):
+            raise GatewayInvocationError("gateway_invalid_binding")
+        headers = headers_factory()
         headers.update({
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -218,7 +268,7 @@ class DirectGatewayInvoker:
             "status": "SUCCESS",
             "tool": f"@legaldesk_gateway/{qualified_name}",
             "result": result,
-            "correlationId": scope.correlation_id,
+            "correlationId": correlation_id,
         }
 
 

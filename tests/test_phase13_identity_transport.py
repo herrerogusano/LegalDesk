@@ -151,11 +151,10 @@ class Phase13IdentityTransportTests(unittest.TestCase):
             correlation_id="22222222-2222-4222-8222-222222222222",
             application_action="review",
         )
-        scope = HarnessInvocationScope.from_derived(review_binding)
         request = {
             "mcp": {
                 "gatewayRequest": {
-                    "headers": scope.gateway_headers(),
+                    "headers": review_binding.gateway_headers(),
                     "body": {
                         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                         "params": {"name": "get_document_metadata", "arguments": {}},
@@ -394,12 +393,11 @@ class Phase13IdentityTransportTests(unittest.TestCase):
             correlation_id="33333333-3333-4333-8333-333333333333",
             application_action="review",
         )
-        scope = HarnessInvocationScope.from_derived(review_binding)
         review_repository.invocations[review_binding.invocation_id]["expiresAt"] = Decimal("4102444800")
         request = {
             "mcp": {
                 "gatewayRequest": {
-                    "headers": scope.gateway_headers(),
+                    "headers": review_binding.gateway_headers(),
                     "body": {
                         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                         "params": {"name": "create_review_task", "arguments": {"matterId": "mat_sundial"}},

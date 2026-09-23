@@ -60,6 +60,9 @@ _APPLICATION_ALLOWED_TOOL_NAMES = frozenset(
         "@legaldesk_gateway/metadata-mcp___list_matter_documents",
         "@legaldesk_gateway/metadata-mcp___get_document_metadata",
         "@legaldesk_gateway/review-task-lambda___create_review_task",
+        "@legaldesk_gateway/review-task-lambda___list_review_tasks",
+        "@legaldesk_gateway/review-task-lambda___get_review_task",
+        "@legaldesk_gateway/review-task-lambda___update_review_task",
     }
 )
 MAX_RAW_GATEWAY_BODY_BYTES = 64 * 1024
@@ -72,10 +75,11 @@ def _target_for_gateway_tool(tool_name: object) -> GatewayTarget:
     if not isinstance(tool_name, str):
         raise AuthorizationDenied("access denied")
     expected = {
-        f"{GatewayTarget.REVIEW_LAMBDA.value}{GATEWAY_TOOL_DELIMITER}create_review_task": (
-            GatewayTarget.REVIEW_LAMBDA
-        ),
-        "create_review_task": GatewayTarget.REVIEW_LAMBDA,
+        **{
+            f"{GatewayTarget.REVIEW_LAMBDA.value}{GATEWAY_TOOL_DELIMITER}{name}": GatewayTarget.REVIEW_LAMBDA
+            for name in ("create_review_task", "list_review_tasks", "get_review_task", "update_review_task")
+        },
+        **{name: GatewayTarget.REVIEW_LAMBDA for name in ("create_review_task", "list_review_tasks", "get_review_task", "update_review_task")},
         f"{GatewayTarget.METADATA_MCP.value}{GATEWAY_TOOL_DELIMITER}list_matter_documents": (
             GatewayTarget.METADATA_MCP
         ),
@@ -674,7 +678,7 @@ def transform_gateway_request(
             verified_subject=envelope.verifiedSubject,
             requested_matter_id=envelope.requestedMatterId,
             correlation_id=envelope.correlationId,
-            tool_name="create_review_task",
+            tool_name=operation,
             expires_at=expires_at,
         )
         try:

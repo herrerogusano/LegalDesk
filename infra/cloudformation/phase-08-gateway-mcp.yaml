@@ -264,16 +264,27 @@ Resources:
             ToolSchema:
               InlinePayload:
                 - Name: create_review_task
-                  Description: Create an OPEN human-review task; returns only ID and status.
+                  Description: Create an OPEN review task with the server-derived accepted answer snapshot.
                   InputSchema:
                     Type: object
                     Required:
                       - reasonCode
                       - matterId
+                      - dueAt
+                      - snapshot
                     Properties:
                       reasonCode:
                         Type: string
                         Description: "Allowed values are insufficient_evidence, ambiguous_evidence, material_legal_judgment, user_requested_review, or safety_escalation; the Lambda validates them."
+                      note:
+                        Type: string
+                        Description: "Optional bounded request note."
+                      dueAt:
+                        Type: string
+                        Description: "Target date in YYYY-MM-DD form."
+                      snapshot:
+                        Type: object
+                        Description: "Server-derived accepted answer snapshot."
                       matterId:
                         Type: string
                         Description: "Matter containing the review request."
@@ -289,6 +300,55 @@ Resources:
                       reviewTaskId:
                         Type: string
                       status:
+                        Type: string
+                - Name: list_review_tasks
+                  Description: List review tasks for the authorized matter.
+                  InputSchema:
+                    Type: object
+                    Required:
+                      - matterId
+                    Properties:
+                      matterId:
+                        Type: string
+                      limit:
+                        Type: integer
+                      _legaldeskGrantId:
+                        Type: string
+                  OutputSchema:
+                    Type: object
+                - Name: get_review_task
+                  Description: Get one review task and its bounded accepted-answer snapshot.
+                  InputSchema:
+                    Type: object
+                    Required:
+                      - matterId
+                      - reviewTaskId
+                    Properties:
+                      matterId:
+                        Type: string
+                      reviewTaskId:
+                        Type: string
+                      _legaldeskGrantId:
+                        Type: string
+                - Name: update_review_task
+                  Description: Move a review task through an allowed lifecycle transition.
+                  InputSchema:
+                    Type: object
+                    Required:
+                      - matterId
+                      - reviewTaskId
+                      - status
+                    Properties:
+                      matterId:
+                        Type: string
+                      reviewTaskId:
+                        Type: string
+                      status:
+                        Type: string
+                        Description: "Allowed lifecycle values are in_review and closed."
+                      resolutionNote:
+                        Type: string
+                      _legaldeskGrantId:
                         Type: string
 
   MetadataMcpGatewayTarget:

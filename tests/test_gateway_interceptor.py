@@ -345,6 +345,9 @@ class GatewayInterceptorTests(unittest.TestCase):
     def test_gateway_visible_tool_names_map_to_exact_targets(self) -> None:
         expected = {
             "review-task-lambda___create_review_task": GatewayTarget.REVIEW_LAMBDA,
+            "review-task-lambda___list_review_tasks": GatewayTarget.REVIEW_LAMBDA,
+            "review-task-lambda___get_review_task": GatewayTarget.REVIEW_LAMBDA,
+            "review-task-lambda___update_review_task": GatewayTarget.REVIEW_LAMBDA,
             "metadata-mcp___list_matter_documents": GatewayTarget.METADATA_MCP,
             "metadata-mcp___get_document_metadata": GatewayTarget.METADATA_MCP,
         }
@@ -355,6 +358,9 @@ class GatewayInterceptorTests(unittest.TestCase):
     def test_target_local_tool_names_map_to_exact_targets(self) -> None:
         expected = {
             "create_review_task": GatewayTarget.REVIEW_LAMBDA,
+            "list_review_tasks": GatewayTarget.REVIEW_LAMBDA,
+            "get_review_task": GatewayTarget.REVIEW_LAMBDA,
+            "update_review_task": GatewayTarget.REVIEW_LAMBDA,
             "list_matter_documents": GatewayTarget.METADATA_MCP,
             "get_document_metadata": GatewayTarget.METADATA_MCP,
         }

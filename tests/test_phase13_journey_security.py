@@ -256,6 +256,57 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         self.assertNotIn(self.fixture.token, json.dumps(audit))
         self.assertNotIn("The inspection period is four years.", json.dumps(audit))
 
+    def test_review_queue_routes_persist_server_snapshot_and_transitions(self):
+        scope = self.start()
+        self.upload()
+        answer = self.ask(scope)
+        origin = answer["correlationId"]
+        forged = {"conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "reasonCode": "user_requested_review", "snapshot": {"question": "forged"}, "originCorrelationId": origin}
+        status, _, _ = self.request("POST", "/api/matters/matter-integration/reviews", forged, csrf=self.csrf)
+        self.assertEqual(status, 400)
+        status, created, _ = self.request("POST", "/api/matters/matter-integration/reviews", {
+            "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "reasonCode": "user_requested_review", "note": "Comprobar el cómputo.", "originCorrelationId": origin,
+        }, csrf=self.csrf)
+        self.assertEqual(status, 201, created)
+        self.assertEqual(created["status"], "open")
+        self.assertIn("dueAt", created)
+        transport_calls = len(self.app.composition.gateway_invoker.transport.calls)
+        for method, path, body in (
+            ("GET", f"/api/matters/matter-foreign/reviews?conversationId={scope['conversationId']}&sessionId={scope['sessionId']}", None),
+            ("GET", f"/api/matters/matter-foreign/reviews/{created['reviewTaskId']}?conversationId={scope['conversationId']}&sessionId={scope['sessionId']}", None),
+            ("PATCH", f"/api/matters/matter-foreign/reviews/{created['reviewTaskId']}", {"conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "status": "in_review"}),
+        ):
+            denied, _, _ = self.request(method, path, body, csrf=self.csrf)
+            self.assertEqual(denied, 403)
+        self.assertEqual(len(self.app.composition.gateway_invoker.transport.calls), transport_calls)
+        status, listed, _ = self.request("GET", f"/api/matters/matter-integration/reviews?conversationId={scope['conversationId']}&sessionId={scope['sessionId']}")
+        self.assertEqual(status, 200, listed)
+        self.assertEqual(len(listed["tasks"]), 1)
+        task = listed["tasks"][0]
+        self.assertNotIn("snapshot", task)
+        status, fetched, _ = self.request("GET", f"/api/matters/matter-integration/reviews/{created['reviewTaskId']}?conversationId={scope['conversationId']}&sessionId={scope['sessionId']}")
+        self.assertEqual(status, 200, fetched)
+        self.assertEqual(fetched["snapshot"]["question"], "What is the inspection period?")
+        self.assertEqual(fetched["snapshot"]["answer"], answer["answer"])
+        status, updated, _ = self.request("PATCH", f"/api/matters/matter-integration/reviews/{created['reviewTaskId']}", {
+            "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "status": "in_review", "originCorrelationId": origin,
+        }, csrf=self.csrf)
+        self.assertEqual(status, 200, updated)
+        status, closed, _ = self.request("PATCH", f"/api/matters/matter-integration/reviews/{created['reviewTaskId']}", {
+            "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "status": "closed", "resolutionNote": "Se verificó la fuente.", "originCorrelationId": origin,
+        }, csrf=self.csrf)
+        self.assertEqual(status, 200, closed)
+        self.assertEqual(closed["status"], "closed")
+        self.assertTrue(closed["closedAt"])
+
+    def test_review_create_without_current_accepted_answer_fails_closed(self):
+        scope = self.start()
+        status, body, _ = self.request("POST", "/api/matters/matter-integration/reviews", {
+            "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "reasonCode": "user_requested_review",
+        }, csrf=self.csrf)
+        self.assertEqual(status, 400)
+        self.assertEqual(body, {"error": "review_task_failed"})
+
     def test_guessed_metadata_and_forged_origin_never_invoke_gateway(self):
         scope = self.start()
         transport = self.app.composition.gateway_invoker.transport

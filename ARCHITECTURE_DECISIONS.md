@@ -187,7 +187,8 @@ Después se pueden valorar:
 ## ADR-016 — Deterministic explicit tools through Gateway
 
 Las acciones explícitas de la UI `get_document_metadata`,
-`list_matter_documents` y `create_review_task` se envían desde el backend a
+`list_matter_documents` y las operaciones `create_review_task`,
+`list_review_tasks`, `get_review_task` y `update_review_task` se envían desde el backend a
 AgentCore Gateway mediante un único `POST tools/call` MCP. No se delegan en la
 selección de herramientas de Harness: `allowedTools` limita la selección del
 modelo pero no obliga a que el modelo invoque una herramienta. Harness queda
@@ -205,3 +206,21 @@ Esta decisión corrige la evidencia del tercer smoke: la UI alcanzó el backend
 pero Harness terminó sin un tool call estructurado, por lo que no hubo grant,
 interceptor ni Lambda. No añade infraestructura ni sustituye las
 comprobaciones de autorización existentes.
+
+## ADR-017 — Cola de revisión durable y purpose-specific
+
+La revisión humana deja de ser únicamente metadata de una intención y pasa a
+ser una cola durable purpose-specific. El backend obtiene la última respuesta
+aceptada de la conversación/correlación vigente y construye un snapshot mínimo
+(pregunta, respuesta, estado de evidencia, hashes de prompt disponibles y
+citas exactas acotadas); el navegador no puede aportar esos campos ni estado,
+autoría o timestamps. Crear, listar, abrir y actualizar pasan por AgentCore
+Gateway hacia la misma Review Lambda y la tabla DynamoDB existente. La Lambda
+revalida el grant, matter y transición (`OPEN → IN_REVIEW → CLOSED`, o cierre
+directo), y cerrar exige una nota de resolución.
+
+La demo Phase 13 mantiene el candidato aceptado en memoria y documenta ese
+límite de despliegue distribuido; la task creada sí es durable. Esta cola no es
+AgentCore long-term Memory. No se asignan personas ni se emiten notificaciones
+automáticas, y la política posterior al cierre queda como gap de producción
+explícito.

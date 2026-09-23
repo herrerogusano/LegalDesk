@@ -13,10 +13,13 @@ The function uses Python 3.12, a 10-second timeout, and 256 MB memory. The
 smoke account exposes only 10 total Lambda concurrency and requires 10 to
 remain unreserved, so no per-function reserved cap is configured in this
 deployment; add a cap after a quota increase and bounded-load observation.
-The only data-plane
-permissions are `dynamodb:GetItem` and `dynamodb:PutItem` on the parameterized
-existing table. `GetItem` supports idempotency lookup; `PutItem` must use a
-server-owned key and a condition that prevents replacing an existing task.
+The only data-plane permissions are `dynamodb:GetItem`, `dynamodb:PutItem`,
+`dynamodb:Query`, and `dynamodb:UpdateItem` on the parameterized existing
+table. `GetItem` supports idempotency and detail reads; `Query` is restricted
+to the exact tenant/matter partition and a `REVIEW#` sort-key prefix, with a
+metadata-only projection for list summaries; `PutItem` uses a server-owned key
+and a condition that prevents replacement; `UpdateItem` requires the expected
+current status and matter key. No Scan or second table is used.
 The function receives the table name and schema version through environment
 variables. The actor, tenant, matter, reason, and correlation ID must come
 from the verified request context and validated tool input in the Lambda code;
@@ -34,7 +37,7 @@ No API, Gateway, MCP server, queue, notification channel, or extra database is
 part of this phase. Phase 08 can expose this Lambda through AgentCore Gateway.
 The Gateway target should pass the verified identity and server-built
 `RequestContext` to the tool boundary, preserve correlation metadata, and
-keep the tool contract narrow: create a review task and return its ID/status,
+keep the tool contract narrow: create/list/get/update a bounded review task,
 never legal advice. Gateway authorization and Lambda authorization remain
 separate checks at their respective boundaries.
 

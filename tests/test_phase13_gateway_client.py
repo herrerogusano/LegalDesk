@@ -110,6 +110,37 @@ class GatewayClientTests(unittest.TestCase):
         with self.assertRaises(GatewayInvocationError):
             invoker.invoke(self.binding, tool_name="create_review_task", arguments={})
 
+    def test_deterministic_review_binding_does_not_depend_on_harness_tool_parser(self) -> None:
+        auth = load_authorization_store()
+        identity = test_identity("idp|alice-fictional")
+        binding_store = InMemoryConversationBindingStore()
+        binding_store.bind(
+            build_request_context(identity, "mat_sundial", auth),
+            conversation_id="conversation-review",
+            session_selector="session-review",
+        )
+        token = _token(identity.subject)
+        binding = bind_harness_invocation(
+            bearer_token=token,
+            gateway_url=self.binding.gateway_url,
+            identity_verifier=_Verifier(token, identity),
+            requested_matter_id="mat_sundial",
+            conversation_id="conversation-review",
+            session_selector="session-review",
+            authorization_store=auth,
+            conversation_store=binding_store,
+            invocation_repository=InMemoryGatewayGrantRepository(),
+            application_action="review",
+        )
+        transport = _Transport()
+        result = DirectGatewayInvoker(binding.gateway_url, transport=transport).invoke(
+            binding, tool_name="list_review_tasks", arguments={}
+        )
+        request = json.loads(transport.calls[0]["body"])
+        self.assertEqual(request["params"]["name"], "review-task-lambda___list_review_tasks")
+        self.assertEqual(request["params"]["arguments"]["matterId"], "mat_sundial")
+        self.assertEqual(result["correlationId"], binding.correlation_id)
+
     def test_non_2xx_malformed_json_bad_sse_and_is_error_fail_closed(self) -> None:
         cases = [
             GatewayHttpResponse(403, "application/json", b"{}"),
