@@ -15,7 +15,7 @@ composed without allowing the browser or the model to define access scope.
 
 - Grounded RAG over authorized passages with exact, inspectable citations.
 - Server-derived tenant, matter, membership and conversation scope.
-- Deterministic metadata and review actions through AgentCore Gateway,
+- Deterministic metadata and durable review-queue actions through AgentCore Gateway,
   MCP and Lambda.
 - AgentCore Harness reserved for genuinely agentic, model-selected workflows.
 - Short-term, actor/session/matter-scoped history; long-term memory is disabled.
@@ -53,9 +53,11 @@ for the complete trust and data lifecycle.
 - **Grounded answers:** authorized retrieval feeds a schema-constrained
   Resolver, then an Answer Writer, then contextual grounding. The backend
   owns status and citation validity.
-- **Explicit UI actions:** metadata and review commands use one fixed
+- **Explicit UI actions:** metadata and review-queue commands use one fixed
   backend → Gateway `tools/call` path. Gateway, MCP and the target handler
-  reauthorize the same scope; Harness is not used as the router.
+  reauthorize the same scope; Harness is not used as the router. Review
+  snapshots are server-derived and bounded; the queue is purpose-specific and
+  is not AgentCore long-term Memory.
 - **Agentic workflows:** model-selected tool use may go through Harness with
   the same sealed JWT-bound scope and server-side authorization.
 

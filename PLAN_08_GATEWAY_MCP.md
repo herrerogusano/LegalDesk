@@ -17,6 +17,7 @@ Exponer las herramientas requeridas a través de AgentCore Gateway: la Lambda de
 ## Precondiciones
 
 - `create_review_task` lista;
+- review queue `list_review_tasks`, `get_review_task` y `update_review_task`;
 - document metadata repository estable;
 - authorization context estable.
 
@@ -28,7 +29,7 @@ Exponer las herramientas requeridas a través de AgentCore Gateway: la Lambda de
    - `get_document_metadata`.
 3. Ambas tools deben ignorar cualquier intento del LLM de ampliar scope.
 4. Conectar MCP remoto a AgentCore Gateway.
-5. Conectar Lambda/API `create_review_task` como target vía Gateway.
+5. Conectar la Review Lambda (create/list/get/update) como target vía Gateway.
 6. Configurar auth/policies mínimas.
 7. Configurar agent para descubrir/usar tools.
 8. Asegurar schemas y descriptions concisos.

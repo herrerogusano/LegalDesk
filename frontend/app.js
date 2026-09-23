@@ -11,6 +11,9 @@
     generation: 0,
     controller: new AbortController(),
     documents: [],
+    reviews: [],
+    reviewDetails: Object.create(null),
+    hasAcceptedAnswer: false,
     busy: false,
   };
 
@@ -24,6 +27,14 @@
     FAILED: "Requiere atención",
   });
   const UPLOAD_STAGES = Object.freeze(["authorize", "upload", "verify", "index"]);
+  const REVIEW_STATUS_LABELS = Object.freeze({ open: "Pendiente", in_review: "En revisión", closed: "Resuelta" });
+  const REVIEW_REASON_LABELS = Object.freeze({
+    user_requested_review: "Necesito criterio profesional",
+    insufficient_evidence: "Falta evidencia suficiente",
+    ambiguous_evidence: "La evidencia es ambigua",
+    material_legal_judgment: "Requiere juicio jurídico material",
+    safety_escalation: "Escalado de seguridad",
+  });
 
   function setMessage(message, error, tone) {
     const node = $(error ? "app-error" : "app-status");
@@ -124,7 +135,8 @@
     $("sync-button").hidden = !retryable;
     $("sync-helper").hidden = !retryable;
     $("metadata-button").disabled = !authorized() || state.busy;
-    $("review-button").disabled = !authorized() || state.busy;
+    $("review-button").disabled = !authorized() || state.busy || !state.hasAcceptedAnswer;
+    ["review-reason", "review-note", "review-due-at"].forEach((id) => { if ($(id)) $(id).disabled = !authorized() || state.busy || !state.hasAcceptedAnswer; });
     $("audit-button").disabled = !enabled || state.busy;
     $("login-button").hidden = enabled;
     $("logout-button").hidden = !enabled;
@@ -182,6 +194,12 @@
     $("evidence-status").querySelector("span:last-child").textContent = "ESPERANDO CONSULTA";
     $("question").value = "";
     $("question-count").textContent = "0 / 1000";
+    state.documents = [];
+    state.reviews = [];
+    state.reviewDetails = Object.create(null);
+    state.hasAcceptedAnswer = false;
+    renderReviews([]);
+    setDefaultReviewDueDate();
   }
 
   function renderDocuments(documents) {
@@ -237,6 +255,223 @@
     });
   }
 
+  function dateOnly(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const parsed = new Date(`${value}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  function formatReviewDate(value) {
+    const parsed = dateOnly(value) || (typeof value === "string" ? new Date(value) : null);
+    if (!parsed || Number.isNaN(parsed.getTime())) return "fecha no disponible";
+    return new Intl.DateTimeFormat("es-ES", { dateStyle: "long" }).format(parsed);
+  }
+
+  function reviewDueState(value, status) {
+    if (status === "closed") return `Resuelta · fecha objetivo ${formatReviewDate(value)}`;
+    const due = dateOnly(value);
+    if (!due) return "Fecha objetivo no disponible";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const days = Math.round((due.getTime() - today.getTime()) / 86400000);
+    if (days < 0) return `Atrasada · fecha objetivo ${formatReviewDate(value)}`;
+    if (days === 0) return `Vence hoy · ${formatReviewDate(value)}`;
+    if (days < 2) return `Próxima · ${formatReviewDate(value)}`;
+    return `Fecha objetivo · ${formatReviewDate(value)}`;
+  }
+
+  function reviewUrgency(value, status) {
+    if (status === "closed") return "resolved";
+    const due = dateOnly(value);
+    if (!due) return "on-track";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const days = Math.round((due.getTime() - today.getTime()) / 86400000);
+    if (days < 0) return "overdue";
+    if (days === 0) return "today";
+    if (days < 2) return "soon";
+    return "on-track";
+  }
+
+  function appendReviewField(parent, label, value) {
+    const paragraph = document.createElement("p");
+    const labelNode = document.createElement("span");
+    labelNode.className = "review-label";
+    labelNode.textContent = label;
+    const valueNode = document.createElement("span");
+    valueNode.textContent = value || "No indicado.";
+    paragraph.append(labelNode, valueNode);
+    parent.append(paragraph);
+  }
+
+  function renderReviewItem(task) {
+    const item = document.createElement("li");
+    item.className = "review-item";
+    item.dataset.urgency = reviewUrgency(task.dueAt, task.status);
+    const details = document.createElement("details");
+    details.dataset.reviewId = typeof task.reviewTaskId === "string" ? task.reviewTaskId : "";
+    const summary = document.createElement("summary");
+    const summaryText = document.createElement("span");
+    const title = document.createElement("span");
+    title.className = "review-item-title";
+    title.textContent = `${REVIEW_STATUS_LABELS[task.status] || "Estado no disponible"} · ${REVIEW_REASON_LABELS[task.reasonCode] || "Motivo registrado"}`;
+    const meta = document.createElement("span");
+    meta.className = "review-item-meta";
+    meta.textContent = `${reviewDueState(task.dueAt, task.status)} · creada ${formatReviewDate(task.createdAt)}`;
+    summaryText.append(title, meta);
+    summary.append(summaryText);
+    details.append(summary);
+
+    const body = document.createElement("div");
+    body.className = "review-item-body";
+    const snapshot = task && task.snapshot && typeof task.snapshot === "object" ? task.snapshot : null;
+    if (!snapshot) {
+      const stateMessage = document.createElement("p");
+      stateMessage.className = "review-detail-state";
+      stateMessage.setAttribute("role", "status");
+      stateMessage.textContent = "Abre esta revisión para cargar la respuesta y sus fuentes autorizadas.";
+      body.append(stateMessage);
+    } else {
+      appendReviewField(body, "Pregunta", snapshot.question);
+      appendReviewField(body, "Respuesta guardada", snapshot.answer);
+    }
+    const citations = snapshot && Array.isArray(snapshot.citations) ? snapshot.citations : [];
+    if (snapshot && citations.length) {
+      const citationWrap = document.createElement("div");
+      const citationLabel = document.createElement("span");
+      citationLabel.className = "review-label";
+      citationLabel.textContent = "Fuentes usadas";
+      citationWrap.append(citationLabel);
+      const citationList = document.createElement("ul");
+      citationList.className = "review-citation";
+      citations.forEach((citation) => {
+        if (!citation || typeof citation !== "object") return;
+        const citationItem = document.createElement("li");
+        const source = citation.documentName || "Documento del expediente";
+        const location = citation.pageNumber != null ? ` · página ${citation.pageNumber}` : citation.section ? ` · ${citation.section}` : "";
+        citationItem.textContent = `${source}${location}${citation.passage ? `: ${citation.passage}` : ""}`;
+        citationList.append(citationItem);
+      });
+      citationWrap.append(citationList);
+      body.append(citationWrap);
+    }
+    if (snapshot) {
+      appendReviewField(body, "Nota de solicitud", task.note);
+      if (task.status === "closed") appendReviewField(body, "Nota de resolución", task.resolutionNote);
+    }
+
+    if (task.status !== "closed" && typeof task.reviewTaskId === "string") {
+      const actions = document.createElement("div");
+      actions.className = "review-actions";
+      const inReview = document.createElement("button");
+      inReview.type = "button";
+      inReview.className = "button review-action-button";
+      inReview.dataset.reviewAction = "in-review";
+      inReview.dataset.reviewId = task.reviewTaskId;
+      inReview.textContent = "Marcar en revisión";
+      inReview.disabled = task.status === "in_review";
+      actions.append(inReview);
+      const resolution = document.createElement("div");
+      resolution.className = "review-resolution";
+      const resolutionLabel = document.createElement("label");
+      resolutionLabel.className = "review-label";
+      resolutionLabel.htmlFor = `resolution-${task.reviewTaskId}`;
+      resolutionLabel.textContent = "Nota de resolución (obligatoria al cerrar)";
+      const resolutionInput = document.createElement("textarea");
+      resolutionInput.id = `resolution-${task.reviewTaskId}`;
+      resolutionInput.maxLength = 2000;
+      resolutionInput.rows = 2;
+      resolutionInput.placeholder = "Describe brevemente el criterio o resultado.";
+      resolutionInput.dataset.resolutionFor = task.reviewTaskId;
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "button button-primary review-action-button";
+      close.dataset.reviewAction = "close";
+      close.dataset.reviewId = task.reviewTaskId;
+      close.textContent = "Cerrar revisión";
+      resolution.append(resolutionLabel, resolutionInput);
+      actions.append(resolution, close);
+      body.append(actions);
+    }
+    details.append(body);
+    details.addEventListener("toggle", () => {
+      if (details.open && !snapshot && task.reviewTaskId) loadReviewDetail(task.reviewTaskId, details);
+    });
+    item.append(details);
+    return item;
+  }
+
+  async function loadReviewDetail(reviewTaskId, details) {
+    if (state.reviewDetails[reviewTaskId]) return;
+    const body = details.querySelector(".review-item-body");
+    const loading = Object.assign(document.createElement("p"), { className: "review-detail-state", textContent: "Cargando detalle de la revisión…" });
+    loading.setAttribute("role", "status");
+    body.replaceChildren(loading);
+    const generation = currentGeneration();
+    try {
+      const query = `conversationId=${encodeURIComponent(state.conversationId)}&sessionId=${encodeURIComponent(state.sessionId)}`;
+      const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews/${encodeURIComponent(reviewTaskId)}?${query}`, { signal: state.controller.signal });
+      if (!isCurrent(generation) || !result || !result.snapshot) throw new Error("El detalle de la revisión no está disponible.");
+      state.reviewDetails[reviewTaskId] = result;
+      state.reviews = state.reviews.map((task) => task.reviewTaskId === reviewTaskId ? { ...task, ...result } : task);
+      renderReviews(state.reviews);
+      const refreshed = document.querySelector(`#reviews-section details[data-review-id="${CSS.escape(reviewTaskId)}"]`);
+      if (refreshed) refreshed.open = true;
+    } catch (error) {
+      if (error.name !== "AbortError" && isCurrent(generation)) {
+        const errorNode = Object.assign(document.createElement("p"), { className: "review-detail-state review-detail-error", textContent: `${error.message} Puedes cerrar y volver a abrir para reintentarlo.` });
+        errorNode.setAttribute("role", "alert");
+        body.replaceChildren(errorNode);
+      }
+    }
+  }
+
+  function renderReviews(tasks) {
+    state.reviews = (Array.isArray(tasks) ? tasks : []).map((task) => task && task.reviewTaskId && state.reviewDetails[task.reviewTaskId] ? { ...task, ...state.reviewDetails[task.reviewTaskId] } : task);
+    const pending = state.reviews.filter((task) => task && task.status !== "closed").sort((left, right) => {
+      const urgency = { overdue: 0, today: 1, soon: 2, "on-track": 3 };
+      const urgencyDiff = (urgency[reviewUrgency(left.dueAt, left.status)] ?? 4) - (urgency[reviewUrgency(right.dueAt, right.status)] ?? 4);
+      if (urgencyDiff) return urgencyDiff;
+      return String(left.dueAt || "9999-12-31").localeCompare(String(right.dueAt || "9999-12-31"));
+    });
+    const resolved = state.reviews.filter((task) => task && task.status === "closed").sort((left, right) => String(right.closedAt || "").localeCompare(String(left.closedAt || "")));
+    const overdue = pending.filter((task) => reviewDueState(task.dueAt, task.status).startsWith("Atrasada"));
+    $("reviews-summary").textContent = `${pending.length} pendientes${overdue.length ? ` · ${overdue.length} atrasada${overdue.length === 1 ? "" : "s"}` : ""}`;
+    [
+      ["reviews-pending", pending, "Aún no hay revisiones pendientes."],
+      ["reviews-resolved", resolved, "Aún no hay revisiones resueltas."],
+    ].forEach(([id, listItems, emptyText]) => {
+      const list = $(id);
+      list.replaceChildren();
+      if (!listItems.length) list.append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: emptyText }));
+      else listItems.forEach((task) => list.append(renderReviewItem(task)));
+    });
+    refreshControls();
+  }
+
+  function setDefaultReviewDueDate() {
+    const input = $("review-due-at");
+    if (!input) return;
+    const date = new Date();
+    let businessDays = 0;
+    while (businessDays < 3) {
+      date.setDate(date.getDate() + 1);
+      if (date.getDay() !== 0 && date.getDay() !== 6) businessDays += 1;
+    }
+    const value = date.toISOString().slice(0, 10);
+    input.min = new Date().toISOString().slice(0, 10);
+    if (!input.value) input.value = value;
+  }
+
+  function setReviewReason(evidenceStatus) {
+    const reason = evidenceStatus === "insufficient_evidence"
+      ? "insufficient_evidence"
+      : evidenceStatus === "ambiguous"
+        ? "ambiguous_evidence"
+        : "user_requested_review";
+    $("review-reason").value = reason;
+  }
+
   async function loadDocuments(generation) {
     const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents`, { signal: state.controller.signal });
     if (!isCurrent(generation)) return;
@@ -247,6 +482,13 @@
     const result = await api(`/api/conversations/${encodeURIComponent(state.conversationId)}?sessionId=${encodeURIComponent(state.sessionId)}`, { signal: state.controller.signal });
     if (!isCurrent(generation)) return;
     renderHistory(result && result.events);
+  }
+
+  async function loadReviews(generation) {
+    const query = `conversationId=${encodeURIComponent(state.conversationId)}&sessionId=${encodeURIComponent(state.sessionId)}`;
+    const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews?${query}`, { signal: state.controller.signal });
+    if (!isCurrent(generation)) return;
+    renderReviews(result && result.tasks);
   }
 
   async function chooseMatter(matterId) {
@@ -273,6 +515,7 @@
       refreshControls();
       await loadDocuments(generation);
       await loadHistory(generation);
+      await loadReviews(generation);
       if (isCurrent(generation)) setMessage("Expediente listo para consulta.", false);
     } catch (error) {
       if (error.name === "AbortError" || !isCurrent(generation)) return;
@@ -371,6 +614,8 @@
     const question = $("question").value.trim();
     if (!question || question.length > 1000) return setMessage("La pregunta debe tener entre 1 y 1000 caracteres.", true);
     const generation = currentGeneration();
+    state.hasAcceptedAnswer = false;
+    refreshControls();
     if (window.LegalDeskCitationPanel && window.LegalDeskCitationPanel.renderOperationalState) window.LegalDeskCitationPanel.renderOperationalState("documents_processing");
     setBusy(true);
     try {
@@ -386,8 +631,11 @@
         setMessage("La consulta terminó con un error operativo; no se ha presentado una respuesta como evidencia.", true);
       } else {
         window.LegalDeskCitationPanel.renderChatResponse(response);
-        setMessage("Consulta completada.", false);
+        state.hasAcceptedAnswer = Boolean(response && response.operationStatus === "ok" && response.evidenceStatus && ["answerable", "ambiguous", "insufficient_evidence"].includes(response.evidenceStatus));
+        setReviewReason(response.evidenceStatus);
+        setMessage("Consulta completada. Puedes guardar esta respuesta para revisión.", false);
       }
+      refreshControls();
       await loadHistory(generation);
     } catch (error) {
       if (error.name === "AbortError" || !isCurrent(generation)) return;
@@ -427,12 +675,33 @@
   async function requestReview() {
     if (!authorized() || state.busy) return;
     const generation = currentGeneration();
+    const dueAt = $("review-due-at").value;
+    const note = $("review-note").value.trim();
+    if (!$("review-reason").value || !dueAt) return setMessage("Indica un motivo y una fecha objetivo para guardar la revisión.", true);
     setBusy(true);
     try {
-      const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/review`, { method: "POST", body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, reasonCode: "user_requested_review", originCorrelationId: state.correlationId, idempotencyKey: `${state.conversationId}:review` }), signal: state.controller.signal });
+      const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews`, { method: "POST", body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, reasonCode: $("review-reason").value, note, dueAt, originCorrelationId: state.correlationId, idempotencyKey: `${state.conversationId}:${state.correlationId}:review` }), signal: state.controller.signal });
       if (isCurrent(generation)) {
-        setOperator(result);
-        setMessage("Solicitud de revisión registrada.", false);
+        setMessage(`Revisión guardada en estado Pendiente. Fecha objetivo: ${formatReviewDate(dueAt)}. No se ha asignado ni notificado automáticamente.`, false, "success");
+        await loadReviews(generation);
+      }
+    } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
+  }
+
+  async function updateReviewTask(reviewTaskId, status, resolutionNote) {
+    if (!authorized() || state.busy || !reviewTaskId) return;
+    const generation = currentGeneration();
+    setBusy(true);
+    try {
+      const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews/${encodeURIComponent(reviewTaskId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, status, resolutionNote: resolutionNote || "", originCorrelationId: state.correlationId }),
+        signal: state.controller.signal,
+      });
+      if (isCurrent(generation)) {
+        if (result && result.reviewTaskId) state.reviewDetails[reviewTaskId] = result;
+        setMessage(status === "closed" ? "Revisión cerrada y conservada en el historial del expediente." : "Revisión marcada En revisión.", false, "success");
+        await loadReviews(generation);
       }
     } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
   }
@@ -465,6 +734,18 @@
     $("chat-form").addEventListener("submit", askQuestion);
     $("question").addEventListener("input", () => { $("question-count").textContent = `${$("question").value.length} / 1000`; });
     $("citation-list").addEventListener("click", inspectCitation);
+    ["reviews-pending", "reviews-resolved"].forEach((listId) => $(listId).addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-review-action]");
+      if (!button) return;
+      const action = button.dataset.reviewAction;
+      const reviewTaskId = button.dataset.reviewId;
+      if (action === "in-review") updateReviewTask(reviewTaskId, "in_review");
+      if (action === "close") {
+        const note = $("resolution-" + reviewTaskId);
+        if (!note || !note.value.trim()) return setMessage("Añade una nota útil antes de cerrar la revisión.", true);
+        updateReviewTask(reviewTaskId, "closed", note.value.trim());
+      }
+    }));
     $("metadata-button").addEventListener("click", metadata);
     $("review-button").addEventListener("click", requestReview);
     $("audit-button").addEventListener("click", audit);
@@ -482,6 +763,7 @@
         await loadDocuments(generation);
       } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
     });
+    setDefaultReviewDueDate();
     refreshControls();
     loadMe().catch((error) => setMessage(error.message, true));
   });

@@ -10,6 +10,15 @@
 | `Conversation` | `userId` + `matterId` | A session cannot be reused across matters |
 | `ReviewTask` | `tenantId` + `matterId` | Creator must be authorized for the matter |
 
+`ReviewTask` stores the closed reason, lifecycle timestamps, due date, optional
+bounded notes, and a validated accepted-answer snapshot: question, answer,
+evidence status, prompt hashes when available, and exact citations with
+document/page/section/passage. It never stores an S3 key, source URI, or full
+document. `list_review_tasks` uses a metadata-only Query projection; the UI
+fetches the snapshot with `get_review_task` when a row is opened. `closed` is
+terminal for now and retention/archival after closure remains a production
+policy gap.
+
 IDs are opaque, stable strings. IDs reveal no entitlement: possession of an ID
 never grants access. Stored ownership/membership is the source of truth.
 

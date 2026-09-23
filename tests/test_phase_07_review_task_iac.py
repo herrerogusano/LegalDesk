@@ -45,7 +45,7 @@ class Phase07ReviewTaskInfrastructureTests(unittest.TestCase):
         # quota permits it; the smoke account's Lambda quota is 10 with the
         # provider-required unreserved floor of 10, so CFN must omit it.
         self.assertIn("REVIEW_TASK_TABLE_NAME: !Ref ReviewTaskTableName", self.template)
-        self.assertIn('REVIEW_TASK_SCHEMA_VERSION: "1"', self.template)
+        self.assertIn('REVIEW_TASK_SCHEMA_VERSION: "2"', self.template)
         self.assertIn('AWS_MAX_ATTEMPTS: "1"', self.template)
         self.assertIn("AWS_RETRY_MODE: standard", self.template)
 
@@ -53,10 +53,8 @@ class Phase07ReviewTaskInfrastructureTests(unittest.TestCase):
         self.assertIn("ReviewTaskTableArn:", self.template)
         self.assertIn("ReviewTaskTableName:", self.template)
         self.assertIn("Resource: !Ref ReviewTaskTableArn", self.template)
-        dynamodb_actions = re.findall(r"^                Action: dynamodb:([A-Za-z]+)$", self.template, re.MULTILINE)
-        self.assertEqual(dynamodb_actions, ["GetItem", "PutItem"])
-        self.assertNotIn("dynamodb:Query", self.template)
-        self.assertNotIn("dynamodb:UpdateItem", self.template)
+        dynamodb_actions = re.findall(r"dynamodb:(GetItem|PutItem|Query|UpdateItem)", self.template)
+        self.assertEqual(set(dynamodb_actions), {"GetItem", "PutItem", "Query", "UpdateItem"})
         self.assertNotIn("dynamodb:DeleteItem", self.template)
 
     def test_execution_role_and_logging_are_scoped_without_wildcard_permissions(self) -> None:

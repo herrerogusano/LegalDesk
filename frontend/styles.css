@@ -114,8 +114,8 @@ h1 { margin: 0; color: var(--navy); font: 500 clamp(42px, 6vw, 72px)/.99 var(--d
 .field-label { color: var(--muted); margin: 0; }
 .question-text { max-width: 780px; color: var(--navy); font: 400 clamp(21px, 3vw, 29px)/1.32 var(--display); letter-spacing: -.018em; margin: 8px 0 0; }
 
-.control-strip { display: grid; grid-template-columns: minmax(180px, .65fr) minmax(280px, 1.35fr); gap: 22px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.control-group { min-width: 0; display: grid; gap: 8px; }
+.control-strip { display: grid; grid-template-columns: minmax(180px, .65fr) minmax(280px, 1.35fr); gap: 22px; align-items: start; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.control-group { min-width: 0; display: grid; align-self: start; gap: 8px; }
 .control-group-wide { min-width: 0; }
 select, input[type="file"], textarea { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 0; color: var(--navy); background: var(--paper-raised); font: 16px/1.4 var(--body); padding: 10px 11px; }
 select { min-height: 44px; }
@@ -167,7 +167,43 @@ textarea { resize: vertical; margin-top: 8px; min-height: 92px; font: 19px/1.45 
 .disclaimer p { margin: 0; font-size: 12px; line-height: 1.5; }
 
 .review-request { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line); }
+.review-request > div { min-width: 0; flex: 1 1 auto; }
+.review-request .review-form-grid { margin-top: 16px; }
 .review-helper { max-width: 47ch; margin-top: 5px; }
+
+.reviews-section { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 16px; padding: 30px 0 38px; border-bottom: 1px solid var(--line); }
+.reviews-content { min-width: 0; }
+.review-form-grid { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(180px, .55fr) minmax(280px, 1.2fr); gap: 16px; margin-top: 20px; }
+.review-form-grid textarea { margin-top: 0; min-height: 72px; font: 15px/1.45 var(--body); }
+.review-queues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; margin-top: 28px; }
+.review-queues h3 { margin: 0 0 12px; color: var(--navy); font: 600 13px/1.3 var(--body); letter-spacing: .08em; text-transform: uppercase; }
+.review-list { display: grid; gap: 10px; list-style: none; margin: 0; padding: 0; }
+.review-item { border: 1px solid var(--line); background: rgb(250 248 242 / 72%); }
+.review-item[data-urgency="overdue"] { border-left: 4px solid var(--oxblood); }
+.review-item[data-urgency="today"] { border-left: 4px solid #9a6a19; }
+.review-item[data-urgency="soon"] { border-left: 4px solid var(--navy); }
+.review-item[data-urgency="on-track"] { border-left: 4px solid var(--green); }
+.review-item[data-urgency="resolved"] { border-left: 4px solid var(--muted); }
+.review-item summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 11px 13px; cursor: pointer; list-style: none; }
+.review-item summary::-webkit-details-marker { display: none; }
+.review-item summary::after { content: "+"; color: var(--oxblood); font: 600 18px/1 var(--body); }
+.review-item[open] summary::after { content: "−"; }
+.review-item summary:focus-visible { outline: 3px solid var(--oxblood); outline-offset: -3px; }
+.review-item summary:hover { background: var(--paper-deep); }
+.review-item summary:active { background: var(--paper); }
+.review-item-title { display: block; color: var(--navy); font-weight: 700; }
+.review-item-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.review-item-body { border-top: 1px solid var(--line); padding: 14px; }
+.review-item-body p { margin: 0 0 12px; color: var(--navy); line-height: 1.5; }
+.review-item-body p:last-of-type { margin-bottom: 0; }
+.review-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.review-citation { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.review-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 14px; }
+.review-resolution { min-width: min(100%, 340px); flex: 1 1 240px; }
+.review-resolution textarea { min-height: 68px; margin-top: 0; font: 14px/1.4 var(--body); }
+.review-action-button { min-height: 44px; }
+.review-detail-state { margin: 0; color: var(--muted); font-style: italic; }
+.review-detail-error { color: var(--oxblood); }
 
 .sources { align-self: start; border-left: 1px solid var(--line); padding: 1px 0 0 21px; }
 .sources-heading-row { display: flex; gap: 12px; align-items: start; }
@@ -207,12 +243,26 @@ textarea { resize: vertical; margin-top: 8px; min-height: 92px; font: 19px/1.45 
 .document-item[data-status="INDEXED"] span { color: var(--green); font-weight: 700; }
 .document-item[data-status="FAILED"] span { color: var(--oxblood); font-weight: 700; }
 .operator-output { min-height: 50px; max-height: 220px; margin: 14px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font: 11px/1.45 var(--body); }
-.technical-diagnostics { min-width: 0; border-top: 1px solid var(--navy); padding-top: 14px; }
-.technical-diagnostics summary { display: flex; align-items: end; justify-content: space-between; gap: 14px; cursor: pointer; list-style: none; }
+.technical-diagnostics { min-width: 0; overflow: hidden; border: 1px solid var(--line); background: rgb(250 248 242 / 72%); }
+.technical-diagnostics summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 14px 16px; cursor: pointer; list-style: none; transition: background-color 160ms ease, border-color 160ms ease; }
 .technical-diagnostics summary::-webkit-details-marker { display: none; }
+.technical-diagnostics summary:hover { background: var(--paper-deep); }
+.technical-diagnostics summary:active { background: var(--paper); }
+.technical-diagnostics summary:focus-visible { outline: 3px solid var(--oxblood); outline-offset: -3px; }
+.technical-diagnostics[open] summary { border-bottom: 1px solid var(--line); background: var(--paper-deep); }
+.diagnostics-summary-content { min-width: 0; }
 .technical-diagnostics summary strong { display: block; margin-top: 6px; color: var(--navy); font: 500 21px/1.1 var(--display); }
+.details-state { display: block; margin-top: 7px; color: var(--oxblood); font-size: 12px; font-weight: 700; }
+.details-state-open { display: none; }
+.technical-diagnostics[open] .details-state-closed { display: none; }
+.technical-diagnostics[open] .details-state-open { display: inline; }
+.details-summary-side { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; }
+.details-chevron { width: 20px; height: 20px; color: var(--oxblood); transition: transform 180ms ease; }
+.technical-diagnostics[open] .details-chevron { transform: rotate(180deg); }
 .details-hint { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .diagnostics-intro { max-width: 52ch; margin: 14px 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.technical-diagnostics .diagnostics-intro, .technical-diagnostics .panel-actions { margin-left: 16px; margin-right: 16px; }
+.technical-diagnostics .operator-output { margin-left: 16px; margin-right: 16px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid var(--oxblood); outline-offset: 3px; }
@@ -254,6 +304,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .upload-row .button { width: 100%; }
   .upload-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .section-heading-row, .review-request, .technical-diagnostics summary { align-items: flex-start; flex-direction: column; }
+  .review-form-grid, .review-queues { grid-template-columns: 1fr; }
+  .details-summary-side { width: 100%; justify-content: space-between; }
   .document-count { margin: 0; }
   .review-request .button { width: 100%; }
   .file-selection, .upload-helper, .sync-helper, .section-intro, .review-helper, .diagnostics-intro, .app-message { font-size: 16px; }

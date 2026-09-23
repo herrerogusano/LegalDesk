@@ -14,6 +14,7 @@ import hashlib
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -39,11 +40,18 @@ from .mcp_server import GET_DOCUMENT_METADATA, LIST_MATTER_DOCUMENTS, MCPServer
 from .memory import ConversationBindingStore, MemoryScope, derive_memory_scope_for_identity
 from .observability import InMemoryTelemetrySink, TelemetrySink
 from .gateway_interceptor import InMemoryGatewayGrantRepository
-from .review_tasks import InMemoryReviewTaskRepository, ReviewTaskError, ReviewReasonCode
+from .review_tasks import (
+    InMemoryReviewTaskRepository,
+    ReviewTaskError,
+    ReviewReasonCode,
+    MAX_REVIEW_NOTE_LENGTH,
+    default_due_at,
+)
 
 
 MAX_HTTP_BODY = 1_048_576
 MAX_QUESTION = 1_000
+REVIEW_CANDIDATE_TTL_SECONDS = 15 * 60
 SESSION_COOKIE = "legaldesk_session"
 STATE_COOKIE = "legaldesk_oauth_state"
 CSRF_HEADER = "HTTP_X_CSRF_TOKEN"
@@ -168,6 +176,7 @@ class LoopbackLegalDeskApp:
         self._conversation_selectors: dict[str, tuple[str, str, str, str]] = {}
         self._conversation_correlations: dict[str, str] = {}
         self._accepted_history_ids: dict[tuple[str, str, str], list[str]] = {}
+        self._accepted_review_candidates: dict[tuple[str, str, str], tuple[float, dict[str, object]]] = {}
         self._audit_records: list[dict[str, object]] = []
 
     def _bound_state(self) -> None:
@@ -410,6 +419,15 @@ class LoopbackLegalDeskApp:
                 return HTTPStatus.OK, {"operationStatus": operation_status, "result": safe_result}, []
             if method == "POST" and len(parts) == 5 and parts[4] == "review":
                 return self._review(environ, identity, matter_id, session)
+            if len(parts) == 5 and parts[4] == "reviews":
+                if method == "GET":
+                    return self._review_list(environ, identity, matter_id, session)
+                if method == "POST":
+                    return self._review_create(environ, identity, matter_id, session)
+            if len(parts) == 6 and parts[4] == "reviews" and method == "GET":
+                return self._review_get(environ, identity, matter_id, parts[5], session)
+            if len(parts) == 6 and parts[4] == "reviews" and method in {"PATCH", "POST"}:
+                return self._review_update(environ, identity, matter_id, parts[5], session)
         if path == PurePosixPath("/api/chat") and method == "POST":
             return self._chat(environ, identity)
         if len(parts) == 4 and parts[1:3] == ("api", "conversations") and parts[3] and method == "GET":
@@ -554,6 +572,18 @@ class LoopbackLegalDeskApp:
                 dict(self._safe_citation(item, identity, context.matter_id, conversation_id), handle=self._citation_links.get((identity.subject, conversation_id, context.correlation_id, str(item.get("citationId")))))
                 for item in citations
             ]
+        if (
+            safe.get("operationStatus") == "ok"
+            and safe.get("evidenceStatus") in {"answerable", "ambiguous", "insufficient_evidence"}
+            and isinstance(safe.get("answer"), str)
+        ):
+            self._remember_review_candidate(
+                identity,
+                conversation_id,
+                context.correlation_id,
+                question,
+                safe,
+            )
         self._audit(identity, context.matter_id, context.correlation_id, "chat")
         self._audit_telemetry(identity, context.matter_id, context.correlation_id)
         if self.composition.memory is not None and safe.get("operationStatus") not in {"error", "blocked"}:
@@ -566,6 +596,65 @@ class LoopbackLegalDeskApp:
                 if isinstance(answer, str) and answer.strip():
                     self._remember_history_event(identity.subject, conversation_id, session_id, self.composition.memory.append_event(scope, role="ASSISTANT", text=answer))
         return HTTPStatus.OK, safe, []
+
+    def _remember_review_candidate(
+        self,
+        identity: VerifiedIdentity,
+        conversation_id: str,
+        correlation_id: str,
+        question: str,
+        response: Mapping[str, object],
+    ) -> None:
+        """Keep only a bounded server-derived candidate for the next create.
+
+        This local map is a Phase 13 limitation: production needs a durable,
+        distributed accepted-answer record before horizontal scaling. The
+        review Lambda still persists the validated snapshot atomically when a
+        task is created.
+        """
+
+        citations: list[dict[str, object]] = []
+        raw_citations = response.get("citations")
+        if isinstance(raw_citations, list):
+            for raw in raw_citations[:32]:
+                if not isinstance(raw, Mapping):
+                    continue
+                handle_id = raw.get("handle")
+                handle = self.citation_handles.get(handle_id) if isinstance(handle_id, str) else None
+                passage = handle.passage if handle is not None else None
+                document_id = raw.get("documentId")
+                if not isinstance(document_id, str) or not isinstance(passage, str):
+                    continue
+                citation = {
+                    "citationId": raw.get("citationId", ""),
+                    "documentId": document_id,
+                    "documentName": raw.get("documentName"),
+                    "pageNumber": raw.get("pageNumber"),
+                    "section": raw.get("section"),
+                    "passage": passage,
+                }
+                citations.append({key: value for key, value in citation.items() if value is not None})
+        prompt_hash = hashlib.sha256(
+            json.dumps(self.composition.system_prompt, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        candidate = {
+            "question": question,
+            "answer": response.get("answer"),
+            "evidenceStatus": response.get("evidenceStatus"),
+            "promptVersion": response.get("promptVersion"),
+            "promptSha256": response.get("promptSha256"),
+            "promptHash": prompt_hash,
+            "citations": citations,
+        }
+        key = (identity.subject, conversation_id, correlation_id)
+        self._accepted_review_candidates[key] = (time.time() + REVIEW_CANDIDATE_TTL_SECONDS, candidate)
+        now = time.time()
+        for stale_key, (expires_at, _value) in list(self._accepted_review_candidates.items()):
+            if expires_at <= now:
+                self._accepted_review_candidates.pop(stale_key, None)
+        if len(self._accepted_review_candidates) > 256:
+            oldest = next(iter(self._accepted_review_candidates))
+            self._accepted_review_candidates.pop(oldest, None)
 
     def _remember_history_event(self, subject: str, conversation_id: str, session_id: str, event: object) -> None:
         event_id = getattr(event, "event_id", None)
@@ -657,36 +746,129 @@ class LoopbackLegalDeskApp:
                         events.append({"eventId": event_id, "role": role, "text": text})
         return HTTPStatus.OK, {"events": events[:100]}, []
 
-    def _review(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, session: SessionRecord):
-        data = self._body(environ)
-        context = self._context(identity, matter_id)
-        conversation_id, session_id = data.pop("conversationId", None), data.pop("sessionId", None)
+    def _review_binding(
+        self,
+        identity: VerifiedIdentity,
+        matter_id: str,
+        session: SessionRecord,
+        conversation_id: object,
+        session_id: object,
+        origin_correlation: object = None,
+    ) -> tuple[Any, Any]:
         if not isinstance(conversation_id, str) or not isinstance(session_id, str):
             raise ValueError("conversation and session are required")
+        context = self._context(identity, matter_id)
         if not self.composition.conversation_store.is_bound(context=context, conversation_id=conversation_id, session_selector=session_id):
             raise AuthorizationDenied("conversation access denied")
-        if set(data) - {"reasonCode", "idempotencyKey", "originCorrelationId"} or not isinstance(data.get("reasonCode"), str):
-            raise ValueError("review request is invalid")
-        try:
-            ReviewReasonCode(data["reasonCode"])
-        except (TypeError, ValueError) as exc:
-            raise ValueError("review reason is invalid") from exc
-        if "idempotencyKey" in data and not isinstance(data["idempotencyKey"], str):
-            raise ValueError("review idempotency key is invalid")
-        origin_correlation = data.pop("originCorrelationId", None)
         expected_correlation = self._conversation_correlations.get(conversation_id)
         if origin_correlation is not None and origin_correlation != expected_correlation:
             raise AuthorizationDenied("operation correlation is not owned")
         if expected_correlation is not None:
             context = self._context(identity, matter_id, correlation_id=expected_correlation)
-        binding = bind_harness_invocation(bearer_token=session.access_token, gateway_url=self.composition.gateway_url, identity_verifier=self.composition.identity_verifier, requested_matter_id=matter_id, conversation_id=conversation_id, session_selector=session_id, authorization_store=self.composition.authorization_store, conversation_store=self.composition.conversation_store, invocation_repository=self.composition.gateway_grant_repository, correlation_id=context.correlation_id, application_action="review")
-        result = self._invoke_gateway_tool(binding, tool_name="create_review_task", arguments=data)
+        binding = bind_harness_invocation(
+            bearer_token=session.access_token,
+            gateway_url=self.composition.gateway_url,
+            identity_verifier=self.composition.identity_verifier,
+            requested_matter_id=matter_id,
+            conversation_id=conversation_id,
+            session_selector=session_id,
+            authorization_store=self.composition.authorization_store,
+            conversation_store=self.composition.conversation_store,
+            invocation_repository=self.composition.gateway_grant_repository,
+            correlation_id=context.correlation_id,
+            application_action="review",
+        )
+        return context, binding
+
+    def _review_payload(self, result: Mapping[str, object], context: Any) -> Mapping[str, object]:
         payload = result.get("result") if isinstance(result, Mapping) else None
-        if not isinstance(payload, Mapping) or not isinstance(payload.get("reviewTaskId"), str) or not isinstance(payload.get("status"), str):
+        if not isinstance(payload, Mapping):
+            raise ReviewTaskError("review task unavailable")
+        return dict(payload, correlationId=context.correlation_id)
+
+    def _review_create(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, session: SessionRecord):
+        data = dict(self._body(environ))
+        allowed = {"conversationId", "sessionId", "reasonCode", "note", "dueAt", "idempotencyKey", "originCorrelationId"}
+        if set(data) - allowed or not isinstance(data.get("reasonCode"), str):
+            raise ValueError("review request is invalid")
+        try:
+            ReviewReasonCode(data["reasonCode"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("review reason is invalid") from exc
+        note = data.get("note", "")
+        if not isinstance(note, str) or len(note) > MAX_REVIEW_NOTE_LENGTH:
+            raise ValueError("review note is invalid")
+        conversation_id, session_id = data.get("conversationId"), data.get("sessionId")
+        context, binding = self._review_binding(identity, matter_id, session, conversation_id, session_id, data.get("originCorrelationId"))
+        candidate_entry = self._accepted_review_candidates.get((identity.subject, conversation_id, context.correlation_id))
+        if not candidate_entry or candidate_entry[0] <= time.time():
+            self._accepted_review_candidates.pop((identity.subject, conversation_id, context.correlation_id), None)
+            candidate = None
+        else:
+            candidate = candidate_entry[1]
+        if not isinstance(candidate, Mapping):
+            # No accepted server-side answer means there is no review task to
+            # create; client-supplied snapshots are deliberately ignored.
+            raise ReviewTaskError("accepted answer unavailable")
+        due_at = data.get("dueAt")
+        if due_at is None:
+            due_at = default_due_at().isoformat()
+        arguments: dict[str, object] = {
+            "reasonCode": data["reasonCode"],
+            "note": note,
+            "dueAt": due_at,
+            "snapshot": dict(candidate),
+        }
+        if isinstance(data.get("idempotencyKey"), str):
+            arguments["idempotencyKey"] = data["idempotencyKey"]
+        result = self._invoke_gateway_tool(binding, tool_name="create_review_task", arguments=arguments)
+        payload = self._review_payload(result, context)
+        if not isinstance(payload.get("reviewTaskId"), str) or not isinstance(payload.get("status"), str):
             raise ReviewTaskError("review task unavailable")
         self._audit(identity, matter_id, context.correlation_id, "review_created")
         self._audit_telemetry(identity, matter_id, context.correlation_id)
-        return HTTPStatus.CREATED, {"reviewTaskId": payload["reviewTaskId"], "status": payload["status"], "correlationId": context.correlation_id}, []
+        return HTTPStatus.CREATED, payload, []
+
+    def _review_list(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, session: SessionRecord):
+        query = parse_qs(str(environ.get("QUERY_STRING", "")))
+        context, binding = self._review_binding(identity, matter_id, session, query.get("conversationId", [None])[0], query.get("sessionId", [None])[0], query.get("originCorrelationId", [None])[0])
+        raw_limit = query.get("limit", ["100"])[0]
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("review limit is invalid") from exc
+        result = self._invoke_gateway_tool(binding, tool_name="list_review_tasks", arguments={"limit": limit})
+        payload = self._review_payload(result, context)
+        self._audit(identity, matter_id, context.correlation_id, "review_listed")
+        return HTTPStatus.OK, payload, []
+
+    def _review_get(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, review_task_id: str, session: SessionRecord):
+        query = parse_qs(str(environ.get("QUERY_STRING", "")))
+        context, binding = self._review_binding(identity, matter_id, session, query.get("conversationId", [None])[0], query.get("sessionId", [None])[0], query.get("originCorrelationId", [None])[0])
+        result = self._invoke_gateway_tool(binding, tool_name="get_review_task", arguments={"reviewTaskId": review_task_id})
+        payload = self._review_payload(result, context)
+        self._audit(identity, matter_id, context.correlation_id, "review_read")
+        return HTTPStatus.OK, payload, []
+
+    def _review_update(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, review_task_id: str, session: SessionRecord):
+        data = dict(self._body(environ))
+        allowed = {"conversationId", "sessionId", "status", "resolutionNote", "originCorrelationId"}
+        if set(data) - allowed or not isinstance(data.get("status"), str):
+            raise ValueError("review update is invalid")
+        context, binding = self._review_binding(identity, matter_id, session, data.pop("conversationId", None), data.pop("sessionId", None), data.pop("originCorrelationId", None))
+        arguments = {"reviewTaskId": review_task_id, "status": data["status"]}
+        if "resolutionNote" in data:
+            arguments["resolutionNote"] = data["resolutionNote"]
+        result = self._invoke_gateway_tool(binding, tool_name="update_review_task", arguments=arguments)
+        payload = self._review_payload(result, context)
+        self._audit(identity, matter_id, context.correlation_id, "review_updated")
+        self._audit_telemetry(identity, matter_id, context.correlation_id)
+        return HTTPStatus.OK, payload, []
+
+    def _review(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, session: SessionRecord):
+        """Compatibility route retained for the Phase 13 manual demo."""
+
+        return self._review_create(environ, identity, matter_id, session)
 
     def _invoke_harness_tool(self, binding: Any, request: Mapping[str, object], *, application_action: str, expected_tool: str | None = None) -> dict[str, object]:
         if self.composition.harness_invoker is None:

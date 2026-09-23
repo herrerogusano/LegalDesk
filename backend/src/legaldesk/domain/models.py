@@ -7,7 +7,8 @@ tokens, prompts, or other secrets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Mapping
 from enum import StrEnum
 
 
@@ -103,9 +104,17 @@ class ReviewTask:
     status: ReviewTaskStatus = ReviewTaskStatus.OPEN
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
-    # Correlation metadata is safe to persist; task bodies and document text
-    # deliberately have no field in this model.
+    # Correlation metadata is safe to persist; workflow snapshots are bounded
+    # answer/citation records and never contain full documents or storage URIs.
     correlation_id: str = ""
+    # Workflow fields were added after the Phase 07 metadata-only contract.
+    # Defaults keep old synthetic records readable while new workflow creates
+    # always populate the durable snapshot and due date.
+    snapshot: Mapping[str, object] | None = None
+    note: str = ""
+    due_at: date | None = None
+    closed_at: datetime | None = None
+    resolution_note: str = ""
 
     @property
     def reason_code(self) -> str:

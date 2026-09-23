@@ -57,14 +57,16 @@ matter, S3 key, document body, review owner, or memory actor. Gateway and tool
 handlers reauthorize the same scope. Guardrails protect content but do not
 replace deterministic authorization.
 
-The application sends explicit metadata/review actions as one fixed remote-MCP
-`tools/call` to Gateway with the verified end-user bearer token in transport
-headers only. Agentic workflows may still use Harness with the same sealed
-binding. An opaque, five-minute invocation record in the existing table binds
+The application sends explicit metadata and review-queue actions as one fixed
+remote-MCP `tools/call` to Gateway with the verified end-user bearer token in
+transport headers only. Review create/list/get/update are deterministic
+backend operations, not Harness agentic tools. Agentic workflows may still use
+Harness with the same sealed binding. An opaque, five-minute invocation record in the existing table binds
 subject, matter, Memory actor/session, correlation and action allowlist. The
 Gateway interceptor verifies that binding after its JWT edge and reauthorizes;
 target handlers reload their own grants/membership before reading or writing.
-Repeated model attempts for one review invocation share one idempotent grant.
+Retries for one accepted-answer correlation share one server-derived
+idempotency key; the short-lived grant ID itself is not used as the retry key.
 JWT signature/expiry checks do not implement immediate IdP revocation lookup;
 membership revocation is checked against server data on each scoped operation.
 

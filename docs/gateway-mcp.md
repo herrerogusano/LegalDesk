@@ -6,7 +6,10 @@ Phase 08 adds a narrow tool surface behind AgentCore Gateway:
 |---|---|---|---|
 | `list_matter_documents` | remote MCP server | `matterId` selector | safe document metadata |
 | `get_document_metadata` | remote MCP server | `matterId`, `documentId` selectors | safe metadata for the current matter |
-| `create_review_task` | Phase 07 Lambda | `matterId` selector, `reasonCode` | `reviewTaskId`, `status` |
+| `create_review_task` | Phase 07 Lambda | `matterId` selector, reason, due date and bounded server-derived snapshot | `reviewTaskId`, `status` |
+| `list_review_tasks` | Phase 07 Lambda | `matterId` selector, bounded limit | summary metadata only (no snapshot) |
+| `get_review_task` | Phase 07 Lambda | `matterId`, `reviewTaskId` selectors | one validated snapshot and metadata |
+| `update_review_task` | Phase 07 Lambda | `matterId`, `reviewTaskId`, allowed status transition | updated task metadata |
 
 The MCP implementation is JSON-RPC/HTTP-neutral in
 `backend/src/legaldesk/mcp_server.py`. It uses the server-built
@@ -14,7 +17,8 @@ The MCP implementation is JSON-RPC/HTTP-neutral in
 returns no document body, S3 key, credentials, or hidden provider fields.
 Repository results are checked again before serialization. The local routing
 seam in `agent/src/legaldesk_agent/tool_router.py` maps the two metadata tools
-to MCP and review creation to Lambda; it performs no inference or
+to MCP. The review queue operations are deterministic backend actions through
+Gateway/Lambda, not Harness agentic tools; the router performs no inference or
 authorization.
 
 ## Context and trust boundary
@@ -43,9 +47,8 @@ headers for business calls and consumes the exact grant, including its tool,
 subject, matter, and expiry binding. Provider
 `client_context.custom` metadata is not treated as identity or authorization.
 No token or request body is logged. Grants expire after five minutes and are
-replayable during that TTL by design; deterministic grant-derived idempotency
-limits duplicate review writes. Grant cleanup remains a deferred operational
-task.
+replayable during that TTL by design; correlation-derived idempotency limits
+duplicate review writes. Grant cleanup remains a deferred operational task.
 
 MCP `initialize`, `tools/list`, `ping`, and the `notifications/initialized`
 notification are allowed without business scope so Gateway dynamic discovery
@@ -53,7 +56,7 @@ can complete; `tools/call` always requires the interceptor-built context. The
 server and interceptor support MCP `2025-03-26`, paginated `tools/list`, and the
 standard optional `_meta` object, while rejecting malformed or unknown fields.
 Gateway-visible tool names use the provider-defined
-`target-name___tool-name` prefix. The interceptor accepts only the three exact
+`target-name___tool-name` prefix. The interceptor accepts only the exact
 target/tool combinations documented above and fails closed for unknown,
 unprefixed, or mismatched names.
 
@@ -81,9 +84,12 @@ Its DynamoDB write permission is additionally restricted to
 
 The approved deployment uses dedicated Phase 08 artifact/Cognito stacks, the
 existing Phase 02 table, and the Phase 07 Lambda. Gateway and both targets are
-`READY`; Harness version 3 discovered all three tools and returned only the
-fictional `Synthetic notice.pdf` result. Direct synthetic calls also proved
-metadata list/get, review creation, and cross-matter denial. Resources are
+`READY`; Harness version 3 historically discovered the three deployed tools
+and returned only the fictional `Synthetic notice.pdf` result. Direct
+synthetic calls historically proved metadata list/get, review creation, and
+cross-matter denial. The durable queue read/update workflow is covered by
+local fakes and focused tests; it is not represented as newly deployed
+evidence. Resources are
 retained for later phases. They can incur Gateway, Harness/Bedrock, Lambda,
 DynamoDB, Cognito, S3, Secrets Manager, and CloudWatch charges.
 

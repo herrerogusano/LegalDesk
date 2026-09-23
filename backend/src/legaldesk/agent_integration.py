@@ -40,6 +40,9 @@ _APPLICATION_TOOL_ALLOWLISTS = {
     ),
     "review": (
         "@legaldesk_gateway/review-task-lambda___create_review_task",
+        "@legaldesk_gateway/review-task-lambda___list_review_tasks",
+        "@legaldesk_gateway/review-task-lambda___get_review_task",
+        "@legaldesk_gateway/review-task-lambda___update_review_task",
     ),
 }
 
@@ -107,6 +110,20 @@ class HarnessInvocationBinding:
 
     def _is_sealed(self) -> bool:
         return self._seal is _BINDING_FACTORY_TOKEN
+
+    def gateway_headers(self) -> dict[str, str]:
+        """Build fixed Gateway headers for deterministic backend actions."""
+
+        if not self._is_sealed():
+            raise TypeError("binding must be server-derived")
+        return {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "x-legaldesk-requested-matter-id": self.matter_id,
+            "x-legaldesk-correlation-id": str(UUID(self.correlation_id)),
+            "x-legaldesk-invocation-id": str(UUID(self.invocation_id)),
+            "x-legaldesk-memory-actor-id": self.memory_scope.actor_id,
+            "x-legaldesk-memory-session-id": self.memory_scope.session_id,
+        }
 
     @property
     def verified_subject(self) -> str:

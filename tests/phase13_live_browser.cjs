@@ -163,7 +163,7 @@ async function run() {
     page.on("response", response => {
       const url = new URL(response.url());
       if (url.origin !== base.origin) return;
-      const route = ["/callback", "/api/chat", "/api/mcp", "/review", "/api/audit", "/logout", "/confirm", "/sync"].find(value => url.pathname.endsWith(value));
+      const route = ["/callback", "/api/chat", "/api/mcp", "/reviews", "/review", "/api/audit", "/logout", "/confirm", "/sync"].find(value => url.pathname.endsWith(value));
       if (route && diagnostics.http.length < 12) diagnostics.http.push({ route, status: response.status() });
     });
     page.on("request", (request) => {
@@ -249,7 +249,7 @@ async function run() {
     finishPhase("metadata_tool");
 
     beginPhase("review_tool");
-    const reviewResponsePromise = apiResponse(page, "/review", "POST", "review_response");
+    const reviewResponsePromise = apiResponse(page, "/reviews", "POST", "review_response");
     await page.locator("#review-button").click();
     const review = await reviewResponsePromise;
     if (!safeId(review.reviewTaskId) || review.status !== "open" || review.correlationId !== operationCorrelationId) fail("review_contract");
