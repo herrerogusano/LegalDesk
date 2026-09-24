@@ -48,12 +48,64 @@ log group use `LogRetentionDays` (default 30). CloudFront service metrics and
 the application's redacted allowlist remain available without retaining the
 callback secret.
 
+## Immutable release artifacts (local only)
+
+`scripts/package_release.py` is the only release packager for this tranche. It
+does not invoke AWS, pip, or a network client. Given a dependency directory
+prepared externally on Linux, it creates:
+
+- `legaldesk-lambda.zip`, containing the `legaldesk/` backend package, the
+  `legaldesk_agent/` package, `prompts/legaldesk-system.md`, and the prepared
+  runtime dependencies. The same zip is valid for the application Lambda and
+  the malware corroboration Lambda because it contains
+  `legaldesk.malware_scan_lambda.lambda_handler`.
+- `legaldesk-frontend.zip`, containing exactly `index.html`, `styles.css`,
+  `app.js`, and `citations.js`.
+- `legaldesk-release-manifest.json`, with per-file and whole-artifact
+  SHA-256 digests.
+
+The archive writer sorts paths, fixes timestamps to the ZIP epoch, uses fixed
+permissions, and rejects symlinks, duplicate archive paths, unsafe paths,
+caches, tests, and secret-looking files. The output directory must be treated
+as a build output and is not part of either artifact.
+
+The dependency input is pinned in
+`packaging/constraints-python312-manylinux-x86_64.txt`. In a clean Linux
+x86_64/Python 3.12 environment, a release operator may prepare it with
+`pip download --only-binary=:all: --platform manylinux_2_17_x86_64
+--implementation cp --python-version 3.12` followed by an offline
+`pip install --no-index --find-links ... --target ... -r` using that exact
+constraints file. The packager itself must then be run offline:
+
+```text
+python3.12 scripts/package_release.py \
+  --dependency-root /opt/legaldesk-python312-deps \
+  --output-dir dist/legaldesk-release
+```
+
+Before accepting the result, import `boto3`, `botocore`, `jwt`,
+`cryptography`, and `cffi` from the prepared dependency directory, verify the
+versions against the constraints file, inspect the manifest, and compare the
+reported Lambda SHA-256 with the immutable S3 object version later supplied
+to CloudFormation. No dependency download or artifact upload is performed by
+local tests.
+
+The frontend zip is a release/verification artifact, not a file served by
+CloudFront. In a separately approved deployment step, extract only those four
+files into a clean staging directory and upload them explicitly to the
+private frontend bucket (never make the bucket public). After the upload,
+invalidate `/`, `/index.html`, `/styles.css`, `/app.js`, and `/citations.js`
+for the reviewed distribution. Preserve the manifest and resulting object
+version/digest for rollback; do not run this upload or invalidation as part of
+Phase 14 local validation.
+
 ## Immutable Lambda artifact
 
 The template accepts only an existing artifact bucket, immutable key, and
-object version; it does not upload code or create an artifact bucket. Artifact
-assembly and dependency pinning remain a separate release-engineering task,
-outside this local edge tranche.
+object version; it does not upload code or create an artifact bucket. The
+packaging workflow above produces the exact zip and digest; uploading it to a
+versioned artifact bucket and passing its key/version remain separate,
+explicitly approved release steps outside this local edge tranche.
 
 ## Deterministic two-step identity/CORS bootstrap
 

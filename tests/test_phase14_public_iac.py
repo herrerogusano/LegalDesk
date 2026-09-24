@@ -63,6 +63,7 @@ class Phase14PublicInfrastructureTests(unittest.TestCase):
         self.assertIn("LEGALDESK_PUBLIC_MODE: \"true\"", text)
         self.assertIn("LEGALDESK_SECURE_COOKIES: \"true\"", text)
         self.assertIn("LEGALDESK_TRUSTED_EDGE_VALUE: !Ref TrustedEdgeSecret", text)
+        self.assertIn("LEGALDESK_SYSTEM_PROMPT_PATH: /var/task/prompts/legaldesk-system.md", text)
         self.assertIn("HeaderName: X-LegalDesk-Trusted-Edge", text)
         self.assertIn("Value: !Sub \"${PublicApi}.execute-api", text)
         self.assertIn("Value: !GetAtt PublicDistribution.DomainName", text)

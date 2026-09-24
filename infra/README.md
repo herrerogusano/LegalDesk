@@ -55,3 +55,11 @@ adds only the GuardDuty quarantine plan, exact EventBridge route, corroborating
 Lambda, bounded retries/DLQ, and retained logs. It reuses the existing S3
 bucket and DynamoDB table by parameter and has no KMS, WAF, public endpoint, or
 reconciliation scheduler.
+
+Release artifacts are assembled locally by `../scripts/package_release.py`
+from the exact Python 3.12 constraints in
+`../packaging/constraints-python312-manylinux-x86_64.txt`. The packager is
+offline and emits a Lambda zip that can be supplied to both the public
+application and malware-scan templates, plus a bounded four-file frontend zip
+and a SHA-256 manifest. Uploading artifacts, publishing frontend files, and
+CloudFront invalidation remain separately approved release operations.

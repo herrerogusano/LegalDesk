@@ -391,6 +391,7 @@ Resources:
           LEGALDESK_SECURE_COOKIES: "true"
           LEGALDESK_PUBLIC_MODE: "true"
           LEGALDESK_TRUSTED_EDGE_VALUE: !Ref TrustedEdgeSecret
+          LEGALDESK_SYSTEM_PROMPT_PATH: /var/task/prompts/legaldesk-system.md
 
   PublicApiIntegration:
     Type: AWS::ApiGatewayV2::Integration
