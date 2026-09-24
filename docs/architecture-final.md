@@ -74,7 +74,10 @@ membership revocation is checked against server data on each scoped operation.
 
 Documents use server-generated IDs and S3 keys. Upload metadata begins at
 `PENDING_UPLOAD` and moves to `UPLOADED` only after the backend confirms the
-expected object exists. Retrieval returns bounded passages and citation IDs;
+expected object exists. The presigned PUT uses SigV4 and binds the exact
+server-validated file size in `Content-Length`; the browser supplies that
+header from the selected file, while confirmation repeats the size check with
+`HeadObject`. Retrieval returns bounded passages and citation IDs;
 the model never receives direct S3 or database credentials. Memory is
 short-term, scoped by authorized actor/session/matter, with long-term writes
 rejected for data minimization.

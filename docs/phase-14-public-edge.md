@@ -33,8 +33,12 @@ different from the browser `PublicOrigin`/`LEGALDESK_ALLOWED_ORIGINS`.
 The response headers policy provides HSTS, `nosniff`, `DENY` framing,
 `strict-origin-when-cross-origin`, a restrictive baseline CSP, and a narrow
 Permissions-Policy. `PresignedUploadOrigin` is the one exact source-bucket
-HTTPS origin used in `connect-src`; no wildcard upload host is accepted. The application adapter
-keeps its one-megabyte body limit and generic error responses. API Gateway and
+HTTPS origin used in `connect-src`; no wildcard upload host is accepted. Upload
+authorization presigns the server-validated byte count as a SigV4
+`content-length` header; the browser supplies that header from the selected
+file and the frontend does not override it. Confirmation still performs an
+exact `HeadObject` size check. The application adapter keeps its one-megabyte
+body limit and generic error responses. API Gateway and
 Lambda are additionally bounded by the stage throttles and 29-second
 integration/function timeouts.
 

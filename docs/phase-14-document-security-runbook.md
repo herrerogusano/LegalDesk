@@ -7,10 +7,14 @@ not authorize real legal data or an AWS deployment.
 
 1. The backend issues a server-owned key and metadata record in
    `PENDING_UPLOAD`; public PUTs target `quarantine/`, outside the Bedrock
-   source prefix `tenants/`.
+   source prefix `tenants/`. The presigned PUT is generated with SigV4 and
+   signs the exact server-validated `Content-Length` declared for the file.
+   The browser sends that header from the selected `File`; frontend code must
+   not set it manually.
 2. Upload confirmation validates the object `HEAD`, size, media type, and
    tenant/matter/document metadata but does not make it indexable in public
-   mode.
+   mode. This server-side HEAD remains a defense-in-depth check even though
+   S3 rejects a PUT whose signed size does not match.
 3. The exact GuardDuty Malware Protection result is corroborated by a fresh
    `HEAD` and the `GuardDutyMalwareScanStatus` object tag. Only
    `NO_THREATS_FOUND` copies the object server-side to its canonical `tenants/`

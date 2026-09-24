@@ -7,6 +7,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
@@ -21,6 +22,7 @@ from legaldesk.authorization import (
 from legaldesk.documents import (
     DocumentPipeline,
     Boto3DynamoDocumentMetadataRepository,
+    Boto3S3ObjectStorage,
     DocumentMetadataError,
     DocumentStorageError,
     DocumentValidationError,
@@ -75,6 +77,10 @@ class DocumentPipelineTests(unittest.TestCase):
         self.assertEqual(authorization.s3_key, document.s3_key)
         self.assertTrue(authorization.upload_url.startswith("https://s3.invalid/"))
         self.assertEqual(authorization.headers["Content-Type"], "text/plain")
+        self.assertEqual(
+            self.objects.presigned_content_lengths[document.s3_key], len(FIXTURE)
+        )
+        self.assertNotIn("Content-Length", authorization.headers)
         self.assertNotIn(document.s3_key, self.objects.objects)
 
     def test_existing_object_confirms_to_uploaded(self) -> None:
@@ -116,16 +122,15 @@ class DocumentPipelineTests(unittest.TestCase):
             "mat_sundial",
             request(body=None, file_size_bytes=len(FIXTURE) + 1),
         )
-        self.objects.put_object(
-            key=authorization.s3_key,
-            body=FIXTURE,
-            media_type="text/plain",
-            metadata={
-                "tenant-id": "tnt_aurora",
-                "matter-id": "mat_sundial",
-                "document-id": authorization.document_id,
-            },
-        )
+        # Bypass the in-memory presigned PUT check to model a malformed or
+        # externally replaced object; confirmation must still enforce HEAD.
+        self.objects.objects[authorization.s3_key] = FIXTURE
+        self.objects.metadata[authorization.s3_key] = {
+            "tenant-id": "tnt_aurora",
+            "matter-id": "mat_sundial",
+            "document-id": authorization.document_id,
+            "media-type": "text/plain",
+        }
         with self.assertRaises(DocumentStorageError):
             self.pipeline.confirm_upload(ALICE, "mat_sundial", authorization.document_id)
         self.assertEqual(
@@ -134,6 +139,7 @@ class DocumentPipelineTests(unittest.TestCase):
             ].status,
             DocumentStatus.PENDING_UPLOAD,
         )
+
 
     def test_cross_matter_confirmation_is_denied(self) -> None:
         authorization = self.pipeline.initiate_upload(
@@ -468,6 +474,56 @@ class DocumentPipelineTests(unittest.TestCase):
                 )
             ),
         )
+
+
+class Boto3PresignedUploadTests(unittest.TestCase):
+    def test_presign_passes_exact_content_length_and_s3v4_signs_header(self) -> None:
+        import boto3
+        from botocore.config import Config
+
+        client = boto3.client(
+            "s3",
+            region_name="eu-west-1",
+            aws_access_key_id="AKIAEXAMPLE",
+            aws_secret_access_key="secret-example",
+            config=Config(signature_version="s3v4"),
+        )
+        storage = Boto3S3ObjectStorage("fictional-bucket", client=client)
+        url = storage.generate_presigned_put_url(
+            key="quarantine/tenants/tnt/matters/mat/documents/doc/original.txt",
+            content_length=len(FIXTURE),
+            media_type="text/plain",
+            metadata={"tenant-id": "tnt", "matter-id": "mat", "document-id": "doc"},
+            expires_in=300,
+        )
+        query = parse_qs(urlsplit(url).query)
+        self.assertIn(
+            "content-length",
+            unquote(query["X-Amz-SignedHeaders"][0]).split(";"),
+        )
+
+    def test_presign_adapter_forwards_content_length_parameter(self) -> None:
+        class FakeClient:
+            def __init__(self) -> None:
+                self.params = None
+
+            def generate_presigned_url(self, _operation, *, Params, ExpiresIn, HttpMethod):
+                self.params = Params
+                return "https://s3.invalid/presigned"
+
+        client = FakeClient()
+        storage = Boto3S3ObjectStorage("bucket", client=client)
+        self.assertEqual(
+            storage.generate_presigned_put_url(
+                key="key",
+                content_length=123,
+                media_type="text/plain",
+                metadata={},
+                expires_in=300,
+            ),
+            "https://s3.invalid/presigned",
+        )
+        self.assertEqual(client.params["ContentLength"], 123)
 
 
 if __name__ == "__main__":

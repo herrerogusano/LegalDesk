@@ -320,11 +320,15 @@ def build_aws_composition(
         raise TypeError("smoke_budget must be a SmokeBudget")
     resource_config = config or AWSResourceConfig.from_environment()
     sdk_config = Config(retries={"total_max_attempts": 1, "mode": "standard"})
+    s3_config = Config(
+        signature_version="s3v4",
+        retries={"total_max_attempts": 1, "mode": "standard"},
+    )
     client_factory = boto3.client if boto3_session is None else boto3_session.client
     resource_factory = boto3.resource if boto3_session is None else boto3_session.resource
     dynamodb = resource_factory("dynamodb", region_name=resource_config.region, config=sdk_config)
     table = dynamodb.Table(resource_config.metadata_table_name)
-    s3 = client_factory("s3", region_name=resource_config.region, config=sdk_config)
+    s3 = client_factory("s3", region_name=resource_config.region, config=s3_config)
     runtime = client_factory("bedrock-runtime", region_name=resource_config.region, config=sdk_config)
     knowledge_base = client_factory("bedrock-agent-runtime", region_name=resource_config.region, config=sdk_config)
     # Retrieval and ingestion are separate Bedrock APIs.  The runtime client

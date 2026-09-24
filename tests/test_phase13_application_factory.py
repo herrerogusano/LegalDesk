@@ -100,6 +100,8 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         self.assertGreaterEqual(client.call_count, 4)
         for call in client.call_args_list:
             self.assertEqual(call.kwargs["config"].retries["total_max_attempts"], 1)
+        s3_call = next(call for call in client.call_args_list if call.args[0] == "s3")
+        self.assertEqual(s3_call.kwargs["config"].signature_version, "s3v4")
         resource.assert_called_once()
 
     def test_retrieval_and_ingestion_use_supported_distinct_bedrock_apis(self):

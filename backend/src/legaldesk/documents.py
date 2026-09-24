@@ -89,6 +89,7 @@ class ObjectStorage(Protocol):
         self,
         *,
         key: str,
+        content_length: int,
         media_type: str,
         metadata: Mapping[str, str],
         expires_in: int,
@@ -466,6 +467,7 @@ class DocumentPipeline:
         try:
             upload_url = self.object_storage.generate_presigned_put_url(
                 key=upload_key,
+                content_length=document.file_size_bytes,
                 media_type=document.media_type,
                 metadata=_safe_metadata(document),
                 expires_in=expires_in,
@@ -648,6 +650,7 @@ class InMemoryObjectStorage:
     fail: bool = False
     fail_delete: bool = False
     presigned_urls: dict[str, str] = field(default_factory=dict)
+    presigned_content_lengths: dict[str, int] = field(default_factory=dict)
 
     def __init__(self, *, fail: bool = False, fail_delete: bool = False) -> None:
         self.objects = {}
@@ -656,6 +659,7 @@ class InMemoryObjectStorage:
         self.fail = fail
         self.fail_delete = fail_delete
         self.presigned_urls = {}
+        self.presigned_content_lengths = {}
 
     def put_object(
         self,
@@ -667,6 +671,9 @@ class InMemoryObjectStorage:
     ) -> None:
         if self.fail:
             raise RuntimeError("fictional storage failure")
+        expected_length = self.presigned_content_lengths.get(key)
+        if expected_length is not None and len(body) != expected_length:
+            raise DocumentStorageError("presigned upload content length mismatch")
         self.objects[key] = body
         self.metadata[key] = dict(metadata) | {"media-type": media_type}
 
@@ -676,6 +683,8 @@ class InMemoryObjectStorage:
         self.objects.pop(key, None)
         self.metadata.pop(key, None)
         self.tags.pop(key, None)
+        self.presigned_urls.pop(key, None)
+        self.presigned_content_lengths.pop(key, None)
 
     def copy_object(self, *, source_key: str, destination_key: str) -> None:
         if self.fail or source_key not in self.objects:
@@ -699,14 +708,23 @@ class InMemoryObjectStorage:
         self,
         *,
         key: str,
+        content_length: int,
         media_type: str,
         metadata: Mapping[str, str],
         expires_in: int,
     ) -> str:
         if self.fail:
             raise RuntimeError("fictional storage failure")
+        if (
+            not isinstance(content_length, int)
+            or isinstance(content_length, bool)
+            or content_length <= 0
+            or content_length > MAX_DOCUMENT_BYTES
+        ):
+            raise DocumentValidationError("presigned content length is invalid")
         url = f"https://s3.invalid/upload/{quote(key, safe='')}?expires={expires_in}"
         self.presigned_urls[key] = url
+        self.presigned_content_lengths[key] = content_length
         return url
 
     def head_object(self, *, key: str) -> Mapping[str, Any]:
@@ -836,8 +854,15 @@ class Boto3S3ObjectStorage:
         self.bucket_name = bucket_name
         if client is None:
             import boto3
+            from botocore.config import Config
 
-            client = boto3.client("s3")
+            client = boto3.client(
+                "s3",
+                config=Config(
+                    signature_version="s3v4",
+                    retries={"total_max_attempts": 1, "mode": "standard"},
+                ),
+            )
         self.client = client
 
     def put_object(
@@ -873,15 +898,24 @@ class Boto3S3ObjectStorage:
         self,
         *,
         key: str,
+        content_length: int,
         media_type: str,
         metadata: Mapping[str, str],
         expires_in: int,
     ) -> str:
+        if (
+            not isinstance(content_length, int)
+            or isinstance(content_length, bool)
+            or content_length <= 0
+            or content_length > MAX_DOCUMENT_BYTES
+        ):
+            raise DocumentValidationError("presigned content length is invalid")
         return self.client.generate_presigned_url(
             "put_object",
             Params={
                 "Bucket": self.bucket_name,
                 "Key": key,
+                "ContentLength": content_length,
                 "ContentType": media_type,
                 "Metadata": dict(metadata),
                 "ServerSideEncryption": "AES256",
