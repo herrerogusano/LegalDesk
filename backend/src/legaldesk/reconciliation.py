@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import math
 from time import time
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .documents import DocumentMetadataRepository, ObjectStorage
 from .domain.models import DocumentStatus
@@ -174,6 +174,16 @@ class ReconciliationService:
                     report.skipped += 1
                     report.record(identifier, "not_pending_upload")
                     continue
+                quarantine_prefix = (
+                    f"quarantine/tenants/{scope.tenant_id}/matters/{scope.matter_id}/documents/"
+                )
+                upload_key = document.quarantine_s3_key
+                if not isinstance(upload_key, str) or not upload_key.startswith(quarantine_prefix):
+                    # The public reconciler may delete only quarantined beta
+                    # uploads. Canonical source keys are never cleanup targets.
+                    report.ambiguous += 1
+                    report.record(identifier, "non_quarantine_key")
+                    continue
                 uploaded_at = document.uploaded_at
                 if not isinstance(uploaded_at, datetime):
                     report.ambiguous += 1
@@ -190,8 +200,8 @@ class ReconciliationService:
                     report.record(identifier, "not_stale")
                     continue
                 try:
-                    self.object_storage.delete_object(key=document.s3_key)
-                    self.object_storage.delete_object(key=f"{document.s3_key}.metadata.json")
+                    self.object_storage.delete_object(key=upload_key)
+                    self.object_storage.delete_object(key=f"{upload_key}.metadata.json")
                     self.metadata_repository.update_status(
                         tenant_id=scope.tenant_id,
                         matter_id=scope.matter_id,
@@ -382,6 +392,70 @@ class ReconciliationService:
                 continue
             report.changed += 1
             report.record(candidate.record_id, "deleted_expired")
+        return report
+
+    def reconcile_gateway_indexed(
+        self,
+        *,
+        now: float | None = None,
+        limit: int | None = None,
+        allowed_matter_ids: Sequence[str],
+    ) -> ReconciliationReport:
+        """Enumerate expiry-index candidates, then revalidate by point-read.
+
+        The repository-owned expiry index is an operational hint, not an
+        authorization source. Every candidate is converted to the same
+        server-bound point-read path as an explicit candidate, so malformed or
+        stale index rows fail closed and cannot cause a cross-scope delete.
+        """
+
+        if self.gateway_repository is None:
+            raise ValueError("Gateway reconciliation is not configured")
+        allowed_matter_ids = self._bounded(allowed_matter_ids, "Gateway matter allowlist")
+        if any(not isinstance(matter_id, str) or not matter_id.strip() for matter_id in allowed_matter_ids):
+            raise ValueError("Gateway matter allowlist is invalid")
+        allowed_matters = frozenset(allowed_matter_ids)
+        enumerate_candidates = getattr(self.gateway_repository, "list_expired_candidates", None)
+        if not callable(enumerate_candidates):
+            raise ValueError("Gateway expiry index is not configured")
+        bounded_limit = self._limit(limit or self.max_batch)
+        candidates: list[GatewayReconciliationCandidate] = []
+        report = ReconciliationReport()
+        try:
+            indexed = enumerate_candidates(now=self.clock() if now is None else now, limit=bounded_limit)
+        except Exception:
+            report = ReconciliationReport(failed=1)
+            report.record("gateway-expiry-index", "query_failed")
+            return report
+        for item in indexed:
+            if not isinstance(item, Mapping):
+                report.examined += 1
+                report.ambiguous += 1
+                continue
+            record_id = item.get("recordId")
+            kind = item.get("kind")
+            subject = item.get("verifiedSubject")
+            matter_id = item.get("requestedMatterId")
+            if not isinstance(matter_id, str) or matter_id not in allowed_matters:
+                report.examined += 1
+                report.skipped += 1
+                report.record(str(record_id) if isinstance(record_id, str) else "gateway-expiry-index", "scope_mismatch")
+                continue
+            if all(isinstance(value, str) and value.strip() for value in (record_id, kind, subject, matter_id)):
+                try:
+                    candidates.append(
+                        GatewayReconciliationCandidate(
+                            record_id=record_id,
+                            kind=kind,
+                            verified_subject=subject,
+                            matter_id=matter_id,
+                        )
+                    )
+                except ValueError:
+                    continue
+        if candidates:
+            child = self.reconcile_gateway(candidates=tuple(candidates))
+            self._merge(report, child)
         return report
 
     def _bounded(self, values: Sequence[object], label: str) -> tuple[object, ...]:

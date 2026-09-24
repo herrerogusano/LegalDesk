@@ -68,6 +68,7 @@ class Phase08GatewayInfrastructureTests(unittest.TestCase):
         self.assertIn("dynamodb:PutItem", self.template)
         self.assertIn("dynamodb:LeadingKeys:", self.template)
         self.assertIn("GATEWAY#GRANT#*", self.template)
+        self.assertIn("GATEWAY#EXPIRY#*", self.template)
         self.assertNotIn("AWS::Lambda::Permission", self.template)
         self.assertIn("aws:SourceAccount: !Ref AWS::AccountId", self.template)
         self.assertIn("bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/*", self.template)

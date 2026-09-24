@@ -2,20 +2,31 @@
 
 Status: **local implementation only; deployment remains approval-gated**.
 
+The deployable candidate is `infra/cloudformation/phase-14-reconciliation.yaml`.
+It runs `legaldesk.reconciliation_lambda.lambda_handler` from a versioned
+artifact on a bounded EventBridge schedule, with reserved concurrency `1`, a
+two-attempt retry policy, a retained log group and an encrypted SQS DLQ. The
+Lambda receives no browser selectors. `UploadScopes` and `IngestionScopes` are
+small deployment parameters, and every entry must match the single
+`BetaTenantId`; malformed, duplicate or foreign entries fail closed.
+
 The reconciler receives an explicit batch of authorized tenant/matter scopes or
 opaque operational candidate IDs. Each batch is bounded (default maximum: 100)
 and uses document-partition queries or point reads. It never scans the shared
-DynamoDB table. A scheduler/operator must supply the candidate partition; this
-module does not infer scope from browser input.
+DynamoDB table. The scheduler supplies the candidate partitions from
+deployment configuration; this module does not infer scope from browser input.
 
 ## Uploads
 
 Run `ReconciliationService.reconcile_pending_uploads` for a small list of
 server-authorized `ReconciliationScope` values. Only `PENDING_UPLOAD` records
-older than the approved stale threshold are considered. The original and
+older than the approved stale threshold are considered. The public reconciler
+deletes only keys under the exact beta `quarantine/tenants/{tenant}/matters/{matter}/`
+prefix; canonical source keys are not cleanup targets. The original and
 metadata sidecar are deleted first; metadata moves to `FAILED` only after both
-deletes succeed. A failed delete or malformed timestamp remains pending and is
-reported for retry. A second run is safe: terminal records are skipped.
+deletes succeed. A failed delete, malformed timestamp or non-quarantine key
+remains pending and is reported for retry. A second run is safe: terminal
+records are skipped.
 
 ## Ingestion
 
@@ -32,13 +43,15 @@ or malformed records fail closed and are not deleted by reconciliation.
 
 ## Gateway grants and invocations
 
-Run `reconcile_gateway` only with bounded point-read candidates from an
-authorized operational source. A record is deleted only when its entity shape,
-subject, matter, key and numeric expiry all match and the expiry is in the
-past. Malformed or scope-mismatched records remain for investigation; DynamoDB
-TTL is cleanup assistance only. The current Gateway schema has no discovery
-index, so candidate enumeration is an explicit operational input rather than a
-table scan.
+`Boto3DynamoGatewayGrantRepository` maintains a separate expiry index item for
+each grant/invocation under a UTC-day partition. The scheduler queries at most
+today and yesterday, with a bounded limit; it never scans the table. Before any
+point-read, the candidate matter must be in the explicit union of the upload
+and ingestion matter scopes for this beta run. Every permitted candidate is
+then point-read and revalidated for exact entity shape, subject, matter, key
+and numeric expiry before deletion. Foreign or malformed candidates remain
+for investigation. Older missed index rows are bounded by the existing
+DynamoDB TTL cleanup and are not an authorization dependency.
 
 ## Failure handling and evidence
 
@@ -47,6 +60,8 @@ candidate after provider/storage recovery; do not broaden the scope or batch
 limit. Preserve the report metadata (counts, opaque IDs, scope and timestamp)
 without recording tokens, document bodies, signed URLs, passages or secrets.
 
-No AWS call is part of local tests. Production scheduling, IAM permissions,
-alarms, candidate-source/index design and deployment require the Phase 14
-deployment approval gate.
+The Phase 02 table enables TTL on `ttl`, and its non-versioned source bucket
+expires the `quarantine/` prefix after one day. TTL is cleanup assistance, not a
+guaranteed deadline or access-control decision. No AWS call is part of local
+tests. Production scheduling, IAM permissions, alarms and deployment require
+the Phase 14 deployment approval gate.

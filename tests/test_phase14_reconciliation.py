@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 from legaldesk.documents import InMemoryDocumentMetadataRepository, InMemoryObjectStorage
 from legaldesk.domain.models import Document, DocumentStatus
 from legaldesk.gateway_interceptor import (
+    Boto3DynamoGatewayGrantRepository,
     GatewayAuthorizationGrant,
     HarnessInvocationGrant,
     InMemoryGatewayGrantRepository,
@@ -43,7 +44,7 @@ def _document(
         matter_id=matter_id,
         tenant_id=tenant_id,
         name="fictional.txt",
-        s3_key=f"tenants/{tenant_id}/matters/{matter_id}/documents/{document_id}/original.txt",
+        s3_key=f"quarantine/tenants/{tenant_id}/matters/{matter_id}/documents/{document_id}/original.txt",
         media_type="text/plain",
         jurisdiction="fictional",
         document_date="2099-01-01",
@@ -51,6 +52,7 @@ def _document(
         status=status,
         file_size_bytes=10,
         uploaded_at=datetime.fromtimestamp(NOW - age_seconds, tz=timezone.utc),
+        quarantine_s3_key=f"quarantine/tenants/{tenant_id}/matters/{matter_id}/documents/{document_id}/original.txt",
     )
 
 
@@ -86,6 +88,24 @@ class _FakeIngestionService:
         return repaired
 
 
+class _FlakyGatewayTable:
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], dict[str, object]] = {}
+        self.fail_index_calls = 2
+
+    def put_item(self, *, Item, ConditionExpression=None, **_kwargs):
+        key = (Item["pk"], Item["sk"])
+        if ConditionExpression and key in self.items:
+            raise RuntimeError("conditional collision")
+        if Item.get("entityType") == "GatewayExpiryIndex" and self.fail_index_calls:
+            self.fail_index_calls -= 1
+            raise RuntimeError("index unavailable")
+        self.items[key] = dict(Item)
+
+    def get_item(self, *, Key, **_kwargs):
+        return {"Item": self.items.get((Key["pk"], Key["sk"]))}
+
+
 class Phase14ReconciliationTests(unittest.TestCase):
     def _service(
         self,
@@ -113,8 +133,8 @@ class Phase14ReconciliationTests(unittest.TestCase):
         foreign = _document(tenant_id="tenant-b", matter_id="matter-b", document_id="doc-foreign")
         for document in (stale, fresh, foreign):
             metadata.save(document)
-            storage.put_object(key=document.s3_key, body=b"fictional", media_type=document.media_type, metadata={})
-            storage.put_object(key=f"{document.s3_key}.metadata.json", body=b"{}", media_type="application/json", metadata={})
+            storage.put_object(key=document.quarantine_s3_key, body=b"fictional", media_type=document.media_type, metadata={})
+            storage.put_object(key=f"{document.quarantine_s3_key}.metadata.json", body=b"{}", media_type="application/json", metadata={})
 
         service = self._service(metadata, storage, InMemoryEphemeralStateStore(clock=lambda: NOW))
         report = service.reconcile_pending_uploads(
@@ -126,7 +146,7 @@ class Phase14ReconciliationTests(unittest.TestCase):
         self.assertEqual(metadata.limits, [2])
         self.assertEqual(metadata.get_for_scope(tenant_id="tenant-a", matter_id="matter-a", document_id="doc-a").status, DocumentStatus.FAILED)
         self.assertIsNotNone(metadata.get_for_scope(tenant_id="tenant-b", matter_id="matter-b", document_id="doc-foreign"))
-        self.assertNotIn(stale.s3_key, storage.objects)
+        self.assertNotIn(stale.quarantine_s3_key, storage.objects)
         repeated = service.reconcile_pending_uploads(
             scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, limit_per_scope=2
         )
@@ -244,6 +264,49 @@ class Phase14ReconciliationTests(unittest.TestCase):
         self.assertIsNone(repository.get("grant-old"))
         self.assertIsNotNone(repository.get("grant-new"))
         self.assertIsNone(repository.get_invocation("inv-old"))
+
+    def test_gateway_expiry_index_is_bounded_and_revalidated_before_delete(self) -> None:
+        repository = InMemoryGatewayGrantRepository()
+        repository.put(GatewayAuthorizationGrant("grant-indexed", "alice", "matter-a", "corr-a", "tool-a", 900))
+        repository.put_invocation(HarnessInvocationGrant("inv-indexed", "alice", "matter-a", "corr-a", "actor", "session", ("tool-a",), 900))
+        service = self._service(
+            InMemoryDocumentMetadataRepository(), InMemoryObjectStorage(), InMemoryEphemeralStateStore(clock=lambda: NOW),
+            gateway_repository=repository,
+        )
+        report = service.reconcile_gateway_indexed(now=NOW, limit=2, allowed_matter_ids=("matter-a",))
+        self.assertEqual(report.examined, 2)
+        self.assertEqual(report.changed, 2)
+        self.assertEqual(len(repository.expiry_index), 0)
+        self.assertIsNone(repository.get("grant-indexed"))
+        self.assertIsNone(repository.get_invocation("inv-indexed"))
+
+    def test_gateway_expiry_index_rejects_foreign_matter_before_point_read(self) -> None:
+        repository = InMemoryGatewayGrantRepository()
+        repository.put(GatewayAuthorizationGrant("grant-allowed", "alice", "matter-a", "corr-a", "tool-a", 900))
+        repository.put(GatewayAuthorizationGrant("grant-foreign", "alice", "matter-b", "corr-b", "tool-a", 900))
+        service = self._service(
+            InMemoryDocumentMetadataRepository(), InMemoryObjectStorage(), InMemoryEphemeralStateStore(clock=lambda: NOW),
+            gateway_repository=repository,
+        )
+        report = service.reconcile_gateway_indexed(now=NOW, limit=2, allowed_matter_ids=("matter-a",))
+        self.assertEqual(report.examined, 2)
+        self.assertEqual(report.changed, 1)
+        self.assertEqual(report.skipped, 1)
+        self.assertTrue(any(item.outcome == "scope_mismatch" for item in report.items))
+        self.assertIsNone(repository.get("grant-allowed"))
+        self.assertIsNotNone(repository.get("grant-foreign"))
+
+    def test_boto_invocation_retry_repairs_index_after_primary_write(self) -> None:
+        table = _FlakyGatewayTable()
+        repository = Boto3DynamoGatewayGrantRepository("fictional-table", table=table)
+        grant = HarnessInvocationGrant(
+            "inv-retry", "alice", "matter-a", "corr-a", "actor", "session", ("tool-a",), 900
+        )
+        with self.assertRaises(RuntimeError):
+            repository.put_invocation(grant)
+        self.assertIn((grant.item["pk"], grant.item["sk"]), table.items)
+        repository.put_invocation(grant)
+        self.assertEqual(sum(item.get("entityType") == "GatewayExpiryIndex" for item in table.items.values()), 1)
 
 
 if __name__ == "__main__":

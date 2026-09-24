@@ -429,7 +429,7 @@ def _validated_mcp_grant(
         "pk", "sk", "entityType", "verifiedSubject", "requestedMatterId",
         "correlationId", "toolName", "expiresAt",
     }
-    if set(item) != required or item.get("pk") != gateway_grant_partition_key(grant_id):
+    if set(item) not in (required, required | {"ttl"}) or item.get("pk") != gateway_grant_partition_key(grant_id):
         return None
     if item.get("sk") != GATEWAY_GRANT_SORT_KEY or item.get("entityType") != GATEWAY_GRANT_ENTITY:
         return None
@@ -445,6 +445,11 @@ def _validated_mcp_grant(
         or not isinstance(expires_at, (int, float, Decimal))
         or not math.isfinite(float(expires_at))
         or expires_at <= time.time()
+        or (
+            "ttl" in item
+            and (isinstance(item.get("ttl"), bool) or not isinstance(item.get("ttl"), (int, float, Decimal))
+                 or not math.isfinite(float(item.get("ttl"))))
+        )
     ):
         return None
     params = request.get("params")

@@ -1079,7 +1079,7 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
             "pk", "sk", "entityType", "verifiedSubject", "requestedMatterId",
             "correlationId", "toolName", "expiresAt",
         }
-        if set(raw_grant) != required or raw_grant.get("entityType") != "GatewayAuthorizationGrant":
+        if set(raw_grant) not in (required, required | {"ttl"}) or raw_grant.get("entityType") != "GatewayAuthorizationGrant":
             return {"error": "access_denied"}
         if raw_grant.get("pk") != f"GATEWAY#GRANT#{grant_id}" or raw_grant.get("sk") != "PROFILE":
             return {"error": "access_denied"}
@@ -1096,6 +1096,9 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
         except (TypeError, ValueError, OverflowError):
             return {"error": "access_denied"}
         if expired:
+            return {"error": "access_denied"}
+        ttl = raw_grant.get("ttl", expires_at)
+        if isinstance(ttl, bool) or not isinstance(ttl, (int, float, Decimal)) or not math.isfinite(float(ttl)):
             return {"error": "access_denied"}
         try:
             envelope = AuthorizedToolEnvelope(

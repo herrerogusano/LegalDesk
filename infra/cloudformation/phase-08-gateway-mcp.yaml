@@ -123,6 +123,7 @@ Resources:
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
                       - GATEWAY#GRANT#*
+                      - GATEWAY#EXPIRY#*
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream

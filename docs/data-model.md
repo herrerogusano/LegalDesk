@@ -51,10 +51,13 @@ tools must reject raw browser scope and accept only the server-built context.
   `sk=REVIEW#{reviewTaskId}`
 - Gateway authorization grant: `pk=GATEWAY#GRANT#{grantId}`, `sk=PROFILE`;
   stores only verified subject, requested matter, correlation ID, target tool,
-  and a five-minute `expiresAt` epoch checked by the consumer. Grants are
-  replayable during that TTL; review idempotency limits duplicate writes. It
-  contains no document body or client-provided scope. Automatic deletion of
-  expired grant records is a deferred operational cleanup gap.
+  and a five-minute `expiresAt` epoch checked by the consumer. A separate
+  `GATEWAY#EXPIRY#{utc-day}` operational index is maintained by grant and
+  invocation writes; the reconciler queries at most the current and previous
+  day, then point-reads and revalidates the grant before deletion. The index is
+  not an authorization source, and DynamoDB TTL remains the bounded fallback.
+  Grants are replayable during that TTL; review idempotency limits duplicate
+  writes. It contains no document body or client-provided scope.
 - Conversation scope is derived server-side from the authorized user/matter and
   opaque conversation/session selectors. The AgentCore values are deterministic
   opaque IDs, not the raw `{userId}:{matterId}:{sessionId}` string.

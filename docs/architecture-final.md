@@ -83,8 +83,10 @@ The full lifecycle is `PENDING_UPLOAD → UPLOADED → PENDING_INGESTION → IND
 with `FAILED` on supported failures. A sync is an explicit, bounded data-source
 operation, not a per-document AWS job; the real smoke requires a dedicated
 synthetic source. Pending uploads/ingestion block the current matter's chat with
-`documents_processing`, not `insufficient_evidence`. Abandoned uploads need
-manual reconciliation; automatic cleanup is deliberately not implemented.
+`documents_processing`, not `insufficient_evidence`. The Phase 14 candidate
+adds a scheduled, bounded reconciler for stale quarantine uploads, ingestion
+operations and indexed Gateway expiries; it uses explicit deployment scopes,
+never a table scan, and leaves malformed/ambiguous records for investigation.
 
 Citation inspection uses short-lived opaque application handles, verifies the
 current actor/matter/conversation and indexed document, then returns its exact
