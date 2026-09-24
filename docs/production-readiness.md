@@ -19,7 +19,13 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    HTTPS OAuth callback, secure cookies, restrictive CSP naming the exact
    presigned-upload host(s), HSTS at the edge, exact S3 CORS, reviewed edge
    limits, and no anonymous/public signup. Ingestion start/status is
-   asynchronous and no public request waits on the Bedrock polling loop.
+   asynchronous and no public request waits on the Bedrock polling loop. The
+   local candidate template and packaging/test evidence are in
+   [`phase-14-public-edge.md`](phase-14-public-edge.md), but they do not close
+   this gate; deployment, browser journey, and callback/CORS evidence remain
+   required. CloudFront standard request logs remain disabled because they
+   would retain the OAuth callback query; the candidate uses field-selected
+   API access logs without query, cookies, headers, IP, or user agent.
 2. **P14-G2 — durable state and authorization.** Sessions, OAuth state, citation
    handles, conversation correlations, accepted history/review candidates and
    redacted audit records survive restart and multi-instance routing. Expiry,

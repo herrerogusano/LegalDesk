@@ -40,3 +40,11 @@ raw AgentCore payload logging, new log group, or dashboard was enabled. The
 deployment/smoke and teardown procedure are recorded in
 [`phase-11-acceptance.md`](../docs/phase-11-acceptance.md) and
 `phase-11-commands.md`.
+
+Phase 14 adds the local-only public edge definition
+([phase-14-public-edge.yaml](cloudformation/phase-14-public-edge.yaml)). It
+creates no AWS resources until a separately approved change set is deployed.
+The companion runbook ([phase-14-public-edge.md](../docs/phase-14-public-edge.md))
+documents the private S3/OAC frontend, exact API routes, trusted-edge
+contract, least privilege parameters, and the two-step callback/CORS
+bootstrap.

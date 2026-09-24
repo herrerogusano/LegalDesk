@@ -80,7 +80,13 @@ security substitute for backend authorization.
 Design and implement the CloudFront/S3/API Gateway/Lambda deployment boundary,
 public callback/logout configuration, secure cookies, CSP/HSTS, exact CORS,
 edge request limits, and health/readiness behavior. Keep Cognito users and
-memberships pre-provisioned; do not add anonymous signup.
+memberships pre-provisioned; do not add anonymous signup. The local IaC
+candidate is `infra/cloudformation/phase-14-public-edge.yaml`, and the
+two-step callback/CORS bootstrap is documented in
+`docs/phase-14-public-edge.md`. These artifacts do not constitute deployment
+evidence. CloudFront request logging is disabled because it would retain the
+OAuth callback query; field-selected API access logs provide bounded
+operational evidence without query, cookie, header, or client identifiers.
 
 ### P14-2 — Durable state and stateless application operation
 
