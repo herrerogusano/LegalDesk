@@ -83,7 +83,7 @@ for the complete trust and data lifecycle.
 
 ## Verified evidence
 
-- **527 tests passed** in the current local release-candidate verification
+- **540 tests passed** in the current local release-candidate verification
   (`1` platform-specific symlink test skipped on Windows).
 - **24/24 deterministic evaluations passed** with zero AWS calls.
 - **All 15 CloudFormation/SAM templates pass lint**, including the public edge,

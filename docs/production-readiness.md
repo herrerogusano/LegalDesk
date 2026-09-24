@@ -12,7 +12,7 @@ The Phase 14 local candidate adds durable state, asynchronous ingestion,
 quarantine and content validation, bounded reconciliation, release packaging,
 operational controls, a bounded holdout runner, fail-closed public endpoint
 validation, browser security headers and strict retrieval response bounds. The
-complete local suite passes with 527 tests (one platform-specific symlink test
+complete local suite passes with 540 tests (one platform-specific symlink test
 skipped on Windows), all 15 CloudFormation/SAM templates pass lint, and the
 deterministic evaluation remains 24/24 with zero AWS calls.
 

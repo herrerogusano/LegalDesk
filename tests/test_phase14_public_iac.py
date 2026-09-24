@@ -97,6 +97,7 @@ class Phase14PublicInfrastructureTests(unittest.TestCase):
         self.assertIn('- !Ref MetadataTableArn', text)
         self.assertIn('${MetadataTableArn}/index/*', text)
         self.assertIn('dynamodb:LeadingKeys:', text)
+        self.assertGreaterEqual(text.count('LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*'), 2)
         self.assertNotIn('TENANT#*', text)
         self.assertIn("Resource: !Ref KnowledgeBaseArn", text)
         self.assertIn("Resource: !Ref GuardrailArn", text)

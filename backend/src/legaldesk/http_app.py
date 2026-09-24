@@ -32,6 +32,7 @@ from .documents import (
     InMemoryObjectStorage,
     UploadRequest,
     build_document_key,
+    validate_upload_metadata,
 )
 from .domain.models import Document, DocumentStatus
 from .identity import PkceAuthorizationRequest, create_pkce_authorization_request
@@ -40,6 +41,17 @@ from .mcp_server import GET_DOCUMENT_METADATA, LIST_MATTER_DOCUMENTS, MCPServer
 from .memory import ConversationBindingStore, MemoryScope, derive_memory_scope_for_identity
 from .observability import InMemoryTelemetrySink, TelemetrySink
 from .gateway_interceptor import InMemoryGatewayGrantRepository
+from .quota import (
+    CHATS,
+    GATEWAY,
+    HARNESS,
+    INGESTION_STARTS,
+    DisabledQuotaLedger,
+    QuotaExceededError,
+    QuotaLedger,
+    QuotaUnavailableError,
+    scoped_idempotency_key,
+)
 from .review_tasks import (
     InMemoryReviewTaskRepository,
     ReviewTaskError,
@@ -152,6 +164,7 @@ class ApplicationComposition:
     secure_cookies: bool = False
     public_mode: bool = False
     trusted_edge_value: str | None = field(default=None, repr=False)
+    quota: QuotaLedger | None = None
 
     def __post_init__(self) -> None:
         if not self.matter_catalog or len(self.matter_catalog) > 64 or any(not isinstance(item, str) or not item or len(item) > 128 for item in self.matter_catalog):
@@ -168,6 +181,10 @@ class ApplicationComposition:
                 raise ValueError("public_mode browser origin allowlist must match the public origin exactly")
             if not isinstance(self.trusted_edge_value, str) or not self.trusted_edge_value or any(ord(char) < 0x21 or ord(char) > 0x7E for char in self.trusted_edge_value):
                 raise ValueError("public_mode requires a valid trusted-edge marker")
+            if self.quota is None:
+                raise ValueError("public_mode requires an explicit server-side quota ledger")
+        elif self.quota is None:
+            self.quota = DisabledQuotaLedger()
         if self.telemetry_sink is None:
             self.telemetry_sink = InMemoryTelemetrySink()
         if self.state_store is None:
@@ -260,6 +277,8 @@ class LoopbackLegalDeskApp:
             if any(name.lower() == "content-type" for name, _value in extra):
                 headers = [header for header in headers if header[0].lower() != "content-type"]
             headers.extend(extra)
+        except (QuotaExceededError, QuotaUnavailableError):
+            status, body = HTTPStatus.TOO_MANY_REQUESTS, {"error": "quota_exceeded"}
         except AuthorizationDenied:
             status, body = HTTPStatus.FORBIDDEN, {"error": "access_denied"}
         except IngestionConflictError:
@@ -465,6 +484,16 @@ class LoopbackLegalDeskApp:
                 ):
                     raise ValueError("ingestion request is invalid")
                 context = self._context(identity, matter_id)
+                self.composition.quota.reserve(
+                    context.tenant_id,
+                    INGESTION_STARTS,
+                    idempotency_key=scoped_idempotency_key(
+                        subject=identity.subject,
+                        tenant_id=context.tenant_id,
+                        matter_id=context.matter_id,
+                        key=idempotency_key,
+                    ),
+                )
                 operation = self.composition.ingestion_service.start(
                     subject=identity.subject,
                     tenant_id=context.tenant_id,
@@ -641,6 +670,8 @@ class LoopbackLegalDeskApp:
         data = self._body(environ)
         request = UploadRequest(filename=data.get("filename"), media_type=data.get("mediaType"), file_size_bytes=data.get("fileSizeBytes"), jurisdiction=data.get("jurisdiction", "fictional"), document_date=data.get("documentDate", "2099-01-01"), confidentiality=data.get("confidentiality", "fictional-internal"))
         context = self._context(identity, matter_id)
+        validate_upload_metadata(request)
+        self.composition.quota.reserve_upload(context.tenant_id, request.file_size_bytes or 0)
         authorization = self.composition.document_pipeline.initiate_upload(identity, matter_id, request, correlation_id=context.correlation_id)
         return HTTPStatus.CREATED, {"document": self._document(authorization.document), "presignedUrl": authorization.presigned_url, "uploadUrl": authorization.presigned_url, "method": authorization.method, "headers": dict(authorization.headers)}, []
 
@@ -658,6 +689,7 @@ class LoopbackLegalDeskApp:
         documents = self.composition.document_pipeline.list_documents(identity, matter_id, correlation_id=context.correlation_id)
         if any(document.status in {DocumentStatus.PENDING_UPLOAD, DocumentStatus.UPLOADED, DocumentStatus.PENDING_INGESTION} for document in documents):
             return HTTPStatus.OK, {"answer": "Los documentos seleccionados todavía se están procesando.", "citations": [], "evidenceStatus": None, "operationStatus": "documents_processing", "correlationId": context.correlation_id}, []
+        self.composition.quota.reserve(context.tenant_id, CHATS)
         if self.composition.chat_accepts_evidence_sink:
             response = self.composition.chat_service(identity, matter_id=matter_id, conversation_id=conversation_id, session_id=session_id, question=question, correlation_id=context.correlation_id, authorized_evidence_sink=self._store_authorized_evidence)
         else:
@@ -975,6 +1007,7 @@ class LoopbackLegalDeskApp:
         from legaldesk_agent import HarnessInvocationError, HarnessInvocationScope
 
         scope = HarnessInvocationScope.from_derived(binding)
+        self.composition.quota.reserve(binding.context.tenant_id, HARNESS)
         # The matter selector is model-visible request data, but it is never
         # an authority: Gateway still compares it with the server-owned
         # invocation binding before the target runs.
@@ -1025,6 +1058,7 @@ class LoopbackLegalDeskApp:
 
         if self.composition.gateway_invoker is None:
             raise RuntimeError("Gateway is not configured")
+        self.composition.quota.reserve(binding.context.tenant_id, GATEWAY)
         try:
             result = self.composition.gateway_invoker.invoke(
                 binding,

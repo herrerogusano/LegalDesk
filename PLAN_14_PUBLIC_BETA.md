@@ -159,6 +159,14 @@ metrics, an optional already-owned alarm topic, and direct-email Budget alerts
 without creating SNS or dashboard resources. Keep production promotion closed
 until all gates have attached provider evidence and owner sign-off.
 
+The public application additionally reserves a durable, fail-closed monthly
+tenant quota before uploads and potentially billable chat, ingestion, Harness,
+or Gateway operations. The ledger uses the existing metadata table, atomic
+conditional writes, UTC-month keys and server-owned limits; authorization
+failures and read-only status checks do not consume quota. API throttling and
+Budget alerts remain complementary controls rather than substitutes for this
+preventive ceiling.
+
 ## Acceptance criteria
 
 Phase 14 is complete only when every criterion below has release evidence:

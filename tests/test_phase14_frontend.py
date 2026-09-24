@@ -42,6 +42,10 @@ class Phase14FrontendIngestionTests(unittest.TestCase):
         self.assertIn("signal: state.controller.signal", self.source)
         self.assertIn("if (!isCurrent(generation)) return null;", self.source)
 
+    def test_monthly_quota_error_is_explained_without_backend_code(self) -> None:
+        self.assertIn("quota_exceeded", self.source)
+        self.assertIn("límite mensual de la beta", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

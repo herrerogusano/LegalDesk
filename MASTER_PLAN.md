@@ -111,7 +111,7 @@ No hay autorización de despliegue AWS ni promoción a prod.
   state, asynchronous ingestion, exact-origin security, and pre-provisioned
   authenticated users only; the local release candidate, bounded holdout
   runner, quarantine/reconciliation and operations controls are implemented
-  and validated (527 tests, 24/24 deterministic evaluations, all 15 templates
+  and validated (540 tests, 24/24 deterministic evaluations, all 15 templates
   lint-clean), while AWS deployment, provider holdout/review, operational
   exercise and prod promotion remain pending.
 

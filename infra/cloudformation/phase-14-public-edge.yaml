@@ -154,6 +154,36 @@ Parameters:
     Default: 40
     MinValue: 1
     MaxValue: 2000
+  QuotaUploadsPerMonth:
+    Type: Number
+    Default: 50
+    MinValue: 1
+    MaxValue: 1000000
+  QuotaUploadBytesPerMonth:
+    Type: Number
+    Default: 524288000
+    MinValue: 1
+    MaxValue: 1000000000000
+  QuotaChatsPerMonth:
+    Type: Number
+    Default: 300
+    MinValue: 1
+    MaxValue: 10000000
+  QuotaIngestionStartsPerMonth:
+    Type: Number
+    Default: 50
+    MinValue: 1
+    MaxValue: 10000000
+  QuotaHarnessPerMonth:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 10000000
+  QuotaGatewayPerMonth:
+    Type: Number
+    Default: 500
+    MinValue: 1
+    MaxValue: 10000000
 
 Conditions:
   HasCustomViewerDomain: !Not [!Equals [!Ref ViewerDomainName, ""]]
@@ -298,6 +328,7 @@ Resources:
                       - SESSION#*
                       - GATEWAY#*
                       - LEGALDESK#P14#STATE#*
+                      - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
               - Sid: WriteOnlyApplicationOwnedState
                 Effect: Allow
                 Action: [dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
@@ -310,6 +341,7 @@ Resources:
                       - SESSION#*
                       - GATEWAY#*
                       - LEGALDESK#P14#STATE#*
+                      - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
               - Sid: SourceDocumentObjectsOnly
                 Effect: Allow
                 Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:GetObjectTagging]
@@ -390,6 +422,12 @@ Resources:
           LEGALDESK_ALLOWED_ORIGINS: !Ref PublicOrigin
           LEGALDESK_SECURE_COOKIES: "true"
           LEGALDESK_PUBLIC_MODE: "true"
+          LEGALDESK_QUOTA_UPLOADS_PER_MONTH: !Ref QuotaUploadsPerMonth
+          LEGALDESK_QUOTA_UPLOAD_BYTES_PER_MONTH: !Ref QuotaUploadBytesPerMonth
+          LEGALDESK_QUOTA_CHATS_PER_MONTH: !Ref QuotaChatsPerMonth
+          LEGALDESK_QUOTA_INGESTION_STARTS_PER_MONTH: !Ref QuotaIngestionStartsPerMonth
+          LEGALDESK_QUOTA_HARNESS_PER_MONTH: !Ref QuotaHarnessPerMonth
+          LEGALDESK_QUOTA_GATEWAY_PER_MONTH: !Ref QuotaGatewayPerMonth
           LEGALDESK_TRUSTED_EDGE_VALUE: !Ref TrustedEdgeSecret
           LEGALDESK_SYSTEM_PROMPT_PATH: /var/task/prompts/legaldesk-system.md
 

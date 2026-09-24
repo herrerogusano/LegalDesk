@@ -38,6 +38,7 @@ from .review_tasks import Boto3DynamoReviewTaskRepository
 from .observability import DEFAULT_TELEMETRY_SINK
 from .smoke_budget import BudgetedSdkClient, SmokeBudget
 from .state import DynamoDBEphemeralStateStore
+from .quota import DisabledQuotaLedger, DynamoDBQuotaLedger, QuotaLimits
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,7 @@ class AWSResourceConfig:
     secure_cookies: bool = False
     public_mode: bool = False
     trusted_edge_value: str | None = field(default=None, repr=False)
+    quota_limits: QuotaLimits = field(default_factory=QuotaLimits)
 
     def __post_init__(self) -> None:
         # Validate before build_aws_composition imports/constructs any AWS
@@ -195,6 +197,7 @@ class AWSResourceConfig:
             secure_cookies=boolean("LEGALDESK_SECURE_COOKIES"),
             public_mode=boolean("LEGALDESK_PUBLIC_MODE"),
             trusted_edge_value=values.get("LEGALDESK_TRUSTED_EDGE_VALUE") or None,
+            quota_limits=QuotaLimits.from_environment(values),
         )
 
 
@@ -394,6 +397,15 @@ def build_aws_composition(
         quarantine_uploads=resource_config.public_mode,
     )
     state_store = DynamoDBEphemeralStateStore(resource_config.metadata_table_name, table=table)
+    quota = (
+        DynamoDBQuotaLedger(
+            resource_config.metadata_table_name,
+            table=table,
+            limits=resource_config.quota_limits,
+        )
+        if resource_config.public_mode
+        else DisabledQuotaLedger(limits=resource_config.quota_limits)
+    )
     sync = _BedrockKnowledgeBaseSync(ingestion_client, storage, metadata, auth_store, resource_config)
     async_ingestion = _BedrockAsyncKnowledgeBaseIngestion(ingestion_client, storage, metadata, state_store, resource_config)
     composition = ApplicationComposition(
@@ -426,6 +438,7 @@ def build_aws_composition(
         secure_cookies=resource_config.secure_cookies,
         public_mode=resource_config.public_mode,
         trusted_edge_value=resource_config.trusted_edge_value,
+        quota=quota,
     )
     from .chat import ChatRequest, answer_question
 

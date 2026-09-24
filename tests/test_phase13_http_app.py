@@ -24,6 +24,7 @@ from legaldesk.identity import OidcTokenVerifier, OidcVerifierConfig
 from legaldesk.memory import InMemoryConversationBindingStore, InMemoryShortTermMemory
 from legaldesk.memory import derive_memory_scope_for_identity
 from legaldesk.mcp_server import MCPServer
+from legaldesk.quota import InMemoryQuotaLedger, QuotaLimits
 
 
 class _KeyResolver:
@@ -199,6 +200,44 @@ class Phase13HttpAppTests(unittest.TestCase):
         self.assertEqual(headers["X-Frame-Options"], "DENY")
         self.assertEqual(headers["Referrer-Policy"], "no-referrer")
         self.assertIn("camera=()", headers["Permissions-Policy"])
+
+    def test_quota_exhaustion_returns_generic_429_without_calling_chat_provider(self):
+        self.login()
+        self.app.composition.quota = InMemoryQuotaLedger(limits=QuotaLimits(chats_per_month=1))
+        status, conversation, _ = self.request("POST", "/api/conversations", {"matterId": "matter-a"}, csrf=self.csrf)
+        self.assertEqual(status, 201)
+        scope = {key: conversation[key] for key in ("matterId", "conversationId", "sessionId")}
+        status, _, _ = self.request("POST", "/api/chat", {**scope, "question": "first"}, csrf=self.csrf)
+        self.assertEqual(status, 200)
+        status, body, _ = self.request("POST", "/api/chat", {**scope, "question": "second"}, csrf=self.csrf)
+        self.assertEqual(status, 429)
+        self.assertEqual(body, {"error": "quota_exceeded"})
+        self.assertEqual(len(self.chat_calls), 1)
+
+    def test_invalid_upload_does_not_consume_quota(self):
+        self.login()
+        self.app.composition.quota = InMemoryQuotaLedger(
+            limits=QuotaLimits(uploads_per_month=1, upload_bytes_per_month=10)
+        )
+        status, _, _ = self.request(
+            "POST", "/api/matters/matter-a/documents/upload-authorizations",
+            {"filename": "bad.txt", "mediaType": "text/plain"}, csrf=self.csrf,
+        )
+        self.assertEqual(status, 400)
+        valid = {
+            "filename": "good.txt", "mediaType": "text/plain", "fileSizeBytes": 4,
+            "jurisdiction": "fictional", "documentDate": "2099-01-01",
+            "confidentiality": "fictional-internal",
+        }
+        status, _, _ = self.request(
+            "POST", "/api/matters/matter-a/documents/upload-authorizations", valid, csrf=self.csrf,
+        )
+        self.assertEqual(status, 201)
+        status, body, _ = self.request(
+            "POST", "/api/matters/matter-a/documents/upload-authorizations", valid, csrf=self.csrf,
+        )
+        self.assertEqual(status, 429)
+        self.assertEqual(body, {"error": "quota_exceeded"})
 
     def test_loopback_http_rejects_foreign_scope_origin_unknown_routes_and_expired_session(self):
         self.login()

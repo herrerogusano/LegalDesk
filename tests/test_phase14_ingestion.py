@@ -16,6 +16,7 @@ from legaldesk.domain.models import Document, DocumentStatus, MalwareScanStatus
 from legaldesk.ingestion import AsyncKnowledgeBaseIngestionService, IngestionConflictError
 from legaldesk.http_app import ApplicationComposition, LoopbackLegalDeskApp
 from legaldesk.state import InMemoryEphemeralStateStore, IngestionOperationRecord
+from legaldesk.quota import InMemoryQuotaLedger, utc_month
 
 
 TENANT = "tenant-a"
@@ -254,7 +255,7 @@ class Phase14IngestionTests(unittest.TestCase):
         composition = ApplicationComposition(
             identity_verifier=object(), token_exchange=None, authorization_store=object(), conversation_store=object(),
             document_pipeline=object(), object_storage=object(), metadata_repository=object(), mcp_server=object(),
-            matter_catalog=(MATTER,), ingestion_service=service,
+            matter_catalog=(MATTER,), ingestion_service=service, quota=InMemoryQuotaLedger(),
         )
         app = LoopbackLegalDeskApp(composition)
         app._session = lambda _environ: ("selector", type("Session", (), {"csrf_token": "csrf", "identity": type("Identity", (), {"subject": "alice"})()})())
@@ -269,6 +270,11 @@ class Phase14IngestionTests(unittest.TestCase):
         self.assertEqual(status.value, 202)
         self.assertEqual(body["operationId"], "ing_opaque")
         self.assertEqual(service.starts[0]["matter_id"], MATTER)
+        # The same client key is scoped to the verified subject/tenant/matter,
+        # so an idempotent retry does not consume a second start reservation.
+        status, _body, _ = app._dispatch({**environ, "wsgi.input": BytesIO(payload)})
+        self.assertEqual(status.value, 202)
+        self.assertEqual(app.composition.quota.counters[(TENANT, utc_month())]["ingestionStartCount"], 1)
         status, body, _ = app._dispatch({**environ, "REQUEST_METHOD": "GET", "PATH_INFO": f"/api/matters/{MATTER}/ingestions/ing_opaque", "CONTENT_LENGTH": "0", "wsgi.input": BytesIO(b"")})
         self.assertEqual(status.value, 200)
         self.assertEqual(body["operationStatus"], "documents_processing")

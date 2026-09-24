@@ -74,6 +74,25 @@ ceilings, bounded retries, one-operation idempotency, and a scheduled close
 procedure are the primary controls. Missing/ambiguous provider usage is not
 treated as zero cost.
 
+The public application also has a server-side monthly quota ledger before each
+potentially billable operation. It keys one DynamoDB counter item by the
+authorized tenant and UTC month (using the existing metadata table, never a
+scan) and reserves with one conditional `UpdateItem`: 50 uploads/500 MiB, 300 chats, 50
+ingestion starts, 100 Harness calls, and 500 Gateway calls by default. The
+limits are server-side environment configuration and are strictly validated;
+the Lambda template exposes bounded parameters for them. Uploads reserve both
+count and bytes. Ingestion reservations use the request idempotency key so a
+retry does not double-charge. Quota exhaustion or an unavailable quota store
+returns a generic HTTP 429 before the provider is called. Reads, status
+lookups, and authorization failures do not reserve quota. Ingestion retry keys
+are hashed together with the verified subject, tenant, and matter before being
+added to the counter item's token set; there are no separate idempotency items
+or non-atomic claim/update sequence. Loopback tests use an explicit disabled
+ledger, while public compositions require an explicitly injected ledger and
+the AWS public composition injects DynamoDB. The token set is bounded by the
+configured monthly operation ceilings; unusually high retry-key cardinality
+should still be monitored for DynamoDB item-size pressure.
+
 The local operational candidate and response procedure are in
 [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md). It uses
 native AWS metrics, five-minute beta evaluation periods by default, and

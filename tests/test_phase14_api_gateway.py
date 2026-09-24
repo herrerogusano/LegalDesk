@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import sys
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ import legaldesk.api_gateway as adapter
 from legaldesk.api_gateway import lambda_handler
 from legaldesk.authorization import AuthorizationDenied
 from legaldesk.http_app import ApplicationComposition, MAX_HTTP_BODY, LoopbackLegalDeskApp, TRUSTED_EDGE_HEADER
+from legaldesk.quota import InMemoryQuotaLedger
 
 
 def _event(*, path: str = "/api/me", method: str = "GET", headers: dict[str, str] | None = None, body: str | None = None, encoded: bool = False, query: str = "") -> dict[str, object]:
@@ -123,6 +125,7 @@ class Phase14ApiGatewayTests(unittest.TestCase):
             secure_cookies=True,
             public_mode=True,
             trusted_edge_value="edge-secret",
+            quota=InMemoryQuotaLedger(),
         )
         adapter._app = LoopbackLegalDeskApp(composition)
         login = lambda_handler(_event(path="/login"), None)
@@ -155,6 +158,7 @@ class Phase14ApiGatewayTests(unittest.TestCase):
             secure_cookies=True,
             public_mode=True,
             trusted_edge_value="edge-secret",
+            quota=InMemoryQuotaLedger(),
         )
         app = LoopbackLegalDeskApp(composition)
         base_environ = {
@@ -177,6 +181,20 @@ class Phase14ApiGatewayTests(unittest.TestCase):
             session=session,
             mutating=True,
         )
+
+    def test_public_mode_requires_explicit_quota_dependency(self) -> None:
+        composition = ApplicationComposition(
+            identity_verifier=object(), token_exchange=None, authorization_store=object(),
+            conversation_store=object(), document_pipeline=object(), object_storage=object(),
+            metadata_repository=object(), mcp_server=object(), matter_catalog=("matter-a",),
+            authorization_endpoint="https://issuer.example/authorize", oauth_client_id="client",
+            public_base_url="https://public.example", redirect_uri="https://public.example/callback",
+            allowed_hosts=frozenset({"public.example"}), allowed_origins=frozenset({"https://public.example"}),
+            secure_cookies=True, public_mode=True, trusted_edge_value="edge-secret",
+            quota=InMemoryQuotaLedger(),
+        )
+        with self.assertRaises(ValueError):
+            replace(composition, quota=None)
 
     def test_import_and_invalid_events_do_not_construct_aws(self) -> None:
         adapter.reset_application_for_tests()

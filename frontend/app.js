@@ -167,7 +167,11 @@
       try { value = await response.json(); } catch (_error) { value = null; }
     }
     if (!response.ok) {
-      const message = value && typeof value.error === "string" ? value.error : `La operación no se pudo completar (${response.status}).`;
+      const publicErrors = {
+        quota_exceeded: "Se ha alcanzado el límite mensual de la beta. Contacta con el administrador para continuar.",
+      };
+      const code = value && typeof value.error === "string" ? value.error : null;
+      const message = (code && publicErrors[code]) || `La operación no se pudo completar (${response.status}).`;
       const error = new Error(message);
       error.status = response.status;
       throw error;
