@@ -1,6 +1,15 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: LegalDesk Phase 01 managed AgentCore Harness and least-privilege role
 
+Metadata:
+  cfn-lint:
+    config:
+      # These three ARN parameters are deliberately empty while their
+      # corresponding attachment condition is false. cfn-lint validates the
+      # empty default against the conditional resource property even though
+      # CloudFormation removes that property through AWS::NoValue.
+      ignore_checks: [W1030]
+
 Parameters:
   ModelId:
     Type: String

@@ -29,10 +29,13 @@ flowchart LR
   B[Browser] --> I[Cognito/OIDC identity]
   I --> A[Backend authorization\nsealed RequestContext]
   A --> U[Upload API]
-  U --> S3[(S3 originals)]
+  U --> Z[(S3 quarantine)]
+  Z --> V[Malware + content validation]
+  V --> S3[(S3 authorized source)]
   A --> D[(DynamoDB\nmetadata/membership/review)]
   A --> R[Authorized retrieval filter]
-  R --> KB[Knowledge Base + S3 Vectors]
+  S3 --> KB[Knowledge Base + S3 Vectors]
+  R --> KB
   KB --> Q[Resolver → Writer →\nGuardrails grounding]
   Q --> B
   A -->|fixed tools/call| GW[AgentCore Gateway]
@@ -70,20 +73,29 @@ for the complete trust and data lifecycle.
 - Gateway interceptors and tool handlers reauthorize independently.
 - Guardrails protect content but do not replace authorization.
 - Retrieved documents are treated as untrusted data, not instructions.
-- Sessions, citation handles, audit data and accepted history are bounded
-  process-local demo state; long-term Memory and direct model credentials are
-  not exposed to the browser.
+- The public composition persists sessions, OAuth state, citation handles,
+  accepted history/reviews and redacted audit records in bounded DynamoDB
+  items. The loopback fixture may still use in-memory adapters for local demos.
+- Public uploads are bound to a server-owned key and exact signed byte length,
+  remain outside the retrieval prefix until malware/content validation passes,
+  and are rechecked with `HeadObject` before lifecycle promotion.
+- Long-term Memory and direct model credentials are not exposed to the browser.
 
 ## Verified evidence
 
-- **413 tests passed** in the final local verification.
+- **527 tests passed** in the current local release-candidate verification
+  (`1` platform-specific symlink test skipped on Windows).
 - **24/24 deterministic evaluations passed** with zero AWS calls.
+- **All 15 CloudFormation/SAM templates pass lint**, including the public edge,
+  quarantine, reconciliation and operations candidates.
 - **Final bounded AWS browser smoke: PASS** for the fixed synthetic journey:
   Cognito login, presigned upload and indexing, factual and absent-evidence
   RAG, citations, Gateway → MCP metadata, Gateway → Lambda review, cross-matter
   denial, audit and logout.
-- Temporary smoke resources were removed and shared stacks restored. The
-  independent 14-case semantic holdout remains unexecuted against AWS.
+- Temporary Phase 13 smoke resources were removed and shared stacks restored.
+  The bounded 14-case holdout runner and fail-closed attestation gate are ready
+  locally, but the holdout remains unexecuted against the release candidate in
+  AWS.
 
 Evidence classes, acceptance scenarios and remaining gates are recorded in the
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md). The smoke result is
@@ -125,11 +137,12 @@ docs/      Architecture, trust boundaries, acceptance and release gates
 
 ## Limits and cost considerations
 
-This repository is intentionally a loopback portfolio application, not an
-internet-facing production server. Sessions, citation handles and audit state
-are process-local; production TLS hosting, durable multi-instance state,
-retention/deletion controls, reconciliation jobs, operational SLOs and the
-independent semantic holdout remain release gates.
+The repository contains both a loopback demo and a locally validated candidate
+for an authenticated public beta using CloudFront, API Gateway, Lambda and
+durable DynamoDB state. It is not yet a public service: the AWS change sets,
+real browser journey, semantic holdout, alarms/budget notifications, rollback
+exercise and owner sign-off remain release gates. Anonymous signup and real
+legal/client documents are outside the approved beta scope.
 
 S3, S3 Vectors, DynamoDB, Bedrock, AgentCore, Lambda and CloudWatch can incur
 charges. Local tests and deterministic evaluations use no AWS calls. Any AWS
@@ -139,6 +152,9 @@ teardown procedure.
 ## Further reading
 
 - [Production readiness gate](docs/production-readiness.md)
+- [Phase 14 public-beta plan](PLAN_14_PUBLIC_BETA.md)
+- [Phase 14 semantic holdout](docs/phase-14-holdout.md)
+- [Phase 14 operations runbook](docs/phase-14-operations-runbook.md)
 - [Guided offline manual demo](docs/phase-13-manual-demo.md)
 - [Phase 13 application run instructions](docs/phase-13-run.md)
 - [Threat model](docs/threat-model.md) and [authorization matrix](docs/authorization-matrix.md)

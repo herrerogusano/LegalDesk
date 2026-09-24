@@ -7,11 +7,14 @@ Budget template plus a release/rollback/teardown runbook. This is local
 evidence only: no AWS deployment, budget, alarm, or notification has been
 created, and the release verdict remains `NOT_READY_FOR_PROD`.
 
-The integrated application and its bounded AWS smoke are complete. The local
-hardening pass adds fail-closed public endpoint validation, browser security
-headers, and strict retrieval response bounds. The complete local suite passes
-with 413 tests and the deterministic evaluation remains 24/24 with zero AWS
-calls.
+The integrated application and its bounded Phase 13 AWS smoke are complete.
+The Phase 14 local candidate adds durable state, asynchronous ingestion,
+quarantine and content validation, bounded reconciliation, release packaging,
+operational controls, a bounded holdout runner, fail-closed public endpoint
+validation, browser security headers and strict retrieval response bounds. The
+complete local suite passes with 527 tests (one platform-specific symlink test
+skipped on Windows), all 15 CloudFormation/SAM templates pass lint, and the
+deterministic evaluation remains 24/24 with zero AWS calls.
 
 This status deliberately does not mean that the loopback application can be
 exposed to legal users. Promotion from `developer` to `prod` must remain closed
@@ -48,6 +51,10 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    destination. Retrieval also revalidates every vector's live metadata;
    deletion remains `indexCleanupPending` until bounded Knowledge Base cleanup
    evidence exists.
+   The local upload candidate also signs the exact server-validated
+   `Content-Length`; the browser cannot authorize a larger object before the
+   malware boundary, and confirmation still performs an exact `HeadObject`
+   check.
 4. **P14-G4 — bounded reconciliation.** Automated, authorized reconciliation
    handles abandoned `PENDING_UPLOAD`, stale ingestion and expired Gateway
    grants/invocations, with bounded queries, idempotent transitions and an
@@ -56,8 +63,11 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    DynamoDB TTL is not treated as an authorization or exact deletion guarantee.
 5. **P14-G5 — independent semantic evidence.** The frozen 14-case semantic
    holdout runs against the exact release candidate and receives independent
-   review. The lexical oracle, deterministic suite and earlier bounded smoke
-   are not substitutes for this gate.
+   review. The bounded local runner, deterministic negative canaries and
+   fail-closed procedural attestation gate are implemented in
+   [`phase-14-holdout.md`](phase-14-holdout.md), but no real-model report or
+   reviewer attestation exists yet. The lexical oracle, deterministic suite
+   and earlier bounded smoke are not substitutes for this gate.
 6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
    recovery procedures, backup/retention ownership, verified deployment and
    rollback, and shared-resource teardown evidence are complete. The local
@@ -91,5 +101,8 @@ release verdict remains `NOT_READY_FOR_PROD`.
   hosts and requires a constant-time-checked trusted-edge marker. CloudFront
   must inject/overwrite that marker without exposing it in IaC outputs or
   logs; direct API Gateway origin calls without it are denied.
+- Presigned upload authorization binds the exact validated byte count into the
+  SigV4 signed headers, while confirmation independently validates size, type
+  and server-owned metadata.
 - No AWS call, resource creation, deployment or inference is part of this local
   hardening pass.

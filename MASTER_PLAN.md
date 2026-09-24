@@ -109,8 +109,11 @@ No hay autorización de despliegue AWS ni promoción a prod.
   (`PLAN_14_PUBLIC_BETA.md`): planning tranche approved for CloudFront + private
   S3 frontend + API Gateway HTTP API + Lambda application, durable DynamoDB
   state, asynchronous ingestion, exact-origin security, and pre-provisioned
-  authenticated users only; local implementation is in progress, while AWS
-  deployment, holdout execution, and prod promotion remain pending.
+  authenticated users only; the local release candidate, bounded holdout
+  runner, quarantine/reconciliation and operations controls are implemented
+  and validated (527 tests, 24/24 deterministic evaluations, all 15 templates
+  lint-clean), while AWS deployment, provider holdout/review, operational
+  exercise and prod promotion remain pending.
 
 - [x] Phase 00
 - [x] Phase 01
