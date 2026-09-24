@@ -19,6 +19,11 @@ not authorize real legal data or an AWS deployment.
    Event parsing requires `scanStatus` (`COMPLETED`, `SKIPPED`, or `FAILED`)
    and the matching `scanResultDetails.scanResultStatus`; status reasons are
    bounded and never logged verbatim.
+4. The browser treats this as a separate **Analizar** stage. It never starts
+   ingestion while metadata remains `PENDING_UPLOAD`; after a bounded wait it
+   leaves a clear successful-upload/pending-analysis message and exposes
+   **Comprobar estado**. That action refreshes server state and submits only
+   `UPLOADED` documents. `FAILED` documents are never retried as ingestion.
 
 ## Fail-closed and incident handling
 

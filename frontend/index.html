@@ -47,13 +47,14 @@
             </div>
             <p id="selected-file-status" class="file-selection" role="status" aria-live="polite">Sin archivo seleccionado.</p>
             <p id="upload-helper" class="upload-helper">PDF o TXT · hasta 10 MB · el documento queda limitado a este expediente.</p>
-            <div id="upload-progress" class="upload-progress" hidden role="status" aria-live="polite" aria-atomic="true">
+            <div id="upload-progress" class="upload-progress" hidden role="group" aria-label="Progreso de la subida">
               <p id="upload-progress-message" class="upload-progress-message">Preparando la subida…</p>
               <ol class="upload-steps" aria-label="Progreso de la subida">
                 <li data-upload-stage="authorize"><span class="step-number" aria-hidden="true">01</span><span>Autorizar</span></li>
                 <li data-upload-stage="upload"><span class="step-number" aria-hidden="true">02</span><span>Subir</span></li>
                 <li data-upload-stage="verify"><span class="step-number" aria-hidden="true">03</span><span>Verificar</span></li>
-                <li data-upload-stage="index"><span class="step-number" aria-hidden="true">04</span><span>Indexar</span></li>
+                <li data-upload-stage="scan"><span class="step-number" aria-hidden="true">04</span><span>Analizar</span></li>
+                <li data-upload-stage="index"><span class="step-number" aria-hidden="true">05</span><span>Indexar</span></li>
               </ol>
             </div>
           </div>
@@ -78,8 +79,8 @@
           <p class="section-intro">Todos los documentos autorizados para este expediente. Solo los que estén listos podrán fundamentar una respuesta.</p>
           <ul id="document-list" class="document-list"><li class="microcopy">Selecciona un expediente para ver sus documentos.</li></ul>
           <div class="document-actions">
-            <button id="sync-button" class="text-button" type="button" disabled hidden aria-describedby="sync-helper">Reintentar indexación</button>
-            <p id="sync-helper" class="sync-helper" hidden>Vuelve a preparar los documentos recibidos o con fallo para consulta.</p>
+            <button id="sync-button" class="text-button" type="button" disabled hidden aria-describedby="sync-helper">Comprobar estado</button>
+            <p id="sync-helper" class="sync-helper" hidden>Comprueba el análisis y prepara solo los documentos listos para consulta.</p>
           </div>
         </div>
       </section>

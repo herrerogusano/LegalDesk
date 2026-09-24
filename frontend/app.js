@@ -20,15 +20,17 @@
   const $ = (id) => document.getElementById(id);
   const controls = ["matter-select", "document-file", "upload-button", "question", "ask-button", "sync-button", "metadata-button", "review-button", "audit-button"];
   const DOCUMENT_STATUS_LABELS = Object.freeze({
-    PENDING_UPLOAD: "Pendiente de subida",
+    PENDING_UPLOAD: "En análisis de seguridad",
     UPLOADED: "Pendiente de indexación",
     PENDING_INGESTION: "Procesando",
     INDEXED: "Listo para consultar",
     FAILED: "Requiere atención",
   });
-  const UPLOAD_STAGES = Object.freeze(["authorize", "upload", "verify", "index"]);
+  const UPLOAD_STAGES = Object.freeze(["authorize", "upload", "verify", "scan", "index"]);
   const INGESTION_MAX_POLLS = 20;
   const INGESTION_POLL_DELAY_MS = 1500;
+  const DOCUMENT_MAX_POLLS = 10;
+  const DOCUMENT_POLL_DELAY_MS = 1000;
   const REVIEW_STATUS_LABELS = Object.freeze({ open: "Pendiente", in_review: "En revisión", closed: "Resuelta" });
   const REVIEW_REASON_LABELS = Object.freeze({
     user_requested_review: "Necesito criterio profesional",
@@ -127,7 +129,7 @@
   function refreshControls() {
     const enabled = Boolean(state.me);
     const hasFile = Boolean(selectedFile());
-    const retryable = state.documents.some((item) => item && ["UPLOADED", "FAILED"].includes(item.status));
+    const retryable = state.documents.some((item) => item && ["PENDING_UPLOAD", "UPLOADED"].includes(item.status));
     $("matter-select").disabled = !enabled;
     $("document-file").disabled = !authorized() || state.busy;
     $("upload-button").disabled = !authorized() || state.busy || !hasFile;
@@ -599,9 +601,9 @@
     }
   }
 
-  function waitForIngestionPoll(signal) {
+  function waitForIngestionPoll(signal, delay = INGESTION_POLL_DELAY_MS) {
     return new Promise((resolve, reject) => {
-      const timer = window.setTimeout(resolve, INGESTION_POLL_DELAY_MS);
+      const timer = window.setTimeout(resolve, delay);
       if (!signal) return;
       if (signal.aborted) {
         window.clearTimeout(timer);
@@ -613,6 +615,27 @@
         reject(new DOMException("The operation was aborted.", "AbortError"));
       }, { once: true });
     });
+  }
+
+  async function pollDocumentUntilReady(documentId, generation, initialDocument) {
+    let documentRecord = initialDocument || null;
+    for (let attempt = 0; attempt < DOCUMENT_MAX_POLLS; attempt += 1) {
+      if (!isCurrent(generation)) return { document: documentRecord, timedOut: false };
+      if (documentRecord && ["UPLOADED", "INDEXED", "FAILED"].includes(documentRecord.status)) {
+        return { document: documentRecord, timedOut: false };
+      }
+      if (attempt > 0) await waitForIngestionPoll(state.controller.signal, DOCUMENT_POLL_DELAY_MS);
+      const scanMessage = `Analizando documento… (${attempt + 1}/${DOCUMENT_MAX_POLLS})`;
+      setUploadProgress("scan", scanMessage);
+      if (attempt === 0) setMessage("Analizando documento…", false);
+      const result = await api(
+        `/api/matters/${encodeURIComponent(state.matterId)}/documents/${encodeURIComponent(documentId)}`,
+        { signal: state.controller.signal },
+      );
+      if (!isCurrent(generation)) return { document: documentRecord, timedOut: false };
+      documentRecord = result && result.document;
+    }
+    return { document: documentRecord, timedOut: true };
   }
 
   async function startAndPollIngestion(documentIds, generation) {
@@ -665,10 +688,28 @@
       if (!uploadResponse.ok) throw new Error("La subida del documento no se pudo completar.");
       const documentId = authorization.document && authorization.document.documentId;
       setUploadProgress("verify", "Verificando documento…");
-      await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents/${encodeURIComponent(documentId)}/confirm`, { method: "POST", body: "{}", signal: state.controller.signal });
+      const confirmed = await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents/${encodeURIComponent(documentId)}/confirm`, { method: "POST", body: "{}", signal: state.controller.signal });
       if (!isCurrent(generation)) return;
-      setUploadProgress("index", "Indexando documento…");
-      await startAndPollIngestion([documentId], generation);
+      const analyzed = await pollDocumentUntilReady(documentId, generation, confirmed && confirmed.document);
+      if (!isCurrent(generation)) return;
+      const analyzedDocument = analyzed.document;
+      if (analyzedDocument && analyzedDocument.status === "FAILED") {
+        throw new Error("El documento no superó el análisis de seguridad y no se puede indexar.");
+      }
+      if (analyzed.timedOut || !analyzedDocument || analyzedDocument.status === "PENDING_UPLOAD") {
+        await loadDocuments(generation);
+        if (!isCurrent(generation)) return;
+        setUploadProgress("complete", "Subida completada; el análisis continúa.");
+        setMessage("Subida completada. El documento sigue en análisis; usa «Comprobar estado» para continuar cuando esté listo.", false, "success");
+        return;
+      }
+      if (analyzedDocument.status !== "UPLOADED" && analyzedDocument.status !== "INDEXED") {
+        throw new Error("El documento no está listo para indexarse. Puedes volver a comprobar su estado.");
+      }
+      if (analyzedDocument.status === "UPLOADED") {
+        setUploadProgress("index", "Indexando documento…");
+        await startAndPollIngestion([documentId], generation);
+      }
       if (!isCurrent(generation)) return;
       $("document-status").textContent = "Indexando el documento; comprobando estado…";
       await loadDocuments(generation);
@@ -850,14 +891,26 @@
     $("sync-button").addEventListener("click", async () => {
       if (!authorized() || state.busy || !state.documents.length) return;
       const generation = currentGeneration();
-      const documentIds = state.documents.filter((item) => item && ["UPLOADED", "FAILED"].includes(item.status)).map((item) => item.documentId).filter(Boolean);
-      if (!documentIds.length) return;
       setBusy(true);
       try {
-        setMessage("Solicitando sincronización…", false);
+        setMessage("Comprobando el estado de los documentos…", false);
+        await loadDocuments(generation);
+        if (!isCurrent(generation)) return;
+        const documentIds = state.documents
+          .filter((item) => item && item.status === "UPLOADED")
+          .map((item) => item.documentId)
+          .filter(Boolean);
+        if (!documentIds.length) {
+          const pending = state.documents.some((item) => item && item.status === "PENDING_UPLOAD");
+          const failed = state.documents.some((item) => item && item.status === "FAILED");
+          if (failed) setMessage("Hay documentos que requieren atención; no se han reintentado como indexación.", true);
+          else if (pending) setMessage("El análisis aún no ha terminado. Puedes volver a comprobar el estado.", false);
+          return;
+        }
+        setUploadProgress("index", "Indexando documentos listos…");
         await startAndPollIngestion(documentIds, generation);
         if (!isCurrent(generation)) return;
-        setMessage("Sincronización solicitada; el estado se actualizará al consultar.", false);
+        setMessage("Indexación completada para los documentos listos.", false, "success");
         await loadDocuments(generation);
       } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
     });
