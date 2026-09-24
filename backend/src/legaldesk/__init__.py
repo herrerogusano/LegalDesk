@@ -117,6 +117,10 @@ from .malware_scan import (
     MalwareScanError,
     MalwareScanEventHandler,
 )
+from .malware_scan_lambda import (
+    MalwareScanLambdaError,
+    lambda_handler as malware_scan_lambda_handler,
+)
 from .data_governance import (
     GovernanceAuthorizationError,
     GovernanceError,
@@ -288,6 +292,8 @@ __all__ = [
     "MALWARE_SCAN_TAG_KEY",
     "MalwareScanError",
     "MalwareScanEventHandler",
+    "MalwareScanLambdaError",
+    "malware_scan_lambda_handler",
     "GovernanceAuthorizationError",
     "GovernanceError",
     "GovernanceFailure",

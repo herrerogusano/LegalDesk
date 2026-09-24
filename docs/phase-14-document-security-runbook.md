@@ -48,12 +48,28 @@ an unsafe overwrite.
 
 ## Deployment gate
 
-The remaining deployment work must configure an exact EventBridge rule,
-GuardDuty/S3 permissions, account and region filters, and alerting before
-public mode is enabled. The application role needs narrowly scoped S3
-`GetObject`/`HeadObject`/`GetObjectTagging`/`DeleteObject` on `quarantine/`,
-and `CopyObject`/sidecar writes plus reads on the canonical `tenants/` prefix;
-the data source role must not read `quarantine/`. IaC, quarantine retention,
-and AWS rollout require the
-separate Phase 14 deployment/cost approval; this local tranche creates no
-resources and performs no AWS calls.
+`infra/cloudformation/phase-14-document-security.yaml` is the local IaC
+candidate. It reuses the existing table and bucket, creates one
+`AWS::GuardDuty::MalwareProtectionPlan` for the exact
+`quarantine/tenants/{BetaTenantId}/` prefix with tagging enabled, and routes
+only the exact account/region/bucket/detail-type EventBridge result to
+`legaldesk.malware_scan_lambda.lambda_handler`. The Lambda constructs only
+the Dynamo metadata and S3 adapters from environment variables; the event is
+never treated as proof of safety. It re-reads metadata, HEAD, and tags through
+`MalwareScanEventHandler`.
+
+The Lambda role has only metadata `GetItem`/`UpdateItem` on the beta tenant's
+partition prefix and exact beta-prefix S3 read/tag/write/delete permissions.
+The GuardDuty service role follows the provider-required setup contract: it
+manages only GuardDuty's named EventBridge rule, enables notifications on the
+one source bucket, writes the fixed validation object, checks that bucket, and
+scans/tags only the beta quarantine object prefix. A three-attempt, one-hour EventBridge
+retry policy sends failures to a retained, SQS-managed-encryption DLQ; the
+Lambda has reserved concurrency five and a bounded CloudWatch log retention.
+No KMS key or permission is added because the existing bucket uses SSE-S3.
+
+Before deployment approval, validate the immutable Lambda artifact parameters,
+the account/region and one fictional `BetaTenantId`, the exact quarantine
+prefix, and that the Bedrock data source still targets only `tenants/`. Review
+DLQ ownership and alerting, then deploy through a reviewed CloudFormation
+change set. This local tranche creates no resources and performs no AWS calls.

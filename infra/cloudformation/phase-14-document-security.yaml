@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  LegalDesk Phase 14 document-security boundary. Protects only the existing
+  S3 quarantine prefix for one approved fictional beta tenant, corroborates
+  GuardDuty results in a dedicated Lambda, and sends bounded failures to an
+  encrypted-by-SQS DLQ. No bucket, table, KMS key, or public endpoint is
+  created by this stack.
+
+Parameters:
+  MalwareLambdaCodeBucket:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  MalwareLambdaCodeKey:
+    Type: String
+    MinLength: 1
+  MalwareLambdaCodeVersion:
+    Type: String
+    MinLength: 1
+  MetadataTableName:
+    Type: String
+    MinLength: 3
+  MetadataTableArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:dynamodb:[^:]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$"
+  SourceBucketName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  SourceBucketArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  BetaTenantId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    Description: One pre-provisioned fictional/public beta tenant; no tenant wildcard is permitted.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90]
+
+Resources:
+  MalwareProtectionPlanRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: GuardDuty Malware Protection access limited to one quarantine prefix
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: malware-protection-plan.guardduty.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GuardDutyQuarantinePrefixAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ManageGuardDutyManagedEventRule
+                Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:DeleteRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                Resource: !Sub "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-AmazonGuardDutyMalwareProtectionS3*"
+                Condition:
+                  StringLike:
+                    events:ManagedBy: malware-protection-plan.guardduty.amazonaws.com
+              - Sid: InspectGuardDutyManagedEventRule
+                Effect: Allow
+                Action:
+                  - events:DescribeRule
+                  - events:ListTargetsByRule
+                Resource: !Sub "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/DO-NOT-DELETE-AmazonGuardDutyMalwareProtectionS3*"
+              - Sid: EnableBucketEventBridgeNotifications
+                Effect: Allow
+                Action:
+                  - s3:PutBucketNotification
+                  - s3:GetBucketNotification
+                Resource: !Ref SourceBucketArn
+              - Sid: ValidateBucketOwnership
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Ref SourceBucketArn
+              - Sid: PutGuardDutyValidationObject
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${SourceBucketArn}/malware-protection-resource-validation-object"
+              - Sid: ScanAndTagOnlyQuarantineObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetObjectTagging
+                  - s3:GetObjectVersionTagging
+                  - s3:PutObjectTagging
+                  - s3:PutObjectVersionTagging
+                Resource:
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/*"
+
+  MalwareProtectionPlan:
+    Type: AWS::GuardDuty::MalwareProtectionPlan
+    Properties:
+      Actions:
+        Tagging:
+          Status: ENABLED
+      ProtectedResource:
+        S3Bucket:
+          BucketName: !Ref SourceBucketName
+          ObjectPrefixes:
+            - !Sub "quarantine/tenants/${BetaTenantId}/"
+      Role: !GetAtt MalwareProtectionPlanRole.Arn
+
+  MalwareScanLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-malware-scan"
+      RetentionInDays: !Ref LogRetentionDays
+
+  MalwareScanExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Lambda role for corroborated malware lifecycle transitions only
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskMalwareScanDataPlane
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteRedactedLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${MalwareScanLogGroup.Arn}:*"
+              - Sid: ReadAndTransitionDocumentMetadata
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+                Resource: !Ref MetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+              - Sid: CorroborateAndPromoteOnlyBetaObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectTagging
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf.metadata.json"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt.metadata.json"
+
+  MalwareScanDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  MalwareScanDeadLetterQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref MalwareScanDeadLetterQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowThisEventRuleToSendFailures
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt MalwareScanDeadLetterQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt MalwareScanRule.Arn
+
+  MalwareScanFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: MalwareScanLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-malware-scan"
+      Description: Corroborate GuardDuty S3 scan results before indexing
+      Runtime: python3.12
+      Handler: legaldesk.malware_scan_lambda.lambda_handler
+      Role: !GetAtt MalwareScanExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      ReservedConcurrentExecutions: 5
+      Code:
+        S3Bucket: !Ref MalwareLambdaCodeBucket
+        S3Key: !Ref MalwareLambdaCodeKey
+        S3ObjectVersion: !Ref MalwareLambdaCodeVersion
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          LEGALDESK_METADATA_TABLE_NAME: !Ref MetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
+          LEGALDESK_MALWARE_ACCOUNT_ID: !Ref AWS::AccountId
+          LEGALDESK_MALWARE_REGION: !Ref AWS::Region
+
+  MalwareScanRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Exact GuardDuty result route for one beta quarantine prefix
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.guardduty
+        detail-type:
+          - GuardDuty Malware Protection Object Scan Result
+        account:
+          - !Ref AWS::AccountId
+        region:
+          - !Ref AWS::Region
+        detail:
+          resourceType:
+            - S3_OBJECT
+          s3ObjectDetails:
+            bucketName:
+              - !Ref SourceBucketName
+            objectKey:
+              - prefix: !Sub "quarantine/tenants/${BetaTenantId}/"
+      Targets:
+        - Id: MalwareScanLambda
+          Arn: !GetAtt MalwareScanFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt MalwareScanDeadLetterQueue.Arn
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 3600
+            MaximumRetryAttempts: 3
+
+  MalwareScanInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref MalwareScanFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MalwareScanRule.Arn
+
+Outputs:
+  MalwareProtectionPlanId:
+    Value: !Ref MalwareProtectionPlan
+  MalwareScanFunctionArn:
+    Value: !GetAtt MalwareScanFunction.Arn
+  MalwareScanRuleArn:
+    Value: !GetAtt MalwareScanRule.Arn
+  MalwareScanDeadLetterQueueArn:
+    Value: !GetAtt MalwareScanDeadLetterQueue.Arn

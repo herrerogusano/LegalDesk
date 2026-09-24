@@ -48,3 +48,10 @@ The companion runbook ([phase-14-public-edge.md](../docs/phase-14-public-edge.md
 documents the private S3/OAC frontend, exact API routes, trusted-edge
 contract, least privilege parameters, and the two-step callback/CORS
 bootstrap.
+
+The P14 document-security candidate
+([phase-14-document-security.yaml](cloudformation/phase-14-document-security.yaml))
+adds only the GuardDuty quarantine plan, exact EventBridge route, corroborating
+Lambda, bounded retries/DLQ, and retained logs. It reuses the existing S3
+bucket and DynamoDB table by parameter and has no KMS, WAF, public endpoint, or
+reconciliation scheduler.
