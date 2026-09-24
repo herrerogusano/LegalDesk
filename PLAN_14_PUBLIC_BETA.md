@@ -142,7 +142,12 @@ separate bounded sync/reconciliation evidence item and is reported as
 
 Execute and independently review the frozen 14-case semantic holdout against
 the exact release candidate, with a pre-approved model/profile, prompt hashes,
-request ceilings, and metadata-only immutable reporting.
+request ceilings, and metadata-only immutable reporting. The local
+preflight/runner is `evals/phase14_holdout_runner.py`, with commands and
+attestation rules in `docs/phase-14-holdout.md`; it performs no AWS calls until
+explicit execution approval. Its forged-citation and role-reversal canaries
+are separate from provider-success scoring, and reviewer identity provides
+procedural separation rather than cryptographic proof of independence.
 
 ### P14-6 — SLO, budget and release operations
 

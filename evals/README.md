@@ -1,5 +1,24 @@
 # Phase 12 local evaluation
 
+## Phase 14 frozen semantic holdout
+
+The independent 14-case holdout runner is documented in
+[`docs/phase-14-holdout.md`](../docs/phase-14-holdout.md) and implemented in
+`phase14_holdout_runner.py`. Its default preflight makes zero AWS/network
+calls and pins the fixture, prompt hashes, exact resolver/writer model IDs,
+release commit, artifact hash, and a hard ceiling of 14 resolver plus up to 13
+writer calls. It runs local negative canaries for the forged citation and role
+reversal, recording only closed metadata codes. Provider execution requires a
+separate explicit `--execute` acknowledgement; it has no retry path. Reports
+are create-only metadata artifacts, and reviewer attestations are separate
+create-only artifacts. A reviewer ID provides procedural separation only; it
+is not cryptographic proof of human independence. The holdout remains
+unexecuted against AWS until the Phase 14 cost and release gates are approved.
+An `approved` attestation is fail-closed: all 14 cases must be accepted,
+preflight and canaries must pass, retries must be zero, and inference calls
+must remain at or below 27; failed reports can only be rejected or marked for
+follow-up.
+
 `phase12_dataset.json` contains 24 synthetic cases across the eight required
 categories. `run_evals.py` invokes `runner.py`, which uses local fakes around
 the authorization, retrieval/chat, Guardrails, review-task, and tool-routing
