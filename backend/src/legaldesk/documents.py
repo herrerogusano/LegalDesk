@@ -96,6 +96,8 @@ class ObjectStorage(Protocol):
 
     def head_object(self, *, key: str) -> Mapping[str, Any]: ...
 
+    def read_object_bytes(self, *, key: str, max_bytes: int) -> bytes: ...
+
     def get_object_tagging(self, *, key: str) -> Mapping[str, str]: ...
 
 
@@ -327,6 +329,39 @@ def validate_uploaded_object(
     ):
         raise DocumentStorageError("uploaded object metadata is invalid")
     return head
+
+
+def validate_uploaded_object_content(
+    object_storage: ObjectStorage, document: Document, *, key: str | None = None
+) -> None:
+    """Validate the small, type-specific content boundary before indexing.
+
+    The size was already checked by :func:`validate_uploaded_object`; the
+    bounded read makes the content check safe for both S3 and local fixtures.
+    The exception messages intentionally contain no body bytes.
+    """
+
+    try:
+        body = object_storage.read_object_bytes(
+            key=key or document.s3_key, max_bytes=MAX_DOCUMENT_BYTES
+        )
+    except DocumentStorageError:
+        raise
+    except Exception as exc:
+        raise DocumentStorageError("uploaded object content could not be read") from exc
+    if not isinstance(body, bytes) or not body or len(body) > MAX_DOCUMENT_BYTES:
+        raise DocumentStorageError("uploaded object content size is invalid")
+    if document.media_type == "application/pdf":
+        if not body.startswith(b"%PDF-"):
+            raise DocumentValidationError("uploaded PDF content is invalid")
+        return
+    if document.media_type == "text/plain":
+        try:
+            body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DocumentValidationError("uploaded text content is invalid") from exc
+        return
+    raise DocumentValidationError("uploaded object media type is unsupported")
 
 
 def write_bedrock_metadata_sidecar(object_storage: ObjectStorage, document: Document) -> None:
@@ -689,6 +724,23 @@ class InMemoryObjectStorage:
             },
         }
 
+    def read_object_bytes(self, *, key: str, max_bytes: int) -> bytes:
+        if self.fail:
+            raise RuntimeError("fictional storage failure")
+        if (
+            not isinstance(max_bytes, int)
+            or isinstance(max_bytes, bool)
+            or max_bytes <= 0
+            or max_bytes > MAX_DOCUMENT_BYTES
+        ):
+            raise DocumentStorageError("object read limit is invalid")
+        if key not in self.objects:
+            raise KeyError(key)
+        body = self.objects[key]
+        if len(body) > max_bytes:
+            raise DocumentStorageError("object content exceeds the read limit")
+        return body
+
 
 @dataclass(slots=True)
 class InMemoryDocumentMetadataRepository:
@@ -840,6 +892,32 @@ class Boto3S3ObjectStorage:
 
     def head_object(self, *, key: str) -> Mapping[str, Any]:
         return self.client.head_object(Bucket=self.bucket_name, Key=key)
+
+    def read_object_bytes(self, *, key: str, max_bytes: int) -> bytes:
+        if (
+            not isinstance(max_bytes, int)
+            or isinstance(max_bytes, bool)
+            or max_bytes <= 0
+            or max_bytes > MAX_DOCUMENT_BYTES
+        ):
+            raise DocumentStorageError("object read limit is invalid")
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket_name,
+                Key=key,
+                Range=f"bytes=0-{max_bytes - 1}",
+            )
+            body_stream = response.get("Body") if isinstance(response, Mapping) else None
+            if body_stream is None or not hasattr(body_stream, "read"):
+                raise DocumentStorageError("object body is invalid")
+            body = body_stream.read(max_bytes)
+            if not isinstance(body, bytes) or len(body) > max_bytes:
+                raise DocumentStorageError("object body is invalid")
+            return body
+        except DocumentStorageError:
+            raise
+        except Exception as exc:
+            raise DocumentStorageError("object content could not be read") from exc
 
     def get_object_tagging(self, *, key: str) -> Mapping[str, str]:
         response = self.client.get_object_tagging(Bucket=self.bucket_name, Key=key)
