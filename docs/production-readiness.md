@@ -2,6 +2,11 @@
 
 Status: **release candidate hardened; production deployment is blocked**.
 
+The local P14-6 operations candidate now includes a parameterized alarms and
+Budget template plus a release/rollback/teardown runbook. This is local
+evidence only: no AWS deployment, budget, alarm, or notification has been
+created, and the release verdict remains `NOT_READY_FOR_PROD`.
+
 The integrated application and its bounded AWS smoke are complete. The local
 hardening pass adds fail-closed public endpoint validation, browser security
 headers, and strict retrieval response bounds. The complete local suite passes
@@ -55,7 +60,9 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    are not substitutes for this gate.
 6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
    recovery procedures, backup/retention ownership, verified deployment and
-   rollback, and shared-resource teardown evidence are complete.
+   rollback, and shared-resource teardown evidence are complete. The local
+   candidate is in [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md);
+   provider evidence and owner sign-off remain open.
 7. **P14-G7 — cost and deployment authority.** The final inventory, numeric cost
    envelope, request/model/retention ceilings, IaC change set and exact
    teardown targets are approved before any AWS deployment, real-model

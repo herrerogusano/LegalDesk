@@ -63,3 +63,13 @@ offline and emits a Lambda zip that can be supplied to both the public
 application and malware-scan templates, plus a bounded four-file frontend zip
 and a SHA-256 manifest. Uploading artifacts, publishing frontend files, and
 CloudFront invalidation remain separately approved release operations.
+
+The Phase 14 operations candidate
+([phase-14-operations.yaml](cloudformation/phase-14-operations.yaml)) adds
+standard CloudWatch alarms for the public API, application/malware/reconciliation
+Lambdas and both DLQs, plus a configurable monthly Budget with direct email
+notifications. It intentionally creates no SNS topic, dashboard, WAF or data
+resource. An existing SNS topic may be supplied explicitly for alarm actions;
+the stack never creates or manages that topic. The no-AWS release, synthetic-
+fault and rollback procedure is in
+[`phase-14-operations-runbook.md`](../docs/phase-14-operations-runbook.md).

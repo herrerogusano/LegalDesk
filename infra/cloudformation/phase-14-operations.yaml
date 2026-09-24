@@ -1,0 +1,331 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  LegalDesk Phase 14 beta operations controls. Creates only standard
+  CloudWatch alarms over existing API/Lambda/SQS resources and one monthly AWS
+  Budget email alert. It does not create an SNS topic, dashboard, WAF, data
+  store, or application resource.
+
+Parameters:
+  PublicApiId:
+    Type: String
+    AllowedPattern: "^[a-z0-9]{1,64}$"
+    Description: Existing API Gateway HTTP API id from the public-edge stack
+  PublicApiStageName:
+    Type: String
+    Default: "$default"
+    AllowedPattern: "^[A-Za-z0-9_$.-]{1,128}$"
+  ApplicationFunctionName:
+    Type: String
+    MinLength: 1
+    Description: Existing public application Lambda function name
+  MalwareScanFunctionName:
+    Type: String
+    MinLength: 1
+    Description: Existing malware scanner Lambda function name
+  MalwareScanDeadLetterQueueName:
+    Type: String
+    MinLength: 1
+    Description: Existing malware scanner SQS DLQ name
+  ReconciliationFunctionName:
+    Type: String
+    MinLength: 1
+    Description: Existing bounded reconciliation Lambda function name
+  ReconciliationDeadLetterQueueName:
+    Type: String
+    MinLength: 1
+    Description: Existing reconciliation SQS DLQ name
+  AlarmPeriodSeconds:
+    Type: Number
+    Default: 300
+    AllowedValues: [60, 300]
+    Description: Evaluation period; five minutes is the beta default
+  BudgetEmail:
+    Type: String
+    NoEcho: true
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    Description: Email recipient for account-wide AWS Budget alerts; no SNS topic is created
+  MonthlyBudgetLimitUsd:
+    Type: String
+    Default: "5"
+    AllowedPattern: "^[0-9]+(\\.[0-9]{1,2})?$"
+    Description: Account-wide monthly alert threshold in USD; this is not a billing hard cap
+
+  ExistingAlarmTopicArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:]+:sns:[^:]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$"
+    Description: Optional existing SNS topic ARN for alarm notifications; no topic is created here
+
+Conditions:
+  HasAlarmTopic: !Not [!Equals [!Ref ExistingAlarmTopicArn, ""]]
+
+Resources:
+  ApiFiveHundredAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: >-
+        Public HTTP API returned at least one 5xx in an evaluation period.
+        Investigate route, application logs and rollback state.
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref PublicApiId
+        - Name: Stage
+          Value: !Ref PublicApiStageName
+      Statistic: Sum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ApiLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: >-
+        Public HTTP API p95 latency exceeded the beta target (3 seconds) for
+        two consecutive periods.
+      Namespace: AWS/ApiGateway
+      MetricName: Latency
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref PublicApiId
+        - Name: Stage
+          Value: !Ref PublicApiStageName
+      ExtendedStatistic: p95
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 3000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ApplicationErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Public application Lambda emitted an error.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApplicationFunctionName
+      Statistic: Sum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ApplicationThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Public application Lambda was throttled.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApplicationFunctionName
+      Statistic: Sum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ApplicationDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Public application Lambda p95 duration exceeded 25 seconds.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApplicationFunctionName
+      ExtendedStatistic: p95
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 25000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  MalwareScanErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Malware scanner Lambda emitted an error.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref MalwareScanFunctionName
+      Statistic: Sum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  MalwareScanThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Malware scanner Lambda was throttled.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref MalwareScanFunctionName
+      Statistic: Sum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ReconciliationErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Reconciliation Lambda emitted an error.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ReconciliationFunctionName
+      Statistic: Sum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ReconciliationThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Reconciliation Lambda was throttled.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ReconciliationFunctionName
+      Statistic: Sum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ReconciliationDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Reconciliation Lambda p95 duration exceeded 100 seconds.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ReconciliationFunctionName
+      ExtendedStatistic: p95
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 100000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  MalwareScanDlqVisibleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Malware scanner DLQ contains a visible message.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !Ref MalwareScanDeadLetterQueueName
+      Statistic: Maximum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  ReconciliationDlqVisibleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Reconciliation DLQ contains a visible message.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !Ref ReconciliationDeadLetterQueueName
+      Statistic: Maximum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAlarmTopic, true, false]
+      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "${AWS::StackName}-monthly"
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetLimitUsd
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: MONTHLY
+      NotificationsWithSubscribers:
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: ACTUAL
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+        - Notification:
+            ComparisonOperator: GREATER_THAN
+            NotificationType: ACTUAL
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+
+Outputs:
+  MonthlyBudgetName:
+    Value: !Ref MonthlyBudget
+  AlarmCount:
+    Value: "12"

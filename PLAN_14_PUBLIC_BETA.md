@@ -148,8 +148,11 @@ request ceilings, and metadata-only immutable reporting.
 
 Define SLOs, alarms, budget alerts, dashboards/queries, backups, recovery,
 change-set deployment, rollback, teardown, and ownership of retained shared
-resources. Keep production promotion closed until all gates have attached
-evidence.
+resources. The local candidate is `infra/cloudformation/phase-14-operations.yaml`
+with the procedure in `docs/phase-14-operations-runbook.md`; it uses standard
+metrics, an optional already-owned alarm topic, and direct-email Budget alerts
+without creating SNS or dashboard resources. Keep production promotion closed
+until all gates have attached provider evidence and owner sign-off.
 
 ## Acceptance criteria
 

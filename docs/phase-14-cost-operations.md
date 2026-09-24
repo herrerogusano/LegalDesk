@@ -40,6 +40,11 @@ retained resources.
 - Reconciliation scheduler/worker (EventBridge + Lambda, or an approved
   equivalent).
 - CloudWatch log ingestion, alarms and custom metrics.
+- Twelve standard CloudWatch alarms over the public API, application,
+  malware/reconciliation Lambdas and their DLQs, plus one direct-email monthly
+  AWS Budget alert. The operations candidate does not create an SNS topic or
+  dashboard. The Budget is account-wide so it does not silently omit untaggable
+  Bedrock/Marketplace spend. Alarm and log retention charges are still possible.
 - Optional WAF WebACL/rules and request charges.
 - Optional ECR image storage/scanning if Lambda is delivered as a container.
 - Real-model holdout inference, retrieval, Guardrail calls, and any required
@@ -68,6 +73,13 @@ Budgets and alarms are detection mechanisms, not billing hard caps. Request
 ceilings, bounded retries, one-operation idempotency, and a scheduled close
 procedure are the primary controls. Missing/ambiguous provider usage is not
 treated as zero cost.
+
+The local operational candidate and response procedure are in
+[`phase-14-operations-runbook.md`](phase-14-operations-runbook.md). It uses
+native AWS metrics, five-minute beta evaluation periods by default, and
+`notBreaching` for missing data. No alarm action is enabled until an approved
+on-call destination exists; an existing SNS topic can be passed explicitly
+without creating a new topic. The Budget's direct email is only an alert.
 
 ## Deployment and rollback expectations
 
