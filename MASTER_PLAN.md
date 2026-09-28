@@ -116,9 +116,9 @@ permanece cerrada hasta completar los gates restantes.
   lint-clean). AWS deployment and the bounded browser smoke are complete;
   bounded rollback/forward-recovery, PITR restore/delete and reconciliation
   evidence are recorded. The final provider holdout remains 13/14 with
-  `needs_follow_up`, one malware alarm is under diagnosis, strict custom-domain
-  TLS is absent, owner decisions remain open, and prod promotion remains
-  pending.
+  `needs_follow_up`; the synthetic malware alarm was diagnosed, remediated and
+  returned to `OK`. Strict custom-domain TLS is absent, owner decisions remain
+  open, and prod promotion remains pending.
 
 - [x] Phase 00
 - [x] Phase 01

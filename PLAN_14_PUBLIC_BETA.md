@@ -160,7 +160,8 @@ metrics, an optional already-owned alarm topic, and direct-email Budget alerts
 without creating SNS or dashboard resources. A bounded release exercise has
   now recorded smoke, rollback/forward recovery, isolated PITR restore/delete,
   reconciliation, confirmed SNS subscription, and alarm evidence; keep
-  production promotion closed while `MalwareScanErrorsAlarm` is in `ALARM`,
+  `MalwareScanErrorsAlarm` was traced to delayed synthetic cleanup events,
+  remediated, and returned to `OK`. Keep production promotion closed while
   semantic evidence is incomplete, strict TLS/custom-domain transport is
   absent, and owner sign-off is pending.
 

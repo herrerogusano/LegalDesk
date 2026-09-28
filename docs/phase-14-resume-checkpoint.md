@@ -81,9 +81,9 @@ walkthrough. The release remains a constrained authenticated beta and is not
   returned HTTP 200.
 - Synthetic reconciliation passed with one invocation:
   `examined=6`, `changed=1`, `skipped=5`, `failed=0`, cleanup true.
-- The SNS subscription is confirmed. Current alarm state is 11 `OK` and one
-  `ALARM` (`MalwareScanErrorsAlarm`, two errors), so diagnosis remains a
-  production-promotion blocker.
+- The SNS subscription is confirmed and all twelve alarms are `OK`. The
+  transient malware alarm from delayed synthetic cleanup events was diagnosed
+  and closed by the deployed routing/idempotency correction.
 - The final holdout remains immutable failed evidence at 13/14 with
   `role-reversal` rejected as `ROLE_RELATIONSHIP_MISSING`; its attestation is
   `needs_follow_up`. The local adapter correction still requires a new

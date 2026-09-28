@@ -97,10 +97,10 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    rollback, and shared-resource teardown evidence are complete. The final
    smoke, isolated 62-item PITR restore/delete, rollback to `50dd36f`, forward
    recovery to `fe53da68...`, and confirmed SNS subscription are recorded in
-   [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md). Current
-   alarm state is 11 `OK` and one `ALARM` (`MalwareScanErrorsAlarm`, two
-   errors), so diagnosis remains a blocker; retention/ownership sign-off and
-   strict TLS remain open.
+   [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md). The
+   synthetic malware alarm was diagnosed, its routing/idempotency fix was
+   deployed, and all twelve alarms returned to `OK`; retention/ownership
+   sign-off and strict TLS remain open.
 7. **P14-G7 — cost and deployment authority.** Earlier operation-specific
    approvals covered the completed deployment and bounded test runs, but do not
    establish a reusable production budget. The final inventory, numeric cost

@@ -23,21 +23,25 @@ secret, token, document body, prompt, answer or credential.
   prefix. Reconciliation is enabled every 15 minutes.
 - DynamoDB is on-demand with TTL and 35-day point-in-time recovery enabled.
   The observed table contained 42 items and about 15 KB.
-- Eleven CloudWatch alarms were `OK`; `MalwareScanErrorsAlarm` is currently in
-  `ALARM` for two errors and remains under diagnosis/block. The project SNS
-  subscription is confirmed; the account-wide Budget is USD 25/month and is
-  not a billing hard cap.
+- All twelve CloudWatch alarms are `OK` and actions are enabled. The project
+  SNS subscription is confirmed; the account-wide Budget is USD 25/month and
+  is not a billing hard cap.
 - Deployed monthly tenant ceilings are 20 uploads, 200 MiB uploads, 100 chats,
   20 ingestion starts, 20 Harness calls and 100 Gateway calls.
 - The public composition revalidates retrieved documents against live scoped
   metadata and the canonical server-owned S3 object before resolver/writer use.
-- Final deployed release commit `fe53da68b1cb696de0741e94ff1ece99ecc3d710`
+- Public-application release commit `fe53da68b1cb696de0741e94ff1ece99ecc3d710`
   packages deterministically as Lambda artifact
   `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`
   and frontend artifact
   `07411bad1c0285d23d8c26f1e44841166ae12c87effb347f2903efa1ffe2d57d`.
   The final holdout report is metadata-only and remains failed evidence at
   13/14; its report SHA-256 is recorded by the attestation file.
+- Document-security commit `65ca11ca44212f5e7991af23972ca8061a08ba17`
+  is deployed with Lambda artifact SHA-256
+  `27a5e8a2016f47e21f279a0f197632b1d32893c8316713dbd7099cf5414b5450`.
+  It filters sidecars before Lambda and acknowledges a late event only when
+  both metadata and the exact quarantine object are absent.
 
 ## Completed bounded evidence — 2026-09-28
 
@@ -52,9 +56,10 @@ secret, token, document body, prompt, answer or credential.
   and returned HTTP 200 in the bounded check.
 - Synthetic reconciliation passed with one invocation:
   `examined=6`, `changed=1`, `skipped=5`, `failed=0`, cleanup verified.
-- The SNS subscription is confirmed. Current alarm state is 11 `OK` and one
-  `ALARM` (`MalwareScanErrorsAlarm`, two errors); the alarm finding remains a
-  production-promotion blocker pending diagnosis.
+- The SNS subscription is confirmed and all twelve alarms are `OK`. The prior
+  malware alarm was caused by two delayed synthetic fixture events (six Lambda
+  attempts after retries), produced no promotion/indexing/DLQ message, and was
+  closed after the bounded routing/idempotency fix was deployed.
 
 ## Gates that still require evidence or an owner decision
 
@@ -76,15 +81,10 @@ secret, token, document body, prompt, answer or credential.
    an isolated restore/delete drill. Name the beta operator, application owner
    and data owner; approve review archival, residual metadata retention,
    legal-hold and export policy.
-4. **Alarm health:** `MalwareScanErrorsAlarm` is currently `ALARM` for two
-   errors while the other eleven alarms are `OK`. Diagnose and close this
-   finding before any production promotion; the confirmed SNS subscription
-   does not turn an active alarm into a pass.
-
 ## Proposed bounded execution envelope
 
-The next provider operation should be approved as one indivisible release
-exercise for this exact account and region:
+The following envelope was consumed for the recorded release exercise. It is
+not reusable; another provider holdout requires a new explicit authorization:
 
 - maximum 27 real-model calls for the frozen holdout, zero retries, estimated
   below USD 2 with a USD 5 residual one-time envelope (not a guaranteed billing

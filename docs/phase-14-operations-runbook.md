@@ -3,9 +3,11 @@
 ## Status
 
 This stack is **deployed in `eu-west-1`**. The 2026-09-28 release exercise
-confirmed 11 alarms in `OK` state and one `MalwareScanErrorsAlarm` in `ALARM`
-for two errors, alongside the monthly Budget and a confirmed project SNS
-subscription. The operations stack is
+confirmed all twelve alarms in `OK` state, alongside the monthly Budget and a
+confirmed project SNS subscription. The transient `MalwareScanErrorsAlarm`
+was traced to delayed events from the synthetic reconciliation fixture; the
+document-security route and handler were corrected before the alarm returned
+to `OK`. The operations stack is
 `infra/cloudformation/phase-14-operations.yaml`; it reuses resource
 names supplied as parameters and creates twelve standard CloudWatch alarms and
 one monthly AWS Budget. It creates no alarm topic by default. An operator may
