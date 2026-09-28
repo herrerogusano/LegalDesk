@@ -20,6 +20,7 @@ let phase = "startup";
 let step = "startup";
 let pageErrors = 0;
 const cleanup = { conversationId: null, sessionId: null };
+const diagnostics = { chat: null };
 
 const SAFE_TYPES = new Set(["Error", "TimeoutError", "TypeError", "ReferenceError", "RangeError", "AssertionError"]);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -92,6 +93,7 @@ async function responseJson(response, category) {
 function setPhase(value) {
   phase = value;
   step = value;
+  process.stdout.write(`${JSON.stringify({ smoke: "phase14-public-browser-progress", phase: value })}\n`);
 }
 
 function safeSelector(value) {
@@ -181,6 +183,12 @@ async function run() {
     count("POST /api/chat");
     const chatResponse = await chatResponsePromise;
     const chat = await responseJson(chatResponse, "chat_response");
+    diagnostics.chat = {
+      operationStatus: ["ok", "error", "blocked", "documents_processing"].includes(chat.operationStatus) ? chat.operationStatus : "unknown",
+      evidenceStatus: ["answerable", "ambiguous", "insufficient_evidence"].includes(chat.evidenceStatus) ? chat.evidenceStatus : null,
+      citationCount: Array.isArray(chat.citations) ? chat.citations.length : 0,
+      answerContainsExpected: typeof chat.answer === "string" && chat.answer.toLowerCase().includes(EXPECTED_FACT.toLowerCase()),
+    };
     if (chat.operationStatus !== "ok" || !["answerable", "ambiguous"].includes(chat.evidenceStatus) || !Array.isArray(chat.citations) || chat.citations.length < 1) throw new SmokeFailure("chat_contract");
     await page.waitForFunction(expected => (document.querySelector("#answer")?.textContent || "").toLowerCase().includes(expected.toLowerCase()), EXPECTED_FACT, { timeout: 30_000 });
     const citationButton = page.locator(".citation-inspect").first();
@@ -232,7 +240,7 @@ function closedFailure(error) {
     result: "FAIL", smoke: "phase14-public-browser", phase, step,
     category: error instanceof SmokeFailure ? error.category : "smoke_failed",
     errorType: error instanceof SmokeFailure ? error.errorType : safeErrorType(error),
-    cleanup,
+    cleanup, diagnostics,
   };
 }
 

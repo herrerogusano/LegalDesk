@@ -56,6 +56,21 @@ class Phase14PublicSmokeTests(unittest.TestCase):
         }
         self.assertEqual(parse_browser_report(json.dumps(passed)), passed)
 
+    def test_parser_retains_only_safe_chat_diagnostics_and_last_progress(self) -> None:
+        failed = {
+            "result": "FAIL", "smoke": "phase14-public-browser", "phase": "chat_citation",
+            "step": "chat_citation", "category": "chat_contract", "errorType": "SmokeFailure",
+            "diagnostics": {"chat": {"operationStatus": "ok", "evidenceStatus": "answerable", "citationCount": 2, "answerContainsExpected": True}},
+        }
+        self.assertEqual(parse_browser_report(json.dumps(failed)), failed)
+        progress = "\n".join((
+            json.dumps({"smoke": "phase14-public-browser-progress", "phase": "login"}),
+            json.dumps({"smoke": "phase14-public-browser-progress", "phase": "chat_citation"}),
+        ))
+        parsed = parse_browser_report(progress)
+        self.assertEqual(parsed["category"], "browser_report_invalid")
+        self.assertEqual(parsed["step"], "chat_citation")
+
     def test_safe_report_drops_cleanup_selectors_and_untrusted_fields(self) -> None:
         result = safe_report(
             {"result": "PASS", "smoke": "phase14-public-browser", "matterId": "matter-a", "cleanup": {"sessionId": "secret"}, "answer": "not retained"},

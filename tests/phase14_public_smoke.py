@@ -75,10 +75,16 @@ def parse_browser_report(stdout: object) -> dict[str, object]:
     """Accept only the closed JSON line emitted by the child runner."""
 
     lines = stdout.splitlines() if isinstance(stdout, str) else []
+    last_progress = None
     for line in reversed(lines):
         try:
             payload = json.loads(line)
         except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and payload.get("smoke") == "phase14-public-browser-progress":
+            phase = payload.get("phase")
+            if last_progress is None and isinstance(phase, str) and SAFE_ID.fullmatch(phase):
+                last_progress = phase
             continue
         if not isinstance(payload, dict) or payload.get("smoke") != "phase14-public-browser":
             continue
@@ -107,10 +113,21 @@ def parse_browser_report(stdout: object) -> dict[str, object]:
             or any(value is not None and (not isinstance(value, str) or not SAFE_ID.fullmatch(value)) for value in cleanup.values())
         ):
             continue
+        diagnostics = payload.get("diagnostics")
+        if diagnostics is not None:
+            chat = diagnostics.get("chat") if isinstance(diagnostics, Mapping) else None
+            if chat is not None and (
+                not isinstance(chat, Mapping)
+                or chat.get("operationStatus") not in {"ok", "error", "blocked", "documents_processing", "unknown"}
+                or chat.get("evidenceStatus") not in {"answerable", "ambiguous", "insufficient_evidence", None}
+                or not isinstance(chat.get("citationCount"), int)
+                or not isinstance(chat.get("answerContainsExpected"), bool)
+            ):
+                continue
         return payload
     return {
         "result": "FAIL", "smoke": "phase14-public-browser", "phase": "startup",
-        "step": "browser_process", "category": "browser_report_missing" if not lines else "browser_report_invalid",
+        "step": last_progress or "browser_process", "category": "browser_report_missing" if not lines else "browser_report_invalid",
         "errorType": "NoReport" if not lines else "InvalidReport",
     }
 
@@ -127,6 +144,7 @@ def safe_report(report: Mapping[str, object], *, cleanup_errors: list[str], requ
         "result", "smoke", "phase", "step", "category", "errorType", "matterId",
         "indexedDocuments", "citationCount", "reviewsListed", "reviewsOpened",
         "crossMatterStatus", "auditEventCount", "logoutStatus",
+        "diagnostics",
     }
     output = {key: value for key, value in report.items() if key in allowed}
     output["cleanupErrors"] = list(cleanup_errors)
