@@ -1,7 +1,7 @@
 # Phase 14 production-promotion decision record
 
-Status: **decision and provider evidence required**. Recorded from a read-only
-inventory on 2026-09-28. This file is not an AWS authorization and contains no
+Status: **promotion remains blocked**. Updated on 2026-09-28 with the bounded
+deployment and operations evidence completed today. This file is not an AWS authorization and contains no
 secret, token, document body, prompt, answer or credential.
 
 ## Verified deployed baseline
@@ -23,46 +23,63 @@ secret, token, document body, prompt, answer or credential.
   prefix. Reconciliation is enabled every 15 minutes.
 - DynamoDB is on-demand with TTL and 35-day point-in-time recovery enabled.
   The observed table contained 42 items and about 15 KB.
-- Twelve CloudWatch alarms were `OK`, but actions are disabled because no
-  owned alarm topic is configured. The account-wide Budget is USD 25/month;
-  a Budget alert is not a billing hard cap.
+- Eleven CloudWatch alarms were `OK`; `MalwareScanErrorsAlarm` is currently in
+  `ALARM` for two errors and remains under diagnosis/block. The project SNS
+  subscription is confirmed; the account-wide Budget is USD 25/month and is
+  not a billing hard cap.
 - Deployed monthly tenant ceilings are 20 uploads, 200 MiB uploads, 100 chats,
   20 ingestion starts, 20 Harness calls and 100 Gateway calls.
 - The public composition revalidates retrieved documents against live scoped
   metadata and the canonical server-owned S3 object before resolver/writer use.
-- Local release commit `830fe892aba17b218838479f2ee89d4cf05e4591`
+- Final deployed release commit `fe53da68b1cb696de0741e94ff1ece99ecc3d710`
   packages deterministically as Lambda artifact
   `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`
   and frontend artifact
   `07411bad1c0285d23d8c26f1e44841166ae12c87effb347f2903efa1ffe2d57d`.
-  Its holdout preflight passed with zero AWS/network calls.
+  The final holdout report is metadata-only and remains failed evidence at
+  13/14; its report SHA-256 is recorded by the attestation file.
+
+## Completed bounded evidence — 2026-09-28
+
+- Final public smoke report `phase14-public-smoke-20260928-08.json`: `PASS`;
+  exactly one `POST /api/chat`, cross-matter status `403`, and
+  `cleanupErrors=[]` (report SHA-256
+  `1431503bd4a336bf552853af4cb8eb7b87a8cc488a44e59b7542e9624281d153`).
+- DynamoDB PITR was restored into an isolated table with 62 items; that exact
+  synthetic restore was then deleted.
+- Rollback to the prior artifact from commit `50dd36f` and forward recovery to
+  `fe53da68b1cb696de0741e94ff1ece99ecc3d710` both reached `UPDATE_COMPLETE`
+  and returned HTTP 200 in the bounded check.
+- Synthetic reconciliation passed with one invocation:
+  `examined=6`, `changed=1`, `skipped=5`, `failed=0`, cleanup verified.
+- The SNS subscription is confirmed. Current alarm state is 11 `OK` and one
+  `ALARM` (`MalwareScanErrorsAlarm`, two errors); the alarm finding remains a
+  production-promotion blocker pending diagnosis.
 
 ## Gates that still require evidence or an owner decision
 
-1. **Semantic holdout:** runner `1.2.0` / adapter `2.1.0` needs one final frozen
-   14-case provider run against the exact release commit and independent
-   attestation. The most recent immutable run is valid failed evidence at
-   13/14; it cannot be relabelled or overwritten.
-2. **Deployment/rollback/recovery:** deploy the final immutable artifact,
-   perform one bounded authenticated smoke, exercise rollback to the previous
-   immutable artifact and forward recovery, exercise reconciliation with a
-   synthetic stale fixture, and restore DynamoDB PITR into an isolated table
-   before deleting that exact synthetic restore.
-3. **Alert delivery:** create or name a project-owned SNS topic and confirm its
-   subscription. Existing topics belong to another project and must not be
-   reused. Until then alarm state is visible but not delivered.
-4. **Transport:** the CloudFront default certificate fixes the viewer security
+1. **Semantic holdout:** runner `1.2.0` / adapter `2.1.0` still needs a newly
+   authorized 14-case provider run against the final release and independent
+   attestation. The immutable final report remains `13/14`,
+   `needs_follow_up`, with `role-reversal` rejected as
+   `ROLE_RELATIONSHIP_MISSING`; it cannot be relabelled or overwritten. The
+   local adapter correction requires that fresh authorization.
+2. **Transport:** the CloudFront default certificate fixes the viewer security
    policy to the legacy `TLSv1` policy. A strict production posture requires an
    approved custom hostname and a validated ACM certificate in `us-east-1`.
    Without them the release can only be described as a constrained beta with
    this residual risk, not strict production transport.
-5. **Recovery/retention:** source-bucket versioning is intentionally not
+3. **Recovery/retention:** source-bucket versioning is intentionally not
    enabled. The fictional/public beta accepts re-upload-only recovery. A future
    version-aware design would need an explicit one-way CloudFormation decision,
    least-privilege version listing/deletion, lifecycle/delete-marker rules and
    an isolated restore/delete drill. Name the beta operator, application owner
    and data owner; approve review archival, residual metadata retention,
    legal-hold and export policy.
+4. **Alarm health:** `MalwareScanErrorsAlarm` is currently `ALARM` for two
+   errors while the other eleven alarms are `OK`. Diagnose and close this
+   finding before any production promotion; the confirmed SNS subscription
+   does not turn an active alarm into a pass.
 
 ## Proposed bounded execution envelope
 

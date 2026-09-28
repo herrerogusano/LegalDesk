@@ -178,5 +178,14 @@ the final local preflight for release commit
 calls. It pins Lambda artifact SHA-256
 `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`,
 runner `1.2.0`, adapter `2.1.0`, the same adapter implementation hash and the
-27-call ceiling. This is preflight evidence only; no provider report exists for
-this commit until a newly authorized execution runs.
+27-call ceiling. The final separately authorized provider execution is now
+preserved in `evals/results/phase14-holdout-20260928-prod-final.json`, pinned
+to release commit `fe53da68b1cb696de0741e94ff1ece99ecc3d710` and the same
+artifact SHA-256. It accepted 13/14 cases with 27 calls and zero retries;
+`role-reversal` remains rejected as `ROLE_RELATIONSHIP_MISSING`. The report is
+immutable failed evidence (SHA-256
+`4035b8d3d64e099aa9f905c068c456331df9ef6ba5e7366c58331c57bf0fd890`). Its
+separate attestation is `needs_follow_up` with the approval threshold unmet
+(SHA-256 `580b25b01f9bcacdb98d70c3ad6b8d17cd01018b9154ae863374836da06af644`).
+The local adapter correction still requires a newly authorized holdout; no
+provider result is upgraded retroactively.

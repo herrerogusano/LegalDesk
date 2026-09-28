@@ -114,8 +114,11 @@ permanece cerrada hasta completar los gates restantes.
   runner, quarantine/reconciliation and operations controls are implemented
   and validated (562 tests, 24/24 deterministic evaluations, all 15 templates
   lint-clean). AWS deployment and the bounded browser smoke are complete;
-  provider holdout/review, operational exercises, owner decisions and prod
-  promotion remain pending.
+  bounded rollback/forward-recovery, PITR restore/delete and reconciliation
+  evidence are recorded. The final provider holdout remains 13/14 with
+  `needs_follow_up`, one malware alarm is under diagnosis, strict custom-domain
+  TLS is absent, owner decisions remain open, and prod promotion remains
+  pending.
 
 - [x] Phase 00
 - [x] Phase 01

@@ -2,10 +2,10 @@
 
 ## Status
 
-This stack is **deployed in `eu-west-1`**. A read-only inventory on 2026-09-28
-confirmed twelve alarms in `OK` state and the monthly Budget; this is current
-deployment evidence, not proof that the remaining recovery and rollback drills
-have passed. The operations stack is
+This stack is **deployed in `eu-west-1`**. The 2026-09-28 release exercise
+confirmed 11 alarms in `OK` state and one `MalwareScanErrorsAlarm` in `ALARM`
+for two errors, alongside the monthly Budget and a confirmed project SNS
+subscription. The operations stack is
 `infra/cloudformation/phase-14-operations.yaml`; it reuses resource
 names supplied as parameters and creates twelve standard CloudWatch alarms and
 one monthly AWS Budget. It creates no alarm topic by default. An operator may
@@ -15,6 +15,20 @@ explicitly choose one of two mutually exclusive notification modes:
 subscription using the existing `BudgetEmail` NoEcho parameter. No topic is
 created when both modes are empty, and the template rejects both modes being
 selected at once. No additional AWS call is authorized by this document.
+
+## Completed release evidence — 2026-09-28
+
+- Final public smoke report `phase14-public-smoke-20260928-08.json` passed with
+  one `POST /api/chat`, cross-matter `403`, and zero cleanup errors.
+- A DynamoDB PITR restore into an isolated table contained 62 items and was
+  deleted after verification.
+- Rollback to the prior immutable artifact from commit `50dd36f`, followed by
+  forward recovery to final commit
+  `fe53da68b1cb696de0741e94ff1ece99ecc3d710` (Lambda artifact SHA-256
+  `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`), reached
+  `UPDATE_COMPLETE` in both directions and returned HTTP 200.
+- The synthetic reconciliation exercise passed with one invocation and
+  `examined=6`, `changed=1`, `skipped=5`, `failed=0`; cleanup was verified.
 
 The alarms are visible-only when both topic modes are empty. If either valid
 mode is selected, all twelve alarms use the effective topic as their action.
@@ -117,6 +131,10 @@ If a change-set update is stuck, use CloudFormation continue-update-rollback
 only after identifying the exact failed resource. Never delete a shared data
 resource to recover a failed application deployment.
 
+The bounded release exercise completed rollback to the prior `50dd36f`
+artifact and forward recovery to `fe53da68...`; both stack updates were
+`UPDATE_COMPLETE` and the synthetic HTTP check returned 200.
+
 ## Backup and recovery ownership
 
 The operations stack does not silently enable a new backup service. The Phase
@@ -129,8 +147,9 @@ policy must be verified from the deployed resource; local template validation
 is not proof of backup coverage. Enabling versioning is deferred because it
 would be a one-way CloudFormation decision and would first require
 version-aware deletion, delete-marker handling, additional least-privilege
-permissions and a restore drill. Until an approved recovery design and test
-exist, the recovery gate remains open and production promotion is blocked.
+permissions and a restore drill. The isolated DynamoDB PITR restore/delete
+  drill is complete, but source-object versioning, retention ownership and the
+  broader recovery design remain open; production promotion is blocked.
 
 ## Teardown and retained ownership
 

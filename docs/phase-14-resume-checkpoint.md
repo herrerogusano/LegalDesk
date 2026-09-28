@@ -4,6 +4,10 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 
 ## Continuation result — 2026-09-28
 
+This checkpoint now includes the bounded evidence completed after the original
+walkthrough. The release remains a constrained authenticated beta and is not
+`READY_FOR_PROD`.
+
 - Added a bounded public-browser smoke with a short-lived technical Cognito
   identity. Passwords remain process-memory-only; the runner performs no upload,
   ingestion, review creation or holdout and emits metadata-only reports.
@@ -64,6 +68,28 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
   and the unchanged Lambda artifact SHA-256. Both negative canaries passed;
   AWS/network calls were zero.
 
+## Post-checkpoint evidence — 2026-09-28
+
+- Final deployed HEAD is `fe53da68b1cb696de0741e94ff1ece99ecc3d710` with
+  Lambda artifact SHA-256
+  `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`.
+- Public smoke report `phase14-public-smoke-20260928-08.json` is `PASS`:
+  one `POST /api/chat`, cross-matter `403`, and zero cleanup errors.
+- PITR restore into an isolated table contained 62 items and was deleted after
+  verification. Rollback to the prior `50dd36f` artifact and forward recovery
+  to the final `fe53da68...` artifact both reached `UPDATE_COMPLETE` and
+  returned HTTP 200.
+- Synthetic reconciliation passed with one invocation:
+  `examined=6`, `changed=1`, `skipped=5`, `failed=0`, cleanup true.
+- The SNS subscription is confirmed. Current alarm state is 11 `OK` and one
+  `ALARM` (`MalwareScanErrorsAlarm`, two errors), so diagnosis remains a
+  production-promotion blocker.
+- The final holdout remains immutable failed evidence at 13/14 with
+  `role-reversal` rejected as `ROLE_RELATIONSHIP_MISSING`; its attestation is
+  `needs_follow_up`. The local adapter correction still requires a new
+  authorized holdout. The custom domain is absent, so strict TLS remains
+  blocked.
+
 ## Source state
 
 - Branch: `phase/14-public-beta`
@@ -106,9 +132,9 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 
 ## Deployed state
 
-- `LegalDeskPhase14PublicEdge`: `UPDATE_COMPLETE`; application artifact is from
-  commit `50dd36f`; its deterministic SHA-256 is unchanged in the final local
-  release package.
+- `LegalDeskPhase14PublicEdge`: `UPDATE_COMPLETE`; the prior rollback artifact
+  from commit `50dd36f` and forward recovery to final commit
+  `fe53da68b1cb696de0741e94ff1ece99ecc3d710` were both verified with HTTP 200.
 - `LegalDeskPhase14DocumentSecurity`: `UPDATE_COMPLETE`; malware artifact is
   from commit `ce86368bd43261fcaf1dc907b2204a6b1702f6ef`.
 - The public application, malware scanner, GuardDuty plan, reconciliation,
@@ -117,19 +143,13 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 
 ## Remaining gates
 
-1. The authenticated technical journey now covers document status, grounded
-   question, citation, cross-matter denial, audit and logout. Review creation
-   retains its earlier manual/live evidence and was intentionally not repeated
-   by the cleanup-oriented technical runner.
-2. Decide whether to remove the duplicate fictional upload produced by the
-   repeated walkthrough attempts, then resync if it is removed.
-3. Run the bounded real holdout against runner `1.2.0` / adapter `2.1.0` and
-   the final release artifact. Every previous one-time holdout authorization
-   has been consumed, so this requires a fresh explicit authorization before
-   any Bedrock inference calls. A 14/14 report must then receive an independent
-   approved attestation.
-4. Complete the privacy/retention and operations owner sign-offs, then create
+1. The final holdout still requires a fresh explicit authorization for runner
+   `1.2.0` / adapter `2.1.0`; only a new 14/14 report with independent
+   approval can close that gate.
+2. The custom CloudFront domain/strict TLS posture is still absent and remains
+   a production transport blocker.
+3. Complete the privacy/retention and operations owner sign-offs, then create
    the Phase 14 PR to `developer` after every gate passes. Promote `developer`
    to `prod` only through its separate release PR.
-5. Update the shared session/vault again only after the remaining Phase 14 gates
+4. Update the shared session/vault again only after the remaining Phase 14 gates
    are complete; the earlier checkpoint has already been saved and synced.

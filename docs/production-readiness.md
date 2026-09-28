@@ -39,6 +39,9 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    logs remain disabled because they would retain the OAuth callback query; the
    candidate uses field-selected API access logs without query, cookies,
    headers, IP, or user agent.
+   The custom CloudFront domain and validated ACM certificate are not present;
+   the default distribution certificate therefore leaves strict TLS production
+   transport blocked.
 2. **P14-G2 — durable state and authorization.** Sessions, OAuth state, citation
    handles, conversation correlations, accepted history/review candidates and
    redacted audit records survive restart and multi-instance routing. Expiry,
@@ -69,26 +72,35 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    operator runbook. The local candidate-driven implementation and procedure
    are in [`docs/phase-14-reconciliation-runbook.md`](phase-14-reconciliation-runbook.md).
    DynamoDB TTL is not treated as an authorization or exact deletion guarantee.
+   The supervised synthetic exercise passed with one invocation,
+   `examined=6`, `changed=1`, `skipped=5`, `failed=0`, and cleanup verified.
 5. **P14-G5 — independent semantic evidence.** The frozen 14-case semantic
    holdout runs against the exact release candidate and receives independent
    review. The bounded local runner, deterministic negative canaries and
    fail-closed procedural attestation gate are implemented in
    [`phase-14-holdout.md`](phase-14-holdout.md). The immutable first real-model
    run accepted 11/14 cases against an earlier commit and cannot be approved.
-   A second run pinned to the final candidate improved to 12/14 but still
-   failed the conflict-phrasing and role-relationship checks. A third run with
-   the structural adapter passed the conflict case and reached 13/14; its
-   remaining `role-reversal` result was `ROLE_RELATIONSHIP_MISSING`. All three
-   reports are immutable failed evidence and cannot be approved. Runner `1.2.0`
-   / adapter `2.1.0` has a locally tested bounded grammar correction, but no
-   passing provider report or reviewer attestation exists. The lexical oracle,
-   deterministic suite and bounded smoke are not substitutes for this gate.
+   A second run pinned to the final candidate improved to 12/14, and the final
+   immutable report `phase14-holdout-20260928-prod-final.json` is pinned to
+   release commit `fe53da68b1cb696de0741e94ff1ece99ecc3d710` and artifact
+   SHA-256 `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`.
+   It reached 13/14 with `role-reversal` rejected as
+   `ROLE_RELATIONSHIP_MISSING`; its separate attestation is
+   `needs_follow_up` (report SHA-256
+   `4035b8d3d64e099aa9f905c068c456331df9ef6ba5e7366c58331c57bf0fd890`).
+   The local runner `1.2.0` / adapter `2.1.0` correction still requires a
+   newly authorized provider holdout. The report is immutable failed evidence;
+   the lexical oracle, deterministic suite and bounded smoke are not
+   substitutes for this gate.
 6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
    recovery procedures, backup/retention ownership, verified deployment and
-   rollback, and shared-resource teardown evidence are complete. The local
-   stack is deployed and its procedure is in
-   [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md); fault,
-   rollback and recovery evidence plus owner sign-off remain open.
+   rollback, and shared-resource teardown evidence are complete. The final
+   smoke, isolated 62-item PITR restore/delete, rollback to `50dd36f`, forward
+   recovery to `fe53da68...`, and confirmed SNS subscription are recorded in
+   [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md). Current
+   alarm state is 11 `OK` and one `ALARM` (`MalwareScanErrorsAlarm`, two
+   errors), so diagnosis remains a blocker; retention/ownership sign-off and
+   strict TLS remain open.
 7. **P14-G7 — cost and deployment authority.** Earlier operation-specific
    approvals covered the completed deployment and bounded test runs, but do not
    establish a reusable production budget. The final inventory, numeric cost

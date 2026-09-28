@@ -468,6 +468,19 @@ def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, s
         rf"\bto\s+(?:the\s+)?buyer\b(?:\s+\w+){{0,3}}\s+\bis\s+(?:the\s+)?supplier\b",
         normalized,
     )
+    actor_nominal = re.search(
+        rf"\b(?:the\s+)?(?:party|entity|one)\s+(?:responsible\s+for|required\s+to|obligated\s+to|"
+        rf"obliged\s+to)\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+to\s+(?:the\s+)?buyer\b"
+        rf"(?:\s+\w+){{0,3}}\s+is\s+(?:the\s+)?supplier\b",
+        normalized,
+    )
+    supplier_nominal = re.search(
+        rf"\bsupplier\s+is\s+(?:the\s+)?(?:party|entity|one)\s+(?:responsible\s+for|required\s+to|"
+        rf"obligated\s+to|obliged\s+to)\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+to\s+(?:the\s+)?buyer\b",
+        normalized,
+    )
     split_recipient = re.search(
         rf"\b{actor}\b\s+{modal}\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
         rf"\b(?:notice|notification)\b(?:\s+\w+){{0,8}}\s+\b(?:buyer\s+is\s+(?:the\s+)?recipient|"
@@ -477,6 +490,12 @@ def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, s
     passive_notice = re.search(
         rf"\b(?:notice|notification)\b(?:\s+\w+){{0,4}}\s+\bto\s+(?:the\s+)?buyer\b"
         rf"(?:\s+\w+){{0,3}}\s+{modal}\s+(?:be\s+)?{_NOTICE_PASSIVE_ACTION}\b"
+        rf"(?:\s+\w+){{0,3}}\s+\bby\s+(?:the\s+)?supplier\b",
+        normalized,
+    )
+    passive_notice_modal_first = re.search(
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,4}}\s+{modal}\s+(?:be\s+)?{_NOTICE_PASSIVE_ACTION}\b"
+        rf"(?:\s+\w+){{0,3}}\s+\bto\s+(?:the\s+)?buyer\b"
         rf"(?:\s+\w+){{0,3}}\s+\bby\s+(?:the\s+)?supplier\b",
         normalized,
     )
@@ -495,14 +514,41 @@ def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, s
         rf"(?:\s+\w+){{0,3}}\s+\bby\s+(?:the\s+)?buyer\b",
         normalized,
     ) or re.search(
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,4}}\s+{modal}\s+(?:be\s+)?{_NOTICE_PASSIVE_ACTION}\b"
+        rf"(?:\s+\w+){{0,3}}\s+\bto\s+(?:the\s+)?supplier\b"
+        rf"(?:\s+\w+){{0,3}}\s+\bby\s+(?:the\s+)?buyer\b",
+        normalized,
+    ) or re.search(
         rf"\b(?:the\s+)?(?:party|entity)\s+(?:who|that)\s+{modal}\s+{transitive_action}\b"
         rf"(?:\s+\w+){{0,5}}\s+\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+"
         rf"\bto\s+(?:the\s+)?supplier\b(?:\s+\w+){{0,3}}\s+\bis\s+(?:the\s+)?buyer\b",
         normalized,
+    ) or re.search(
+        rf"\b(?:the\s+)?(?:party|entity|one)\s+(?:responsible\s+for|required\s+to|obligated\s+to|"
+        rf"obliged\s+to)\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+to\s+(?:the\s+)?supplier\b"
+        rf"(?:\s+\w+){{0,3}}\s+is\s+(?:the\s+)?buyer\b",
+        normalized,
+    ) or re.search(
+        rf"\bbuyer\s+is\s+(?:the\s+)?(?:party|entity|one)\s+(?:responsible\s+for|required\s+to|"
+        rf"obligated\s+to|obliged\s+to)\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+to\s+(?:the\s+)?supplier\b",
+        normalized,
     )
     if reversal is not None:
         return False, "ROLE_REVERSAL"
-    if not any((active_to_buyer, active_notify, active_buyer_object, actor_predicate, split_recipient, passive_notice, passive_buyer)):
+    if not any((
+        active_to_buyer,
+        active_notify,
+        active_buyer_object,
+        actor_predicate,
+        actor_nominal,
+        supplier_nominal,
+        split_recipient,
+        passive_notice,
+        passive_notice_modal_first,
+        passive_buyer,
+    )):
         return False, "ROLE_RELATIONSHIP_MISSING"
     return True, "VALID_ROLE_RELATIONSHIP"
 

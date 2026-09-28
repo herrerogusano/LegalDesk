@@ -2,8 +2,8 @@
 
 ## Status, scope and authority
 
-Status: **authenticated public-beta infrastructure deployed and browser-smoke
-tested; production promotion remains gated**.
+Status: **authenticated public-beta infrastructure deployed and bounded
+release/operations evidence recorded; production promotion remains gated**.
 
 The approved product scope is an authenticated public beta for fictional or
 public documents only. It is not a legal-data service and it does not assume
@@ -157,8 +157,12 @@ change-set deployment, rollback, teardown, and ownership of retained shared
 resources. The local candidate is `infra/cloudformation/phase-14-operations.yaml`
 with the procedure in `docs/phase-14-operations-runbook.md`; it uses standard
 metrics, an optional already-owned alarm topic, and direct-email Budget alerts
-without creating SNS or dashboard resources. Keep production promotion closed
-until all gates have attached provider evidence and owner sign-off.
+without creating SNS or dashboard resources. A bounded release exercise has
+  now recorded smoke, rollback/forward recovery, isolated PITR restore/delete,
+  reconciliation, confirmed SNS subscription, and alarm evidence; keep
+  production promotion closed while `MalwareScanErrorsAlarm` is in `ALARM`,
+  semantic evidence is incomplete, strict TLS/custom-domain transport is
+  absent, and owner sign-off is pending.
 
 The public application additionally reserves a durable, fail-closed monthly
 tenant quota before uploads and potentially billable chat, ingestion, Harness,
