@@ -27,18 +27,31 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 - Deployment: `LegalDeskPhase14PublicEdge` is `UPDATE_COMPLETE`; the Lambda
   artifact is from commit `50dd36f`, and the IAM/template correction is commit
   `7194b00`. Metadata-only reports `01`–`06` preserve each bounded attempt.
-- Independent readiness review kept the release closed because the only real
-  holdout is the immutable historical 11/14 run and the privacy/operations/cost
-  approvals are incomplete. A zero-network preflight passed for release commit
+- Independent readiness review initially kept the release closed because the
+  only real holdout at that checkpoint was the immutable historical 11/14 run
+  and the privacy/operations/cost approvals were incomplete. A zero-network
+  preflight passed for release commit
   `19b86acc7a4f659c972cb960b0b41327674c4498` and Lambda SHA-256
   `eb36c4559176c433562f2273aaa9948661f65fa6f16695726eda2848f0c8c0be`,
   with both local safety canaries and a hard ceiling of 27 model calls.
+- The separately authorized final-candidate holdout then accepted 12/14 with
+  27 calls and zero retries. Its immutable report remains failed evidence; no
+  attestation was created. Review traced both remaining failures to literal
+  evaluation adapters rather than resolver/citation selection.
+- Runner `1.1.0` and grounding adapter `2.0.0` now validate the conflict and
+  directed relationship structurally, bind accepted cases to exact
+  server-owned fixture citations, and make attestation verify complete
+  per-case/counter/provenance consistency. The full 555-test suite passes. A
+  new zero-network preflight passed for commit
+  `623002eebf8ed556a8153ea6d3488229d617ee03`, the unchanged Lambda artifact
+  SHA-256, and adapter implementation SHA-256
+  `24a1cc4dbc4e0bdd26aaf47f03942e1ee91b4f25978a78a0da0c13a0d6cbfb59`.
 
 ## Source state
 
 - Branch: `phase/14-public-beta`
-- Release-candidate commit used by the final holdout preflight:
-  `19b86acc7a4f659c972cb960b0b41327674c4498`.
+- Current release-candidate commit used by the revised holdout preflight:
+  `623002eebf8ed556a8153ea6d3488229d617ee03`.
 - Integration target remains `developer`; no Phase 14 pull request or merge has
   been completed yet.
 - Local-only `.agents/`, `skills-lock.json`, and `tmp/` are intentionally not
