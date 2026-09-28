@@ -173,29 +173,45 @@ def _state_key(kind: str, value: object, suffix: str) -> dict[str, str]:
     return {"pk": f"{STATE_PREFIX}{hashlib.sha256(material).hexdigest()}", "sk": suffix}
 
 
-def discover_subject_state(table: Any, subject: str, *, budget: CallBudget, limit: int = 100) -> set[tuple[str, str]]:
-    """Discover one bounded page of P14 state rows for a new subject."""
+def discover_subject_state(
+    table: Any,
+    subject: str,
+    *,
+    budget: CallBudget,
+    limit: int = 100,
+    max_scanned: int = 1_000,
+) -> set[tuple[str, str]]:
+    """Discover a subject's P14 state within explicit page and scan bounds."""
 
     from boto3.dynamodb.conditions import Attr
 
-    response = budget.call(
-        "dynamodb", table.scan,
-        FilterExpression=(Attr("subject").eq(subject) | Attr("verifiedSubject").eq(subject)) & Attr("pk").begins_with(STATE_PREFIX),
-        ProjectionExpression="#pk,#sk,#entity",
-        ExpressionAttributeNames={"#pk": "pk", "#sk": "sk", "#entity": "entityType"},
-        Limit=limit,
-    )
-    if response.get("LastEvaluatedKey"):
-        raise RuntimeError("subject state discovery was not complete")
-    items = response.get("Items", ())
-    if not isinstance(items, list) or len(items) > limit:
-        raise RuntimeError("subject state discovery exceeded bound")
     result: set[tuple[str, str]] = set()
-    for item in items:
-        if not isinstance(item, Mapping) or not isinstance(item.get("pk"), str) or not isinstance(item.get("sk"), str):
-            raise RuntimeError("subject state key is malformed")
-        result.add((item["pk"], item["sk"]))
-    return result
+    scanned = 0
+    start_key = None
+    for _page in range(10):
+        kwargs: dict[str, object] = {
+            "FilterExpression": (Attr("subject").eq(subject) | Attr("verifiedSubject").eq(subject)) & Attr("pk").begins_with(STATE_PREFIX),
+            "ProjectionExpression": "#pk,#sk,#entity",
+            "ExpressionAttributeNames": {"#pk": "pk", "#sk": "sk", "#entity": "entityType"},
+            "Limit": min(100, max_scanned - scanned),
+        }
+        if start_key is not None:
+            kwargs["ExclusiveStartKey"] = start_key
+        response = budget.call("dynamodb", table.scan, **kwargs)
+        scanned += int(response.get("ScannedCount", 0))
+        items = response.get("Items", ())
+        if not isinstance(items, list) or len(result) + len(items) > limit:
+            raise RuntimeError("subject state discovery exceeded result bound")
+        for item in items:
+            if not isinstance(item, Mapping) or not isinstance(item.get("pk"), str) or not isinstance(item.get("sk"), str):
+                raise RuntimeError("subject state key is malformed")
+            result.add((item["pk"], item["sk"]))
+        start_key = response.get("LastEvaluatedKey")
+        if not start_key:
+            return result
+        if scanned >= max_scanned:
+            raise RuntimeError("subject state discovery exceeded scan bound")
+    raise RuntimeError("subject state discovery exceeded page bound")
 
 
 def query_history_state(table: Any, subject: str, tenant_id: str, matter_id: str, *, budget: CallBudget, limit: int = 100) -> set[tuple[str, str]]:

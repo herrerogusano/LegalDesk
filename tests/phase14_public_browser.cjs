@@ -230,7 +230,7 @@ async function run() {
       result: "PASS", smoke: "phase14-public-browser", matterId: MATTER_ID,
       indexedDocuments, citationCount: chat.citations.length,
       reviewsListed, reviewsOpened, crossMatterStatus: deniedStatus,
-      auditEventCount: audit.events.length, logoutStatus: logout.status,
+      auditEventCount: audit.events.length, logoutStatus: logout.status(),
       requestCounts, cleanup,
     };
   } finally {

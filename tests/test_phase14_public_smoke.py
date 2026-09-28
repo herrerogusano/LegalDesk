@@ -6,6 +6,7 @@ import unittest
 from phase14_public_smoke import (
     CallBudget,
     PublicSmokeConfig,
+    discover_subject_state,
     parse_browser_report,
     safe_report,
     validate_config,
@@ -87,6 +88,25 @@ class Phase14PublicSmokeTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             budget.call("test", lambda: calls.append(True))
         self.assertEqual(calls, [True])
+
+    def test_subject_state_discovery_is_bounded_but_can_cross_pages(self) -> None:
+        class Table:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.assertions: list[dict[str, object]] = []
+
+            def scan(self, **kwargs: object) -> dict[str, object]:
+                self.calls += 1
+                self.assertions.append(kwargs)
+                if self.calls == 1:
+                    return {"Items": [], "ScannedCount": 100, "LastEvaluatedKey": {"pk": "next", "sk": "next"}}
+                return {"Items": [{"pk": "LEGALDESK#P14#STATE#owned", "sk": "RECORD"}], "ScannedCount": 2}
+
+        table = Table()
+        result = discover_subject_state(table, "subject-1", budget=CallBudget(), max_scanned=200)
+        self.assertEqual(result, {("LEGALDESK#P14#STATE#owned", "RECORD")})
+        self.assertEqual(table.calls, 2)
+        self.assertIn("ExclusiveStartKey", table.assertions[-1])
 
 
 if __name__ == "__main__":
