@@ -17,7 +17,8 @@ secret, token, document body, prompt, answer or credential.
   revocation is enabled.
 - S3 public access is fully blocked, SSE-S3 is enabled, exact CORS is deployed,
   quarantine expires after one day and canonical `tenants/` objects after 30
-  days. Source-bucket versioning is not enabled.
+  days. The deployed source bucket is unversioned; fictional/public beta
+  recovery is re-upload-only. Version-aware recovery is not claimed.
 - GuardDuty Malware Protection is active only for the approved quarantine
   prefix. Reconciliation is enabled every 15 minutes.
 - DynamoDB is on-demand with TTL and 35-day point-in-time recovery enabled.
@@ -55,11 +56,13 @@ secret, token, document body, prompt, answer or credential.
    approved custom hostname and a validated ACM certificate in `us-east-1`.
    Without them the release can only be described as a constrained beta with
    this residual risk, not strict production transport.
-5. **Recovery/retention:** source-bucket versioning is disabled. Either enable
-   versioning with an approved noncurrent-version lifecycle and restore test,
-   or explicitly accept re-upload-only recovery for fictional/public source
-   documents. Name the beta operator, application owner and data owner; approve
-   review archival, residual metadata retention, legal-hold and export policy.
+5. **Recovery/retention:** source-bucket versioning is intentionally not
+   enabled. The fictional/public beta accepts re-upload-only recovery. A future
+   version-aware design would need an explicit one-way CloudFormation decision,
+   least-privilege version listing/deletion, lifecycle/delete-marker rules and
+   an isolated restore/delete drill. Name the beta operator, application owner
+   and data owner; approve review archival, residual metadata retention,
+   legal-hold and export policy.
 
 ## Proposed bounded execution envelope
 
@@ -77,8 +80,9 @@ exercise for this exact account and region:
 - no real/client legal data, no anonymous signup, no broad IAM, no new region
   and no unrelated infrastructure;
 - a dedicated alarm topic/subscription only if explicitly approved;
-- source-bucket versioning/custom-domain resources only if separately selected
-  and approved with their lifecycle/ownership.
+- custom-domain resources only if separately selected and approved with their
+  lifecycle/ownership. Source-bucket versioning is deferred and is not part of
+  this release envelope.
 
 All evidence must pin commit, artifact and template hashes. A failed holdout is
 preserved and stops promotion; it is not retried under the same authorization.

@@ -8,14 +8,29 @@ deployment evidence, not proof that the remaining recovery and rollback drills
 have passed. The operations stack is
 `infra/cloudformation/phase-14-operations.yaml`; it reuses resource
 names supplied as parameters and creates twelve standard CloudWatch alarms and
-one monthly AWS Budget. It deliberately creates no SNS topic, dashboard, WAF,
-or data resource. No additional AWS call is authorized by this document.
+one monthly AWS Budget. It creates no alarm topic by default. An operator may
+explicitly choose one of two mutually exclusive notification modes:
+`ExistingAlarmTopicArn` reuses an already-owned topic, or
+`CreateAlarmTopic=true` creates one project-owned topic plus one email
+subscription using the `AlarmNotificationEmail` NoEcho parameter. No topic is
+created when both modes are empty, and the template rejects both modes being
+selected at once. No additional AWS call is authorized by this document.
 
-The alarms are visible-only when `ExistingAlarmTopicArn` is empty. If an
-already-owned SNS topic is explicitly supplied, the same alarms enable that
-topic as an action; this stack never creates or manages an SNS topic. The
-Budget uses the supplied email directly and its 80%/100% notifications are
-alerts, not a billing hard cap. It is deliberately account-wide because some
+The alarms are visible-only when both topic modes are empty. If either valid
+mode is selected, all twelve alarms use the effective topic as their action.
+For the managed mode, SNS sends a confirmation email; alarm delivery is not
+considered active until the recipient confirms it. Do not reuse an unrelated
+SNS topic. The managed topic/subscription is stack-owned and must be removed
+only through an owner-approved teardown; SNS request/email delivery charges
+may apply. Its topic policy grants only `cloudwatch.amazonaws.com` the
+`sns:Publish` action, restricted by both the current account and the exact
+regional CloudWatch alarm ARN pattern. This source-account/source-ARN binding
+is the confused-deputy control; it is not applied to an existing topic because
+that topic's owner controls its policy. The effective topic ARN is exposed in
+the `EffectiveAlarmTopicArn` stack output for release evidence. The Budget
+uses the supplied email directly and its 80%/100%
+notifications are alerts, not a billing hard cap. It is deliberately
+account-wide because some
 Bedrock/Marketplace charges cannot be reliably attributed by project tag; set
 the threshold with the account's existing non-LegalDesk spend in mind.
 
@@ -47,8 +62,10 @@ Run these exercises without AWS or real-model calls:
 
 1. Render the operations template with a local CloudFormation parser and
    assert all twelve alarms use native namespaces, bounded dimensions,
-   `TreatMissingData: notBreaching`, and no SNS resource. Verify the optional
-   alarm topic is empty for the local default.
+   `TreatMissingData: notBreaching`, and the effective topic action. Verify
+   that the local default creates no topic, that `ExistingAlarmTopicArn` and
+   `CreateAlarmTopic=true` are mutually exclusive, and that the managed mode
+   requires email confirmation.
 2. In the API/application provider doubles, inject one 5xx, a timeout-shaped
    latency, and a Lambda error/throttle result. Confirm the local incident
    report maps each signal to the runbook response and never prints tokens,
@@ -105,20 +122,26 @@ resource to recover a failed application deployment.
 The operations stack does not silently enable a new backup service. The Phase
 02 table template enables DynamoDB point-in-time recovery; deployment evidence
 must verify it is active and the data owner must record the permitted recovery
-window and owner-approved restore test. The source bucket's encryption, lifecycle and
-retained-object policy must likewise be verified from the deployed resource;
-local template validation is not proof of backup coverage. A recovery drill
-must restore into an isolated name, validate tenant/matter isolation and then
-remove only that synthetic restore. Until that evidence exists, the recovery
-gate remains open and production promotion is blocked.
+window and owner-approved restore test. The deployed Phase 02 source bucket is
+unversioned, so the fictional/public beta has re-upload-only recovery and no
+object-version backup claim. Its encryption, lifecycle and retained-object
+policy must be verified from the deployed resource; local template validation
+is not proof of backup coverage. Enabling versioning is deferred because it
+would be a one-way CloudFormation decision and would first require
+version-aware deletion, delete-marker handling, additional least-privilege
+permissions and a restore drill. Until an approved recovery design and test
+exist, the recovery gate remains open and production promotion is blocked.
 
 ## Teardown and retained ownership
 
 Teardown is a recorded, owner-approved operation—not part of a failed test.
 Stop traffic and inference, disable the reconciliation schedule, and remove
 only synthetic/public beta objects, sidecars, vectors, state records, alarms,
-budget and temporary artifacts. Verify quarantine and source prefixes,
-noncurrent versions, DLQs, log groups and CloudFormation events independently.
+budget and temporary artifacts. Verify quarantine and source prefixes, DLQs,
+log groups and CloudFormation events independently. If versioning is ever
+approved, teardown must additionally list and delete object versions and delete
+markers with dedicated, exact-scope controls; the current beta has no such
+version-management path.
 
 The candidate templates mark frontend bucket, log groups, malware/reconciliation
 DLQs and other durable resources with `DeletionPolicy: Retain` where they own
@@ -131,3 +154,14 @@ Ownership must be explicit before deployment: a named beta operator owns
 alarm review and budget close; an application owner owns rollback; a data
 owner owns retention/deletion/export approval. No production promotion is
 allowed while any owner or retained-resource inventory is unknown.
+
+### Alert delivery ownership and retention
+
+The alarm topic is not a delivery guarantee: CloudWatch actions can publish to
+the topic, but the email endpoint must confirm the SNS subscription and remain
+owned by the named beta operator. Record the confirmation and the topic ARN in
+the release evidence without recording the email address in source control.
+For teardown, disable alarm actions, remove the managed subscription and topic
+through the stack, and retain only the minimum release/incident evidence. Do
+not delete or modify an existing topic supplied through
+`ExistingAlarmTopicArn`; its owner controls its lifecycle.

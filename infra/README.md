@@ -68,8 +68,15 @@ The Phase 14 operations candidate
 ([phase-14-operations.yaml](cloudformation/phase-14-operations.yaml)) adds
 standard CloudWatch alarms for the public API, application/malware/reconciliation
 Lambdas and both DLQs, plus a configurable monthly Budget with direct email
-notifications. It intentionally creates no SNS topic, dashboard, WAF or data
-resource. An existing SNS topic may be supplied explicitly for alarm actions;
-the stack never creates or manages that topic. The no-AWS release, synthetic-
-fault and rollback procedure is in
+notifications. It creates no alarm topic by default. Operators can either
+provide an already-owned `ExistingAlarmTopicArn` or explicitly set
+`CreateAlarmTopic=true` with the NoEcho `AlarmNotificationEmail` parameter;
+the template rejects both modes together and all twelve alarms point to the
+effective topic. The managed email subscription remains pending until its
+recipient confirms it. The managed topic policy permits only CloudWatch alarm
+publishes from this account and region, binding both `aws:SourceAccount` and
+the exact `aws:SourceArn` alarm pattern to reduce confused-deputy risk. The
+effective topic ARN is available as a stack output. Do not reuse unrelated SNS
+topics; account for SNS request/delivery cost and owner-approved teardown. The no-AWS release,
+synthetic-fault and rollback procedure is in
 [`phase-14-operations-runbook.md`](../docs/phase-14-operations-runbook.md).

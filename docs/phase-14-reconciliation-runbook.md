@@ -68,9 +68,11 @@ candidate after provider/storage recovery; do not broaden the scope or batch
 limit. Preserve the report metadata (counts, opaque IDs, scope and timestamp)
 without recording tokens, document bodies, signed URLs, passages or secrets.
 
-The Phase 02 table enables TTL on `ttl`, and its non-versioned source bucket
-expires the `quarantine/` prefix after one day. TTL is cleanup assistance, not a
-guaranteed deadline or access-control decision. No AWS call is part of local
-tests. The deployed schedule, IAM permissions and alarms must be revalidated
-after every approved update; the provider-side fault/recovery exercise remains
-an open production-promotion gate.
+The Phase 02 table enables TTL on `ttl`, and the deployed source bucket remains
+unversioned with one-day quarantine and 30-day canonical lifecycle rules. S3
+lifecycle is cleanup assistance, not a guaranteed deadline or access-control
+decision. The current reconciler deliberately has no version-management path;
+reconciliation must not treat a version ID as an authorization input. No AWS
+call is part of local tests. The deployed schedule, IAM permissions and alarms
+must be revalidated after every approved update; the provider-side
+fault/recovery exercise remains an open production-promotion gate.

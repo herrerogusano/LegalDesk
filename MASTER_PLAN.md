@@ -112,7 +112,7 @@ permanece cerrada hasta completar los gates restantes.
   state, asynchronous ingestion, exact-origin security, and pre-provisioned
   authenticated users only; the local release candidate, bounded holdout
   runner, quarantine/reconciliation and operations controls are implemented
-  and validated (559 tests, 24/24 deterministic evaluations, all 15 templates
+  and validated (562 tests, 24/24 deterministic evaluations, all 15 templates
   lint-clean). AWS deployment and the bounded browser smoke are complete;
   provider holdout/review, operational exercises, owner decisions and prod
   promotion remain pending.

@@ -16,7 +16,7 @@ class Phase14OperationsInfrastructureTests(unittest.TestCase):
         cls.template = TEMPLATE.read_text(encoding="utf-8")
         cls.runbook = RUNBOOK.read_text(encoding="utf-8")
 
-    def test_template_is_alarm_only_and_has_all_required_signals(self) -> None:
+    def test_template_has_all_required_signals_and_optional_managed_topic(self) -> None:
         text = self.template
         self.assertEqual(text.count("Type: AWS::CloudWatch::Alarm"), 12)
         self.assertIn("Namespace: AWS/ApiGateway", text)
@@ -28,18 +28,81 @@ class Phase14OperationsInfrastructureTests(unittest.TestCase):
         self.assertIn("MetricName: Duration", text)
         self.assertEqual(text.count("Namespace: AWS/SQS"), 2)
         self.assertEqual(text.count("MetricName: ApproximateNumberOfMessagesVisible"), 2)
-        self.assertNotIn("Type: AWS::SNS::Topic", text)
+        self.assertIn("Type: AWS::SNS::Topic", text)
+        self.assertIn("Condition: HasManagedAlarmTopic", text)
+        self.assertIn("Type: AWS::SNS::Subscription", text)
         self.assertNotIn("Type: AWS::CloudWatch::Dashboard", text)
         self.assertNotIn("Type: AWS::WAFv2::WebACL", text)
 
     def test_alarm_defaults_fail_safe_and_topic_is_reused_optionally(self) -> None:
         text = self.template
         self.assertIn("ExistingAlarmTopicArn:", text)
-        self.assertIn("HasAlarmTopic: !Not", text)
+        self.assertIn('CreateAlarmTopic:', text)
+        self.assertIn('Default: "false"', text)
+        self.assertIn("HasExistingAlarmTopic: !Not", text)
+        self.assertIn("HasManagedAlarmTopic: !Equals", text)
+        self.assertIn("HasAlarmTopic: !Or", text)
+        self.assertIn("Rules:", text)
+        self.assertIn("Choose exactly one alarm topic mode", text)
+        self.assertIn("AlarmNotificationEmail:", text)
         self.assertEqual(text.count("TreatMissingData: notBreaching"), 12)
-        self.assertEqual(text.count("AlarmActions: !If [HasAlarmTopic"), 12)
+        self.assertEqual(text.count("AlarmActions: !If\n        - HasAlarmTopic"), 12)
+        alarm_body = text.split("Outputs:", 1)[0]
+        self.assertEqual(
+            alarm_body.count("HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic"),
+            12,
+        )
         self.assertEqual(text.count("ActionsEnabled: !If [HasAlarmTopic"), 12)
-        self.assertNotIn("AlarmActions: [!Ref", text)
+        self.assertNotIn("AlarmActions: [!Ref ExistingAlarmTopicArn]", text)
+
+    def test_alarm_topic_rules_validate_parameters_directly(self) -> None:
+        rules = self.template.split("Rules:", 1)[1].split("Resources:", 1)[0]
+        # Rules must evaluate parameter values directly.  Referencing template
+        # Conditions here is not a portable CloudFormation parameter-rule
+        # validation pattern.
+        self.assertNotIn("!Condition", rules)
+        self.assertIn('!Ref ExistingAlarmTopicArn, ""', rules)
+        self.assertIn('!Ref CreateAlarmTopic, "true"', rules)
+        self.assertIn('!Ref CreateAlarmTopic, "false"', rules)
+        self.assertIn('!Ref AlarmNotificationEmail, ""', rules)
+        self.assertIn("Choose exactly one alarm topic mode", rules)
+        self.assertIn("AlarmNotificationEmail is only valid", rules)
+        self.assertIn("AlarmNotificationEmail must be supplied", rules)
+
+    def test_managed_subscription_is_explicit_and_requires_confirmation(self) -> None:
+        text = self.template
+        self.assertIn("AlarmSubscription:", text)
+        self.assertIn("Protocol: email", text)
+        self.assertIn("Endpoint: !Ref AlarmNotificationEmail", text)
+        self.assertIn("TopicArn: !Ref AlarmTopic", text)
+        # The email is a sensitive deployment parameter and must not be echoed.
+        email_block = text.split("AlarmNotificationEmail:", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("NoEcho: true", email_block)
+
+    def test_managed_topic_policy_is_least_privilege_and_effective_arn_is_output(self) -> None:
+        text = self.template
+        self.assertIn("AlarmTopicPolicy:", text)
+        policy = text.split("AlarmTopicPolicy:", 1)[1].split("ApiFiveHundredAlarm:", 1)[0]
+        self.assertIn("Condition: HasManagedAlarmTopic", policy)
+        self.assertIn("Type: AWS::SNS::TopicPolicy", policy)
+        self.assertIn("Service: cloudwatch.amazonaws.com", policy)
+        self.assertIn("Action: sns:Publish", policy)
+        self.assertIn("Resource: !Ref AlarmTopic", policy)
+        self.assertIn("aws:SourceAccount: !Ref AWS::AccountId", policy)
+        self.assertIn(
+            'aws:SourceArn: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*"',
+            policy,
+        )
+        self.assertIn("Topics:", policy)
+        self.assertIn("- !Ref AlarmTopic", policy)
+
+        output = text.split("Outputs:", 1)[1]
+        self.assertIn("EffectiveAlarmTopicArn:", output)
+        self.assertIn("Condition: HasAlarmTopic", output)
+        self.assertIn(
+            "Value: !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]",
+            output,
+        )
 
     def test_budget_uses_direct_email_and_is_not_a_hard_cap(self) -> None:
         text = self.template

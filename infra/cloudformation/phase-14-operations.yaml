@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  LegalDesk Phase 14 beta operations controls. Creates only standard
-  CloudWatch alarms over existing API/Lambda/SQS resources and one monthly AWS
-  Budget email alert. It does not create an SNS topic, dashboard, WAF, data
-  store, or application resource.
+  LegalDesk Phase 14 beta operations controls. Creates standard CloudWatch
+  alarms over existing API/Lambda/SQS resources, one monthly AWS Budget email
+  alert, and optionally a project-owned SNS email subscription when explicitly
+  requested. It does not create a topic by default.
 
 Parameters:
   PublicApiId:
@@ -54,12 +54,96 @@ Parameters:
     Type: String
     Default: ""
     AllowedPattern: "^$|^arn:[^:]+:sns:[^:]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$"
-    Description: Optional existing SNS topic ARN for alarm notifications; no topic is created here
+    Description: >-
+      Optional already-owned SNS topic ARN for alarm notifications. Leave empty
+      when CreateAlarmTopic is true; do not pass both modes.
+
+  CreateAlarmTopic:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Explicitly create a project-owned SNS topic and email subscription for
+      alarm notifications. Defaults to false; email confirmation is required.
+
+  AlarmNotificationEmail:
+    Type: String
+    Default: ""
+    NoEcho: true
+    AllowedPattern: "^$|^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    Description: >-
+      Email endpoint for the managed alarm topic. Required only when
+      CreateAlarmTopic is true; the recipient must confirm the SNS email.
 
 Conditions:
-  HasAlarmTopic: !Not [!Equals [!Ref ExistingAlarmTopicArn, ""]]
+  HasExistingAlarmTopic: !Not [!Equals [!Ref ExistingAlarmTopicArn, ""]]
+  HasManagedAlarmTopic: !Equals [!Ref CreateAlarmTopic, "true"]
+  HasAlarmTopic: !Or
+    - !Condition HasExistingAlarmTopic
+    - !Condition HasManagedAlarmTopic
+
+Rules:
+  AlarmTopicMode:
+    Assertions:
+      - Assert: !Not
+          - !And
+            - !Not [!Equals [!Ref ExistingAlarmTopicArn, ""]]
+            - !Equals [!Ref CreateAlarmTopic, "true"]
+        AssertDescription: >-
+          Choose exactly one alarm topic mode: ExistingAlarmTopicArn or
+          CreateAlarmTopic=true, never both.
+      - Assert: !Or
+          - !Equals [!Ref CreateAlarmTopic, "true"]
+          - !Equals [!Ref AlarmNotificationEmail, ""]
+        AssertDescription: >-
+          AlarmNotificationEmail is only valid when CreateAlarmTopic is true.
+      - Assert: !Or
+          - !Equals [!Ref CreateAlarmTopic, "false"]
+          - !Not [!Equals [!Ref AlarmNotificationEmail, ""]]
+        AssertDescription: >-
+          AlarmNotificationEmail must be supplied when CreateAlarmTopic is true.
 
 Resources:
+  AlarmTopic:
+    Condition: HasManagedAlarmTopic
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "${AWS::StackName} alarm notifications"
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: ManagedBy
+          Value: LegalDeskPhase14Operations
+
+  AlarmSubscription:
+    Condition: HasManagedAlarmTopic
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref AlarmNotificationEmail
+      Protocol: email
+      TopicArn: !Ref AlarmTopic
+
+  AlarmTopicPolicy:
+    Condition: HasManagedAlarmTopic
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarmPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*"
+      Topics:
+        - !Ref AlarmTopic
+
   ApiFiveHundredAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -81,7 +165,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ApiLatencyAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -104,7 +191,10 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ApplicationErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -123,7 +213,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ApplicationThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -142,7 +235,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ApplicationDurationAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -161,7 +257,10 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   MalwareScanErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -180,7 +279,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   MalwareScanThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -199,7 +301,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ReconciliationErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -218,7 +323,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ReconciliationThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -237,7 +345,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ReconciliationDurationAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -256,7 +367,10 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   MalwareScanDlqVisibleAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -275,7 +389,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   ReconciliationDlqVisibleAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -294,7 +411,10 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       ActionsEnabled: !If [HasAlarmTopic, true, false]
-      AlarmActions: !If [HasAlarmTopic, [!Ref ExistingAlarmTopicArn], !Ref AWS::NoValue]
+      AlarmActions: !If
+        - HasAlarmTopic
+        - - !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]
+        - !Ref AWS::NoValue
 
   MonthlyBudget:
     Type: AWS::Budgets::Budget
@@ -329,3 +449,7 @@ Outputs:
     Value: !Ref MonthlyBudget
   AlarmCount:
     Value: "12"
+  EffectiveAlarmTopicArn:
+    Condition: HasAlarmTopic
+    Description: Effective SNS topic used by the twelve CloudWatch alarms
+    Value: !If [HasExistingAlarmTopic, !Ref ExistingAlarmTopicArn, !Ref AlarmTopic]

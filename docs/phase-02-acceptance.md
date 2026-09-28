@@ -40,11 +40,13 @@ ingestion, or retrieval was created or invoked.
   sidecar leaves the document in `PENDING_UPLOAD`.
 - In-memory fakes support deterministic local tests; boto3 adapters are lazy
   and injectable and were not called in this phase.
-- IaC defines encrypted, private, TLS-only S3 with a 30-day lifecycle,
+- IaC defines encrypted, private, TLS-only S3 with a one-day quarantine and
+  30-day canonical lifecycle,
   on-demand encrypted DynamoDB, and a least-privilege pipeline role with
   prefix-restricted object management for original files and Bedrock sidecars
-  (including `GetObject` only for upload confirmation). Stack teardown removes
-  both resources after the bucket is emptied.
+  (including `GetObject` only for upload confirmation). The bucket and table are
+  retained by default; any owner-approved teardown must empty the bucket before
+  deleting resources.
 - Two small, clearly distinguishable fictional fixtures are included.
 
 ## Local evidence

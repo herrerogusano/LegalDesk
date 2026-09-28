@@ -33,6 +33,13 @@ Lambda, and CloudWatch usage may continue to incur charges. Historical smoke
 teardown is not a live inventory or a guarantee that an account has no
 retained resources.
 
+The deployed Phase 02 source bucket remains unversioned. For the fictional/public
+beta, recovery is therefore re-upload-only: S3 lifecycle bounds current
+objects, while the application does not claim object-version backup coverage.
+Enabling versioning would add storage cost, require version-aware deletion and
+least-privilege `ListBucketVersions`/`DeleteObjectVersion` permissions, and is
+deferred until that separate design and approval exist.
+
 ### New or changed resources in the target topology
 
 - CloudFront distribution, HTTPS custom domain and ACM certificate; Route 53
@@ -46,9 +53,13 @@ retained resources.
 - CloudWatch log ingestion, alarms and custom metrics.
 - Twelve standard CloudWatch alarms over the public API, application,
   malware/reconciliation Lambdas and their DLQs, plus one direct-email monthly
-  AWS Budget alert. The operations candidate does not create an SNS topic or
-  dashboard. The Budget is account-wide so it does not silently omit untaggable
-  Bedrock/Marketplace spend. Alarm and log retention charges are still possible.
+  AWS Budget alert. The operations candidate creates no alarm topic by default;
+  it can either reuse an explicitly supplied existing topic or create one
+  project-owned SNS topic and one email subscription when explicitly enabled.
+  SNS request/delivery charges and the subscription confirmation/teardown are
+  operator responsibilities. The Budget is account-wide so it does not
+  silently omit untaggable Bedrock/Marketplace spend. Alarm and log retention
+  charges are still possible.
 - Optional WAF WebACL/rules and request charges.
 - Optional ECR image storage/scanning if Lambda is delivered as a container.
 - Real-model holdout inference, retrieval, Guardrail calls, and any required
@@ -101,8 +112,10 @@ The local operational candidate and response procedure are in
 [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md). It uses
 native AWS metrics, five-minute beta evaluation periods by default, and
 `notBreaching` for missing data. No alarm action is enabled until an approved
-on-call destination exists; an existing SNS topic can be passed explicitly
-without creating a new topic. The Budget's direct email is only an alert.
+on-call destination exists. An existing SNS topic can be passed explicitly, or
+the stack can create a project-owned topic only when `CreateAlarmTopic=true`
+and a NoEcho confirmation email is provided; both modes cannot be selected
+together. The Budget's direct email is only an alert.
 
 ## Deployment and rollback expectations
 
