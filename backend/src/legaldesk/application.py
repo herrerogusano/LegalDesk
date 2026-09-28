@@ -326,6 +326,7 @@ def build_aws_composition(
     s3_config = Config(
         signature_version="s3v4",
         retries={"total_max_attempts": 1, "mode": "standard"},
+        s3={"addressing_style": "virtual"},
     )
     client_factory = boto3.client if boto3_session is None else boto3_session.client
     resource_factory = boto3.resource if boto3_session is None else boto3_session.resource
