@@ -116,3 +116,16 @@ material conflicting values, and actor/action/recipient direction. The failed
 report remains immutable historical evidence; the semantic-release gate stays
 closed until a new, separately authorized run against the corrected release
 passes and receives independent attestation.
+
+A second, separately authorized execution is preserved in
+`evals/results/phase14-holdout-20260928-final.json`. It was pinned to release
+commit `19b86acc7a4f659c972cb960b0b41327674c4498` and the deterministic Lambda
+artifact SHA-256
+`eb36c4559176c433562f2273aaa9948661f65fa6f16695726eda2848f0c8c0be`.
+It accepted 12 of 14 cases with 27 calls and zero retries. The remaining
+metadata-only failures were `contradictory-deadlines` /
+`UNSUPPORTED_LEXICAL_CLAIM` and `role-reversal` /
+`ROLE_RELATIONSHIP_MISSING`. This report also cannot be approved or reused as
+passing evidence. Any evaluator correction must be versioned, tested against
+positive and negative paraphrases, and followed by a newly authorized run;
+the historical report is never rescored or overwritten.

@@ -71,8 +71,10 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    review. The bounded local runner, deterministic negative canaries and
    fail-closed procedural attestation gate are implemented in
    [`phase-14-holdout.md`](phase-14-holdout.md). The immutable first real-model
-   run accepted 11/14 cases against an earlier commit and cannot be approved;
-   no passing final-candidate report or reviewer attestation exists. The
+   run accepted 11/14 cases against an earlier commit and cannot be approved.
+   A second run pinned to the final candidate improved to 12/14 but still
+   failed the conflict-phrasing and role-relationship checks. Neither report
+   can be approved; no passing report or reviewer attestation exists. The
    lexical oracle, deterministic suite and bounded smoke are not substitutes
    for this gate.
 6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
