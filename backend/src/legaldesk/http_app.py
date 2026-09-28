@@ -687,7 +687,16 @@ class LoopbackLegalDeskApp:
         if self.composition.chat_service is None:
             raise RuntimeError("chat service is not configured")
         documents = self.composition.document_pipeline.list_documents(identity, matter_id, correlation_id=context.correlation_id)
-        if any(document.status in {DocumentStatus.PENDING_UPLOAD, DocumentStatus.UPLOADED, DocumentStatus.PENDING_INGESTION} for document in documents):
+        has_indexed_document = any(document.status is DocumentStatus.INDEXED for document in documents)
+        has_processing_document = any(
+            document.status in {
+                DocumentStatus.PENDING_UPLOAD,
+                DocumentStatus.UPLOADED,
+                DocumentStatus.PENDING_INGESTION,
+            }
+            for document in documents
+        )
+        if has_processing_document and not has_indexed_document:
             return HTTPStatus.OK, {"answer": "Los documentos seleccionados todavía se están procesando.", "citations": [], "evidenceStatus": None, "operationStatus": "documents_processing", "correlationId": context.correlation_id}, []
         self.composition.quota.reserve(context.tenant_id, CHATS)
         if self.composition.chat_accepts_evidence_sink:

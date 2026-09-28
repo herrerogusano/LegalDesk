@@ -115,6 +115,18 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         self.assertEqual(self.fixture.runtime.retrieve_calls, [])
         self.assertEqual(self.fixture.runtime.guardrail_calls, [])
 
+    def test_processing_upload_does_not_block_existing_indexed_evidence(self):
+        scope = self.start()
+        self.upload()
+        self.upload(sync=False, text="A second upload is still being processed.")
+
+        answer = self.ask(scope)
+
+        self.assertEqual(answer["operationStatus"], "ok")
+        self.assertEqual(answer["evidenceStatus"], "answerable")
+        self.assertEqual(len(answer["citations"]), 1)
+        self.assertEqual(len(self.fixture.runtime.retrieve_calls), 1)
+
     def test_model_failure_is_operational_without_rejected_answer_or_not_found(self):
         scope = self.start()
         self.upload()
