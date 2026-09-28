@@ -561,7 +561,9 @@ Resources:
               QueryString: true
               # Never forward the viewer Host: CloudFront must set the API
               # origin Host, which is the exact value in ALLOWED_HOSTS.
-              Headers: [Origin, Content-Type, Cookie, X-CSRF-Token, Authorization, Accept]
+              # Cookies are forwarded by the dedicated Cookies block; Cookie
+              # is a CloudFront-disallowed explicit forwarded header.
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
               Cookies:
                 Forward: all
             MinTTL: 0
@@ -575,7 +577,7 @@ Resources:
             CachedMethods: [GET, HEAD, OPTIONS]
             ForwardedValues:
               QueryString: true
-              Headers: [Origin, Content-Type, Cookie, X-CSRF-Token, Authorization, Accept]
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
               Cookies:
                 Forward: all
             MinTTL: 0
@@ -589,7 +591,7 @@ Resources:
             CachedMethods: [GET, HEAD, OPTIONS]
             ForwardedValues:
               QueryString: true
-              Headers: [Origin, Content-Type, Cookie, X-CSRF-Token, Authorization, Accept]
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
               Cookies:
                 Forward: all
             MinTTL: 0
@@ -603,7 +605,7 @@ Resources:
             CachedMethods: [GET, HEAD, OPTIONS]
             ForwardedValues:
               QueryString: true
-              Headers: [Origin, Content-Type, Cookie, X-CSRF-Token, Authorization, Accept]
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
               Cookies:
                 Forward: all
             MinTTL: 0
@@ -617,7 +619,7 @@ Resources:
             CachedMethods: [GET, HEAD, OPTIONS]
             ForwardedValues:
               QueryString: true
-              Headers: [Origin, Content-Type, Cookie, X-CSRF-Token, Authorization, Accept]
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
               Cookies:
                 Forward: all
             MinTTL: 0

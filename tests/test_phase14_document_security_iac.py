@@ -64,7 +64,10 @@ class Phase14DocumentSecurityInfrastructureTests(unittest.TestCase):
         text = self.template
         self.assertIn("Handler: legaldesk.malware_scan_lambda.lambda_handler", text)
         self.assertIn("S3ObjectVersion: !Ref MalwareLambdaCodeVersion", text)
-        self.assertIn("ReservedConcurrentExecutions: 5", text)
+        self.assertIn("MalwareReservedConcurrency:", text)
+        self.assertIn("Default: 5", text)
+        self.assertIn("HasMalwareReservedConcurrency", text)
+        self.assertIn("ReservedConcurrentExecutions: !If", text)
         self.assertIn("LEGALDESK_MALWARE_ACCOUNT_ID: !Ref AWS::AccountId", text)
         self.assertIn("LEGALDESK_MALWARE_REGION: !Ref AWS::Region", text)
         self.assertIn("Action: [dynamodb:GetItem, dynamodb:UpdateItem]", text)

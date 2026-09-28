@@ -48,6 +48,8 @@ class Phase14PublicInfrastructureTests(unittest.TestCase):
         self.assertIn("DefaultTTL: 0", text)
         self.assertIn("CachedMethods: [GET, HEAD, OPTIONS]", text)
         self.assertNotIn('Headers: ["*"]', text)
+        self.assertNotIn("Headers: [Origin, Content-Type, Cookie,", text)
+        self.assertEqual(text.count("Cookies:\n                Forward: all"), 5)
         self.assertIn("Never forward the viewer Host", text)
         self.assertIn("OriginCustomHeaders:", text)
         self.assertNotIn("            CustomHeaders:", text)

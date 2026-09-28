@@ -36,6 +36,17 @@ Parameters:
     Type: Number
     Default: 30
     AllowedValues: [7, 14, 30, 60, 90]
+  MalwareReservedConcurrency:
+    Type: Number
+    Default: 5
+    MinValue: 0
+    MaxValue: 100
+    Description: >-
+      Per-function concurrency reservation. Set to 0 only when the regional
+      account concurrency quota is itself the reviewed deployment ceiling.
+
+Conditions:
+  HasMalwareReservedConcurrency: !Not [!Equals [!Ref MalwareReservedConcurrency, 0]]
 
 Resources:
   MalwareProtectionPlanRole:
@@ -198,7 +209,10 @@ Resources:
       Role: !GetAtt MalwareScanExecutionRole.Arn
       Timeout: 30
       MemorySize: 512
-      ReservedConcurrentExecutions: 5
+      ReservedConcurrentExecutions: !If
+        - HasMalwareReservedConcurrency
+        - !Ref MalwareReservedConcurrency
+        - !Ref AWS::NoValue
       Code:
         S3Bucket: !Ref MalwareLambdaCodeBucket
         S3Key: !Ref MalwareLambdaCodeKey

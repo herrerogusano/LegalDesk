@@ -4,11 +4,18 @@ Status: **local implementation only; deployment remains approval-gated**.
 
 The deployable candidate is `infra/cloudformation/phase-14-reconciliation.yaml`.
 It runs `legaldesk.reconciliation_lambda.lambda_handler` from a versioned
-artifact on a bounded EventBridge schedule, with reserved concurrency `1`, a
+artifact on a bounded EventBridge schedule, with a default reserved concurrency
+of `1`, a
 two-attempt retry policy, a retained log group and an encrypted SQS DLQ. The
 Lambda receives no browser selectors. `UploadScopes` and `IngestionScopes` are
 small deployment parameters, and every entry must match the single
 `BetaTenantId`; malformed, duplicate or foreign entries fail closed.
+
+`ReconciliationReservedConcurrency` defaults to `1`. A deployment may set it
+to `0` only when the reviewed regional account concurrency quota is already a
+stricter ceiling and cannot accept Lambda reservations; the one schedule
+target, bounded scopes/limit and durable idempotency remain mandatory. Enable
+the per-function reservation after the account quota is raised.
 
 The reconciler receives an explicit batch of authorized tenant/matter scopes or
 opaque operational candidate IDs. Each batch is bounded (default maximum: 100)

@@ -20,7 +20,10 @@ class Phase14ReconciliationInfrastructureTests(unittest.TestCase):
         text = self.template
         self.assertIn("Handler: legaldesk.reconciliation_lambda.lambda_handler", text)
         self.assertIn("S3ObjectVersion: !Ref ReconciliationCodeVersion", text)
-        self.assertIn("ReservedConcurrentExecutions: 1", text)
+        self.assertIn("ReconciliationReservedConcurrency:", text)
+        self.assertIn("Default: 1", text)
+        self.assertIn("HasReconciliationReservedConcurrency", text)
+        self.assertIn("ReservedConcurrentExecutions: !If", text)
         self.assertIn("MaximumEventAgeInSeconds: 3600", text)
         self.assertIn("MaximumRetryAttempts: 2", text)
         self.assertIn("SqsManagedSseEnabled: true", text)

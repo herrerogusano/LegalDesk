@@ -74,7 +74,11 @@ manages only GuardDuty's named EventBridge rule, enables notifications on the
 one source bucket, writes the fixed validation object, checks that bucket, and
 scans/tags only the beta quarantine object prefix. A three-attempt, one-hour EventBridge
 retry policy sends failures to a retained, SQS-managed-encryption DLQ; the
-Lambda has reserved concurrency five and a bounded CloudWatch log retention.
+Lambda defaults to reserved concurrency five and has bounded CloudWatch log
+retention. `MalwareReservedConcurrency=0` omits the per-function reservation
+only for a reviewed account where the regional Lambda concurrency quota is
+already the stricter deployment ceiling; API/event bounds and durable quotas
+remain in force. Raise the account quota before enabling the reservation.
 No KMS key or permission is added because the existing bucket uses SSE-S3.
 
 Before deployment approval, validate the immutable Lambda artifact parameters,
