@@ -99,10 +99,10 @@ resource to recover a failed application deployment.
 
 ## Backup and recovery ownership
 
-The operations stack does not silently enable a new backup service. Before an
-AWS deployment, the data owner must record whether the existing metadata table
-has point-in-time recovery enabled, the permitted recovery window, and the
-owner-approved restore test. The source bucket's encryption, lifecycle and
+The operations stack does not silently enable a new backup service. The Phase
+02 table template enables DynamoDB point-in-time recovery; deployment evidence
+must verify it is active and the data owner must record the permitted recovery
+window and owner-approved restore test. The source bucket's encryption, lifecycle and
 retained-object policy must likewise be verified from the deployed resource;
 local template validation is not proof of backup coverage. A recovery drill
 must restore into an isolated name, validate tenant/matter isolation and then

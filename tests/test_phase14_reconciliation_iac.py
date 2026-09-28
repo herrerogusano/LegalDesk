@@ -55,6 +55,8 @@ class Phase14ReconciliationInfrastructureTests(unittest.TestCase):
         text = self.phase02
         self.assertIn("TimeToLiveSpecification:", text)
         self.assertIn("AttributeName: ttl", text)
+        self.assertIn("PointInTimeRecoverySpecification:", text)
+        self.assertIn("PointInTimeRecoveryEnabled: true", text)
         self.assertIn("Id: ExpireQuarantineUploads", text)
         self.assertIn("Prefix: quarantine/", text)
         self.assertIn("ExpirationInDays: 1", text)
