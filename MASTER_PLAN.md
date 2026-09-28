@@ -53,13 +53,14 @@ Fases 09–10.
 
 Memoria, identidad y aislamiento comprobados.
 
-### M6 — Portfolio readiness (pendiente)
+### M6 — Portfolio readiness (production gates pending)
 Fases 11–14.
 
 Fases 11–12 acreditan componentes, evaluación acotada y checklist de demo,
 no una aplicación integrada. Fase 13 integra y verifica el recorrido local.
-Fase 14 define la topología de beta pública autenticada y sus gates, pero no
-certifica todavía el despliegue, la operación ni la promoción a prod.
+Fase 14 ha desplegado y probado la beta pública autenticada. La promoción a
+`prod` sigue bloqueada hasta cerrar la evidencia semántica, los ejercicios de
+operación/recuperación y las decisiones de propiedad, retención y coste.
 
 ## Reglas de avance
 
@@ -98,10 +99,10 @@ No confiar en el LLM para ninguna decisión de acceso.
 
 ## Estado
 
-Auditoría: `NOT_READY_FOR_PROD` (ver `docs/release-audit.md`). Fases 00–12
-conservan su aceptación acotada; Fase 13 conserva su evidencia integrada y
-Fase 14 tiene aprobadas la planificación, arquitectura e implementación local.
-No hay autorización de despliegue AWS ni promoción a prod.
+Auditoría: `NOT_READY_FOR_PROD` (ver `docs/production-readiness.md`). Fases
+00–13 conservan su aceptación acotada. La infraestructura de beta autenticada
+de Fase 14 está desplegada y el smoke público pasó; la promoción a `prod`
+permanece cerrada hasta completar los gates restantes.
 
 - [x] Phase 13 integration, bounded live smoke and local release hardening (413 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; fail-closed endpoint/retrieval hardening; independent holdout, production hosting/distributed state and prod promotion remain pending, NOT_READY_FOR_PROD)
 
@@ -111,9 +112,10 @@ No hay autorización de despliegue AWS ni promoción a prod.
   state, asynchronous ingestion, exact-origin security, and pre-provisioned
   authenticated users only; the local release candidate, bounded holdout
   runner, quarantine/reconciliation and operations controls are implemented
-  and validated (540 tests, 24/24 deterministic evaluations, all 15 templates
-  lint-clean), while AWS deployment, provider holdout/review, operational
-  exercise and prod promotion remain pending.
+  and validated (559 tests, 24/24 deterministic evaluations, all 15 templates
+  lint-clean). AWS deployment and the bounded browser smoke are complete;
+  provider holdout/review, operational exercises, owner decisions and prod
+  promotion remain pending.
 
 - [x] Phase 00
 - [x] Phase 01

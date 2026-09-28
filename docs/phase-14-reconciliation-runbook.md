@@ -1,8 +1,9 @@
 # Phase 14 bounded reconciliation runbook
 
-Status: **local implementation only; deployment remains approval-gated**.
+Status: **deployed and scheduled in `eu-west-1`; provider-side exercise and
+future updates remain approval-gated**.
 
-The deployable candidate is `infra/cloudformation/phase-14-reconciliation.yaml`.
+The deployed definition is `infra/cloudformation/phase-14-reconciliation.yaml`.
 It runs `legaldesk.reconciliation_lambda.lambda_handler` from a versioned
 artifact on a bounded EventBridge schedule, with a default reserved concurrency
 of `1`, a
@@ -70,5 +71,6 @@ without recording tokens, document bodies, signed URLs, passages or secrets.
 The Phase 02 table enables TTL on `ttl`, and its non-versioned source bucket
 expires the `quarantine/` prefix after one day. TTL is cleanup assistance, not a
 guaranteed deadline or access-control decision. No AWS call is part of local
-tests. Production scheduling, IAM permissions, alarms and deployment require
-the Phase 14 deployment approval gate.
+tests. The deployed schedule, IAM permissions and alarms must be revalidated
+after every approved update; the provider-side fault/recovery exercise remains
+an open production-promotion gate.

@@ -1,7 +1,9 @@
 # Phase 14 document-security runbook
 
 This runbook applies to the authenticated fictional/public beta only. It does
-not authorize real legal data or an AWS deployment.
+not authorize real legal data or another AWS operation. The documented stack
+is deployed in `eu-west-1`; changes and provider exercises remain separately
+approval-gated.
 
 ## Normal path
 
@@ -57,8 +59,8 @@ an unsafe overwrite.
 
 ## Deployment gate
 
-`infra/cloudformation/phase-14-document-security.yaml` is the local IaC
-candidate. It reuses the existing table and bucket, creates one
+`infra/cloudformation/phase-14-document-security.yaml` is the deployed IaC
+definition. It reuses the existing table and bucket, creates one
 `AWS::GuardDuty::MalwareProtectionPlan` for the exact
 `quarantine/tenants/{BetaTenantId}/` prefix with tagging enabled, and routes
 only the exact account/region/bucket/detail-type EventBridge result to
@@ -81,8 +83,8 @@ already the stricter deployment ceiling; API/event bounds and durable quotas
 remain in force. Raise the account quota before enabling the reservation.
 No KMS key or permission is added because the existing bucket uses SSE-S3.
 
-Before deployment approval, validate the immutable Lambda artifact parameters,
-the account/region and one fictional `BetaTenantId`, the exact quarantine
-prefix, and that the Bedrock data source still targets only `tenants/`. Review
-DLQ ownership and alerting, then deploy through a reviewed CloudFormation
-change set. This local tranche creates no resources and performs no AWS calls.
+Before any update, validate the immutable Lambda artifact parameters, the
+account/region and one fictional `BetaTenantId`, the exact quarantine prefix,
+and that the Bedrock data source still targets only `tenants/`. Review DLQ
+ownership and alerting, then update through a reviewed CloudFormation change
+set. Reading this runbook performs no AWS call and authorizes no update.

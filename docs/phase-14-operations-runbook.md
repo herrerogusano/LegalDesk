@@ -2,11 +2,14 @@
 
 ## Status
 
-This is a **local IaC candidate**, not deployment evidence. The operations
-stack is `infra/cloudformation/phase-14-operations.yaml`; it reuses resource
+This stack is **deployed in `eu-west-1`**. A read-only inventory on 2026-09-28
+confirmed twelve alarms in `OK` state and the monthly Budget; this is current
+deployment evidence, not proof that the remaining recovery and rollback drills
+have passed. The operations stack is
+`infra/cloudformation/phase-14-operations.yaml`; it reuses resource
 names supplied as parameters and creates twelve standard CloudWatch alarms and
 one monthly AWS Budget. It deliberately creates no SNS topic, dashboard, WAF,
-or data resource. No AWS call is authorized by this document.
+or data resource. No additional AWS call is authorized by this document.
 
 The alarms are visible-only when `ExistingAlarmTopicArn` is empty. If an
 already-owned SNS topic is explicitly supplied, the same alarms enable that

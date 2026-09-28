@@ -8,8 +8,8 @@ composed without allowing the browser or the model to define access scope.
 > **Status: `NOT_READY_FOR_PROD`**
 >
 > This is an educational MVP, not legal advice or a production legal system.
-> Use only public or wholly fictional documents. No public deployment is
-> claimed.
+> Use only public or wholly fictional documents. An authenticated public-beta
+> stack is deployed, but production promotion remains gated.
 
 ## What it demonstrates
 
@@ -83,7 +83,7 @@ for the complete trust and data lifecycle.
 
 ## Verified evidence
 
-- **540 tests passed** in the current local release-candidate verification
+- **559 tests passed** in the current local release-candidate verification
   (`1` platform-specific symlink test skipped on Windows).
 - **24/24 deterministic evaluations passed** with zero AWS calls.
 - **All 15 CloudFormation/SAM templates pass lint**, including the public edge,

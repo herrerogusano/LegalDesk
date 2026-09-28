@@ -15,7 +15,7 @@ The Phase 14 local candidate adds durable state, asynchronous ingestion,
 quarantine and content validation, bounded reconciliation, release packaging,
 operational controls, a bounded holdout runner, fail-closed public endpoint
 validation, browser security headers and strict retrieval response bounds. The
-complete local suite passes with 555 tests (one platform-specific symlink test
+complete local suite passes with 559 tests (one platform-specific symlink test
 skipped on Windows), all 15 CloudFormation/SAM templates pass lint, and the
 deterministic evaluation remains 24/24 with zero AWS calls.
 
@@ -55,7 +55,10 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    constitute approval of public destructive routes or a production export
    destination. Retrieval also revalidates every vector's live metadata;
    deletion remains `indexCleanupPending` until bounded Knowledge Base cleanup
-   evidence exists.
+   evidence exists. The public composition also checks the canonical
+   server-owned S3 object with `HeadObject` before any retrieved passage can
+   reach the resolver/writer, so lifecycle expiry cannot leave a usable stale
+   vector.
    The local upload candidate also signs the exact server-validated
    `Content-Length`; the browser cannot authorize a larger object before the
    malware boundary, and confirmation still performs an exact `HeadObject`
@@ -91,6 +94,10 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    establish a reusable production budget. The final inventory, numeric cost
    envelope, request/model/retention ceilings and exact teardown targets must
    be approved before further billable operations or promotion.
+
+The current read-only inventory, unresolved owner decisions and proposed
+bounded execution envelope are consolidated in
+[`phase-14-production-approval.md`](phase-14-production-approval.md).
 
 The loopback entry point rejects non-loopback hosts and is intentionally not a
 production server. ADR-018 and `PLAN_14_PUBLIC_BETA.md` define the target
