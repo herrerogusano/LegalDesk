@@ -146,3 +146,24 @@ validation codes, grounding score/diagnostic and aggregate call counters.
 Procedural review must still verify that the release identifiers belong to the
 packaged candidate. This change does not
 retroactively rescore either failed provider report.
+
+A third, separately authorized execution is preserved in
+`evals/results/phase14-holdout-20260928-adapter-v2.json`. It was pinned to
+release commit `623002eebf8ed556a8153ea6d3488229d617ee03`, runner `1.1.0`,
+grounding adapter `2.0.0`, and the same Lambda artifact SHA-256. It accepted
+13 of 14 cases with 27 calls and zero retries: the conflict case passed, while
+`role-reversal` remained rejected as `ROLE_RELATIONSHIP_MISSING`. The
+metadata-only policy intentionally retained no answer text, so the exact
+provider phrasing cannot be reconstructed or retroactively rescored. This
+report is immutable failed evidence and cannot receive an approved
+attestation.
+
+Runner `1.2.0` / grounding adapter `2.1.0` broadens only the closed grammar for
+the directed relationship. It accepts bounded active, passive, cleft,
+double-object, actor-as-party, predicate-nominal and explicit-recipient
+paraphrases while retaining negative tests for party reversal, negation, weak
+modality, missing actors, wrong recipients and incidental buyer mentions. The
+fixture, resolver prompt, writer prompt and application artifact are unchanged.
+This local correction does not prove the provider holdout passes: the semantic
+release gate remains closed until a newly authorized, create-only execution of
+the current runner passes 14/14 and an independent reviewer attests it.

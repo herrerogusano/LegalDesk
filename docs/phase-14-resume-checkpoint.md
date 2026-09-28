@@ -46,6 +46,17 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
   `623002eebf8ed556a8153ea6d3488229d617ee03`, the unchanged Lambda artifact
   SHA-256, and adapter implementation SHA-256
   `24a1cc4dbc4e0bdd26aaf47f03942e1ee91b4f25978a78a0da0c13a0d6cbfb59`.
+- The next separately authorized execution used that exact candidate and
+  accepted 13/14 with 27 calls and zero retries. `contradictory-deadlines`
+  passed; `role-reversal` was still rejected as
+  `ROLE_RELATIONSHIP_MISSING`. Its create-only metadata report is preserved as
+  `phase14-holdout-20260928-adapter-v2.json`; no attestation was created.
+- Because the privacy-preserving report contains no raw answers, the exact
+  provider wording cannot be recovered. Runner `1.2.0` / adapter `2.1.0`
+  therefore adds only bounded, adversarially tested relationship grammars
+  (including double-object, cleft and actor-as-party forms) without changing
+  prompts, fixture or application artifact. This is a local remediation, not
+  passing provider evidence.
 
 ## Source state
 
@@ -106,9 +117,11 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
    by the cleanup-oriented technical runner.
 2. Decide whether to remove the duplicate fictional upload produced by the
    repeated walkthrough attempts, then resync if it is removed.
-3. Re-run the bounded real holdout against the final release artifact. The
-   previous one-time holdout authorization has already been consumed, so this
-   requires a fresh explicit authorization before any Bedrock inference calls.
+3. Run the bounded real holdout against runner `1.2.0` / adapter `2.1.0` and
+   the final release artifact. Every previous one-time holdout authorization
+   has been consumed, so this requires a fresh explicit authorization before
+   any Bedrock inference calls. A 14/14 report must then receive an independent
+   approved attestation.
 4. Complete the privacy/retention and operations owner sign-offs, then create
    the Phase 14 PR to `developer` after every gate passes. Promote `developer`
    to `prod` only through its separate release PR.

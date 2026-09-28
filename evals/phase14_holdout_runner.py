@@ -90,8 +90,8 @@ TEMPERATURE = 0.0
 MAX_RESOLVER_CALLS = len(EXPECTED_CASE_IDS)
 MAX_WRITER_CALLS = MAX_RESOLVER_CALLS - 1  # the unrelated-evidence case has no writer call
 MAX_TOTAL_CALLS = MAX_RESOLVER_CALLS + MAX_WRITER_CALLS
-RUNNER_VERSION = "1.1.0"
-GROUNDING_ADAPTER_VERSION = "2.0.0"
+RUNNER_VERSION = "1.2.0"
+GROUNDING_ADAPTER_VERSION = "2.1.0"
 GROUNDING_ADAPTER_CONTRACT = (
     "conflict:subject+complete-typed-values+incompatibility-without-invented-precedence;"
     "directed-relation:actor+must-modality+action-class+object+recipient+positive-polarity"
@@ -437,20 +437,41 @@ def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, s
         return False, "ROLE_POLARITY_MISMATCH"
     if re.search(r"\b(?:may|can)\b", normalized) and re.search(rf"\b{_MUST_MODALITY}\b", normalized) is None:
         return False, "ROLE_MODALITY_MISMATCH"
-    modal = rf"(?:must|shall|is\s+required\s+to|is\s+responsible\s+for|is\s+(?:obliged|obligated)\s+to)"
+    modal = (
+        r"(?:must|shall|has\s+to|is\s+required\s+to|is\s+responsible\s+for|"
+        r"is\s+(?:obliged|obligated)\s+to|has\s+(?:(?:a|an)\s+)?(?:duty|obligation)\s+to|"
+        r"is\s+under\s+(?:(?:a|an)\s+)?(?:duty|obligation)\s+to)"
+    )
     transitive_action = r"(?:send|sending|deliver|delivering|provide|providing|give|giving|issue|issuing|serve|serving)"
+    actor = (
+        r"(?:it\s+is\s+(?:the\s+)?supplier\s+(?:who|that)|"
+        r"(?:the\s+)?supplier(?:\s+is\s+(?:the\s+)?(?:party|entity)(?:\s+(?:who|that))?|"
+        r"\s+(?:who|that))?)"
+    )
     active_to_buyer = re.search(
-        rf"\bsupplier\b\s+{modal}\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b{actor}\b\s+{modal}\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
         rf"\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+\bto\s+(?:the\s+)?buyer\b",
         normalized,
     )
     active_notify = re.search(
-        rf"\bsupplier\b\s+{modal}\s+(?:notify|notifying)\s+(?:the\s+)?buyer\b",
+        rf"\b{actor}\b\s+{modal}\s+(?:notify|notifying)\s+(?:the\s+)?buyer\b",
         normalized,
     )
-    active_provide_buyer = re.search(
-        rf"\bsupplier\b\s+{modal}\s+(?:provide|providing|give|giving)\s+(?:the\s+)?buyer\b"
+    active_buyer_object = re.search(
+        rf"\b{actor}\b\s+{modal}\s+{transitive_action}\s+(?:the\s+)?buyer\b"
         rf"(?:\s+\w+){{0,3}}\s+\b(?:notice|notification)\b",
+        normalized,
+    )
+    actor_predicate = re.search(
+        rf"\b(?:the\s+)?(?:party|entity)\s+(?:who|that)\s+{modal}\s+{transitive_action}\b"
+        rf"(?:\s+\w+){{0,5}}\s+\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+"
+        rf"\bto\s+(?:the\s+)?buyer\b(?:\s+\w+){{0,3}}\s+\bis\s+(?:the\s+)?supplier\b",
+        normalized,
+    )
+    split_recipient = re.search(
+        rf"\b{actor}\b\s+{modal}\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,8}}\s+\b(?:buyer\s+is\s+(?:the\s+)?recipient|"
+        rf"recipient\s+is\s+(?:the\s+)?buyer)\b",
         normalized,
     )
     passive_notice = re.search(
@@ -473,10 +494,15 @@ def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, s
         rf"(?:\s+\w+){{0,3}}\s+{modal}\s+(?:be\s+)?{_NOTICE_PASSIVE_ACTION}\b"
         rf"(?:\s+\w+){{0,3}}\s+\bby\s+(?:the\s+)?buyer\b",
         normalized,
+    ) or re.search(
+        rf"\b(?:the\s+)?(?:party|entity)\s+(?:who|that)\s+{modal}\s+{transitive_action}\b"
+        rf"(?:\s+\w+){{0,5}}\s+\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+"
+        rf"\bto\s+(?:the\s+)?supplier\b(?:\s+\w+){{0,3}}\s+\bis\s+(?:the\s+)?buyer\b",
+        normalized,
     )
     if reversal is not None:
         return False, "ROLE_REVERSAL"
-    if not any((active_to_buyer, active_notify, active_provide_buyer, passive_notice, passive_buyer)):
+    if not any((active_to_buyer, active_notify, active_buyer_object, actor_predicate, split_recipient, passive_notice, passive_buyer)):
         return False, "ROLE_RELATIONSHIP_MISSING"
     return True, "VALID_ROLE_RELATIONSHIP"
 

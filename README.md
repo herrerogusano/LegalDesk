@@ -93,9 +93,12 @@ for the complete trust and data lifecycle.
   RAG, citations, Gateway → MCP metadata, Gateway → Lambda review, cross-matter
   denial, audit and logout.
 - Temporary Phase 13 smoke resources were removed and shared stacks restored.
-  The bounded 14-case holdout runner and fail-closed attestation gate are ready
-  locally, but the holdout remains unexecuted against the release candidate in
-  AWS.
+  The bounded 14-case holdout has been executed three times with immutable,
+  metadata-only evidence. The latest authorized run reached 13/14 with zero
+  retries; runner `1.2.0` / grounding adapter `2.1.0` contains the subsequent
+  locally tested directed-relation correction. The semantic gate remains open
+  until a newly authorized run passes 14/14 and receives independent
+  attestation.
 
 Evidence classes, acceptance scenarios and remaining gates are recorded in the
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md). The smoke result is

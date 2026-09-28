@@ -274,6 +274,12 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
             "The supplier must send written notice to the buyer.",
             "The supplier is responsible for sending written notification to the buyer.",
             "Written notice to the buyer must be delivered by the supplier.",
+            "The supplier must send the buyer written notice.",
+            "It is the supplier who must send written notice to the buyer.",
+            "The supplier has an obligation to give the buyer written notice.",
+            "The supplier is the party that must send written notice to the buyer.",
+            "The party that must send written notice to the buyer is the supplier.",
+            "The supplier must send written notice; the buyer is the recipient.",
         )
         for answer in accepted:
             with self.subTest(answer=answer):
@@ -287,6 +293,10 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
             "Written notice must be sent to the buyer.": "ROLE_RELATIONSHIP_MISSING",
             "The supplier must receive written notice from the buyer.": "ROLE_RELATIONSHIP_MISSING",
             "The supplier must send written notice from the buyer.": "ROLE_RELATIONSHIP_MISSING",
+            "The supplier must send written notice to the customer; the buyer is copied.": "ROLE_RELATIONSHIP_MISSING",
+            "The supplier must send written notice to the customer; the buyer receives a copy.": "ROLE_RELATIONSHIP_MISSING",
+            "The supplier says that the buyer must send written notice to the supplier.": "ROLE_REVERSAL",
+            "The party that must send written notice to the supplier is the buyer.": "ROLE_REVERSAL",
         }
         for answer, code in rejected.items():
             with self.subTest(answer=answer):

@@ -73,10 +73,13 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    [`phase-14-holdout.md`](phase-14-holdout.md). The immutable first real-model
    run accepted 11/14 cases against an earlier commit and cannot be approved.
    A second run pinned to the final candidate improved to 12/14 but still
-   failed the conflict-phrasing and role-relationship checks. Neither report
-   can be approved; no passing report or reviewer attestation exists. The
-   lexical oracle, deterministic suite and bounded smoke are not substitutes
-   for this gate.
+   failed the conflict-phrasing and role-relationship checks. A third run with
+   the structural adapter passed the conflict case and reached 13/14; its
+   remaining `role-reversal` result was `ROLE_RELATIONSHIP_MISSING`. All three
+   reports are immutable failed evidence and cannot be approved. Runner `1.2.0`
+   / adapter `2.1.0` has a locally tested bounded grammar correction, but no
+   passing provider report or reviewer attestation exists. The lexical oracle,
+   deterministic suite and bounded smoke are not substitutes for this gate.
 6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
    recovery procedures, backup/retention ownership, verified deployment and
    rollback, and shared-resource teardown evidence are complete. The local
