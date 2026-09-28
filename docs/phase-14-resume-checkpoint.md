@@ -20,17 +20,25 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
   retrieval and logout `200`. The synthetic user, membership, Memory events and
   subject-scoped state were removed; independent checks found no matching user,
   restored membership count and zero recent technical audit rows.
-- Full local suite after the lifecycle fix and final review: 552 tests OK, 1 skipped. The known
-  Windows loopback `WinError 10053` appeared in one aggregate focused run; each
-  affected test passed independently and the subsequent full suite passed.
+- Full local suite after the lifecycle fix and final review: 552 tests OK,
+  1 skipped. The known Windows loopback `WinError 10053` appeared in one
+  aggregate focused run; each affected test passed independently and the
+  subsequent full suite passed.
 - Deployment: `LegalDeskPhase14PublicEdge` is `UPDATE_COMPLETE`; the Lambda
   artifact is from commit `50dd36f`, and the IAM/template correction is commit
   `7194b00`. Metadata-only reports `01`–`06` preserve each bounded attempt.
+- Independent readiness review kept the release closed because the only real
+  holdout is the immutable historical 11/14 run and the privacy/operations/cost
+  approvals are incomplete. A zero-network preflight passed for release commit
+  `19b86acc7a4f659c972cb960b0b41327674c4498` and Lambda SHA-256
+  `eb36c4559176c433562f2273aaa9948661f65fa6f16695726eda2848f0c8c0be`,
+  with both local safety canaries and a hard ceiling of 27 model calls.
 
 ## Source state
 
 - Branch: `phase/14-public-beta`
-- Last validated code commit before this checkpoint: `5cb5c8ce26a1a1615bdabedb51dc26c88211149b`
+- Release-candidate commit used by the final holdout preflight:
+  `19b86acc7a4f659c972cb960b0b41327674c4498`.
 - Integration target remains `developer`; no Phase 14 pull request or merge has
   been completed yet.
 - Local-only `.agents/`, `skills-lock.json`, and `tmp/` are intentionally not
@@ -38,7 +46,7 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 
 ## Validation completed
 
-- Full local suite: 544 tests passed, 1 skipped.
+- Full local suite: 552 tests passed, 1 skipped.
 - Authenticated manual login and matter selection succeeded through CloudFront.
 - A fictional text fixture was uploaded through the browser to the quarantine
   prefix, corroborated by GuardDuty, promoted to the canonical prefix, and
@@ -69,7 +77,8 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 ## Deployed state
 
 - `LegalDeskPhase14PublicEdge`: `UPDATE_COMPLETE`; application artifact is from
-  commit `5cb5c8ce26a1a1615bdabedb51dc26c88211149b`.
+  commit `50dd36f`; its deterministic SHA-256 is unchanged in the final local
+  release package.
 - `LegalDeskPhase14DocumentSecurity`: `UPDATE_COMPLETE`; malware artifact is
   from commit `ce86368bd43261fcaf1dc907b2204a6b1702f6ef`.
 - The public application, malware scanner, GuardDuty plan, reconciliation,
@@ -87,8 +96,8 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 3. Re-run the bounded real holdout against the final release artifact. The
    previous one-time holdout authorization has already been consumed, so this
    requires a fresh explicit authorization before any Bedrock inference calls.
-4. Complete the final documentation/readiness review, create the Phase 14 PR to
-   `developer`, merge after gates pass, and promote `developer` to `prod` only
-   through its separate release PR.
+4. Complete the privacy/retention and operations owner sign-offs, then create
+   the Phase 14 PR to `developer` after every gate passes. Promote `developer`
+   to `prod` only through its separate release PR.
 5. Update the shared session/vault again only after the remaining Phase 14 gates
    are complete; the earlier checkpoint has already been saved and synced.
