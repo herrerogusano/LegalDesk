@@ -57,12 +57,18 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
   (including double-object, cleft and actor-as-party forms) without changing
   prompts, fixture or application artifact. This is a local remediation, not
   passing provider evidence.
+- A zero-network preflight passed for commit
+  `f12c5c4b8bd5803db05c4737d55645e08659f8c7`, runner `1.2.0`, adapter `2.1.0`,
+  adapter implementation SHA-256
+  `629df88b14d7ea15589d46ce6c6d934c30d14a93ad7ce80b61a7e9d599bcc8e5`,
+  and the unchanged Lambda artifact SHA-256. Both negative canaries passed;
+  AWS/network calls were zero.
 
 ## Source state
 
 - Branch: `phase/14-public-beta`
 - Current release-candidate commit used by the revised holdout preflight:
-  `623002eebf8ed556a8153ea6d3488229d617ee03`.
+  `f12c5c4b8bd5803db05c4737d55645e08659f8c7`.
 - Integration target remains `developer`; no Phase 14 pull request or merge has
   been completed yet.
 - Local-only `.agents/`, `skills-lock.json`, and `tmp/` are intentionally not

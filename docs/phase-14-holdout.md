@@ -167,3 +167,7 @@ fixture, resolver prompt, writer prompt and application artifact are unchanged.
 This local correction does not prove the provider holdout passes: the semantic
 release gate remains closed until a newly authorized, create-only execution of
 the current runner passes 14/14 and an independent reviewer attests it.
+The local preflight for commit
+`f12c5c4b8bd5803db05c4737d55645e08659f8c7` passed with zero AWS/network
+calls and pins adapter implementation SHA-256
+`629df88b14d7ea15589d46ce6c6d934c30d14a93ad7ce80b61a7e9d599bcc8e5`.
