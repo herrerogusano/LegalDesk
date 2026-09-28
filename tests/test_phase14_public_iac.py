@@ -113,6 +113,8 @@ class Phase14PublicInfrastructureTests(unittest.TestCase):
         self.assertIn("bedrock:GetIngestionJob", text)
         self.assertIn('ResolverFoundationModelArn', text)
         self.assertIn('WriterFoundationModelArn', text)
+        self.assertIn('region may be * for a cross-region inference profile', text)
+        self.assertIn(r'(?:[^:*?]+|\\*)::foundation-model/', text)
         self.assertIn('${BetaTenantId}/matters/*/documents/*/original.pdf', text)
 
 if __name__ == "__main__":

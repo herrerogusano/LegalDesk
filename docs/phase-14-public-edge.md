@@ -111,6 +111,14 @@ packaging workflow above produces the exact zip and digest; uploading it to a
 versioned artifact bucket and passing its key/version remain separate,
 explicitly approved release steps outside this local edge tranche.
 
+When `ResolverModelArn` or `WriterModelArn` names a cross-region inference
+profile, `bedrock:InvokeModel` must also cover every foundation-model region to
+which that profile can route. The template keeps the action and model ID exact
+while permitting a region wildcard only in the corresponding
+`*FoundationModelArn` parameter, for example
+`arn:aws:bedrock:*::foundation-model/<exact-model-id>`. A single regional model
+ARN is insufficient for a cross-region profile and fails closed at inference.
+
 ## Deterministic two-step identity/CORS bootstrap
 
 Avoid a circular dependency between the new edge hostname and existing Phase

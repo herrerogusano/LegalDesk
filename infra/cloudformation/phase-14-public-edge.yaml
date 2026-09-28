@@ -68,12 +68,12 @@ Parameters:
     AllowedPattern: "^arn:[^*?]+$"
   ResolverFoundationModelArn:
     Type: String
-    AllowedPattern: "^arn:[^:]+:bedrock:[^:]+::foundation-model/[A-Za-z0-9._:-]+$"
-    Description: Exact foundation model reached through ResolverModelArn when it is an inference profile
+    AllowedPattern: "^arn:[^:*?]+:bedrock:(?:[^:*?]+|\\*)::foundation-model/[A-Za-z0-9._:-]+$"
+    Description: Exact foundation model family reached through ResolverModelArn; region may be * for a cross-region inference profile
   WriterFoundationModelArn:
     Type: String
-    AllowedPattern: "^arn:[^:]+:bedrock:[^:]+::foundation-model/[A-Za-z0-9._:-]+$"
-    Description: Exact foundation model reached through WriterModelArn when it is an inference profile
+    AllowedPattern: "^arn:[^:*?]+:bedrock:(?:[^:*?]+|\\*)::foundation-model/[A-Za-z0-9._:-]+$"
+    Description: Exact foundation model family reached through WriterModelArn; region may be * for a cross-region inference profile
   HarnessArn:
     Type: String
     AllowedPattern: "^arn:[^*?]+$"
