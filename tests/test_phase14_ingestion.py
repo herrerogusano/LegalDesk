@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sys
+import re
 import unittest
+from hashlib import sha256
 from io import BytesIO
 from dataclasses import replace
 from pathlib import Path
@@ -128,6 +130,24 @@ class Phase14IngestionTests(unittest.TestCase):
         )
         self.assertEqual(repeated.operation_id, operation.operation_id)
         self.assertEqual(len(self.client.start_calls), 1)
+        client_token = self.client.start_calls[0]["clientToken"]
+        self.assertEqual(client_token, sha256(operation.operation_id.encode("utf-8")).hexdigest())
+        self.assertGreaterEqual(len(client_token), 33)
+        self.assertLessEqual(len(client_token), 256)
+        self.assertIsNotNone(re.fullmatch(r"[a-zA-Z0-9](-*[a-zA-Z0-9]){0,256}", client_token))
+        self.assertNotEqual(client_token, operation.operation_id)
+
+    def test_client_token_is_stable_and_changes_with_operation_id(self) -> None:
+        first = AsyncKnowledgeBaseIngestionService._client_token("ing_first")
+        repeated = AsyncKnowledgeBaseIngestionService._client_token("ing_first")
+        different = AsyncKnowledgeBaseIngestionService._client_token("ing_second")
+
+        self.assertEqual(first, repeated)
+        self.assertNotEqual(first, different)
+        self.assertEqual(len(first), 64)
+        self.assertGreaterEqual(len(first), 33)
+        self.assertLessEqual(len(first), 256)
+        self.assertIsNotNone(re.fullmatch(r"[a-zA-Z0-9](-*[a-zA-Z0-9]){0,256}", first))
 
     def test_same_idempotency_key_accepts_document_ids_in_different_order(self) -> None:
         metadata = InMemoryDocumentMetadataRepository()

@@ -9,6 +9,7 @@ documents. Partial or timed-out jobs remain PENDING_INGESTION for reconciliation
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from hashlib import sha256
 from time import monotonic, sleep, time
 from typing import Any, Callable, Mapping, Protocol, Sequence
 from uuid import uuid4
@@ -262,6 +263,12 @@ class AsyncKnowledgeBaseIngestionService:
         return f"ing_{uuid4().hex}"
 
     @staticmethod
+    def _client_token(operation_id: str) -> str:
+        """Return a stable Bedrock-compatible token for one local operation."""
+
+        return sha256(operation_id.encode("utf-8")).hexdigest()
+
+    @staticmethod
     def _job_id(response: Mapping[str, Any]) -> str:
         job = response.get("ingestionJob")
         job_id = job.get("ingestionJobId") if isinstance(job, Mapping) else None
@@ -325,7 +332,7 @@ class AsyncKnowledgeBaseIngestionService:
             started = self.client.start_ingestion_job(
                 knowledgeBaseId=self.knowledge_base_id,
                 dataSourceId=self.data_source_id,
-                clientToken=operation.operation_id,
+                clientToken=self._client_token(operation.operation_id),
             )
             job_id = self._job_id(started)
             operation = replace(
