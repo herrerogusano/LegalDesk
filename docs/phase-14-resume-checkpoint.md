@@ -2,6 +2,31 @@
 
 Recorded on 2026-09-28 after pausing the public-beta validation work.
 
+## Continuation result — 2026-09-28
+
+- Added a bounded public-browser smoke with a short-lived technical Cognito
+  identity. Passwords remain process-memory-only; the runner performs no upload,
+  ingestion, review creation or holdout and emits metadata-only reports.
+- The first run demonstrated that three abandoned `PENDING_UPLOAD` rows blocked
+  chat even though two documents were already `INDEXED`. The backend now blocks
+  only when processing documents exist **and no indexed document is available**;
+  retrieval still revalidates live indexed metadata before using evidence.
+- A second live failure identified incomplete IAM for the configured
+  cross-region inference profile. `InvokeModel` remains limited to the exact
+  Sonnet 4.6 model family, with only the region wildcard required for the
+  profile's documented routing set.
+- Final authenticated Chrome-headless smoke: PASS. It verified two indexed
+  documents, one bounded grounded chat, two citations, cross-matter `403`, audit
+  retrieval and logout `200`. The synthetic user, membership, Memory events and
+  subject-scoped state were removed; independent checks found no matching user,
+  restored membership count and zero recent technical audit rows.
+- Full local suite after the lifecycle fix: 550 tests OK, 1 skipped. The known
+  Windows loopback `WinError 10053` appeared in one aggregate focused run; each
+  affected test passed independently and the subsequent full suite passed.
+- Deployment: `LegalDeskPhase14PublicEdge` is `UPDATE_COMPLETE`; the Lambda
+  artifact is from commit `50dd36f`, and the IAM/template correction is commit
+  `7194b00`. Metadata-only reports `01`–`06` preserve each bounded attempt.
+
 ## Source state
 
 - Branch: `phase/14-public-beta`
@@ -53,18 +78,17 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 
 ## Remaining gates
 
-1. Refresh the UI and verify the visible document status is `Indexed`, then
-   exercise the grounded question, citation, review, and audit views.
-2. Add or run a non-personal technical test identity for repeatable HTTP E2E.
-   Never request or store the user's personal password.
-3. Decide whether to remove the duplicate fictional upload produced by the
+1. The authenticated technical journey now covers document status, grounded
+   question, citation, cross-matter denial, audit and logout. Review creation
+   retains its earlier manual/live evidence and was intentionally not repeated
+   by the cleanup-oriented technical runner.
+2. Decide whether to remove the duplicate fictional upload produced by the
    repeated walkthrough attempts, then resync if it is removed.
-4. Re-run the bounded real holdout against the final release artifact. The
+3. Re-run the bounded real holdout against the final release artifact. The
    previous one-time holdout authorization has already been consumed, so this
    requires a fresh explicit authorization before any Bedrock inference calls.
-5. Complete the final documentation/readiness review, create the Phase 14 PR to
+4. Complete the final documentation/readiness review, create the Phase 14 PR to
    `developer`, merge after gates pass, and promote `developer` to `prod` only
    through its separate release PR.
-6. Run the requested `save-session` workflow and update reusable RAG/MCP/AWS
-   knowledge only after the final Phase 14 work is complete.
-
+5. Update the shared session/vault again only after the remaining Phase 14 gates
+   are complete; the earlier checkpoint has already been saved and synced.

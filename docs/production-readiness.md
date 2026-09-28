@@ -1,18 +1,21 @@
 # Production readiness gate
 
-Status: **release candidate hardened; production deployment is blocked**.
+Status: **authenticated public beta deployed and smoke-tested; production
+promotion remains blocked**.
 
-The local P14-6 operations candidate now includes a parameterized alarms and
-Budget template plus a release/rollback/teardown runbook. This is local
-evidence only: no AWS deployment, budget, alarm, or notification has been
-created, and the release verdict remains `NOT_READY_FOR_PROD`.
+The Phase 14 public edge, document-security, reconciliation and operations
+stacks are deployed in `eu-west-1`. A bounded Chrome-headless journey using a
+short-lived technical identity passed Cognito login, indexed-document display,
+one grounded chat with citations, cross-matter denial, audit and logout. This
+does not close the independent holdout, operational drill, privacy review or
+production-promotion gates; the verdict remains `NOT_READY_FOR_PROD`.
 
 The integrated application and its bounded Phase 13 AWS smoke are complete.
 The Phase 14 local candidate adds durable state, asynchronous ingestion,
 quarantine and content validation, bounded reconciliation, release packaging,
 operational controls, a bounded holdout runner, fail-closed public endpoint
 validation, browser security headers and strict retrieval response bounds. The
-complete local suite passes with 540 tests (one platform-specific symlink test
+complete local suite passes with 550 tests (one platform-specific symlink test
 skipped on Windows), all 15 CloudFormation/SAM templates pass lint, and the
 deterministic evaluation remains 24/24 with zero AWS calls.
 
