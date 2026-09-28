@@ -13,6 +13,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Mapping, Protocol
 from uuid import uuid4
 
@@ -49,6 +50,32 @@ _SAFE_AUDIT_FIELDS = frozenset({
     "resolver_prompt_version", "resolver_prompt_sha256",
     "writer_prompt_version", "writer_prompt_sha256",
 })
+
+
+def _dynamodb_number(value: int | float | Decimal) -> int | Decimal:
+    """Return a boto3 DynamoDB-compatible finite number."""
+
+    if isinstance(value, bool):
+        raise TypeError("boolean is not a DynamoDB number")
+    if isinstance(value, int):
+        return value
+    number = value if isinstance(value, Decimal) else Decimal(str(value))
+    if not number.is_finite():
+        raise ValueError("DynamoDB number must be finite")
+    return number
+
+
+def _integer_from_dynamodb(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
+        return None
+    number = Decimal(value)
+    return int(number) if number == number.to_integral_value() else None
+
+
+def _json_number(value: object) -> object:
+    if not isinstance(value, Decimal):
+        return value
+    return int(value) if value == value.to_integral_value() else float(value)
 
 
 def ingestion_document_set_key(*, subject: str, tenant_id: str, matter_id: str, document_ids: tuple[str, ...]) -> str:
@@ -513,7 +540,7 @@ class DynamoDBEphemeralStateStore:
                 "subject": record.identity.subject,
                 "accessToken": record.access_token,
                 "csrfToken": record.csrf_token,
-                "expiresAt": record.expires_at,
+                "expiresAt": _dynamodb_number(record.expires_at),
                 "ttl": max(1, int(record.expires_at)),
             },
         )
@@ -538,7 +565,7 @@ class DynamoDBEphemeralStateStore:
                 **self._key("OAUTH", state, "RECORD"),
                 "entityType": "P14OAuthState",
                 "codeVerifier": code_verifier,
-                "expiresAt": expires_at,
+                "expiresAt": _dynamodb_number(expires_at),
                 "ttl": max(1, int(expires_at)),
             },
             ConditionExpression="attribute_not_exists(pk)",
@@ -574,7 +601,7 @@ class DynamoDBEphemeralStateStore:
                 "conversationId": handle.conversation_id,
                 "documentId": handle.document_id,
                 "passage": handle.passage,
-                "expiresAt": handle.expires_at,
+                "expiresAt": _dynamodb_number(handle.expires_at),
                 "ttl": max(1, int(handle.expires_at)),
             },
         )
@@ -587,7 +614,7 @@ class DynamoDBEphemeralStateStore:
                 "conversationId": citation_key[1],
                 "correlationId": citation_key[2],
                 "citationId": citation_key[3],
-                "expiresAt": handle.expires_at,
+                "expiresAt": _dynamodb_number(handle.expires_at),
                 "ttl": max(1, int(handle.expires_at)),
             },
             ConditionExpression="attribute_not_exists(pk)",
@@ -647,7 +674,7 @@ class DynamoDBEphemeralStateStore:
                 "selector": selector,
                 "conversationId": conversation_id,
                 "correlationId": correlation_id,
-                "expiresAt": expires_at,
+                "expiresAt": _dynamodb_number(expires_at),
                 "ttl": max(1, int(expires_at)),
             },
             ConditionExpression="attribute_not_exists(pk)",
@@ -686,7 +713,7 @@ class DynamoDBEphemeralStateStore:
                 **self._key("HISTORY", key, f"EVENT#{_digest(event_id)}"),
                 "entityType": "P14HistoryEvent",
                 "eventId": event_id,
-                "expiresAt": self.clock() + 7 * 24 * 60 * 60,
+                "expiresAt": _dynamodb_number(self.clock() + 7 * 24 * 60 * 60),
                 "ttl": max(1, int(self.clock()) + 7 * 24 * 60 * 60),
             },
             ConditionExpression="attribute_not_exists(pk)",
@@ -723,7 +750,7 @@ class DynamoDBEphemeralStateStore:
                 **self._key("REVIEW_CANDIDATE", key, "RECORD"),
                 "entityType": "P14ReviewCandidate",
                 "candidateJson": encoded,
-                "expiresAt": expires_at,
+                "expiresAt": _dynamodb_number(expires_at),
                 "ttl": max(1, int(expires_at)),
             },
         )
@@ -759,9 +786,9 @@ class DynamoDBEphemeralStateStore:
             "ingestionJobId": record.ingestion_job_id,
             "status": record.status,
             "providerStatus": record.provider_status,
-            "createdAt": record.created_at,
-            "updatedAt": record.updated_at,
-            "expiresAt": record.expires_at,
+            "createdAt": _dynamodb_number(record.created_at),
+            "updatedAt": _dynamodb_number(record.updated_at),
+            "expiresAt": _dynamodb_number(record.expires_at),
             "documentSetKey": record.document_set_key,
             "documentsUpdated": record.documents_updated,
             "failedDocumentCount": record.failed_document_count,
@@ -777,7 +804,7 @@ class DynamoDBEphemeralStateStore:
             "subject": record.subject,
             "tenantId": record.tenant_id,
             "matterId": record.matter_id,
-            "expiresAt": record.expires_at,
+            "expiresAt": _dynamodb_number(record.expires_at),
             "ttl": max(1, int(record.expires_at)),
         }
 
@@ -800,7 +827,9 @@ class DynamoDBEphemeralStateStore:
         document_set_key = item.get("documentSetKey")
         document_ids = item.get("documentIds")
         created_at, updated_at = item.get("createdAt"), item.get("updatedAt")
-        documents_updated, failed_count = item.get("documentsUpdated", 0), item.get("failedDocumentCount")
+        documents_updated = _integer_from_dynamodb(item.get("documentsUpdated", 0))
+        failed_value = item.get("failedDocumentCount")
+        failed_count = None if failed_value is None else _integer_from_dynamodb(failed_value)
         valid_job_binding = (
             isinstance(values[6], str)
             and (
@@ -818,10 +847,10 @@ class DynamoDBEphemeralStateStore:
             or not isinstance(document_ids, list)
             or not 1 <= len(document_ids) <= 20
             or not all(isinstance(value, str) and value for value in document_ids)
-            or not isinstance(created_at, (int, float)) or isinstance(created_at, bool)
-            or not isinstance(updated_at, (int, float)) or isinstance(updated_at, bool)
-            or not isinstance(documents_updated, int) or isinstance(documents_updated, bool)
-            or (failed_count is not None and (not isinstance(failed_count, int) or isinstance(failed_count, bool)))
+            or not isinstance(created_at, (int, float, Decimal)) or isinstance(created_at, bool)
+            or not isinstance(updated_at, (int, float, Decimal)) or isinstance(updated_at, bool)
+            or documents_updated is None
+            or (failed_value is not None and failed_count is None)
         ):
             return None
         if document_set_key != ingestion_document_set_key(
@@ -856,7 +885,7 @@ class DynamoDBEphemeralStateStore:
                     "entityType": "P14ActiveIngestion",
                     "operationId": record.operation_id,
                     "documentSetKey": record.document_set_key,
-                    "expiresAt": record.expires_at,
+                    "expiresAt": _dynamodb_number(record.expires_at),
                     "ttl": max(1, int(record.expires_at)),
                 },
                 ConditionExpression="attribute_not_exists(pk)",
@@ -988,7 +1017,7 @@ class DynamoDBEphemeralStateStore:
         if not isinstance(subject, str) or not subject:
             raise ValueError("audit subject is required")
         safe = {
-            str(key): value
+            str(key): _dynamodb_number(value) if isinstance(value, float) else value
             for key, value in record.items()
             if key in self._AUDIT_ALLOWED and isinstance(value, (str, int, float, bool))
         }
@@ -1012,7 +1041,11 @@ class DynamoDBEphemeralStateStore:
             ScanIndexForward=False,
         )
         items = response.get("Items", ()) if isinstance(response, Mapping) else ()
-        return tuple(dict(item) for item in items if isinstance(item, Mapping))
+        return tuple(
+            {str(key): _json_number(value) for key, value in item.items()}
+            for item in items
+            if isinstance(item, Mapping)
+        )
 
     def delete_scope_state(
         self, *, subject: str, tenant_id: str, matter_id: str, limit: int

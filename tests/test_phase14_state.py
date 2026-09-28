@@ -3,7 +3,10 @@ from __future__ import annotations
 import sys
 import unittest
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
+
+from boto3.dynamodb.types import TypeSerializer
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
@@ -85,6 +88,42 @@ def _session() -> SessionRecord:
 
 
 class Phase14StateTests(unittest.TestCase):
+    def test_dynamo_items_use_boto3_compatible_numbers(self) -> None:
+        table = RecordingDynamoTable()
+        store = DynamoDBEphemeralStateStore("existing-metadata", table=table, clock=lambda: 100.25)
+        store.put_session("selector", SessionRecord(VerifiedIdentity("alice"), "token", "csrf", 200.5))
+        store.put_oauth_state("state", "verifier", 200.5)
+        store.put_citation(
+            CitationHandle("h", "alice", "tenant-a", "matter-a", "conversation-a", "doc-a", "passage", 200.5),
+            citation_key=("alice", "conversation-a", "corr-a", "citation-a"),
+        )
+        store.bind_conversation("conversation-a", ("alice", "tenant-a", "matter-a", "selector"), "corr-a")
+        store.add_history_event(("alice", "conversation-a", "selector"), "event-a")
+        store.put_review_candidate(("alice", "tenant-a", "matter-a"), (200.5, {"reason": "review"}))
+        operation = IngestionOperationRecord(
+            operation_id="ing-serializable", idempotency_key="retry-a", subject="alice", tenant_id="tenant-a",
+            matter_id="matter-a", document_ids=("doc-a",), correlation_id="corr-a", ingestion_job_id="job-a",
+            status="PENDING", provider_status="STARTING", created_at=100.25, updated_at=100.5,
+            expires_at=200.5, documents_updated=1, failed_document_count=0,
+        )
+        store.put_ingestion_operation(operation)
+        store.append_audit({"subject": "alice", "operation": "chat", "latency_ms": 12.5})
+
+        serializer = TypeSerializer()
+        for item in table.items.values():
+            serializer.serialize(item)
+        self.assertTrue(
+            all(
+                not isinstance(value, float)
+                for item in table.items.values()
+                for value in item.values()
+            )
+        )
+        self.assertIsInstance(next(iter(table.items.values()))["expiresAt"], Decimal)
+        restored = store.get_ingestion_operation("ing-serializable")
+        self.assertEqual(restored.documents_updated, 1)
+        self.assertEqual(restored.failed_document_count, 0)
+
     def test_shared_store_survives_app_recreation(self) -> None:
         store = InMemoryEphemeralStateStore(clock=lambda: 100.0)
         composition = ApplicationComposition(
