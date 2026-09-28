@@ -43,7 +43,9 @@ Parameters:
     Type: String
     NoEcho: true
     AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-    Description: Email recipient for account-wide AWS Budget alerts; no SNS topic is created
+    Description: >-
+      Email recipient for account-wide AWS Budget alerts and, when
+      CreateAlarmTopic is true, the managed alarm topic subscription.
   MonthlyBudgetLimitUsd:
     Type: String
     Default: "5"
@@ -66,15 +68,6 @@ Parameters:
       Explicitly create a project-owned SNS topic and email subscription for
       alarm notifications. Defaults to false; email confirmation is required.
 
-  AlarmNotificationEmail:
-    Type: String
-    Default: ""
-    NoEcho: true
-    AllowedPattern: "^$|^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-    Description: >-
-      Email endpoint for the managed alarm topic. Required only when
-      CreateAlarmTopic is true; the recipient must confirm the SNS email.
-
 Conditions:
   HasExistingAlarmTopic: !Not [!Equals [!Ref ExistingAlarmTopicArn, ""]]
   HasManagedAlarmTopic: !Equals [!Ref CreateAlarmTopic, "true"]
@@ -92,17 +85,6 @@ Rules:
         AssertDescription: >-
           Choose exactly one alarm topic mode: ExistingAlarmTopicArn or
           CreateAlarmTopic=true, never both.
-      - Assert: !Or
-          - !Equals [!Ref CreateAlarmTopic, "true"]
-          - !Equals [!Ref AlarmNotificationEmail, ""]
-        AssertDescription: >-
-          AlarmNotificationEmail is only valid when CreateAlarmTopic is true.
-      - Assert: !Or
-          - !Equals [!Ref CreateAlarmTopic, "false"]
-          - !Not [!Equals [!Ref AlarmNotificationEmail, ""]]
-        AssertDescription: >-
-          AlarmNotificationEmail must be supplied when CreateAlarmTopic is true.
-
 Resources:
   AlarmTopic:
     Condition: HasManagedAlarmTopic
@@ -119,7 +101,7 @@ Resources:
     Condition: HasManagedAlarmTopic
     Type: AWS::SNS::Subscription
     Properties:
-      Endpoint: !Ref AlarmNotificationEmail
+      Endpoint: !Ref BudgetEmail
       Protocol: email
       TopicArn: !Ref AlarmTopic
 

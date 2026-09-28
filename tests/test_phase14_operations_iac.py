@@ -44,7 +44,8 @@ class Phase14OperationsInfrastructureTests(unittest.TestCase):
         self.assertIn("HasAlarmTopic: !Or", text)
         self.assertIn("Rules:", text)
         self.assertIn("Choose exactly one alarm topic mode", text)
-        self.assertIn("AlarmNotificationEmail:", text)
+        self.assertNotIn("AlarmNotificationEmail", text)
+        self.assertIn("BudgetEmail:", text)
         self.assertEqual(text.count("TreatMissingData: notBreaching"), 12)
         self.assertEqual(text.count("AlarmActions: !If\n        - HasAlarmTopic"), 12)
         alarm_body = text.split("Outputs:", 1)[0]
@@ -63,20 +64,18 @@ class Phase14OperationsInfrastructureTests(unittest.TestCase):
         self.assertNotIn("!Condition", rules)
         self.assertIn('!Ref ExistingAlarmTopicArn, ""', rules)
         self.assertIn('!Ref CreateAlarmTopic, "true"', rules)
-        self.assertIn('!Ref CreateAlarmTopic, "false"', rules)
-        self.assertIn('!Ref AlarmNotificationEmail, ""', rules)
+        self.assertNotIn('!Ref CreateAlarmTopic, "false"', rules)
+        self.assertNotIn("AlarmNotificationEmail", rules)
         self.assertIn("Choose exactly one alarm topic mode", rules)
-        self.assertIn("AlarmNotificationEmail is only valid", rules)
-        self.assertIn("AlarmNotificationEmail must be supplied", rules)
 
     def test_managed_subscription_is_explicit_and_requires_confirmation(self) -> None:
         text = self.template
         self.assertIn("AlarmSubscription:", text)
         self.assertIn("Protocol: email", text)
-        self.assertIn("Endpoint: !Ref AlarmNotificationEmail", text)
+        self.assertIn("Endpoint: !Ref BudgetEmail", text)
         self.assertIn("TopicArn: !Ref AlarmTopic", text)
-        # The email is a sensitive deployment parameter and must not be echoed.
-        email_block = text.split("AlarmNotificationEmail:", 1)[1].split("\n\n", 1)[0]
+        # The shared email is a sensitive deployment parameter and must not be echoed.
+        email_block = text.split("BudgetEmail:", 1)[1].split("\n\n", 1)[0]
         self.assertIn("NoEcho: true", email_block)
 
     def test_managed_topic_policy_is_least_privilege_and_effective_arn_is_output(self) -> None:

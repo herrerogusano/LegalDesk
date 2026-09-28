@@ -114,8 +114,8 @@ native AWS metrics, five-minute beta evaluation periods by default, and
 `notBreaching` for missing data. No alarm action is enabled until an approved
 on-call destination exists. An existing SNS topic can be passed explicitly, or
 the stack can create a project-owned topic only when `CreateAlarmTopic=true`
-and a NoEcho confirmation email is provided; both modes cannot be selected
-together. The Budget's direct email is only an alert.
+using the existing NoEcho `BudgetEmail` confirmation endpoint; both modes
+cannot be selected together. The Budget's direct email is only an alert.
 
 ## Deployment and rollback expectations
 

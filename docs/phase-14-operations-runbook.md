@@ -12,7 +12,7 @@ one monthly AWS Budget. It creates no alarm topic by default. An operator may
 explicitly choose one of two mutually exclusive notification modes:
 `ExistingAlarmTopicArn` reuses an already-owned topic, or
 `CreateAlarmTopic=true` creates one project-owned topic plus one email
-subscription using the `AlarmNotificationEmail` NoEcho parameter. No topic is
+subscription using the existing `BudgetEmail` NoEcho parameter. No topic is
 created when both modes are empty, and the template rejects both modes being
 selected at once. No additional AWS call is authorized by this document.
 

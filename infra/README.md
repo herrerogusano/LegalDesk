@@ -70,8 +70,9 @@ standard CloudWatch alarms for the public API, application/malware/reconciliatio
 Lambdas and both DLQs, plus a configurable monthly Budget with direct email
 notifications. It creates no alarm topic by default. Operators can either
 provide an already-owned `ExistingAlarmTopicArn` or explicitly set
-`CreateAlarmTopic=true` with the NoEcho `AlarmNotificationEmail` parameter;
-the template rejects both modes together and all twelve alarms point to the
+`CreateAlarmTopic=true`; the existing NoEcho `BudgetEmail` parameter is reused
+for the managed subscription. The template rejects both modes together and all
+twelve alarms point to the
 effective topic. The managed email subscription remains pending until its
 recipient confirms it. The managed topic policy permits only CloudWatch alarm
 publishes from this account and region, binding both `aws:SourceAccount` and
