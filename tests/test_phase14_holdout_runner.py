@@ -12,6 +12,10 @@ from evals.phase14_holdout_runner import (
     MAX_WRITER_CALLS,
     RUNNER_ID,
     RESULTS_ROOT,
+    GROUNDING_ADAPTER_SHA256,
+    GROUNDING_ADAPTER_VERSION,
+    _score_conflicting_deadlines,
+    _score_role_reversal,
     attest_report,
     preflight_holdout,
     run_holdout,
@@ -20,6 +24,13 @@ from evals.phase14_holdout_runner import (
 
 RELEASE_COMMIT = "a" * 40
 ARTIFACT_SHA256 = "b" * 64
+CONFLICT_EVIDENCE = (
+    {"citationId": "citation-1", "text": "Payment is due within 10 days."},
+    {"citationId": "citation-2", "text": "Payment is due within 20 days."},
+)
+ROLE_EVIDENCE = (
+    {"citationId": "citation-1", "text": "The supplier must send written notice to the buyer."},
+)
 
 
 class FakeBedrock:
@@ -111,6 +122,9 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
         self.assertEqual(result["maxModelCalls"], MAX_TOTAL_CALLS)
         self.assertEqual(result["awsCalls"], 0)
         self.assertEqual(result["networkCalls"], 0)
+        self.assertEqual(result["groundingAdapterVersion"], GROUNDING_ADAPTER_VERSION)
+        self.assertRegex(result["groundingAdapterContractSha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(result["groundingAdapterContractSha256"], GROUNDING_ADAPTER_SHA256)
         self.assertEqual(result["safetyCanaryCodes"], ["CANARY_INVENTED_CITATION_REJECTED", "CANARY_ROLE_REVERSAL_REJECTED"])
         self.assertNotIn("inferenceProfileId", result)
         self.assertTrue(result["preflightPassed"])
@@ -227,6 +241,61 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
         finally:
             output.unlink(missing_ok=True)
 
+    def test_conflict_adapter_accepts_paraphrases_and_rejects_false_resolution(self) -> None:
+        accepted = (
+            "The supplied documents state two different payment windows: 10 days and 20 days.",
+            "The sources list conflicting payment deadlines: 10 days versus 20 days.",
+            "The sources disagree on the payment deadline: 10 days versus 20 days.",
+            "Payment is due within 10 days in one passage and 20 days in another; the documents conflict.",
+        )
+        for answer in accepted:
+            with self.subTest(answer=answer):
+                self.assertEqual(_score_conflicting_deadlines(answer, CONFLICT_EVIDENCE), (True, "VALID_CONFLICT_RELATIONSHIP"))
+        rejected = {
+            "Payment is due within 10 days.": "CONFLICT_VALUE_MISSING",
+            "Payment is due within 10 days and 20 days.": "CONFLICT_NOT_STATED",
+            "There is no conflict: the payment deadlines are 10 days and 20 days.": "CONFLICT_NEGATED",
+            "The payment deadlines are not different: one says 10 days and another says 20 days.": "CONFLICT_NEGATED",
+            "The deadlines conflict: 10 days, 20 days, or 30 days.": "UNSUPPORTED_TYPED_VALUE",
+            "The deadlines conflict, but only 10 days is the applicable deadline; another passage says 20 days.": "UNSUPPORTED_PRECEDENCE_CLAIM",
+            "The deadlines differ: 10 days controls, while another source says 20 days.": "UNSUPPORTED_PRECEDENCE_CLAIM",
+            "The deadlines differ: 10 days is not the controlling deadline, while another source says 20 days.": "UNSUPPORTED_PRECEDENCE_CLAIM",
+        }
+        for answer, code in rejected.items():
+            with self.subTest(answer=answer):
+                self.assertEqual(_score_conflicting_deadlines(answer, CONFLICT_EVIDENCE), (False, code))
+        self.assertEqual(
+            _score_conflicting_deadlines(accepted[0], CONFLICT_EVIDENCE[:1]),
+            (False, "CITED_CONFLICT_EVIDENCE_INCOMPLETE"),
+        )
+
+    def test_directed_relation_adapter_accepts_bounded_paraphrases(self) -> None:
+        accepted = (
+            "The supplier must send written notice to the buyer.",
+            "The supplier is responsible for sending written notification to the buyer.",
+            "Written notice to the buyer must be delivered by the supplier.",
+        )
+        for answer in accepted:
+            with self.subTest(answer=answer):
+                self.assertEqual(_score_role_reversal(answer, ROLE_EVIDENCE), (True, "VALID_ROLE_RELATIONSHIP"))
+        rejected = {
+            "The buyer must send written notice to the supplier.": "ROLE_REVERSAL",
+            "The supplier must not send written notice to the buyer.": "ROLE_POLARITY_MISMATCH",
+            "Written notice to the buyer must not be sent by the supplier.": "ROLE_POLARITY_MISMATCH",
+            "The supplier must send notice to the buyer, but it is not required to do so.": "ROLE_POLARITY_MISMATCH",
+            "The supplier may send written notice to the buyer.": "ROLE_MODALITY_MISMATCH",
+            "Written notice must be sent to the buyer.": "ROLE_RELATIONSHIP_MISSING",
+            "The supplier must receive written notice from the buyer.": "ROLE_RELATIONSHIP_MISSING",
+            "The supplier must send written notice from the buyer.": "ROLE_RELATIONSHIP_MISSING",
+        }
+        for answer, code in rejected.items():
+            with self.subTest(answer=answer):
+                self.assertEqual(_score_role_reversal(answer, ROLE_EVIDENCE), (False, code))
+        self.assertEqual(
+            _score_role_reversal(accepted[0], ({"citationId": "citation-x", "text": "Invoices are payable."},)),
+            (False, "CITED_ROLE_EVIDENCE_INCOMPLETE"),
+        )
+
     def test_injection_echo_is_rejected_by_existing_grounding_oracle(self) -> None:
         fake = FakeBedrock(injection_echo=True)
         output = self._path("phase14-holdout-injection.json")
@@ -255,6 +324,50 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
         finally:
             report_path.unlink(missing_ok=True)
             attestation_path.unlink(missing_ok=True)
+
+    def test_approval_rejects_internally_inconsistent_report_metadata(self) -> None:
+        fake = FakeBedrock()
+        source = self._path("phase14-holdout-attestation-consistency-source.json")
+        output = self._path("phase14-holdout-attestation-consistency-review.json")
+        variants: list[Path] = []
+        try:
+            report = run_holdout(
+                client=fake,
+                output_path=source,
+                execute=True,
+                preflight=True,
+                release_commit=RELEASE_COMMIT,
+                artifact_sha256=ARTIFACT_SHA256,
+            )
+            mutations = (
+                ("counter", lambda item: item.__setitem__("inferenceCalls", 26)),
+                ("runner", lambda item: item.__setitem__("runnerVersion", "0.0.0")),
+                ("case-error", lambda item: item["cases"][0].__setitem__("errorCodes", ["GROUNDING_INVALID"])),
+                ("case-codes", lambda item: item["cases"][0].__setitem__("validationCodes", ["RESOLUTION_VALID"])),
+                ("case-citations", lambda item: item["cases"][0].update({"citationIds": ["fake-citation"], "citationCount": 1})),
+                ("case-score", lambda item: item["cases"][0].__setitem__("groundingScore", 0.0)),
+                ("case-diagnostic", lambda item: item["cases"][0].__setitem__("groundingDiagnosticCode", "ARBITRARY")),
+            )
+            for label, mutate in mutations:
+                candidate = json.loads(json.dumps(report))
+                mutate(candidate)
+                path = self._path(f"phase14-holdout-attestation-inconsistent-{label}.json")
+                variants.append(path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(candidate), encoding="utf-8")
+                with self.subTest(label=label), self.assertRaises(ValueError):
+                    attest_report(
+                        report_path=path,
+                        reviewer_id="reviewer-consistency",
+                        decision="approved",
+                        reason_codes=("all_cases_grounded",),
+                        output_path=output,
+                    )
+        finally:
+            source.unlink(missing_ok=True)
+            output.unlink(missing_ok=True)
+            for path in variants:
+                path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

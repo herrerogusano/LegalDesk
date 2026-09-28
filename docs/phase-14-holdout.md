@@ -129,3 +129,20 @@ metadata-only failures were `contradictory-deadlines` /
 passing evidence. Any evaluator correction must be versioned, tested against
 positive and negative paraphrases, and followed by a newly authorized run;
 the historical report is never rescored or overwritten.
+
+Runner `1.1.0` introduces grounding adapter contract `2.0.0` without changing
+the frozen fixture or the resolver/writer prompts. The conflict adapter checks
+the subject, both documented typed values and an explicit incompatibility
+marker while rejecting extra durations, conflict negation and invented
+precedence. The directed-relation adapter checks actor, mandatory modality,
+notice action, recipient and positive polarity; it accepts bounded active and
+passive paraphrases but rejects role reversal, negation, weaker modality and
+missing participants. Preflight and reports include the adapter version and
+implementation hash; an approved attestation requires the current runner,
+fixture, prompt and adapter provenance plus well-formed operator-supplied
+release/artifact identifiers. It also reconstructs the exact server-owned
+citation IDs from the frozen fixture and verifies per-case status, calls,
+validation codes, grounding score/diagnostic and aggregate call counters.
+Procedural review must still verify that the release identifiers belong to the
+packaged candidate. This change does not
+retroactively rescore either failed provider report.

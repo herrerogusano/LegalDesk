@@ -20,7 +20,7 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
   retrieval and logout `200`. The synthetic user, membership, Memory events and
   subject-scoped state were removed; independent checks found no matching user,
   restored membership count and zero recent technical audit rows.
-- Full local suite after the lifecycle fix and final review: 552 tests OK,
+- Full local suite after the lifecycle fix and final review: 555 tests OK,
   1 skipped. The known Windows loopback `WinError 10053` appeared in one
   aggregate focused run; each affected test passed independently and the
   subsequent full suite passed.
@@ -46,7 +46,7 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
 
 ## Validation completed
 
-- Full local suite: 552 tests passed, 1 skipped.
+- Full local suite: 555 tests passed, 1 skipped.
 - Authenticated manual login and matter selection succeeded through CloudFront.
 - A fictional text fixture was uploaded through the browser to the quarantine
   prefix, corroborated by GuardDuty, promoted to the canonical prefix, and

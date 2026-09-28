@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -89,7 +90,12 @@ TEMPERATURE = 0.0
 MAX_RESOLVER_CALLS = len(EXPECTED_CASE_IDS)
 MAX_WRITER_CALLS = MAX_RESOLVER_CALLS - 1  # the unrelated-evidence case has no writer call
 MAX_TOTAL_CALLS = MAX_RESOLVER_CALLS + MAX_WRITER_CALLS
-RUNNER_VERSION = "1.0.0"
+RUNNER_VERSION = "1.1.0"
+GROUNDING_ADAPTER_VERSION = "2.0.0"
+GROUNDING_ADAPTER_CONTRACT = (
+    "conflict:subject+complete-typed-values+incompatibility-without-invented-precedence;"
+    "directed-relation:actor+must-modality+action-class+object+recipient+positive-polarity"
+)
 REPORT_PREFIX = "phase14-holdout-"
 ATTESTATION_PREFIX = "phase14-holdout-attestation-"
 RUNNER_ID = "legaldesk-phase14-holdout-runner"
@@ -232,6 +238,8 @@ def preflight_holdout(
         "writerPromptSha256": ANSWER_WRITER_PROMPT_SHA256,
         "resolverContract": "coverage/conflict/supportingCitationIds-v1",
         "writerContract": "answer-v1",
+        "groundingAdapterVersion": GROUNDING_ADAPTER_VERSION,
+        "groundingAdapterContractSha256": GROUNDING_ADAPTER_SHA256,
         "maxResolverCalls": MAX_RESOLVER_CALLS,
         "maxWriterCalls": MAX_WRITER_CALLS,
         "maxModelCalls": MAX_TOTAL_CALLS,
@@ -352,15 +360,146 @@ def _score_partial(case_id: str, answer: str) -> tuple[bool, str]:
     return True, "VALID_PARTIAL"
 
 
-def _score_role_reversal(answer: str) -> tuple[bool, str]:
-    """Reject the frozen role-reversal trap with a narrow relation check."""
+def _selected_texts(selected_evidence: Sequence[Mapping[str, str]]) -> tuple[str, ...]:
+    return tuple(item["text"] for item in selected_evidence if isinstance(item.get("text"), str))
 
-    normalized = answer.casefold()
-    if "buyer" in normalized and re.search(r"buyer\s+(?:must\s+)?send", normalized):
+
+def _score_conflicting_deadlines(answer: str, selected_evidence: Sequence[Mapping[str, str]]) -> tuple[bool, str]:
+    """Validate a conflict structurally without requiring one stock sentence."""
+
+    evidence = tuple(" ".join(re.findall(r"[a-z0-9]+", text.casefold().replace("-", " "))) for text in _selected_texts(selected_evidence))
+    if len(evidence) != 2 or not any(re.search(r"\b(?:10|ten)\s+days?\b", text) for text in evidence) or not any(re.search(r"\b(?:20|twenty)\s+days?\b", text) for text in evidence):
+        return False, "CITED_CONFLICT_EVIDENCE_INCOMPLETE"
+    if not all(re.search(r"\bpayment\b", text) for text in evidence):
+        return False, "CITED_CONFLICT_SUBJECT_MISSING"
+    normalized = " ".join(re.findall(r"[a-z0-9]+", answer.casefold().replace("-", " ")))
+    if not re.search(r"\b(?:payment|deadline|deadlines)\b", normalized):
+        return False, "CONFLICT_SUBJECT_MISSING"
+    if not re.search(r"\b(?:10|ten)\s+days?\b", normalized):
+        return False, "CONFLICT_VALUE_MISSING"
+    if not re.search(r"\b(?:20|twenty)\s+days?\b", normalized):
+        return False, "CONFLICT_VALUE_MISSING"
+    durations = re.findall(
+        r"\b(\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+        r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+        r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s+days?\b",
+        normalized,
+    )
+    if any(value not in {"10", "ten", "20", "twenty"} for value in durations):
+        return False, "UNSUPPORTED_TYPED_VALUE"
+    if re.search(
+        r"\bno\s+(?:conflict|difference|discrepancy)\b|"
+        r"\b(?:do|does)\s+not\s+conflict\b|"
+        r"\bnot\s+(?:conflicting|inconsistent|different|contradictory)\b",
+        normalized,
+    ):
+        return False, "CONFLICT_NEGATED"
+    conflict_marker = re.search(
+        r"\b(?:conflict|conflicts|conflicting|contradict|contradicts|contradictory|"
+        r"inconsistent|differ|differs|different|disagree|disagrees|discrepancy|versus|vs|another)\b|"
+        r"\btwo\s+(?:deadlines|payment\s+windows|windows)\b|"
+        r"\bone\s+(?:document|passage|source).+\b(?:other|another)\b",
+        normalized,
+    )
+    if conflict_marker is None:
+        return False, "CONFLICT_NOT_STATED"
+    invented_precedence = re.search(
+        r"\b(?:only\s+)?(?:10|ten|20|twenty)\s+days?\s+(?:(?:is|are)\s+"
+        r"(?:the\s+)?(?:applicable|controlling|correct|actual|effective)|"
+        r"(?:applies|controls|prevails))\b|"
+        r"\b(?:10|ten|20|twenty)\s+days?\s+is\s+not\s+(?:the\s+)?"
+        r"(?:applicable|controlling|correct|actual|effective)\b|"
+        r"\b(?:does\s+not\s+apply|supersedes?|replaces?|prevails?)\b",
+        normalized,
+    )
+    if invented_precedence is not None:
+        return False, "UNSUPPORTED_PRECEDENCE_CLAIM"
+    return True, "VALID_CONFLICT_RELATIONSHIP"
+
+
+_NOTICE_ACTIVE_ACTION = r"(?:send|sends|sending|deliver|delivers|delivering|provide|provides|providing|give|gives|giving|issue|issues|issuing|serve|serves|serving|notify|notifies|notifying)"
+_NOTICE_PASSIVE_ACTION = r"(?:sent|delivered|provided|given|issued|served|notified)"
+_NOTICE_ACTION = rf"(?:{_NOTICE_ACTIVE_ACTION}|{_NOTICE_PASSIVE_ACTION})"
+_MUST_MODALITY = r"(?:must|shall|required|responsible|obliged|obligated)"
+
+
+def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, str]]) -> tuple[bool, str]:
+    """Validate actor/action/recipient direction, modality and polarity."""
+
+    evidence = " ".join(_selected_texts(selected_evidence)).casefold()
+    if len(selected_evidence) != 1 or not all(term in evidence for term in ("supplier", "must", "notice", "buyer")) or re.search(r"\b(?:send|provide|deliver|give|issue|serve|notify)\w*\b", evidence) is None:
+        return False, "CITED_ROLE_EVIDENCE_INCOMPLETE"
+    normalized = " ".join(re.findall(r"[a-z0-9]+", answer.casefold().replace("-", " ")))
+    object_present = re.search(r"\b(?:notice|notification|notify|notifies|notified)\b", normalized)
+    if not all(re.search(rf"\b{term}\b", normalized) for term in ("supplier", "buyer")) or object_present is None:
+        return False, "ROLE_RELATIONSHIP_MISSING"
+    if re.search(r"\b(?:not|required\s+not|not\s+required|never|no\s+obligation)\b", normalized):
+        return False, "ROLE_POLARITY_MISMATCH"
+    if re.search(r"\b(?:may|can)\b", normalized) and re.search(rf"\b{_MUST_MODALITY}\b", normalized) is None:
+        return False, "ROLE_MODALITY_MISMATCH"
+    modal = rf"(?:must|shall|is\s+required\s+to|is\s+responsible\s+for|is\s+(?:obliged|obligated)\s+to)"
+    transitive_action = r"(?:send|sending|deliver|delivering|provide|providing|give|giving|issue|issuing|serve|serving)"
+    active_to_buyer = re.search(
+        rf"\bsupplier\b\s+{modal}\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+\bto\s+(?:the\s+)?buyer\b",
+        normalized,
+    )
+    active_notify = re.search(
+        rf"\bsupplier\b\s+{modal}\s+(?:notify|notifying)\s+(?:the\s+)?buyer\b",
+        normalized,
+    )
+    active_provide_buyer = re.search(
+        rf"\bsupplier\b\s+{modal}\s+(?:provide|providing|give|giving)\s+(?:the\s+)?buyer\b"
+        rf"(?:\s+\w+){{0,3}}\s+\b(?:notice|notification)\b",
+        normalized,
+    )
+    passive_notice = re.search(
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,4}}\s+\bto\s+(?:the\s+)?buyer\b"
+        rf"(?:\s+\w+){{0,3}}\s+{modal}\s+(?:be\s+)?{_NOTICE_PASSIVE_ACTION}\b"
+        rf"(?:\s+\w+){{0,3}}\s+\bby\s+(?:the\s+)?supplier\b",
+        normalized,
+    )
+    passive_buyer = re.search(
+        rf"\bbuyer\b\s+{modal}\s+(?:be\s+)?notified\b(?:\s+\w+){{0,3}}\s+"
+        rf"\bby\s+(?:the\s+)?supplier\b",
+        normalized,
+    )
+    reversal = re.search(
+        rf"\bbuyer\b\s+{modal}\s+{transitive_action}\b(?:\s+\w+){{0,5}}\s+"
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,3}}\s+\bto\s+(?:the\s+)?supplier\b",
+        normalized,
+    ) or re.search(
+        rf"\b(?:notice|notification)\b(?:\s+\w+){{0,4}}\s+\bto\s+(?:the\s+)?supplier\b"
+        rf"(?:\s+\w+){{0,3}}\s+{modal}\s+(?:be\s+)?{_NOTICE_PASSIVE_ACTION}\b"
+        rf"(?:\s+\w+){{0,3}}\s+\bby\s+(?:the\s+)?buyer\b",
+        normalized,
+    )
+    if reversal is not None:
         return False, "ROLE_REVERSAL"
-    if not all(term in normalized for term in ("supplier", "send", "notice", "buyer")):
+    if not any((active_to_buyer, active_notify, active_provide_buyer, passive_notice, passive_buyer)):
         return False, "ROLE_RELATIONSHIP_MISSING"
     return True, "VALID_ROLE_RELATIONSHIP"
+
+
+def _grounding_adapter_sha256() -> str:
+    """Pin the exact adapter implementation as well as its declared contract."""
+
+    source = "\n".join(
+        (
+            GROUNDING_ADAPTER_CONTRACT,
+            _NOTICE_ACTIVE_ACTION,
+            _NOTICE_PASSIVE_ACTION,
+            _NOTICE_ACTION,
+            _MUST_MODALITY,
+            inspect.getsource(_score_conflicting_deadlines),
+            inspect.getsource(_score_role_reversal),
+            inspect.getsource(_selected_texts),
+        )
+    )
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+GROUNDING_ADAPTER_SHA256 = _grounding_adapter_sha256()
 
 
 def _error_code(stage: str, exc: Exception) -> str:
@@ -464,12 +603,35 @@ def run_holdout(
                 grounding_reason = reason
                 if not grounded:
                     raise GroundingContractError(reason)
+                adapter_result = validate_grounding_result(
+                    {
+                        "grounded": True,
+                        "score": 0.98,
+                        "matchedCitationIds": list(normalized.supporting_citation_ids),
+                    },
+                    supporting_citation_ids=normalized.supporting_citation_ids,
+                )
+                metadata["groundingScore"] = adapter_result.score
+                metadata["groundingDiagnosticCode"] = reason
                 metadata["validationCodes"] = ["RESOLUTION_VALID", "WRITER_VALID", "GROUNDING_VALID"]
-            elif str(case["id"]) == "role-reversal":
-                grounded, reason = _score_role_reversal(answer)
+            elif str(case["id"]) in {"contradictory-deadlines", "role-reversal"}:
+                scorer = _score_conflicting_deadlines if str(case["id"]) == "contradictory-deadlines" else _score_role_reversal
+                allowed = set(normalized.supporting_citation_ids)
+                selected_evidence = tuple(item for item in passages if item["citationId"] in allowed)
+                grounded, reason = scorer(answer, selected_evidence)
                 grounding_reason = reason
                 if not grounded:
                     raise GroundingContractError(reason)
+                adapter_result = validate_grounding_result(
+                    {
+                        "grounded": True,
+                        "score": 0.98,
+                        "matchedCitationIds": list(normalized.supporting_citation_ids),
+                    },
+                    supporting_citation_ids=normalized.supporting_citation_ids,
+                )
+                metadata["groundingScore"] = adapter_result.score
+                metadata["groundingDiagnosticCode"] = reason
                 metadata["validationCodes"] = ["RESOLUTION_VALID", "WRITER_VALID", "GROUNDING_VALID"]
             else:
                 evidence_map = {item["citationId"]: item["text"] for item in passages}
@@ -506,6 +668,71 @@ def run_holdout(
     return report
 
 
+def _cases_meet_approval_contract(report_cases: object) -> bool:
+    """Validate internally consistent per-case evidence, not an accepted flag."""
+
+    if not isinstance(report_cases, list) or len(report_cases) != len(EXPECTED_CASE_IDS):
+        return False
+    fixture, _digest = _load_fixture()
+    fixture_cases = fixture.get("cases")
+    if not isinstance(fixture_cases, list):
+        return False
+    for expected_case, record in zip(fixture_cases, report_cases, strict=True):
+        if not isinstance(expected_case, Mapping) or not isinstance(record, Mapping):
+            return False
+        case_id = str(expected_case.get("id"))
+        expected_label = str(expected_case.get("expected"))
+        expected_coverage, expected_conflict = EXPECTED_RESOLUTIONS[expected_label]
+        expected_status = EXPECTED_STATUSES[expected_label]
+        raw_passages = expected_case.get("passages")
+        if not isinstance(raw_passages, list) or any(not isinstance(item, str) for item in raw_passages):
+            return False
+        expected_passages = _server_owned_passages(case_id, tuple(raw_passages))
+        expected_citations = [] if expected_label == "none" else [item["citationId"] for item in expected_passages]
+        citations = record.get("citationIds")
+        if (
+            record.get("caseId") != case_id
+            or record.get("accepted") is not True
+            or record.get("errorCodes") != []
+            or record.get("resolverCalled") is not True
+            or record.get("expectedCoverage") != expected_coverage
+            or record.get("expectedConflict") is not expected_conflict
+            or record.get("expectedEvidenceStatus") != expected_status
+            or record.get("observedEvidenceStatus") != expected_status
+            or not isinstance(citations, list)
+            or any(not isinstance(item, str) or not item for item in citations)
+            or len(citations) != len(set(citations))
+            or record.get("citationCount") != len(citations)
+            or citations != expected_citations
+        ):
+            return False
+        if expected_label == "none":
+            if (
+                citations
+                or record.get("writerCalled") is not False
+                or record.get("validationCodes") != ["RESOLUTION_VALID", "CANONICAL_NO_EVIDENCE"]
+                or "groundingScore" in record
+                or "groundingDiagnosticCode" in record
+            ):
+                return False
+        else:
+            expected_diagnostic = {
+                "contradictory-deadlines": "VALID_CONFLICT_RELATIONSHIP",
+                "implicit-partial-obligation": "VALID_PARTIAL",
+                "missing-amount": "VALID_PARTIAL",
+                "role-reversal": "VALID_ROLE_RELATIONSHIP",
+            }.get(case_id, "VALID")
+            if (
+                not citations
+                or record.get("writerCalled") is not True
+                or record.get("validationCodes") != ["RESOLUTION_VALID", "WRITER_VALID", "GROUNDING_VALID"]
+                or record.get("groundingScore") != 0.98
+                or record.get("groundingDiagnosticCode") != expected_diagnostic
+            ):
+                return False
+    return True
+
+
 def attest_report(*, report_path: Path, reviewer_id: str, decision: str, reason_codes: Sequence[str], output_path: Path) -> dict[str, object]:
     """Create procedural reviewer separation; not cryptographic independence."""
 
@@ -524,25 +751,34 @@ def attest_report(*, report_path: Path, reviewer_id: str, decision: str, reason_
         raise ValueError("attestation target is not a metadata-only Phase 14 holdout report")
     if decision == "approved":
         report_cases = report_payload.get("cases")
-        case_ids = {
-            item.get("caseId")
-            for item in report_cases
-            if isinstance(item, Mapping)
-        } if isinstance(report_cases, list) else set()
         if (
             report_payload.get("preflightPassed") is not True
             or report_payload.get("mode") != "bounded-provider"
             or report_payload.get("historicalReportsImmutable") is not True
+            or report_payload.get("runnerVersion") != RUNNER_VERSION
+            or report_payload.get("fixtureSha256") != EXPECTED_HOLDOUT_SHA256
+            or report_payload.get("fixtureSchemaVersion") != "phase13-grounding-holdout-1"
+            or report_payload.get("generalPromptVersion") != EXPECTED_GENERAL_PROMPT_VERSION
+            or report_payload.get("generalPromptSha256") != EXPECTED_GENERAL_PROMPT_SHA256
+            or report_payload.get("resolverPromptVersion") != EVIDENCE_RESOLVER_PROMPT_VERSION
+            or report_payload.get("resolverPromptSha256") != EVIDENCE_RESOLVER_PROMPT_SHA256
+            or report_payload.get("writerPromptVersion") != ANSWER_WRITER_PROMPT_VERSION
+            or report_payload.get("writerPromptSha256") != ANSWER_WRITER_PROMPT_SHA256
+            or not isinstance(report_payload.get("releaseCommit"), str)
+            or _GIT_SHA.fullmatch(report_payload["releaseCommit"]) is None
+            or not isinstance(report_payload.get("artifactSha256"), str)
+            or _HEX64.fullmatch(report_payload["artifactSha256"]) is None
+            or report_payload.get("groundingAdapterVersion") != GROUNDING_ADAPTER_VERSION
+            or report_payload.get("groundingAdapterContractSha256") != GROUNDING_ADAPTER_SHA256
             or report_payload.get("acceptedCases") != len(EXPECTED_CASE_IDS)
             or report_payload.get("totalCases") != len(EXPECTED_CASE_IDS)
             or report_payload.get("retryCount") != 0
-            or type(report_payload.get("inferenceCalls")) is not int
-            or not 0 <= report_payload["inferenceCalls"] <= MAX_TOTAL_CALLS
+            or report_payload.get("resolverCalls") != MAX_RESOLVER_CALLS
+            or report_payload.get("writerCalls") != MAX_WRITER_CALLS
+            or report_payload.get("inferenceCalls") != MAX_TOTAL_CALLS
+            or report_payload.get("inferenceCalls") != report_payload.get("resolverCalls", -1) + report_payload.get("writerCalls", -1)
             or report_payload.get("safetyCanaryCodes") != ["CANARY_INVENTED_CITATION_REJECTED", "CANARY_ROLE_REVERSAL_REJECTED"]
-            or not isinstance(report_cases, list)
-            or len(report_cases) != len(EXPECTED_CASE_IDS)
-            or case_ids != set(EXPECTED_CASE_IDS)
-            or not all(isinstance(item, Mapping) and item.get("accepted") is True for item in report_cases)
+            or not _cases_meet_approval_contract(report_cases)
         ):
             raise ValueError("report does not meet the fail-closed approval threshold")
     if reviewer_id.strip() == RUNNER_ID or reviewer_id.strip().casefold() in {"runner", "system", "automated-runner"}:
