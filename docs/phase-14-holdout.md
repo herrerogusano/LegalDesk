@@ -70,7 +70,8 @@ python -m evals.phase14_holdout_runner execute --execute `
 ```
 
 Reports are metadata-only and create-only. They contain case IDs, status
-labels, citation counts/IDs, bounded validation/error codes, model/prompt
+labels, citation counts/IDs, bounded validation/error codes (including a
+closed grounding diagnostic code when the oracle rejects a writer result), model/prompt
 provenance, call counters, and the release hashes. They do not contain
 questions, passages, answers, prompts, tokens, secrets, or chain-of-thought.
 An existing report path is rejected; no report is overwritten.
@@ -107,6 +108,11 @@ python -m evals.phase14_holdout_runner attest `
   --output evals/results/phase14-holdout-attestation-<unique-run>.json
 ```
 
-The holdout has not been executed against AWS by this local implementation.
-Until a real report and an independent attestation exist, the Phase 14
-semantic-release gate remains pending.
+The first bounded provider execution is preserved in
+`evals/results/phase14-holdout-20260928-live.json`. It accepted 11 of 14 cases
+with zero retries and therefore cannot be approved. The failure analysis led
+to versioned resolver/writer prompt corrections for amendment precedence,
+material conflicting values, and actor/action/recipient direction. The failed
+report remains immutable historical evidence; the semantic-release gate stays
+closed until a new, separately authorized run against the corrected release
+passes and receives independent attestation.

@@ -222,6 +222,7 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
             report = run_holdout(client=fake, output_path=output, execute=True, preflight=True, release_commit=RELEASE_COMMIT, artifact_sha256=ARTIFACT_SHA256)
             failed = next(item for item in report["cases"] if item["caseId"] == "role-reversal")
             self.assertEqual(failed["errorCodes"], ["GROUNDING_INVALID"])
+            self.assertEqual(failed["groundingDiagnosticCode"], "ROLE_REVERSAL")
             self.assertFalse(failed["accepted"])
         finally:
             output.unlink(missing_ok=True)
@@ -233,6 +234,7 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
             report = run_holdout(client=fake, output_path=output, execute=True, preflight=True, release_commit=RELEASE_COMMIT, artifact_sha256=ARTIFACT_SHA256)
             failed = next(item for item in report["cases"] if item["caseId"] == "injection-adjacent-fact")
             self.assertEqual(failed["errorCodes"], ["GROUNDING_INVALID"])
+            self.assertEqual(failed["groundingDiagnosticCode"], "FORBIDDEN_DIRECTIVE_ECHO")
             self.assertFalse(failed["accepted"])
         finally:
             output.unlink(missing_ok=True)

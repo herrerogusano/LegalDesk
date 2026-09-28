@@ -275,8 +275,8 @@ class GroundedChatTests(unittest.TestCase):
             grounding_validator=grounder,
         )
         self.assertEqual(response.operation_status, "ok")
-        self.assertEqual(response.resolver_prompt_version, "1.1.0")
-        self.assertEqual(response.writer_prompt_version, "1.2.0")
+        self.assertEqual(response.resolver_prompt_version, "1.2.0")
+        self.assertEqual(response.writer_prompt_version, "1.3.0")
         self.assertEqual([call["source"] for call in guardrail_client.calls], ["INPUT", "OUTPUT"])
         output_text = " ".join(
             block["text"]["text"]

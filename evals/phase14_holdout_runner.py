@@ -205,9 +205,9 @@ def preflight_holdout(
     artifact = FileSystemSystemPromptProvider().load()
     if artifact.version != EXPECTED_GENERAL_PROMPT_VERSION or artifact.sha256 != EXPECTED_GENERAL_PROMPT_SHA256:
         raise RuntimeError("general system prompt artifact is not the approved release artifact")
-    if EVIDENCE_RESOLVER_PROMPT_VERSION != "1.1.0" or EVIDENCE_RESOLVER_PROMPT_SHA256 != "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672":
+    if EVIDENCE_RESOLVER_PROMPT_VERSION != "1.2.0" or EVIDENCE_RESOLVER_PROMPT_SHA256 != "da65f6b0efa70e728d9c6c5b85c036a7fb3b71b1b24c1cde33e9caedabe8127c":
         raise RuntimeError("resolver prompt contract changed")
-    if ANSWER_WRITER_PROMPT_VERSION != "1.2.0" or ANSWER_WRITER_PROMPT_SHA256 != "3e6142b473d2df1efce4070eada43566d4b831063af3e1230e3cd70e3ae7d0cf":
+    if ANSWER_WRITER_PROMPT_VERSION != "1.3.0" or ANSWER_WRITER_PROMPT_SHA256 != "a5dcb22f747bb3853d5e3840a3ba13cd885db835f2f70bb3d36a1e5e7364d9b7":
         raise RuntimeError("writer prompt contract changed")
     if output_path is not None:
         _assert_result_path(output_path, prefix=REPORT_PREFIX)
@@ -430,6 +430,7 @@ def run_holdout(
         passages = _server_owned_passages(str(case["id"]), tuple(case["passages"]))  # type: ignore[arg-type]
         metadata = _case_metadata(case, passages)
         expected_status = str(metadata["expectedEvidenceStatus"])
+        grounding_reason: str | None = None
         try:
             metadata["resolverCalled"] = True
             normalized = validate_evidence_resolution(
@@ -460,17 +461,20 @@ def run_holdout(
                 raise ValueError("writer answer was not text")
             if str(case["expected"]) == "partial":
                 grounded, reason = _score_partial(str(case["id"]), answer)
+                grounding_reason = reason
                 if not grounded:
                     raise GroundingContractError(reason)
                 metadata["validationCodes"] = ["RESOLUTION_VALID", "WRITER_VALID", "GROUNDING_VALID"]
             elif str(case["id"]) == "role-reversal":
                 grounded, reason = _score_role_reversal(answer)
+                grounding_reason = reason
                 if not grounded:
                     raise GroundingContractError(reason)
                 metadata["validationCodes"] = ["RESOLUTION_VALID", "WRITER_VALID", "GROUNDING_VALID"]
             else:
                 evidence_map = {item["citationId"]: item["text"] for item in passages}
                 raw_grounding, reason = evaluate_grounding_detailed(answer, _grounding_spec(str(case["id"])), normalized.supporting_citation_ids, tuple(evidence_map), evidence_map)
+                grounding_reason = reason
                 grounding = validate_grounding_result(raw_grounding, supporting_citation_ids=normalized.supporting_citation_ids)
                 metadata["groundingScore"] = grounding.score
                 metadata["groundingDiagnosticCode"] = reason
@@ -478,6 +482,8 @@ def run_holdout(
             metadata["accepted"] = True
         except Exception as exc:
             stage = "writer" if metadata["writerCalled"] else "resolver"
+            if stage == "writer" and isinstance(exc, GroundingContractError) and grounding_reason is not None:
+                metadata["groundingDiagnosticCode"] = grounding_reason
             metadata["errorCodes"] = [_error_code(stage, exc)]
         results.append(metadata)
 

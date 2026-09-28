@@ -38,7 +38,7 @@ EVIDENCE_RESOLUTION_FIELDS = (
 # retrieval.  Keeping the contract here prevents a caller from accidentally
 # giving it the general answer-generation instructions (which previously
 # caused the model to answer instead of resolving evidence).
-EVIDENCE_RESOLVER_PROMPT_VERSION = "1.1.0"
+EVIDENCE_RESOLVER_PROMPT_VERSION = "1.2.0"
 EVIDENCE_RESOLVER_SYSTEM_PROMPT = """You are the LegalDesk Evidence Resolver.
 
 Your only task is to inspect the user's question and the authorized passages,
@@ -57,6 +57,11 @@ Resolve evidence, do not write an answer. Use these meanings:
 - conflict: authorized passages contain materially incompatible facts relevant
   to the question. Do not mark a conflict for different wording or facts that
   apply to different dates, entities, or conditions.
+- When a passage explicitly says that a provision is amended, revised, or
+  supersedes an earlier provision for the same field and scope, treat the
+  stated replacement as the applicable value rather than a conflict. Keep
+  conflict=true when incompatible values apply to the same effective scope
+  without an explicit precedence relationship.
 
 Apply the coverage labels by relationship to the question, not by whether the
 passage contains the final requested value:
@@ -97,7 +102,7 @@ EVIDENCE_RESOLVER_PROMPT_SHA256 = hashlib.sha256(
     EVIDENCE_RESOLVER_SYSTEM_PROMPT.encode("utf-8")
 ).hexdigest()
 
-ANSWER_WRITER_PROMPT_VERSION = "1.2.0"
+ANSWER_WRITER_PROMPT_VERSION = "1.3.0"
 ANSWER_WRITER_SYSTEM_PROMPT = """You are the LegalDesk Answer Writer.
 
 Write one concise answer using only the selected authorized passages. The
@@ -121,7 +126,13 @@ Follow the fixed evidence status:
   relationship or fact and explicitly state which requested material detail is
   absent, omitted, unspecified, or otherwise not established; never guess the
   missing value and do not add a legal conclusion;
-- ambiguous: describe the documented conflict without resolving it by guess.
+- ambiguous: describe the documented conflict without resolving it by guess,
+  and preserve every material conflicting value with its unit, denomination,
+  or full date as stated in the selected evidence.
+
+Preserve documentary relationships exactly: keep each actor, action, and
+recipient in the same direction as the evidence. Never swap the parties or
+reverse who owes, sends, receives, approves, or performs an action.
 
 Prefer neutral words already present in the question or selected evidence.
 Do not add background facts, implications, recommendations, or interpretations
