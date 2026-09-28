@@ -691,8 +691,9 @@ class InMemoryObjectStorage:
             raise RuntimeError("fictional storage copy failure")
         self.objects[destination_key] = self.objects[source_key]
         self.metadata[destination_key] = dict(self.metadata[source_key])
-        if source_key in self.tags:
-            self.tags[destination_key] = dict(self.tags[source_key])
+        # Match the production adapter: quarantine scan tags are not copied to
+        # the canonical/indexable object.
+        self.tags.pop(destination_key, None)
 
     def get_object_tagging(self, *, key: str) -> Mapping[str, str]:
         if key not in self.objects:
@@ -891,6 +892,10 @@ class Boto3S3ObjectStorage:
             CopySource={"Bucket": self.bucket_name, "Key": source_key},
             Key=destination_key,
             MetadataDirective="COPY",
+            # GuardDuty writes its scan verdict on the quarantine object.  Do
+            # not copy that trust signal into the canonical/indexable prefix.
+            TaggingDirective="REPLACE",
+            Tagging="",
             ServerSideEncryption="AES256",
         )
 
