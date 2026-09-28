@@ -205,6 +205,10 @@ async function run() {
     count("GET /api/cross-matter/documents");
 
     setPhase("audit");
+    const diagnosticsPanel = page.locator("#technical-diagnostics");
+    if (!(await diagnosticsPanel.getAttribute("open"))) {
+      await diagnosticsPanel.locator("summary").click();
+    }
     const auditResponsePromise = page.waitForResponse(response => {
       try { return new URL(response.url()).origin === base.origin && new URL(response.url()).pathname === "/api/audit" && response.request().method() === "GET"; } catch (_error) { return false; }
     }, { timeout: 60_000 });
