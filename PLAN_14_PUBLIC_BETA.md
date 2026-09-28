@@ -2,8 +2,8 @@
 
 ## Status, scope and authority
 
-Status: **planning/architecture and local implementation approved; AWS
-deployment pending**.
+Status: **authenticated public-beta infrastructure deployed and browser-smoke
+tested; production promotion remains gated**.
 
 The approved product scope is an authenticated public beta for fictional or
 public documents only. It is not a legal-data service and it does not assume
@@ -11,9 +11,10 @@ anonymous signup, self-service tenant creation, or real client data. Users and
 matter memberships are provisioned and authorized server-side before use.
 
 This plan follows Phase 13 and preserves the existing AgentCore, Cognito,
-Gateway, Memory, Bedrock, S3 and DynamoDB boundaries. It authorizes local
-implementation and tests, but it does not authorize AWS calls, infrastructure
-creation, inference, or release promotion.
+Gateway, Memory, Bedrock, S3 and DynamoDB boundaries. Deployment and bounded
+test operations were performed under the user's operation-specific approvals;
+this document does not authorize further AWS calls, inference, destructive
+cleanup, or release promotion. The remaining gates below continue to apply.
 
 ## Approved target architecture
 

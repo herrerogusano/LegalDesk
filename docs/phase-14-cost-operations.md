@@ -2,15 +2,19 @@
 
 ## Status and authority
 
-This is a planning artifact for the approved authenticated public beta
-architecture. It does not authorize AWS calls, resource creation, real-model
-inference, or promotion to `prod`. The beta accepts only fictional/public
+This began as a planning artifact for the approved authenticated public beta
+architecture. The Phase 14 stacks and bounded tests were subsequently executed
+under operation-specific user approvals. This document does not authorize any
+additional AWS call, resource change, real-model inference, destructive
+cleanup, or promotion to `prod`. The beta accepts only fictional/public
 documents and pre-provisioned authenticated users.
 
-No numeric spend ceiling is claimed by this document. A numeric ceiling,
-retention period, request budget, and teardown target must be approved before
-AWS deployment, ingestion, inference, or the real-model holdout. Local
-implementation and provider-double tests remain permitted.
+No general numeric spend ceiling is claimed by this document. Earlier
+operation-specific approvals do not establish a reusable production budget.
+A numeric ceiling, retention period, request budget, and teardown target must
+be approved before further ingestion/inference, the final real-model holdout,
+or production promotion. Local implementation and provider-double tests remain
+permitted.
 
 ## Resource inventory and cost classes
 
@@ -133,8 +137,9 @@ without creating a new topic. The Budget's direct email is only an alert.
 
 ## Release stop conditions
 
-Stop before AWS if the inventory is incomplete, the numeric envelope is
-missing, a requested resource is not covered by IaC, edge/origin settings are
-broader than approved, cleanup is unbounded, or rollback/retention ownership
-is unclear. Keep the verdict `NOT_READY_FOR_PROD` until every Phase 14 gate in
+Stop before any additional AWS mutation or billable operation if the inventory
+is incomplete, the numeric envelope is missing, a requested resource is not
+covered by IaC, edge/origin settings are broader than approved, cleanup is
+unbounded, or rollback/retention ownership is unclear. Keep the verdict
+`NOT_READY_FOR_PROD` until every Phase 14 gate in
 `docs/production-readiness.md` has attached evidence.

@@ -1,8 +1,8 @@
-# Phase 14 public edge (local IaC tranche)
+# Phase 14 public edge
 
-`infra/cloudformation/phase-14-public-edge.yaml` is a deployment definition,
-not a deployment. It is intentionally parameterized around the existing
-Phase 02 source bucket and metadata table, Phase 03 knowledge base, Phase 06
+`infra/cloudformation/phase-14-public-edge.yaml` is the deployment definition
+used by the public-beta stack. It is intentionally parameterized around the
+existing Phase 02 source bucket and metadata table, Phase 03 knowledge base, Phase 06
 Guardrail, Phase 08 Gateway/identity dependencies, Phase 09 Memory, and Phase
 01 Harness. It creates no replacement data plane for those resources.
 
@@ -52,7 +52,7 @@ log group use `LogRetentionDays` (default 30). CloudFront service metrics and
 the application's redacted allowlist remain available without retaining the
 callback secret.
 
-## Immutable release artifacts (local only)
+## Immutable release artifacts
 
 `scripts/package_release.py` is the only release packager for this tranche. It
 does not invoke AWS, pip, or a network client. Given a dependency directory
@@ -119,6 +119,15 @@ while permitting a region wildcard only in the corresponding
 `arn:aws:bedrock:*::foundation-model/<exact-model-id>`. A single regional model
 ARN is insufficient for a cross-region profile and fails closed at inference.
 
+On 2026-09-28, a read-only `GetInferenceProfile` check showed the active
+`eu.anthropic.claude-sonnet-4-6` profile routing to the exact Sonnet 4.6
+foundation-model ID in `eu-north-1`, `eu-west-3`, `eu-south-1`, `eu-south-2`,
+`eu-west-1`, and `eu-central-1`. The deployed role therefore uses
+`arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6`: the action,
+resource type and model ID remain exact, while the region is wildcarded only
+to permit the provider-controlled routing set. A same-day CloudFormation
+read-only check recorded `LegalDeskPhase14PublicEdge` as `UPDATE_COMPLETE`.
+
 ## Deterministic two-step identity/CORS bootstrap
 
 Avoid a circular dependency between the new edge hostname and existing Phase
@@ -140,10 +149,12 @@ The stack output remains the source of truth for the API host/origin split.
 
 ## Deployment and rollback gate
 
-This file and its tests are local-only. Before any deployment approval, review
-the exact parameter values against `docs/phase-13-application-access.md`,
-confirm that all catalog entries are fictional/public beta matters, inspect
-the NoEcho marker handling, and verify the Lambda zip digest. Keep the prior
+The public-beta stack has been deployed under operation-specific approval, but
+that does not close the production gate. Before any subsequent deployment or
+promotion, review the exact parameter values against
+`docs/phase-13-application-access.md`, confirm that all catalog entries are
+fictional/public beta matters, inspect the NoEcho marker handling, and verify
+the Lambda zip digest. Keep the prior
 immutable Lambda S3 version and CloudFormation change set available for
 rollback. Roll back the distribution/API/Lambda stack to the prior reviewed
 version, then restore the prior Phase 10/02 origin values if the bootstrap

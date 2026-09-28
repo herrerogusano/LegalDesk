@@ -20,7 +20,7 @@ Recorded on 2026-09-28 after pausing the public-beta validation work.
   retrieval and logout `200`. The synthetic user, membership, Memory events and
   subject-scoped state were removed; independent checks found no matching user,
   restored membership count and zero recent technical audit rows.
-- Full local suite after the lifecycle fix: 550 tests OK, 1 skipped. The known
+- Full local suite after the lifecycle fix and final review: 552 tests OK, 1 skipped. The known
   Windows loopback `WinError 10053` appeared in one aggregate focused run; each
   affected test passed independently and the subsequent full suite passed.
 - Deployment: `LegalDeskPhase14PublicEdge` is `UPDATE_COMPLETE`; the Lambda

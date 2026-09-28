@@ -15,7 +15,7 @@ The Phase 14 local candidate adds durable state, asynchronous ingestion,
 quarantine and content validation, bounded reconciliation, release packaging,
 operational controls, a bounded holdout runner, fail-closed public endpoint
 validation, browser security headers and strict retrieval response bounds. The
-complete local suite passes with 550 tests (one platform-specific symlink test
+complete local suite passes with 552 tests (one platform-specific symlink test
 skipped on Windows), all 15 CloudFormation/SAM templates pass lint, and the
 deterministic evaluation remains 24/24 with zero AWS calls.
 
@@ -31,12 +31,14 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    presigned-upload host(s), HSTS at the edge, exact S3 CORS, reviewed edge
    limits, and no anonymous/public signup. Ingestion start/status is
    asynchronous and no public request waits on the Bedrock polling loop. The
-   local candidate template and packaging/test evidence are in
-   [`phase-14-public-edge.md`](phase-14-public-edge.md), but they do not close
-   this gate; deployment, browser journey, and callback/CORS evidence remain
-   required. CloudFront standard request logs remain disabled because they
-   would retain the OAuth callback query; the candidate uses field-selected
-   API access logs without query, cookies, headers, IP, or user agent.
+   implementation and deployment evidence are in
+   [`phase-14-public-edge.md`](phase-14-public-edge.md). The deployed edge and
+   authenticated browser journey close the basic deployment path, but the
+   complete cookie/header/CSP/CORS and asynchronous-ingestion evidence set
+   remains to be attached before this gate closes. CloudFront standard request
+   logs remain disabled because they would retain the OAuth callback query; the
+   candidate uses field-selected API access logs without query, cookies,
+   headers, IP, or user agent.
 2. **P14-G2 — durable state and authorization.** Sessions, OAuth state, citation
    handles, conversation correlations, accepted history/review candidates and
    redacted audit records survive restart and multi-instance routing. Expiry,
@@ -68,25 +70,29 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    holdout runs against the exact release candidate and receives independent
    review. The bounded local runner, deterministic negative canaries and
    fail-closed procedural attestation gate are implemented in
-   [`phase-14-holdout.md`](phase-14-holdout.md), but no real-model report or
-   reviewer attestation exists yet. The lexical oracle, deterministic suite
-   and earlier bounded smoke are not substitutes for this gate.
+   [`phase-14-holdout.md`](phase-14-holdout.md). The immutable first real-model
+   run accepted 11/14 cases against an earlier commit and cannot be approved;
+   no passing final-candidate report or reviewer attestation exists. The
+   lexical oracle, deterministic suite and bounded smoke are not substitutes
+   for this gate.
 6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
    recovery procedures, backup/retention ownership, verified deployment and
    rollback, and shared-resource teardown evidence are complete. The local
-   candidate is in [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md);
-   provider evidence and owner sign-off remain open.
-7. **P14-G7 — cost and deployment authority.** The final inventory, numeric cost
-   envelope, request/model/retention ceilings, IaC change set and exact
-   teardown targets are approved before any AWS deployment, real-model
-   evaluation, or promotion.
+   stack is deployed and its procedure is in
+   [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md); fault,
+   rollback and recovery evidence plus owner sign-off remain open.
+7. **P14-G7 — cost and deployment authority.** Earlier operation-specific
+   approvals covered the completed deployment and bounded test runs, but do not
+   establish a reusable production budget. The final inventory, numeric cost
+   envelope, request/model/retention ceilings and exact teardown targets must
+   be approved before further billable operations or promotion.
 
 The loopback entry point rejects non-loopback hosts and is intentionally not a
-production server. ADR-018 and `PLAN_14_PUBLIC_BETA.md` approve the target
-design only; implementation, IaC, AWS deployment and inference remain gated by
-P14-G1 through P14-G7. The cost inventory and operational procedure are in
-`docs/phase-14-cost-operations.md`. Until all gates have evidence, the honest
-release verdict remains `NOT_READY_FOR_PROD`.
+production server. ADR-018 and `PLAN_14_PUBLIC_BETA.md` define the target
+design; further AWS operations, final inference evidence and production
+promotion remain gated by P14-G1 through P14-G7. The cost inventory and
+operational procedure are in `docs/phase-14-cost-operations.md`. Until all
+gates have evidence, the honest release verdict remains `NOT_READY_FOR_PROD`.
 
 ## Local hardening evidence
 
@@ -107,5 +113,6 @@ release verdict remains `NOT_READY_FOR_PROD`.
 - Presigned upload authorization binds the exact validated byte count into the
   SigV4 signed headers, while confirmation independently validates size, type
   and server-owned metadata.
-- No AWS call, resource creation, deployment or inference is part of this local
-  hardening pass.
+- The local hardening tests make no AWS call. Deployment and the bounded public
+  smoke are separately recorded evidence and do not imply authorization for
+  another provider operation.
