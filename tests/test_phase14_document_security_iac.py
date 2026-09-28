@@ -51,12 +51,16 @@ class Phase14DocumentSecurityInfrastructureTests(unittest.TestCase):
             "bucketName:",
             "- !Ref SourceBucketName",
             "objectKey:",
-            "prefix: !Sub \"quarantine/tenants/${BetaTenantId}/\"",
+            'wildcard: !Sub "quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"',
+            'wildcard: !Sub "quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"',
             "MaximumEventAgeInSeconds: 3600",
             "MaximumRetryAttempts: 3",
             "DeadLetterConfig:",
         ):
             self.assertIn(value, text)
+        rule = text[text.index("  MalwareScanRule:"):text.index("  MalwareScanInvokePermission:")]
+        self.assertNotIn(".metadata.json", rule)
+        self.assertNotIn("prefix:", rule)
         self.assertIn("SqsManagedSseEnabled: true", text)
         self.assertIn("MessageRetentionPeriod: 1209600", text)
 

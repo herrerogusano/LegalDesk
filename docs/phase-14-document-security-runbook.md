@@ -5,6 +5,17 @@ not authorize real legal data or another AWS operation. The documented stack
 is deployed in `eu-west-1`; changes and provider exercises remain separately
 approval-gated.
 
+## Late-event idempotency and routing
+
+The EventBridge rule routes only server-owned `original.pdf` and
+`original.txt` quarantine keys; GuardDuty results for metadata sidecars never
+invoke the lifecycle handler. A delayed result received after reconciliation
+has removed both the document metadata and the exact quarantine object is
+acknowledged as `stale_event_ignored`. Metadata absence while the object still
+exists remains a fail-closed `unknown_document` error, so an orphaned or forged
+object cannot be silently accepted. No ignored event can promote or index a
+document.
+
 ## Normal path
 
 1. The backend issues a server-owned key and metadata record in
