@@ -1,7 +1,8 @@
 # Phase 14 data governance runbook
 
-Status: local, operator-boundary implementation only. No public HTTP route or
-AWS deployment is enabled by this document.
+Status: operator-only governance boundary implemented; the authenticated beta
+is deployed, but no public destructive route exists. This document authorizes
+no AWS operation.
 
 ## Beta data policy
 
@@ -55,8 +56,11 @@ The report sets `indexCleanupPending=true` when documents were deleted. This
 is intentional: Bedrock Knowledge Bases may retain stale vectors until a
 subsequent bounded synchronization observes the deletion. The retrieval gate
 drops/fails closed for any result whose exact document is absent, not
-`INDEXED`, or not malware-clean, but privacy deletion is not declared complete
-until index-cleanup evidence exists.
+`INDEXED`, or not malware-clean. In the public composition it additionally
+HEAD-checks the server-owned canonical `Document.s3Key`; a missing or failed
+HEAD blocks the complete response before evidence resolution/writing, and a
+provider URI/key cannot redirect that check. Privacy deletion is not declared
+complete until index-cleanup evidence exists.
 
 ## Review retention
 
@@ -79,6 +83,6 @@ idempotent; limits and conditional transitions are required.
    bounded partition queries and server-owned IDs. Escalate any item that
    cannot be proven to belong to the target scope.
 
-Production deployment remains blocked until retention periods, operator
-identity, export destination, backup/legal-hold behavior, deletion evidence,
-and cost/teardown ownership are separately approved.
+Promotion to `prod` remains blocked until retention periods, operator identity,
+export destination, backup/legal-hold behavior, deletion evidence, and
+cost/teardown ownership are separately approved.

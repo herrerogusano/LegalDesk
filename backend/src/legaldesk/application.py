@@ -462,6 +462,7 @@ def build_aws_composition(
             telemetry_sink=composition.telemetry_sink,
             authorized_evidence_sink=authorized_evidence_sink,
             metadata_repository=metadata,
+            object_storage=storage,
         )
 
     composition.chat_service = chat_service

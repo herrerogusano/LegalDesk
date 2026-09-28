@@ -143,6 +143,8 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         self.assertIsNot(instances["bedrock-agent-runtime"], instances["bedrock-agent"])
         self.assertIs(observed["retrieval_client"], instances["bedrock-agent-runtime"])
         self.assertIsNot(observed["retrieval_client"], composition.sync_service.client)
+        self.assertIs(observed["metadata_repository"], composition.metadata_repository)
+        self.assertIs(observed["object_storage"], composition.object_storage)
         for kwargs in clients.values():
             self.assertEqual(kwargs["config"].retries["total_max_attempts"], 1)
 

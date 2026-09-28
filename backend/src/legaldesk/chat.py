@@ -48,6 +48,7 @@ from .retrieval import (
     Citation,
     RetrievedPassage,
     _retrieve_with_context,
+    ObjectHeadStorage,
 )
 from .evidence import (
     AnswerWriter,
@@ -362,6 +363,7 @@ def answer_question(
     grounding_validator: GroundingValidator | None = None,
     authorized_evidence_sink: Callable[[VerifiedIdentity, RequestContext, ChatRequest, ChatResponse, tuple[RetrievedPassage, ...]], None] | None = None,
     metadata_repository: DocumentMetadataRepository | None = None,
+    object_storage: ObjectHeadStorage | None = None,
 ) -> ChatResponse:
     """Load the server prompt, authorize and retrieve, then generate from evidence."""
 
@@ -512,6 +514,7 @@ def answer_question(
             knowledge_base_id=knowledge_base_id,
             telemetry_sink=telemetry_sink,
             metadata_repository=metadata_repository,
+            object_storage=object_storage,
         )
     except Exception:
         emit_telemetry(

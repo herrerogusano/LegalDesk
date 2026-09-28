@@ -237,7 +237,13 @@ adapter.
 
 `answer_question` calls the existing authorized retrieval service before the
 generator. Retrieval derives scope from the authorization store and filters
-and rechecks tenant/matter server-side. An empty result returns this canonical
+and rechecks tenant/matter server-side. When the public composition injects
+object storage, every result that is live `INDEXED` and malware-clean also
+gets a `HeadObject` against the canonical `Document.s3Key` from metadata. The
+provider's returned URI is never used as the key. A missing/error object
+fails closed for the complete response before the evidence resolver or answer
+writer; compatibility callers without an injected storage verifier retain the
+metadata-only local contract. An empty result returns this canonical
 response without invoking a model:
 
 ```json
