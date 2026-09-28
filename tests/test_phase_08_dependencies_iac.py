@@ -57,9 +57,10 @@ class Phase08DependencyInfrastructureTests(unittest.TestCase):
         self.assertIn("- client_credentials", template)
         self.assertIn("- legaldesk/use", template)
         self.assertIn("Domain: !Sub legaldesk-phase08-${AWS::AccountId}", template)
+        self.assertIn("AdminCreateUserConfig:", template)
+        self.assertIn("AllowAdminCreateUserOnly: true", template)
         self.assertNotIn("344774635844", template)
         self.assertIn("/.well-known/openid-configuration", template)
-        self.assertNotIn("AdminCreateUser", template)
 
 
 if __name__ == "__main__":
