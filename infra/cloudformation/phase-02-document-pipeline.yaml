@@ -21,6 +21,7 @@ Resources:
             AllowedMethods:
               - PUT
             AllowedHeaders:
+              - Content-Length
               - Content-Type
               - x-amz-meta-tenant-id
               - x-amz-meta-matter-id

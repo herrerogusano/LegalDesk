@@ -16,6 +16,7 @@ class UploadCorsTests(unittest.TestCase):
         self.assertIn("- !Ref ApplicationOrigin", cors)
         self.assertEqual(re.findall(r"^\s+- ([A-Z]+)$", cors, re.MULTILINE), ["PUT"])
         self.assertNotIn('"*"', cors)
+        self.assertIn("- Content-Length", cors)
         self.assertIn("- Content-Type", cors)
         for header in ("tenant-id", "matter-id", "document-id"):
             self.assertIn(f"- x-amz-meta-{header}", cors)
