@@ -171,3 +171,12 @@ The local preflight for commit
 `f12c5c4b8bd5803db05c4737d55645e08659f8c7` passed with zero AWS/network
 calls and pins adapter implementation SHA-256
 `629df88b14d7ea15589d46ce6c6d934c30d14a93ad7ce80b61a7e9d599bcc8e5`.
+
+After canonical-object retrieval revalidation and documentation reconciliation,
+the final local preflight for release commit
+`830fe892aba17b218838479f2ee89d4cf05e4591` also passed with zero AWS/network
+calls. It pins Lambda artifact SHA-256
+`2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`,
+runner `1.2.0`, adapter `2.1.0`, the same adapter implementation hash and the
+27-call ceiling. This is preflight evidence only; no provider report exists for
+this commit until a newly authorized execution runs.

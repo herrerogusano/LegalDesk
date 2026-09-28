@@ -29,6 +29,12 @@ secret, token, document body, prompt, answer or credential.
   20 ingestion starts, 20 Harness calls and 100 Gateway calls.
 - The public composition revalidates retrieved documents against live scoped
   metadata and the canonical server-owned S3 object before resolver/writer use.
+- Local release commit `830fe892aba17b218838479f2ee89d4cf05e4591`
+  packages deterministically as Lambda artifact
+  `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`
+  and frontend artifact
+  `07411bad1c0285d23d8c26f1e44841166ae12c87effb347f2903efa1ffe2d57d`.
+  Its holdout preflight passed with zero AWS/network calls.
 
 ## Gates that still require evidence or an owner decision
 
@@ -76,4 +82,3 @@ exercise for this exact account and region:
 
 All evidence must pin commit, artifact and template hashes. A failed holdout is
 preserved and stops promotion; it is not retried under the same authorization.
-
