@@ -240,6 +240,13 @@ textarea { resize: vertical; margin-top: 8px; min-height: 92px; font: 19px/1.45 
 .section-heading-row h2 { margin: 6px 0 0; color: var(--navy); font: 500 26px/1.1 var(--display); letter-spacing: -.025em; }
 .document-count { flex: 0 0 auto; margin: 0 0 3px; color: var(--oxblood); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .section-intro { max-width: 68ch; margin-top: 10px; }
+.document-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; border-bottom: 1px solid var(--line); }
+.document-tab { display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 9px 12px 10px; color: var(--muted); background: transparent; cursor: pointer; font: 700 11px/1.2 var(--body); letter-spacing: .08em; text-transform: uppercase; }
+.document-tab:hover { color: var(--navy); background: var(--paper-deep); }
+.document-tab[aria-selected="true"] { border-bottom-color: var(--oxblood); color: var(--navy); }
+.document-tab:focus-visible { outline: 3px solid var(--oxblood); outline-offset: 2px; }
+.document-tab-count { display: inline-grid; min-width: 24px; min-height: 24px; place-items: center; padding: 3px 6px; border: 1px solid currentColor; color: var(--oxblood); font-size: 10px; letter-spacing: 0; }
+.document-panel { min-width: 0; }
 .document-list { min-height: 50px; list-style: none; margin: 21px 0 13px; padding: 0; }
 .document-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .document-actions .text-button { color: var(--oxblood); border-color: var(--oxblood); }

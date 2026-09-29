@@ -15,6 +15,7 @@
     reviewDetails: Object.create(null),
     hasAcceptedAnswer: false,
     busy: false,
+    activeDocumentTab: "available",
   };
 
   const $ = (id) => document.getElementById(id);
@@ -185,6 +186,18 @@
     $("document-count").textContent = "Sin documentos";
     $("document-list").replaceChildren();
     $("document-list").append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "Selecciona un expediente para ver sus documentos." }));
+    const incompleteList = $("document-incomplete-list");
+    if (incompleteList) {
+      incompleteList.replaceChildren();
+      incompleteList.append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "Selecciona un expediente para ver sus cargas incompletas." }));
+    }
+    ["document-tab-available-count", "document-tab-incomplete-count"].forEach((id) => {
+      const count = $(id);
+      if (count) {
+        count.textContent = "0";
+        count.setAttribute("aria-label", id.includes("incomplete") ? "0 cargas incompletas" : "0 documentos");
+      }
+    });
     $("history-list").replaceChildren();
     $("history-list").append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "El historial de la sesión aparecerá aquí." }));
     $("answer").replaceChildren(Object.assign(document.createElement("p"), { textContent: "La respuesta aparecerá aquí después de una consulta autorizada." }));
@@ -203,6 +216,8 @@
     $("question").value = "";
     $("question-count").textContent = "0 / 1000";
     state.documents = [];
+    state.activeDocumentTab = "available";
+    setDocumentTab("available");
     state.reviews = [];
     state.reviewDetails = Object.create(null);
     state.hasAcceptedAnswer = false;
@@ -221,6 +236,57 @@
       else if (item.status === "FAILED") summary.failed += 1;
     });
     return summary;
+  }
+
+  // Operational documents stay together: FAILED is visible here because it needs
+  // attention, while only PENDING_UPLOAD represents an incomplete upload. Keeping
+  // every other status here also makes future backend states visible by default.
+  function partitionDocuments(documents) {
+    const records = Array.isArray(documents) ? documents.filter(Boolean) : [];
+    return {
+      operational: records.filter((item) => item.status !== "PENDING_UPLOAD"),
+      incomplete: records.filter((item) => item.status === "PENDING_UPLOAD"),
+    };
+  }
+
+  function setDocumentTab(tabName, focus) {
+    const tab = tabName === "incomplete" ? "incomplete" : "available";
+    const tabIds = { available: "document-tab-available", incomplete: "document-tab-incomplete" };
+    const panelIds = { available: "document-panel-available", incomplete: "document-panel-incomplete" };
+    const availableTab = $(tabIds.available);
+    const incompleteTab = $(tabIds.incomplete);
+    const availablePanel = $(panelIds.available);
+    const incompletePanel = $(panelIds.incomplete);
+    if (!availableTab || !incompleteTab || !availablePanel || !incompletePanel) return;
+    state.activeDocumentTab = tab;
+    [["available", availableTab, availablePanel], ["incomplete", incompleteTab, incompletePanel]].forEach(([name, tabNode, panelNode]) => {
+      const selected = name === tab;
+      tabNode.setAttribute("aria-selected", String(selected));
+      tabNode.setAttribute("tabindex", selected ? "0" : "-1");
+      panelNode.hidden = !selected;
+    });
+    if (focus) $(tabIds[tab]).focus();
+  }
+
+  function bindDocumentTabs() {
+    const tablist = $("document-tabs");
+    const tabs = [$("document-tab-available"), $("document-tab-incomplete")];
+    if (!tablist || tabs.some((tab) => !tab)) return;
+    tabs.forEach((tab) => tab.addEventListener("click", () => setDocumentTab(tab.id === "document-tab-incomplete" ? "incomplete" : "available")));
+    tablist.addEventListener("keydown", (event) => {
+      const currentIndex = tabs.indexOf(event.target);
+      if (currentIndex < 0) return;
+      let nextIndex = currentIndex;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % tabs.length;
+      else if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (currentIndex + tabs.length - 1) % tabs.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      const nextTab = tabs[nextIndex];
+      setDocumentTab(nextTab.id === "document-tab-incomplete" ? "incomplete" : "available", true);
+    });
+    setDocumentTab(state.activeDocumentTab);
   }
 
   function documentSummaryLabel(summary) {
@@ -249,28 +315,14 @@
     };
   }
 
-  function renderDocuments(documents) {
-    state.documents = Array.isArray(documents) ? documents : [];
-    const summary = summarizeDocuments(state.documents);
-    const summaryLabel = documentSummaryLabel(summary);
-    $("document-count").textContent = summaryLabel;
-    if (!state.documents.length) $("document-status").textContent = "No hay documentos autorizados en este expediente.";
-    else {
-      const details = [];
-      if (summary.indexed) details.push(`${summary.indexed} ${summary.indexed === 1 ? "está listo" : "están listos"} para consultar`);
-      if (summary.processing) details.push(`${summary.processing} ${summary.processing === 1 ? "sigue" : "siguen"} en procesamiento`);
-      if (summary.incomplete) details.push(`${summary.incomplete} ${summary.incomplete === 1 ? "tiene una carga incompleta" : "tienen cargas incompletas"}`);
-      if (summary.failed) details.push(`${summary.failed} ${summary.failed === 1 ? "requiere" : "requieren"} atención`);
-      $("document-status").textContent = `${details.join(" · ")}.`;
-    }
-    const list = $("document-list");
+  function renderDocumentList(list, records, emptyText) {
+    if (!list) return;
     list.replaceChildren();
-    if (!state.documents.length) {
-      list.append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "Aún no hay documentos autorizados." }));
-      refreshControls();
+    if (!records.length) {
+      list.append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: emptyText }));
       return;
     }
-    state.documents.forEach((documentRecord) => {
+    records.forEach((documentRecord) => {
       const item = document.createElement("li");
       item.className = "document-item";
       const view = documentViewModel(documentRecord);
@@ -286,12 +338,43 @@
       item.append(name, status, metadata);
       list.append(item);
     });
+  }
+
+  function renderDocuments(documents) {
+    state.documents = Array.isArray(documents) ? documents : [];
+    const summary = summarizeDocuments(state.documents);
+    const groups = partitionDocuments(state.documents);
+    const summaryLabel = documentSummaryLabel(summary);
+    $("document-count").textContent = summaryLabel;
+    const availableCount = $("document-tab-available-count");
+    const incompleteCount = $("document-tab-incomplete-count");
+    if (availableCount) {
+      availableCount.textContent = String(groups.operational.length);
+      availableCount.setAttribute("aria-label", `${groups.operational.length} ${groups.operational.length === 1 ? "documento" : "documentos"}`);
+    }
+    if (incompleteCount) {
+      incompleteCount.textContent = String(groups.incomplete.length);
+      incompleteCount.setAttribute("aria-label", `${groups.incomplete.length} ${groups.incomplete.length === 1 ? "carga incompleta" : "cargas incompletas"}`);
+    }
+    if (!state.documents.length) $("document-status").textContent = "No hay documentos autorizados en este expediente.";
+    else {
+      const details = [];
+      if (summary.indexed) details.push(`${summary.indexed} ${summary.indexed === 1 ? "está listo" : "están listos"} para consultar`);
+      if (summary.processing) details.push(`${summary.processing} ${summary.processing === 1 ? "sigue" : "siguen"} en procesamiento`);
+      if (summary.incomplete) details.push(`${summary.incomplete} ${summary.incomplete === 1 ? "tiene una carga incompleta" : "tienen cargas incompletas"}`);
+      if (summary.failed) details.push(`${summary.failed} ${summary.failed === 1 ? "requiere" : "requieren"} atención`);
+      $("document-status").textContent = `${details.join(" · ")}.`;
+    }
+    renderDocumentList($("document-list"), groups.operational, "Aún no hay documentos operativos en este expediente.");
+    renderDocumentList($("document-incomplete-list"), groups.incomplete, "No hay cargas incompletas en este expediente.");
     refreshControls();
   }
 
   window.LegalDeskDocumentView = Object.freeze({
     documentSummaryLabel,
     documentViewModel,
+    bindDocumentTabs,
+    partitionDocuments,
     renderDocuments,
     summarizeDocuments,
   });
@@ -917,6 +1000,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    bindDocumentTabs();
     $("login-button").addEventListener("click", () => { window.location.assign("/login"); });
     $("logout-button").addEventListener("click", logout);
     $("matter-select").addEventListener("change", (event) => chooseMatter(event.target.value));
