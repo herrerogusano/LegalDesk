@@ -107,7 +107,7 @@
             <textarea id="question" rows="3" maxlength="1000" placeholder="Escribe una pregunta sobre el expediente seleccionado..." disabled required></textarea>
             <div class="form-actions">
               <span id="question-count" class="microcopy">0 / 1000</span>
-              <button id="ask-button" class="button button-primary" type="submit" disabled>Consultar</button>
+              <button id="ask-button" class="button button-primary" type="submit" disabled aria-busy="false">Consultar</button>
             </div>
           </form>
         </div>
@@ -120,7 +120,7 @@
             <p id="answer-label" class="field-label">RESPUESTA</p>
             <p id="evidence-status" class="status"><span class="status-mark" aria-hidden="true"></span><span>ESPERANDO CONSULTA</span></p>
           </div>
-          <div id="answer" class="answer-copy" aria-live="polite"><p>La respuesta aparecerá aquí después de una consulta autorizada.</p></div>
+          <div id="answer" class="answer-copy" aria-live="polite" aria-busy="false"><p>La respuesta aparecerá aquí después de una consulta autorizada.</p></div>
           <div id="disclaimer" class="disclaimer" hidden>
             <span class="disclaimer-mark" aria-hidden="true">i</span>
             <p>Resumen documental, no asesoramiento jurídico. Verifique el texto original y consulte a su profesional legal.</p>

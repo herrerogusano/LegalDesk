@@ -152,6 +152,22 @@
     refreshControls();
   }
 
+  function setQueryLoadingState(active) {
+    const askButton = $("ask-button");
+    const answer = $("answer");
+    if (askButton) {
+      askButton.textContent = active ? "Consultando…" : "Consultar";
+      if (active) {
+        askButton.disabled = true;
+        askButton.setAttribute("aria-busy", "true");
+      } else {
+        askButton.setAttribute("aria-busy", "false");
+        askButton.disabled = !authorized() || state.busy;
+      }
+    }
+    if (answer) answer.setAttribute("aria-busy", active ? "true" : "false");
+  }
+
   async function api(path, options) {
     const request = options || {};
     const headers = new Headers(request.headers || {});
@@ -223,6 +239,7 @@
     state.hasAcceptedAnswer = false;
     renderReviews([]);
     setDefaultReviewDueDate();
+    setQueryLoadingState(false);
   }
 
   function summarizeDocuments(documents) {
@@ -877,10 +894,11 @@
     const generation = currentGeneration();
     state.hasAcceptedAnswer = false;
     refreshControls();
-    if (window.LegalDeskCitationPanel && window.LegalDeskCitationPanel.renderOperationalState) window.LegalDeskCitationPanel.renderOperationalState("documents_processing");
+    if (window.LegalDeskCitationPanel && window.LegalDeskCitationPanel.renderLoadingState) window.LegalDeskCitationPanel.renderLoadingState();
     setBusy(true);
+    setQueryLoadingState(true);
     try {
-      setMessage("Consultando los documentos autorizados…", false);
+      clearMessages();
       const response = await api("/api/chat", { method: "POST", body: JSON.stringify({ matterId: state.matterId, conversationId: state.conversationId, sessionId: state.sessionId, question }), signal: state.controller.signal });
       if (!isCurrent(generation)) return;
       if (typeof response.correlationId === "string") state.correlationId = response.correlationId;
@@ -903,7 +921,10 @@
       window.LegalDeskCitationPanel.renderOperationalState("error");
       setMessage(error.message, true);
     } finally {
-      if (isCurrent(generation)) setBusy(false);
+      if (isCurrent(generation)) {
+        setQueryLoadingState(false);
+        setBusy(false);
+      }
     }
   }
 

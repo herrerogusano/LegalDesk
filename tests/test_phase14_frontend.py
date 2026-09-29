@@ -37,6 +37,27 @@ class Phase14FrontendIngestionTests(unittest.TestCase):
         self.assertNotIn('id="upload-progress" class="upload-progress" hidden role="status"', html)
         self.assertIn('id="app-status" class="app-message" role="status" aria-live="polite"', html)
 
+    def test_query_loading_feedback_preserves_context_and_restores_busy_state(self) -> None:
+        html = (Path(__file__).parents[1] / "frontend" / "index.html").read_text(encoding="utf-8")
+        citations = (Path(__file__).parents[1] / "frontend" / "citations.js").read_text(encoding="utf-8")
+        styles = (Path(__file__).parents[1] / "frontend" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('id="ask-button" class="button button-primary" type="submit" disabled aria-busy="false">Consultar</button>', html)
+        self.assertIn('id="answer" class="answer-copy" aria-live="polite" aria-busy="false"', html)
+        self.assertIn("function setQueryLoadingState(active)", self.source)
+        self.assertIn('askButton.textContent = active ? "Consultando…" : "Consultar"', self.source)
+        self.assertIn('askButton.setAttribute("aria-busy", "true")', self.source)
+        self.assertIn('answer.setAttribute("aria-busy", active ? "true" : "false")', self.source)
+        self.assertIn("function renderLoadingState()", citations)
+        self.assertIn("Buscando en los documentos autorizados…", citations)
+        self.assertIn('status.dataset.status = "loading"', citations)
+        self.assertIn('BUSCANDO RESPUESTA', citations)
+        self.assertIn('answer.append(loading);', citations)
+        self.assertIn('.status[data-status="loading"]', styles)
+        self.assertIn('.answer-loading[hidden] { display: none; }', styles)
+        self.assertIn("@keyframes answer-loading-enter", styles)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
+        self.assertNotIn('setMessage("Consultando los documentos autorizados…"', self.source)
+
     def test_matter_change_cancels_inflight_upload_or_poll(self) -> None:
         self.assertIn("resetController();", self.source)
         self.assertIn("signal: state.controller.signal", self.source)
