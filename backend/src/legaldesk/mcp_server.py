@@ -329,6 +329,7 @@ class MCPServer:
             "confidentiality": document.confidentiality,
             "status": document.status.value,
             "fileSizeBytes": document.file_size_bytes,
+            "uploadedAt": document.uploaded_at.isoformat(),
         }
 
     @staticmethod

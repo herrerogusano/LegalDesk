@@ -20,7 +20,7 @@
   const $ = (id) => document.getElementById(id);
   const controls = ["matter-select", "document-file", "upload-button", "question", "ask-button", "sync-button", "metadata-button", "review-button", "audit-button"];
   const DOCUMENT_STATUS_LABELS = Object.freeze({
-    PENDING_UPLOAD: "En análisis de seguridad",
+    PENDING_UPLOAD: "Subida incompleta",
     UPLOADED: "Pendiente de indexación",
     PENDING_INGESTION: "Procesando",
     INDEXED: "Listo para consultar",
@@ -182,7 +182,7 @@
   function clearMatterView() {
     $("matter-kicker").textContent = "SELECCIONA UN EXPEDIENTE";
     $("document-status").textContent = "Selecciona un expediente para empezar.";
-    $("document-count").textContent = "0 documentos";
+    $("document-count").textContent = "Sin documentos";
     $("document-list").replaceChildren();
     $("document-list").append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: "Selecciona un expediente para ver sus documentos." }));
     $("history-list").replaceChildren();
@@ -210,18 +210,59 @@
     setDefaultReviewDueDate();
   }
 
+  function summarizeDocuments(documents) {
+    const records = Array.isArray(documents) ? documents : [];
+    const summary = { indexed: 0, processing: 0, incomplete: 0, failed: 0 };
+    records.forEach((item) => {
+      if (!item) return;
+      if (item.status === "INDEXED") summary.indexed += 1;
+      else if (["UPLOADED", "PENDING_INGESTION"].includes(item.status)) summary.processing += 1;
+      else if (item.status === "PENDING_UPLOAD") summary.incomplete += 1;
+      else if (item.status === "FAILED") summary.failed += 1;
+    });
+    return summary;
+  }
+
+  function documentSummaryLabel(summary) {
+    const parts = [];
+    if (summary.indexed) parts.push(`${summary.indexed} ${summary.indexed === 1 ? "listo" : "listos"}`);
+    if (summary.processing) parts.push(`${summary.processing} en procesamiento`);
+    if (summary.incomplete) parts.push(`${summary.incomplete} ${summary.incomplete === 1 ? "carga incompleta" : "cargas incompletas"}`);
+    if (summary.failed) parts.push(`${summary.failed} ${summary.failed === 1 ? "fallo" : "fallos"}`);
+    return parts.length ? parts.join(" · ") : "Sin documentos";
+  }
+
+  function formatDocumentDateTime(value) {
+    if (typeof value !== "string" || !value) return "fecha de autorización no disponible";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "fecha de autorización no disponible";
+    return `autorizado ${new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(parsed)}`;
+  }
+
+  function documentViewModel(documentRecord) {
+    const documentId = typeof documentRecord.documentId === "string" ? documentRecord.documentId : "";
+    const shortId = documentId ? `ID ${documentId.slice(0, 8)}` : "ID no disponible";
+    return {
+      name: typeof documentRecord.name === "string" ? documentRecord.name : "Documento",
+      statusLabel: DOCUMENT_STATUS_LABELS[documentRecord.status] || "Estado no disponible",
+      metadata: `${shortId} · ${formatFileSize(typeof documentRecord.fileSizeBytes === "number" ? documentRecord.fileSizeBytes : Number.NaN)} · ${formatDocumentDateTime(documentRecord.uploadedAt)}`,
+    };
+  }
+
   function renderDocuments(documents) {
     state.documents = Array.isArray(documents) ? documents : [];
-    const count = state.documents.length;
-    $("document-count").textContent = `${count} ${count === 1 ? "documento" : "documentos"}`;
-    const processing = state.documents.filter((item) => item && ["UPLOADED", "PENDING_INGESTION", "PENDING_UPLOAD"].includes(item.status)).length;
-    const failed = state.documents.filter((item) => item && item.status === "FAILED").length;
-    const indexed = state.documents.filter((item) => item && item.status === "INDEXED").length;
-    if (!count) $("document-status").textContent = "No hay documentos autorizados en este expediente.";
-    else if (failed) $("document-status").textContent = `${failed} ${failed === 1 ? "documento requiere" : "documentos requieren"} atención.`;
-    else if (processing) $("document-status").textContent = `${processing} ${processing === 1 ? "documento se está" : "documentos se están"} preparando para consulta.`;
-    else if (indexed) $("document-status").textContent = `${indexed} ${indexed === 1 ? "documento está" : "documentos están"} listos para consultar.`;
-    else $("document-status").textContent = "Revisa el estado de los documentos del expediente.";
+    const summary = summarizeDocuments(state.documents);
+    const summaryLabel = documentSummaryLabel(summary);
+    $("document-count").textContent = summaryLabel;
+    if (!state.documents.length) $("document-status").textContent = "No hay documentos autorizados en este expediente.";
+    else {
+      const details = [];
+      if (summary.indexed) details.push(`${summary.indexed} ${summary.indexed === 1 ? "está listo" : "están listos"} para consultar`);
+      if (summary.processing) details.push(`${summary.processing} ${summary.processing === 1 ? "sigue" : "siguen"} en procesamiento`);
+      if (summary.incomplete) details.push(`${summary.incomplete} ${summary.incomplete === 1 ? "tiene una carga incompleta" : "tienen cargas incompletas"}`);
+      if (summary.failed) details.push(`${summary.failed} ${summary.failed === 1 ? "requiere" : "requieren"} atención`);
+      $("document-status").textContent = `${details.join(" · ")}.`;
+    }
     const list = $("document-list");
     list.replaceChildren();
     if (!state.documents.length) {
@@ -232,16 +273,28 @@
     state.documents.forEach((documentRecord) => {
       const item = document.createElement("li");
       item.className = "document-item";
+      const view = documentViewModel(documentRecord);
       const name = document.createElement("strong");
-      name.textContent = typeof documentRecord.name === "string" ? documentRecord.name : "Documento";
-      const details = document.createElement("span");
-      details.textContent = DOCUMENT_STATUS_LABELS[documentRecord.status] || "Estado no disponible";
+      name.textContent = view.name;
+      const status = document.createElement("span");
+      status.className = "document-status";
+      status.textContent = view.statusLabel;
+      const metadata = document.createElement("span");
+      metadata.className = "document-meta";
+      metadata.textContent = view.metadata;
       item.dataset.status = documentRecord.status || "unknown";
-      item.append(name, details);
+      item.append(name, status, metadata);
       list.append(item);
     });
     refreshControls();
   }
+
+  window.LegalDeskDocumentView = Object.freeze({
+    documentSummaryLabel,
+    documentViewModel,
+    renderDocuments,
+    summarizeDocuments,
+  });
 
   function renderHistory(events) {
     const list = $("history-list");
