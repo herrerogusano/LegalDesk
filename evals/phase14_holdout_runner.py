@@ -93,6 +93,7 @@ MAX_RESOLVER_CALLS = len(EXPECTED_CASE_IDS)
 MAX_WRITER_CALLS = MAX_RESOLVER_CALLS - 1  # the unrelated-evidence case has no writer call
 MAX_TOTAL_CALLS = MAX_RESOLVER_CALLS + MAX_WRITER_CALLS
 RUNNER_VERSION = "1.3.0"
+ATTESTATION_POLICY_VERSION = "1.1.0"
 GROUNDING_ADAPTER_VERSION = "2.2.0"
 GROUNDING_ADAPTER_CONTRACT = (
     "conflict:subject+complete-typed-values+incompatibility-without-invented-precedence;"
@@ -857,7 +858,15 @@ def _cases_meet_approval_contract(report_cases: object) -> bool:
         if not isinstance(raw_passages, list) or any(not isinstance(item, str) for item in raw_passages):
             return False
         expected_passages = _server_owned_passages(case_id, tuple(raw_passages))
-        expected_citations = [] if expected_label == "none" else [item["citationId"] for item in expected_passages]
+        if expected_label == "none":
+            expected_citations = []
+        elif case_id == "document-conflict":
+            # The frozen oracle says the amended address controls. Requiring
+            # the superseded address as a citation would make the otherwise
+            # grounded answer less precise and contradict the precedence case.
+            expected_citations = [expected_passages[-1]["citationId"]]
+        else:
+            expected_citations = [item["citationId"] for item in expected_passages]
         citations = record.get("citationIds")
         if (
             record.get("caseId") != case_id
@@ -963,7 +972,7 @@ def attest_report(*, report_path: Path, reviewer_id: str, decision: str, reason_
     digest = hashlib.sha256(report.read_bytes()).hexdigest()
     destination = _assert_result_path(output_path, prefix=ATTESTATION_PREFIX)
     attestation = {
-        "attestationVersion": "1.0.0",
+        "attestationVersion": ATTESTATION_POLICY_VERSION,
         "reportName": report.name,
         "reportSha256": digest,
         "reviewerId": reviewer_id.strip(),
@@ -1022,12 +1031,13 @@ def main(argv: list[str] | None = None) -> int:
         artifact_sha256=args.artifact_sha256,
     )
     print(json.dumps({"acceptedCases": report["acceptedCases"], "totalCases": report["totalCases"], "inferenceCalls": report["inferenceCalls"]}, sort_keys=True))
-    return 0 if report["acceptedCases"] == report["totalCases"] else 1
+    return 0 if _cases_meet_approval_contract(report.get("cases")) else 1
 
 
 __all__ = [
     "EXPECTED_CASE_IDS",
     "EXPECTED_HOLDOUT_SHA256",
+    "ATTESTATION_POLICY_VERSION",
     "MAX_RESOLVER_CALLS",
     "MAX_WRITER_CALLS",
     "MAX_TOTAL_CALLS",

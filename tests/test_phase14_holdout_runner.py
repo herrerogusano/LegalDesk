@@ -62,6 +62,8 @@ class FakeBedrock:
                 result = {"coverage": "partial", "conflict": False, "supportingCitationIds": [p["citationId"] for p in passages]}
             elif "reimbursable" in question:
                 result = {"coverage": "partial", "conflict": False, "supportingCitationIds": [p["citationId"] for p in passages]}
+            elif "notice address" in question:
+                result = {"coverage": "complete", "conflict": False, "supportingCitationIds": [passages[-1]["citationId"]]}
             else:
                 ids = [p["citationId"] for p in passages]
                 if self.invented_citation and any("30 days" in str(p) for p in passages):
@@ -342,6 +344,7 @@ class Phase14HoldoutRunnerTests(unittest.TestCase):
             run_holdout(client=fake, output_path=report_path, execute=True, preflight=True, release_commit=RELEASE_COMMIT, artifact_sha256=ARTIFACT_SHA256)
             result = attest_report(report_path=report_path, reviewer_id="reviewer-17", decision="approved", reason_codes=("all_cases_grounded",), output_path=attestation_path)
             self.assertEqual(result["reportSha256"], __import__("hashlib").sha256(report_path.read_bytes()).hexdigest())
+            self.assertEqual(result["attestationVersion"], "1.1.0")
             self.assertEqual(result["independenceEvidence"], "procedural_separation_only")
             with self.assertRaises(ValueError):
                 attest_report(report_path=report_path, reviewer_id=RUNNER_ID, decision="approved", reason_codes=("self",), output_path=self._path("phase14-holdout-attestation-self.json"))
