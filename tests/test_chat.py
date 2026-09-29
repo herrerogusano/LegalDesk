@@ -237,6 +237,30 @@ class GroundedChatTests(unittest.TestCase):
         self.assertEqual(len(writer.requests), 1)
         self.assertEqual(len(grounder.requests), 1)
 
+    def test_structured_relationship_canonicalizes_reversed_writer_prose(self) -> None:
+        class StructuredWriter:
+            def write(self, request: object) -> Mapping[str, object]:
+                return {
+                    "answer": "The buyer must send written notice to the supplier.",
+                    "relationships": [{"actor": "supplier", "action": "send", "recipient": "buyer"}],
+                }
+
+        resolver = FakeEvidenceResolver(
+            {"coverage": "complete", "conflict": False, "supportingCitationIds": ["citation-1"]}
+        )
+        response = self.answer(
+            [result("tnt_aurora", "mat_sundial", "doc-one", "The supplier must send written notice to the buyer.")],
+            FakeGenerator(),
+            evidence_resolver=resolver,
+            answer_writer=StructuredWriter(),  # type: ignore[arg-type]
+            grounding_validator=FakeGroundingValidator(
+                {"grounded": True, "score": 0.95, "matchedCitationIds": ["citation-1"]}
+            ),
+        )
+        self.assertEqual(response.operation_status, "ok")
+        self.assertEqual(response.answer, "supplier must send to buyer.")
+        self.assertNotIn("buyer must send", response.answer)
+
     def test_productive_grounding_uses_only_selected_passages_and_one_output_guardrail(self) -> None:
         resolver = FakeEvidenceResolver(
             {"coverage": "complete", "conflict": False, "supportingCitationIds": ["citation-1"]}
@@ -276,7 +300,7 @@ class GroundedChatTests(unittest.TestCase):
         )
         self.assertEqual(response.operation_status, "ok")
         self.assertEqual(response.resolver_prompt_version, "1.2.0")
-        self.assertEqual(response.writer_prompt_version, "1.3.0")
+        self.assertEqual(response.writer_prompt_version, "1.4.0")
         self.assertEqual([call["source"] for call in guardrail_client.calls], ["INPUT", "OUTPUT"])
         output_text = " ".join(
             block["text"]["text"]

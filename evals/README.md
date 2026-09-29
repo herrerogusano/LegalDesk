@@ -114,6 +114,14 @@ The resolver schema is exposed locally as a Bedrock Converse
 remains mandatory. Native provider citations are not enabled because this
 design uses its own `supportingCitationIds` contract.
 
+The separated writer contract is version `1.4.0`. It preserves the required
+`answer` field and may additionally return a bounded `relationships` array of
+server-validated `{actor, action, recipient}` objects. The holdout's directed
+relationship check uses that structured projection for actor/recipient
+direction; it does not infer the direction from answer prose. Missing,
+malformed, duplicated, or reversed relationships fail closed, and relationship
+values are never written to metadata-only reports.
+
 After the `3/9` real result, runner `5.1.0` isolates the resolver and writer
 with dedicated prompt contracts instead of sending both stages the general
 conversation prompt. It also replaces exact-sentence grounding with a

@@ -65,6 +65,9 @@ from .evidence import (
     legacy_resolution_from_generation,
     validate_evidence_resolution,
     validate_grounding_result,
+    validate_answer_writer_result,
+    validate_writer_relationships_against_evidence,
+    render_writer_relationships,
     ANSWER_WRITER_PROMPT_SHA256,
     ANSWER_WRITER_PROMPT_VERSION,
 )
@@ -616,10 +619,16 @@ def answer_question(
                         resolution=resolution,
                     )
                 )
+                relationships: tuple[Mapping[str, str], ...] = ()
                 if isinstance(written, str):
                     answer = written
-                elif isinstance(written, Mapping) and set(written) == {"answer"}:
-                    answer = written.get("answer")
+                elif isinstance(written, Mapping):
+                    normalized_written = validate_answer_writer_result(written)
+                    answer = normalized_written.get("answer")
+                    raw_relationships = normalized_written.get("relationships", ())
+                    if not isinstance(raw_relationships, (list, tuple)):
+                        raise EvidenceContractError("answer writer relationships are invalid")
+                    relationships = tuple(raw_relationships)  # type: ignore[arg-type]
                 else:
                     raise EvidenceContractError("answer writer returned an unsupported shape")
                 if (
@@ -628,6 +637,20 @@ def answer_question(
                     or len(answer) > MAX_ANSWER_LENGTH
                 ):
                     raise EvidenceContractError("answer writer returned invalid answer text")
+                selected_evidence = tuple(
+                    item
+                    for item in generation_request.evidence
+                    if item.citation_id in resolution.supporting_citation_ids
+                )
+                if relationships:
+                    relationships = validate_writer_relationships_against_evidence(
+                        relationships,
+                        selected_evidence,
+                    )
+                    # Structured relationships are the authoritative public
+                    # rendering for directional claims; this prevents prose
+                    # from reversing a validated actor/action/recipient.
+                    answer = render_writer_relationships(relationships)
                 emit_telemetry(
                     telemetry_sink,
                     TelemetryEventType.MODEL,
@@ -654,13 +677,10 @@ def answer_question(
                         GroundingRequest(
                             question=question,
                             answer=answer.strip(),
-                            evidence=tuple(
-                                item
-                                for item in generation_request.evidence
-                                if item.citation_id in resolution.supporting_citation_ids
-                            ),
+                            evidence=selected_evidence,
                             supporting_citation_ids=resolution.supporting_citation_ids,
                             correlation_id=context.correlation_id,
+                            relationships=relationships,
                         )
                     )
                     validate_grounding_result(

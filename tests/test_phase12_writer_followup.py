@@ -22,7 +22,7 @@ class Phase12WriterFollowupTests(unittest.TestCase):
         self.assertEqual(result["maxModelInvocations"], 9)
         self.assertEqual(result["retryCount"], 0)
         self.assertEqual(result["resolverPromptVersion"], "1.2.0")
-        self.assertEqual(result["writerPromptVersion"], "1.3.0")
+        self.assertEqual(result["writerPromptVersion"], "1.4.0")
         self.assertTrue(result["metadataOnly"])
 
     def test_source_report_and_historical_paths_are_immutable(self) -> None:

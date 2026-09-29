@@ -39,6 +39,8 @@ from legaldesk.evidence import (  # noqa: E402
     GroundingContractError,
     validate_evidence_resolution,
     validate_grounding_result,
+    validate_writer_relationships_against_evidence,
+    render_writer_relationships,
 )
 from legaldesk.prompts import FileSystemSystemPromptProvider  # noqa: E402
 
@@ -90,11 +92,11 @@ TEMPERATURE = 0.0
 MAX_RESOLVER_CALLS = len(EXPECTED_CASE_IDS)
 MAX_WRITER_CALLS = MAX_RESOLVER_CALLS - 1  # the unrelated-evidence case has no writer call
 MAX_TOTAL_CALLS = MAX_RESOLVER_CALLS + MAX_WRITER_CALLS
-RUNNER_VERSION = "1.2.0"
-GROUNDING_ADAPTER_VERSION = "2.1.0"
+RUNNER_VERSION = "1.3.0"
+GROUNDING_ADAPTER_VERSION = "2.2.0"
 GROUNDING_ADAPTER_CONTRACT = (
     "conflict:subject+complete-typed-values+incompatibility-without-invented-precedence;"
-    "directed-relation:actor+must-modality+action-class+object+recipient+positive-polarity"
+    "directed-relation:structured-actor+action+recipient+evidence-vocabulary+direction"
 )
 REPORT_PREFIX = "phase14-holdout-"
 ATTESTATION_PREFIX = "phase14-holdout-attestation-"
@@ -213,7 +215,7 @@ def preflight_holdout(
         raise RuntimeError("general system prompt artifact is not the approved release artifact")
     if EVIDENCE_RESOLVER_PROMPT_VERSION != "1.2.0" or EVIDENCE_RESOLVER_PROMPT_SHA256 != "da65f6b0efa70e728d9c6c5b85c036a7fb3b71b1b24c1cde33e9caedabe8127c":
         raise RuntimeError("resolver prompt contract changed")
-    if ANSWER_WRITER_PROMPT_VERSION != "1.3.0" or ANSWER_WRITER_PROMPT_SHA256 != "a5dcb22f747bb3853d5e3840a3ba13cd885db835f2f70bb3d36a1e5e7364d9b7":
+    if ANSWER_WRITER_PROMPT_VERSION != "1.4.0" or ANSWER_WRITER_PROMPT_SHA256 != "b4b54b39e7d016af94534ff8078b43d2aac556f608c33a8c7bee8697430294e7":
         raise RuntimeError("writer prompt contract changed")
     if output_path is not None:
         _assert_result_path(output_path, prefix=REPORT_PREFIX)
@@ -237,7 +239,7 @@ def preflight_holdout(
         "writerPromptVersion": ANSWER_WRITER_PROMPT_VERSION,
         "writerPromptSha256": ANSWER_WRITER_PROMPT_SHA256,
         "resolverContract": "coverage/conflict/supportingCitationIds-v1",
-        "writerContract": "answer-v1",
+        "writerContract": "answer-with-relationships-v1",
         "groundingAdapterVersion": GROUNDING_ADAPTER_VERSION,
         "groundingAdapterContractSha256": GROUNDING_ADAPTER_SHA256,
         "maxResolverCalls": MAX_RESOLVER_CALLS,
@@ -423,8 +425,8 @@ _NOTICE_ACTION = rf"(?:{_NOTICE_ACTIVE_ACTION}|{_NOTICE_PASSIVE_ACTION})"
 _MUST_MODALITY = r"(?:must|shall|required|responsible|obliged|obligated)"
 
 
-def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, str]]) -> tuple[bool, str]:
-    """Validate actor/action/recipient direction, modality and polarity."""
+def _score_role_reversal_legacy(answer: str, selected_evidence: Sequence[Mapping[str, str]]) -> tuple[bool, str]:
+    """Retained only as historical implementation context; not used for scoring."""
 
     evidence = " ".join(_selected_texts(selected_evidence)).casefold()
     if len(selected_evidence) != 1 or not all(term in evidence for term in ("supplier", "must", "notice", "buyer")) or re.search(r"\b(?:send|provide|deliver|give|issue|serve|notify)\w*\b", evidence) is None:
@@ -553,6 +555,68 @@ def _score_role_reversal(answer: str, selected_evidence: Sequence[Mapping[str, s
     return True, "VALID_ROLE_RELATIONSHIP"
 
 
+def _relation_party(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", value.casefold())).strip().removeprefix("the ")
+
+
+def _relation_action(value: object) -> str:
+    return _relation_party(value)
+
+
+def _score_role_reversal(
+    answer: str,
+    selected_evidence: Sequence[Mapping[str, str]],
+    relationships: Sequence[Mapping[str, object]] | None = None,
+) -> tuple[bool, str]:
+    """Use the writer's structured relation for direction-sensitive grounding.
+
+    The answer remains user-facing prose, but actor/recipient direction is
+    decided from a server-validated projection rather than regexes over that
+    prose. Evidence vocabulary is checked as a separate bounded guard.
+    """
+
+    evidence = " ".join(_selected_texts(selected_evidence)).casefold()
+    if len(selected_evidence) != 1 or not all(term in evidence for term in ("supplier", "must", "notice", "buyer")):
+        return False, "CITED_ROLE_EVIDENCE_INCOMPLETE"
+    if not isinstance(answer, str) or not answer.strip() or not relationships:
+        return False, "ROLE_RELATIONSHIP_MISSING"
+    evidence_terms = set(re.findall(r"[a-z0-9]+", evidence))
+    actions = {
+        "send", "sending", "deliver", "delivering", "provide", "providing",
+        "give", "giving", "issue", "issuing", "serve", "serving", "notify",
+        "notifying",
+    }
+    evidence_action = {
+        "send": "send", "sending": "send", "deliver": "deliver", "delivering": "deliver",
+        "provide": "provide", "providing": "provide", "give": "give", "giving": "give",
+        "issue": "issue", "issuing": "issue", "serve": "serve", "serving": "serve",
+        "notify": "notify", "notifying": "notify",
+    }
+    valid = False
+    for relationship in relationships:
+        if not isinstance(relationship, Mapping) or set(relationship) != {"actor", "action", "recipient"}:
+            return False, "ROLE_RELATIONSHIP_MALFORMED"
+        actor = _relation_party(relationship.get("actor"))
+        action = _relation_action(relationship.get("action"))
+        recipient = _relation_party(relationship.get("recipient"))
+        if not actor or not action or not recipient:
+            return False, "ROLE_RELATIONSHIP_MALFORMED"
+        if actor == "buyer" and recipient == "supplier":
+            return False, "ROLE_REVERSAL"
+        if actor == "supplier" and recipient == "buyer" and action in actions:
+            if actor in evidence_terms and recipient in evidence_terms and evidence_action[action] in evidence_terms:
+                valid = True
+    if not valid:
+        return False, "ROLE_RELATIONSHIP_MISSING"
+    try:
+        validate_writer_relationships_against_evidence(relationships, selected_evidence)
+    except EvidenceContractError:
+        return False, "ROLE_RELATIONSHIP_MISSING"
+    return True, "VALID_ROLE_RELATIONSHIP"
+
+
 def _grounding_adapter_sha256() -> str:
     """Pin the exact adapter implementation as well as its declared contract."""
 
@@ -593,6 +657,7 @@ def _case_metadata(case: Mapping[str, object], passages: Sequence[Mapping[str, s
         "writerCalled": False,
         "citationIds": [],
         "citationCount": 0,
+        "relationshipCount": 0,
         "validationCodes": [],
         "errorCodes": [],
         "accepted": False,
@@ -670,6 +735,29 @@ def run_holdout(
             answer = written.get("answer") if isinstance(written, Mapping) else None
             if not isinstance(answer, str) or not answer.strip():
                 raise ValueError("writer answer was not text")
+            relationships = written.get("relationships", ()) if isinstance(written, Mapping) else ()
+            if not isinstance(relationships, (list, tuple)):
+                raise EvidenceContractError("writer relationships were not normalized")
+            metadata["relationshipCount"] = len(relationships)
+            if str(case["id"]) == "role-reversal" and relationships:
+                selected_relationship_evidence = tuple(
+                    item
+                    for item in passages
+                    if item["citationId"] in normalized.supporting_citation_ids
+                )
+                try:
+                    validate_writer_relationships_against_evidence(
+                        relationships,
+                        selected_relationship_evidence,
+                    )
+                except EvidenceContractError:
+                    # The scorer emits the closed diagnostic (ROLE_REVERSAL,
+                    # malformed, or missing) without exposing provider text.
+                    pass
+                else:
+                    # Use the same canonical rendering as production so a
+                    # reversed prose answer cannot appear in an accepted result.
+                    answer = render_writer_relationships(relationships)
             if str(case["expected"]) == "partial":
                 grounded, reason = _score_partial(str(case["id"]), answer)
                 grounding_reason = reason
@@ -690,7 +778,7 @@ def run_holdout(
                 scorer = _score_conflicting_deadlines if str(case["id"]) == "contradictory-deadlines" else _score_role_reversal
                 allowed = set(normalized.supporting_citation_ids)
                 selected_evidence = tuple(item for item in passages if item["citationId"] in allowed)
-                grounded, reason = scorer(answer, selected_evidence)
+                grounded, reason = scorer(answer, selected_evidence, relationships) if str(case["id"]) == "role-reversal" else scorer(answer, selected_evidence)
                 grounding_reason = reason
                 if not grounded:
                     raise GroundingContractError(reason)
@@ -800,6 +888,7 @@ def _cases_meet_approval_contract(report_cases: object) -> bool:
                 or record.get("validationCodes") != ["RESOLUTION_VALID", "WRITER_VALID", "GROUNDING_VALID"]
                 or record.get("groundingScore") != 0.98
                 or record.get("groundingDiagnosticCode") != expected_diagnostic
+                or (case_id == "role-reversal" and record.get("relationshipCount", 0) < 1)
             ):
                 return False
     return True

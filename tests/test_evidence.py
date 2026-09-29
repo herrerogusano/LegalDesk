@@ -25,6 +25,8 @@ from legaldesk.evidence import (
     evidence_resolver_output_config,
     GroundingContractError,
     validate_answer_writer_result,
+    validate_writer_relationships_against_evidence,
+    render_writer_relationships,
     validate_grounding_result,
     validate_evidence_resolution,
 )
@@ -201,10 +203,12 @@ class EvidenceResolverContractTests(unittest.TestCase):
         self.assertIn("explicitly state which requested material detail", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("both the number", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("what is being counted", ANSWER_WRITER_SYSTEM_PROMPT)
-        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.3.0")
+        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.4.0")
         self.assertRegex(ANSWER_WRITER_PROMPT_SHA256, r"^[0-9a-f]{64}$")
         self.assertIn("every material conflicting value", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("Never swap the parties", ANSWER_WRITER_SYSTEM_PROMPT)
+        writer_schema = client.payload["outputConfig"]["textFormat"]["structure"]["jsonSchema"]
+        self.assertIn("relationships", json.loads(writer_schema["schema"])["properties"])
 
     def test_answer_writer_contract_rejects_extra_or_empty_fields(self) -> None:
         self.assertEqual(
@@ -215,10 +219,47 @@ class EvidenceResolverContractTests(unittest.TestCase):
             {"answer": ""},
             {"answer": "Supported.", "citationIds": []},
             {},
+            {"answer": "Supported.", "relationships": [{"actor": "supplier", "action": "send"}]},
+            {"answer": "Supported.", "relationships": [{"actor": "supplier", "action": "send", "recipient": "buyer", "extra": "x"}]},
+            {"answer": "Supported.", "relationships": [{"actor": "", "action": "send", "recipient": "buyer"}]},
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(EvidenceContractError):
                     validate_answer_writer_result(invalid)
+
+    def test_answer_writer_contract_accepts_and_normalizes_structured_relationships(self) -> None:
+        result = validate_answer_writer_result({
+            "answer": "The supplier must send notice to the buyer.",
+            "relationships": [{"actor": " supplier ", "action": "send", "recipient": "buyer"}],
+        })
+        self.assertEqual(result["answer"], "The supplier must send notice to the buyer.")
+        self.assertEqual(result["relationships"], [{"actor": "supplier", "action": "send", "recipient": "buyer"}])
+        with self.assertRaises(EvidenceContractError):
+            validate_answer_writer_result({
+                "answer": "Supported.",
+                "relationships": [{"actor": "supplier", "action": "send", "recipient": "buyer"}] * 2,
+            })
+
+    def test_structured_relationships_are_ordered_and_fail_closed(self) -> None:
+        evidence = ({"text": "The supplier must send written notice to the buyer."},)
+        valid = ({"actor": "supplier", "action": "send", "recipient": "buyer"},)
+        self.assertEqual(validate_writer_relationships_against_evidence(valid, evidence), valid)
+        self.assertEqual(render_writer_relationships(valid), "supplier must send to buyer.")
+        with self.assertRaises(EvidenceContractError):
+            validate_writer_relationships_against_evidence(
+                ({"actor": "buyer", "action": "send", "recipient": "supplier"},),
+                evidence,
+            )
+        with self.assertRaises(EvidenceContractError):
+            validate_writer_relationships_against_evidence(
+                ({"actor": "lawyer", "action": "send", "recipient": "buyer"},),
+                evidence,
+            )
+        with self.assertRaises(EvidenceContractError):
+            validate_writer_relationships_against_evidence(
+                ({"actor": "supplier", "action": "send", "recipient": "buyer"},),
+                ({"text": "The supplier may inspect."}, {"text": "Send notice to the buyer."}),
+            )
 
     def test_stage_payloads_json_encode_instruction_like_user_data(self) -> None:
         class FakeConverse:
