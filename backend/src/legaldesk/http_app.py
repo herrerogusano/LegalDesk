@@ -381,6 +381,7 @@ class LoopbackLegalDeskApp:
             "malwareScanStatus": document.malware_scan_status.value,
             "fileSizeBytes": document.file_size_bytes,
             "documentDate": document.document_date,
+            "uploadedAt": document.uploaded_at.isoformat(),
         }
 
     def _dispatch(self, environ: Mapping[str, Any]) -> tuple[HTTPStatus, Mapping[str, Any] | bytes, list[tuple[str, str]]]:

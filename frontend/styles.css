@@ -251,8 +251,10 @@ textarea { resize: vertical; margin-top: 8px; min-height: 92px; font: 19px/1.45 
 .document-item, .history-item { border-top: 1px solid var(--line); padding: 8px 0; color: var(--navy); font-size: 12px; overflow-wrap: anywhere; }
 .document-item strong { display: block; font-weight: 600; }
 .document-item span, .history-item span { color: var(--muted); font-size: 10px; }
-.document-item[data-status="INDEXED"] span { color: var(--green); font-weight: 700; }
-.document-item[data-status="FAILED"] span { color: var(--oxblood); font-weight: 700; }
+.document-item .document-status { display: block; margin-top: 3px; }
+.document-item .document-meta { display: block; margin-top: 3px; color: #77766f; font-size: 10px; }
+.document-item[data-status="INDEXED"] .document-status { color: var(--green); font-weight: 700; }
+.document-item[data-status="FAILED"] .document-status { color: var(--oxblood); font-weight: 700; }
 .operator-output { min-height: 50px; max-height: 220px; margin: 14px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font: 11px/1.45 var(--body); }
 .technical-diagnostics { min-width: 0; overflow: hidden; border: 1px solid var(--line); background: rgb(250 248 242 / 72%); }
 .technical-diagnostics summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 14px 16px; cursor: pointer; list-style: none; transition: background-color 160ms ease, border-color 160ms ease; }
