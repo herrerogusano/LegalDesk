@@ -21,7 +21,7 @@
   const $ = (id) => document.getElementById(id);
   const controls = ["matter-select", "document-file", "upload-button", "question", "ask-button", "sync-button", "metadata-button", "review-button", "audit-button"];
   const DOCUMENT_STATUS_LABELS = Object.freeze({
-    PENDING_UPLOAD: "Subida incompleta",
+    PENDING_UPLOAD: "Carga incompleta",
     UPLOADED: "Pendiente de indexación",
     PENDING_INGESTION: "Procesando",
     INDEXED: "Listo para consultar",
@@ -246,23 +246,44 @@
     const records = Array.isArray(documents) ? documents : [];
     const summary = { indexed: 0, processing: 0, incomplete: 0, failed: 0 };
     records.forEach((item) => {
-      if (!item) return;
-      if (item.status === "INDEXED") summary.indexed += 1;
-      else if (["UPLOADED", "PENDING_INGESTION"].includes(item.status)) summary.processing += 1;
-      else if (item.status === "PENDING_UPLOAD") summary.incomplete += 1;
-      else if (item.status === "FAILED") summary.failed += 1;
+      const classification = documentClassification(item);
+      if (classification === "indexed") summary.indexed += 1;
+      else if (classification === "processing") summary.processing += 1;
+      else if (classification === "incomplete") summary.incomplete += 1;
+      else if (classification === "failed") summary.failed += 1;
     });
     return summary;
   }
 
-  // Operational documents stay together: FAILED is visible here because it needs
-  // attention, while only PENDING_UPLOAD represents an incomplete upload. Keeping
-  // every other status here also makes future backend states visible by default.
+  function isIncompleteUpload(documentRecord) {
+    return Boolean(documentRecord) && (
+      documentRecord.status === "PENDING_UPLOAD"
+      || (documentRecord.status === "FAILED" && documentRecord.malwareScanStatus === "PENDING")
+    );
+  }
+
+  function documentClassification(documentRecord) {
+    if (!documentRecord) return "unknown";
+    if (isIncompleteUpload(documentRecord)) return "incomplete";
+    if (documentRecord.status === "INDEXED") return "indexed";
+    if (["UPLOADED", "PENDING_INGESTION"].includes(documentRecord.status)) return "processing";
+    if (documentRecord.status === "FAILED") return "failed";
+    return "unknown";
+  }
+
+  function documentStatusLabel(documentRecord) {
+    return documentClassification(documentRecord) === "incomplete"
+      ? "Carga incompleta"
+      : DOCUMENT_STATUS_LABELS[documentRecord && documentRecord.status] || "Estado no disponible";
+  }
+
+  // Operational documents stay together except for incomplete uploads. This
+  // includes reconciled abandoned uploads represented as FAILED + PENDING scan.
   function partitionDocuments(documents) {
     const records = Array.isArray(documents) ? documents.filter(Boolean) : [];
     return {
-      operational: records.filter((item) => item.status !== "PENDING_UPLOAD"),
-      incomplete: records.filter((item) => item.status === "PENDING_UPLOAD"),
+      operational: records.filter((item) => documentClassification(item) !== "incomplete"),
+      incomplete: records.filter((item) => documentClassification(item) === "incomplete"),
     };
   }
 
@@ -327,7 +348,7 @@
     const shortId = documentId ? `ID ${documentId.slice(0, 8)}` : "ID no disponible";
     return {
       name: typeof documentRecord.name === "string" ? documentRecord.name : "Documento",
-      statusLabel: DOCUMENT_STATUS_LABELS[documentRecord.status] || "Estado no disponible",
+      statusLabel: documentStatusLabel(documentRecord),
       metadata: `${shortId} · ${formatFileSize(typeof documentRecord.fileSizeBytes === "number" ? documentRecord.fileSizeBytes : Number.NaN)} · ${formatDocumentDateTime(documentRecord.uploadedAt)}`,
     };
   }
@@ -390,6 +411,8 @@
   window.LegalDeskDocumentView = Object.freeze({
     documentSummaryLabel,
     documentViewModel,
+    documentClassification,
+    isIncompleteUpload,
     bindDocumentTabs,
     partitionDocuments,
     renderDocuments,
