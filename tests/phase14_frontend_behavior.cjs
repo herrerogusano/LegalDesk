@@ -1,4 +1,4 @@
-/* Offline browser behavior test for the public upload safety gate. */
+/* Offline browser behavior test for the public upload safety gate and query loading state. */
 const assert = require("node:assert/strict");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
@@ -21,6 +21,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     let mode = "pending-then-uploaded";
     let pendingPolls = 0;
     const ingestionPosts = [];
+    let chatCalls = 0;
+    await page.route("**/api/chat", async route => {
+      chatCalls += 1;
+      if (chatCalls > 1) await new Promise(resolve => setTimeout(resolve, 700));
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ operationStatus: "ok", evidenceStatus: "answerable", answer: chatCalls > 1 ? "Second answer." : "Initial answer.", citations: [] }),
+      });
+    });
     await page.route("**/api/matters/matter-integration/documents/**", async route => {
       const request = route.request();
       const url = new URL(request.url());
@@ -66,7 +76,26 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.waitForFunction(() => !document.querySelector("#app-error").hidden, null, { timeout: 10000 });
     assert.match(await page.locator("#app-error").innerText(), /seguridad/);
     assert.equal(ingestionPosts.length, 1, "FAILED must never start ingestion");
-    console.log(JSON.stringify({ result: "PASS", pendingPolls: verifiedPendingPolls, ingestionPosts: ingestionPosts.length, failedStarted: false }));
+
+    await page.locator("#question").fill("First query");
+    await page.locator("#ask-button").click();
+    await page.waitForFunction(() => document.querySelector("#answer").innerText.includes("Initial answer."));
+    await page.locator("#question").fill("Second query");
+    await page.locator("#ask-button").click();
+    await page.waitForFunction(() => document.querySelector("#answer").getAttribute("aria-busy") === "true");
+    assert.equal(await page.locator("#evidence-status").getAttribute("data-status"), "loading");
+    assert.equal(await page.locator("#evidence-status").innerText(), "BUSCANDO RESPUESTA");
+    assert.match(await page.locator("#answer").innerText(), /Initial answer\./);
+    await page.waitForFunction(() => document.querySelector("#answer").getAttribute("aria-busy") === "false");
+    assert.equal(await page.locator("#evidence-status").getAttribute("data-status"), "answerable");
+    assert.match(await page.locator("#answer").innerText(), /Second answer\./);
+    const loaders = page.locator(".answer-loading");
+    if (await loaders.count()) {
+      assert.equal(await loaders.getAttribute("hidden"), "");
+      assert.equal(await loaders.isVisible(), false);
+    }
+    assert.doesNotMatch(await page.locator("#answer").innerText(), /Buscando en los documentos autorizados/);
+    console.log(JSON.stringify({ result: "PASS", pendingPolls: verifiedPendingPolls, ingestionPosts: ingestionPosts.length, failedStarted: false, queryLoadingState: true }));
   } finally {
     await browser.close();
   }
