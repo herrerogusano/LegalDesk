@@ -123,6 +123,7 @@ class EvidenceResolverContractTests(unittest.TestCase):
         self.assertEqual(decoded["additionalProperties"], False)
         self.assertNotIn("minLength", json.dumps(decoded))
         self.assertNotIn("uniqueItems", json.dumps(decoded))
+        self.assertNotIn("maxItems", json.dumps(decoded))
 
     def test_converse_adapter_prepares_and_parses_schema_request(self) -> None:
         class FakeConverse:
@@ -209,7 +210,9 @@ class EvidenceResolverContractTests(unittest.TestCase):
         self.assertIn("every material conflicting value", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("Never swap the parties", ANSWER_WRITER_SYSTEM_PROMPT)
         writer_schema = client.payload["outputConfig"]["textFormat"]["structure"]["jsonSchema"]
-        self.assertIn("relationships", json.loads(writer_schema["schema"])["properties"])
+        decoded_writer_schema = json.loads(writer_schema["schema"])
+        self.assertIn("relationships", decoded_writer_schema["properties"])
+        self.assertNotIn("maxItems", json.dumps(decoded_writer_schema))
 
     def test_answer_writer_contract_rejects_extra_or_empty_fields(self) -> None:
         self.assertEqual(

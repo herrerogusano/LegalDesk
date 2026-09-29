@@ -200,7 +200,6 @@ ANSWER_WRITER_JSON_SCHEMA: dict[str, object] = {
         "answer": {"type": "string"},
         "relationships": {
             "type": "array",
-            "maxItems": 8,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
