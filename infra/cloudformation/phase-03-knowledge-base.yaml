@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 03 Bedrock Knowledge Base backed by S3 Vectors
+
+Parameters:
+  DocumentBucketName:
+    Type: String
+    Description: Existing Phase 02 document bucket name in this account and region
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  TenantSourcePrefix:
+    Type: String
+    Default: tenants/
+    AllowedPattern: '^tenants/([A-Za-z0-9_-]+/)?$'
+    Description: Source prefix; use one dedicated fictional tenant for bounded smoke ingestion
+
+Resources:
+  LegalDeskVectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    Properties:
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "03"
+
+  LegalDeskVectorIndex:
+    Type: AWS::S3Vectors::Index
+    Properties:
+      VectorBucketArn: !GetAtt LegalDeskVectorBucket.VectorBucketArn
+      IndexName: legaldesk-phase03
+      DataType: float32
+      Dimension: 1024
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+          - AMAZON_BEDROCK_METADATA
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "03"
+
+  KnowledgeBaseExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LegalDeskKnowledgeBasePhase03
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/*"
+      Policies:
+        - PolicyName: LegalDeskKnowledgeBasePhase03
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListOnlyDocumentPrefixes
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}"
+                Condition:
+                  StringLike:
+                    s3:prefix: !Sub "${TenantSourcePrefix}*"
+              - Sid: ReadOnlySupportedOriginalsAndSidecars
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.txt"
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.txt.metadata.json"
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.pdf"
+                  - !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}/${TenantSourcePrefix}*matters/*/documents/*/original.pdf.metadata.json"
+              - Sid: InvokeOnlySelectedEmbeddingModel
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+              - Sid: ManageVectorsOnlyInLegalDeskIndex
+                Effect: Allow
+                Action:
+                  - s3vectors:PutVectors
+                  - s3vectors:GetVectors
+                  - s3vectors:DeleteVectors
+                  - s3vectors:QueryVectors
+                  - s3vectors:GetIndex
+                Resource: !GetAtt LegalDeskVectorIndex.IndexArn
+
+  LegalDeskKnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: LegalDeskPhase03
+      Description: Fictional LegalDesk documents with tenant and matter filtered retrieval
+      RoleArn: !GetAtt KnowledgeBaseExecutionRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0"
+          EmbeddingModelConfiguration:
+            BedrockEmbeddingModelConfiguration:
+              Dimensions: 1024
+              EmbeddingDataType: FLOAT32
+      StorageConfiguration:
+        Type: S3_VECTORS
+        S3VectorsConfiguration:
+          IndexArn: !GetAtt LegalDeskVectorIndex.IndexArn
+      Tags:
+        Project: LegalDesk
+        Phase: "03"
+
+  LegalDeskS3DataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      KnowledgeBaseId: !Ref LegalDeskKnowledgeBase
+      Name: LegalDeskPhase03Documents
+      Description: Phase 02 documents in the tenants prefix of the existing bucket
+      DataDeletionPolicy: DELETE
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !Sub "arn:${AWS::Partition}:s3:::${DocumentBucketName}"
+          InclusionPrefixes:
+            - !Ref TenantSourcePrefix
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          ChunkingStrategy: FIXED_SIZE
+          FixedSizeChunkingConfiguration:
+            MaxTokens: 800
+            OverlapPercentage: 15
+
+Outputs:
+  KnowledgeBaseId:
+    Value: !Ref LegalDeskKnowledgeBase
+  DataSourceId:
+    Value: !GetAtt LegalDeskS3DataSource.DataSourceId
+  VectorBucketArn:
+    Value: !GetAtt LegalDeskVectorBucket.VectorBucketArn
+  VectorIndexArn:
+    Value: !GetAtt LegalDeskVectorIndex.IndexArn
+  KnowledgeBaseExecutionRoleArn:
+    Value: !GetAtt KnowledgeBaseExecutionRole.Arn

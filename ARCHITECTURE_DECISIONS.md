@@ -71,6 +71,23 @@ Flujo:
 
 Para preguntas documentales, recuperar antes de responder.
 
+Implementación Phase 03: Amazon Bedrock Knowledge Base con S3 como data source,
+S3 Vectors como vector store, Amazon Titan Text Embeddings V2 en 1024
+dimensiones y chunking fijo (`MaxTokens: 800`, `OverlapPercentage: 15`). Esta
+configuración sustituye el chunking jerárquico inicial, cuyo smoke histórico no
+valida los parámetros actuales. Se elige el modo fijo para mantener el perfil
+de metadatos más sencillo y compatible con el presupuesto de metadatos de S3
+Vectors; no se afirma que reduzca el coste total, ya que el tamaño y solapamiento
+también afectan al número de chunks y embeddings.
+El índice de S3 Vectors reserva `AMAZON_BEDROCK_TEXT` y
+`AMAZON_BEDROCK_METADATA` como metadata no filterable; los atributos propios
+de LegalDesk, incluidos `tenantId` y `matterId`, permanecen filterable.
+`search_legal_documents` deriva el filtro
+AND `tenantId`/`matterId` desde `RequestContext` en el backend y vuelve a
+comprobar el scope de cada resultado. El modelo solo podrá recibir los
+passages/citations autorizados; no recibe credenciales ni acceso directo a S3 o
+a la Knowledge Base.
+
 ## ADR-008 — Identidad
 
 Preferencia MVP: Amazon Cognito, salvo que una integración OIDC existente resulte claramente más simple.
@@ -106,6 +123,14 @@ Short-term memory: habilitada.
 Long-term memory: empezar **deshabilitada o extremadamente restringida** hasta que exista una allowlist clara de información inocua.
 
 Nunca persistir texto legal bruto o conclusiones legales como memoria larga.
+
+Phase 09 concreta esta decisión con AgentCore Memory sin `MemoryStrategies`,
+eventos con `EventExpiryDuration` de siete días y `extractionMode=SKIP`. La
+política de aplicación rechaza cualquier escritura o retrieval long-term,
+incluidas preferencias inocuas, hasta una futura revisión de clasificación de
+datos. `actorId` y `sessionId` se derivan de `RequestContext` autorizado y de
+selectores de conversación; no se aceptan como valores libres del navegador o
+CLI.
 
 ## ADR-012 — Observabilidad
 
@@ -158,3 +183,124 @@ Después se pueden valorar:
 - dashboard de evaluación;
 - skills;
 - borrado + reingestión + memory cleanup.
+
+## ADR-016 — Deterministic explicit tools through Gateway
+
+Las acciones explícitas de la UI `get_document_metadata`,
+`list_matter_documents` y las operaciones `create_review_task`,
+`list_review_tasks`, `get_review_task` y `update_review_task` se envían desde el backend a
+AgentCore Gateway mediante un único `POST tools/call` MCP. No se delegan en la
+selección de herramientas de Harness: `allowedTools` limita la selección del
+modelo pero no obliga a que el modelo invoque una herramienta. Harness queda
+reservado para flujos genuinamente agentic en los que la decisión del modelo
+sea parte del producto.
+
+La llamada directa reutiliza el `HarnessInvocationBinding` sellado existente:
+JWT verificado, contexto de matter reconstruido en servidor, grant corto,
+correlación y allowlist. El interceptor Gateway vuelve a autenticar y
+autorizar antes de transformar la petición; MCP/Lambda vuelve a comprobar el
+grant. La ruta falla cerrada, no sigue redirecciones, no reintenta, limita la
+respuesta y reserva el contador `gateway` del presupuesto de smoke.
+
+Esta decisión corrige la evidencia del tercer smoke: la UI alcanzó el backend
+pero Harness terminó sin un tool call estructurado, por lo que no hubo grant,
+interceptor ni Lambda. No añade infraestructura ni sustituye las
+comprobaciones de autorización existentes.
+
+## ADR-017 — Cola de revisión durable y purpose-specific
+
+La revisión humana deja de ser únicamente metadata de una intención y pasa a
+ser una cola durable purpose-specific. El backend obtiene la última respuesta
+aceptada de la conversación/correlación vigente y construye un snapshot mínimo
+(pregunta, respuesta, estado de evidencia, hashes de prompt disponibles y
+citas exactas acotadas); el navegador no puede aportar esos campos ni estado,
+autoría o timestamps. Crear, listar, abrir y actualizar pasan por AgentCore
+Gateway hacia la misma Review Lambda y la tabla DynamoDB existente. La Lambda
+revalida el grant, matter y transición (`OPEN → IN_REVIEW → CLOSED`, o cierre
+directo), y cerrar exige una nota de resolución.
+
+La demo Phase 13 mantiene el candidato aceptado en memoria y documenta ese
+límite de despliegue distribuido; la task creada sí es durable. Esta cola no es
+AgentCore long-term Memory. No se asignan personas ni se emiten notificaciones
+automáticas, y la política posterior al cierre queda como gap de producción
+explícito.
+
+## ADR-018 — Beta pública autenticada y topología de hosting
+
+**Decisión aprobada para la planificación de Phase 14:** publicar únicamente
+una beta autenticada para documentos ficticios o públicos, sin signup anónimo ni
+alta self-service de tenants/memberships. Los usuarios Cognito y sus
+pertenencias a matters se provisionan y autorizan en backend antes del uso.
+
+La topología objetivo es:
+
+`Browser HTTPS → CloudFront (ACM, edge limits) → private S3 frontend (OAC)`
+
+con `/callback` y `/api/*` dirigidos por CloudFront a un **API Gateway HTTP
+API → Lambda application adapter**. El backend conserva los tokens OAuth
+server-side, valida issuer/scope/expiry y mantiene las decisiones de
+autorización deterministas existentes. S3 de documentos sigue privado y solo
+emite URLs PUT prefirmadas de corta duración.
+
+La aplicación deja de depender de estado de proceso. Como primera opción,
+sessions, OAuth state, citation handles, conversation correlations, accepted
+history/review candidates y redacted audit records reutilizan la tabla
+DynamoDB de metadata mediante prefijos de entidad explícitos, escrituras
+condicionales, proyecciones acotadas y permisos IAM por recurso/prefijo. Una
+tabla separada sigue siendo una alternativa si la revisión de seguridad exige
+aislar tokens o pasajes; requiere una decisión y coste documentados. La
+expiración se comprueba en aplicación; TTL solo ayuda a limpiar y no es una
+decisión de autorización.
+
+La ingesta se convierte en asíncrona: el request inicia un job acotado y el
+cliente observa un status separado. Ningún request público espera el polling
+de Bedrock. La reconciliación de uploads abandonados, ingestas atascadas y
+grants expirados es un proceso bounded y autorizado; no se usan scans
+ilimitados ni TTL como garantía de borrado.
+
+La seguridad de origen es exacta: hostname HTTPS único aprobado, cookies
+`Secure; HttpOnly; SameSite=Lax`, CSP con hosts de upload explícitos, HSTS en
+la edge, CORS S3 exacto, límites de body/rate y sin S3 público. WAF es una
+opción separada de coste y aprobación; no sustituye authorization backend.
+
+Esta decisión aprueba el diseño y la implementación local, pero no crea
+recursos ni autoriza AWS, inferencia, datos legales reales o promoción
+`developer → prod`. Esas acciones requieren
+los gates y el envelope de coste de `PLAN_14_PUBLIC_BETA.md` y
+`docs/phase-14-cost-operations.md`.
+
+## ADR-019 — Malware gate before public indexing
+
+En la beta pública un objeto recién subido permanece en `PENDING_UPLOAD` y no
+puede ser seleccionado para ingesta hasta que el resultado de GuardDuty Malware
+Protection sea `NO_THREATS_FOUND`. En public mode, el PUT usa físicamente
+`quarantine/tenants/...`, fuera del prefijo `tenants/` de la data source; así un
+job Bedrock de otro documento no puede ingerir un upload pendiente. El handler
+solo acepta esa quarantine key, copia server-side al key canónico bajo
+`tenants/`, escribe allí el sidecar y elimina la quarantine después de la
+transición condicional. El modo loopback conserva el key canónico por
+compatibilidad. El handler local/production-safe acepta solo
+el evento EventBridge exacto (`source=aws.guardduty`, detail-type
+`GuardDuty Malware Protection Object Scan Result`, account, región, bucket y
+key configurados). Además valida el esquema oficial: `detail.scanStatus` es
+`COMPLETED`, `SKIPPED` o `FAILED`, y el veredicto se obtiene de
+`detail.scanResultDetails.scanResultStatus`, con combinaciones coherentes y
+razones acotadas. Resuelve tenant/matter/document desde metadata server-side,
+y vuelve a comprobar `HEAD` de S3, tamaño, Content-Type, metadata, tag
+`GuardDutyMalwareScanStatus` y ETag/version cuando están disponibles. Un
+evento limpio para un objeto cambiado no promociona el documento.
+
+`THREATS_FOUND`, `UNSUPPORTED`, `ACCESS_DENIED` y `FAILED` son terminales: el
+objeto y su sidecar se eliminan según la política de beta y el registro queda
+en `FAILED`; errores de corroboración o eventos forjados no mutan metadata.
+La promoción y el fallo terminal usan una operación de metadata atómica y
+condicional (`PENDING_UPLOAD + PENDING` como precondición); una carrera pierde
+cerrada y no puede resucitar ni sobreescribir una transición de reconciliación.
+Resultados repetidos son idempotentes y un resultado limpio fuera de orden no
+puede resucitar un documento terminal. Si la limpieza posterior a una
+transición falla, el documento queda no indexable y un evento repetido reintenta
+la limpieza. La composición pública activa el gate;
+el modo loopback conserva fixtures locales y no representa una autorización de
+despliegue. La integración EventBridge/IAM/GuardDuty y cualquier cuarentena
+durable siguen siendo gates de infraestructura separados, sin llamadas AWS en
+esta fase.

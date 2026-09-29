@@ -7,7 +7,8 @@ tokens, prompts, or other secrets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Mapping
 from enum import StrEnum
 
 
@@ -20,11 +21,33 @@ class MatterStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-class IngestionStatus(StrEnum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    READY = "ready"
-    FAILED = "failed"
+class DocumentStatus(StrEnum):
+    """Lifecycle states owned by the document pipeline.
+
+    Values are intentionally explicit because they are exposed to callers and
+    persisted in metadata.  Indexing is implemented by a later phase.
+    """
+
+    PENDING_UPLOAD = "PENDING_UPLOAD"
+    UPLOADED = "UPLOADED"
+    PENDING_INGESTION = "PENDING_INGESTION"
+    INDEXED = "INDEXED"
+    FAILED = "FAILED"
+
+
+class MalwareScanStatus(StrEnum):
+    """Server-owned malware gate; only a clean result permits indexing."""
+
+    PENDING = "PENDING"
+    CLEAN = "NO_THREATS_FOUND"
+    THREATS_FOUND = "THREATS_FOUND"
+    UNSUPPORTED = "UNSUPPORTED"
+    ACCESS_DENIED = "ACCESS_DENIED"
+    FAILED = "FAILED"
+
+
+# Kept as a compatibility name for callers that used the Phase 00 draft.
+IngestionStatus = DocumentStatus
 
 
 class ReviewTaskStatus(StrEnum):
@@ -61,7 +84,19 @@ class Document:
     jurisdiction: str
     document_date: str
     confidentiality: str
-    ingestion_status: IngestionStatus = IngestionStatus.PENDING
+    status: DocumentStatus = DocumentStatus.PENDING_UPLOAD
+    file_size_bytes: int = 0
+    uploaded_at: datetime = field(default_factory=utc_now)
+    quarantine_s3_key: str | None = None
+    malware_scan_status: MalwareScanStatus = MalwareScanStatus.PENDING
+    malware_scan_etag: str | None = None
+    malware_scan_version_id: str | None = None
+
+    @property
+    def ingestion_status(self) -> DocumentStatus:
+        """Compatibility view for the pre-Phase-02 field name."""
+
+        return self.status
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,3 +119,23 @@ class ReviewTask:
     status: ReviewTaskStatus = ReviewTaskStatus.OPEN
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+    # Correlation metadata is safe to persist; workflow snapshots are bounded
+    # answer/citation records and never contain full documents or storage URIs.
+    correlation_id: str = ""
+    # Workflow fields were added after the Phase 07 metadata-only contract.
+    # Defaults keep old synthetic records readable while new workflow creates
+    # always populate the durable snapshot and due date.
+    snapshot: Mapping[str, object] | None = None
+    note: str = ""
+    due_at: date | None = None
+    closed_at: datetime | None = None
+    resolution_note: str = ""
+    # Operator retention may strip workflow/user text while retaining a
+    # bounded metadata record for auditability.
+    archived_at: datetime | None = None
+
+    @property
+    def reason_code(self) -> str:
+        """Compatibility-friendly name for the closed review reason value."""
+
+        return self.reason

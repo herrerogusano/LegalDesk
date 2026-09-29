@@ -5,8 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "legaldesk"
 version = "0.1.0"
-description = "Grounded, tenant-safe legal assistant portfolio project"
+description = "Tenant-safe legal document assistant with grounded RAG and verifiable citations on AWS Bedrock AgentCore"
 requires-python = ">=3.11"
+dependencies = ["PyJWT[crypto]>=2.10,<3"]
+
+[project.scripts]
+legaldesk = "legaldesk.__main__:main"
+
+[project.optional-dependencies]
+aws = ["boto3>=1.42,<2"]
 
 [tool.setuptools]
 package-dir = {"" = "backend/src"}

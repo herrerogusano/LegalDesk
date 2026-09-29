@@ -1,0 +1,45 @@
+# Declarative post-deploy update for the existing Phase 01 Harness.
+# This fragment is not a second Harness resource. Resolve placeholders in the
+# deployment system; no OAuth secret is stored here.
+schemaVersion: "1"
+action: update-existing
+harness:
+  arn: "${EXISTING_HARNESS_ARN}"
+  tools:
+    - name: legaldesk_gateway
+      type: agentcore_gateway
+      config:
+        agentCoreGateway:
+          gatewayArn: "${PHASE08_GATEWAY_ARN}"
+          outboundAuth:
+            oauth:
+              providerArn: "${OAUTH_PROVIDER_ARN}"
+              scopes:
+                - "${OAUTH_SCOPE}"
+
+# Deterministic local routing/documentation for tools discovered from Gateway.
+discoveredTools:
+  metadata-mcp___list_matter_documents: mcp
+  metadata-mcp___get_document_metadata: mcp
+  review-task-lambda___create_review_task: lambda
+
+# The Gateway tool schemas expose matterId only as an untrusted selector. The
+# REQUEST interceptor performs bilateral user/matter authorization and strips
+# it before the target receives the call.
+matterSelector:
+  argument: matterId
+  targetReceives: false
+
+# Attach this statement to the existing Harness execution role after the
+# Gateway ARN is known. Do not use Resource: "*".
+iamPolicyStatement:
+  effect: Allow
+  action: bedrock-agentcore:InvokeGateway
+  resource: "${PHASE08_GATEWAY_ARN}"
+
+# The Harness also needs the provider's AgentCore token-vault resources and
+# this exact managed-secret prefix; the secret value itself is never in Git.
+oauthManagedSecretPolicyStatement:
+  effect: Allow
+  action: secretsmanager:GetSecretValue
+  resource: "arn:${AWS_PARTITION}:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:bedrock-agentcore-identity!default/oauth2/${OAUTH_PROVIDER_NAME}-*"

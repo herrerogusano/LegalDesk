@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 11 redacted CloudWatch metric filters over existing logs
+
+Parameters:
+  GatewayLogGroupName:
+    Type: String
+    Default: /aws/lambda/LegalDeskGatewayRequestInterceptorPhase08
+    AllowedPattern: "^/[A-Za-z0-9_.@/+-]{1,255}$"
+  MetadataMcpLogGroupName:
+    Type: String
+    Default: /aws/lambda/LegalDeskMetadataMcpPhase08
+    AllowedPattern: "^/[A-Za-z0-9_.@/+-]{1,255}$"
+  ReviewTaskLogGroupName:
+    Type: String
+    Default: /aws/lambda/LegalDeskReviewTaskPhase07
+    AllowedPattern: "^/[A-Za-z0-9_.@/+-]{1,255}$"
+
+Resources:
+  GatewayErrorMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref GatewayLogGroupName
+      FilterPattern: '{ $.event_type = "error" }'
+      MetricTransformations:
+        - MetricName: GatewayErrors
+          MetricNamespace: LegalDesk/Phase11
+          MetricValue: "1"
+
+  GatewayToolErrorMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref GatewayLogGroupName
+      FilterPattern: '{ $.event_type = "tool" && $.outcome = "error" }'
+      MetricTransformations:
+        - MetricName: GatewayToolErrors
+          MetricNamespace: LegalDesk/Phase11
+          MetricValue: "1"
+
+  GatewayLatencyMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref GatewayLogGroupName
+      FilterPattern: '{ $.latency_ms = * }'
+      MetricTransformations:
+        - MetricName: GatewayLatencyMs
+          MetricNamespace: LegalDesk/Phase11
+          MetricValue: "$.latency_ms"
+
+  GatewayRequestMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref GatewayLogGroupName
+      FilterPattern: '{ $.event_type = "agent" && $.outcome = "started" }'
+      MetricTransformations:
+        - MetricName: GatewayRequests
+          MetricNamespace: LegalDesk/Phase11
+          MetricValue: "1"
+
+  MetadataMcpErrorMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref MetadataMcpLogGroupName
+      FilterPattern: '{ $.event_type = "error" }'
+      MetricTransformations:
+        - MetricName: MetadataMcpErrors
+          MetricNamespace: LegalDesk/Phase11
+          MetricValue: "1"
+
+  MetadataMcpToolErrorMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref MetadataMcpLogGroupName
+      FilterPattern: '{ $.event_type = "tool" && $.outcome = "error" }'
+      MetricTransformations:
+        - MetricName: MetadataMcpToolErrors
+          MetricNamespace: LegalDesk/Phase11
+          MetricValue: "1"
+
+  ReviewTaskErrorMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ReviewTaskLogGroupName
+      FilterPattern: '{ $.event_type = "error" }'
+      MetricTransformations:
+        - MetricName: ReviewTaskErrors
+          MetricNamespace: LegalDesk/Phase11
+          MetricValue: "1"
+
+Outputs:
+  MetricNamespace:
+    Value: LegalDesk/Phase11
+    Description: Namespace for the minimum operational metrics
+  LogsQueryHint:
+    Value: "fields @timestamp,event_type,correlation_id,outcome,operation,latency_ms,error_code | filter ispresent(correlation_id) | sort @timestamp desc"
+    Description: Redacted CloudWatch Logs Insights query hint; payload logging is intentionally disabled

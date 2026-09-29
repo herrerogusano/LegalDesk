@@ -1,0 +1,651 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  LegalDesk Phase 14 public beta edge. This stack owns only the private static
+  frontend, CloudFront edge, HTTP API, application Lambda, and their access
+  policy. Existing source, metadata, identity, Bedrock, Gateway, Harness,
+  Memory, and Guardrail resources are supplied as parameters and are never
+  recreated here.
+
+Metadata:
+  cfn-lint:
+    config:
+      # The parameter is deliberately empty when the default CloudFront
+      # certificate is used; its non-empty branch is constrained below.
+      ignore_checks: [W1030]
+
+Parameters:
+  ApplicationCodeBucket:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: Existing versioned artifact bucket containing the application Lambda zip
+  ApplicationCodeKey:
+    Type: String
+    MinLength: 1
+    Description: Immutable S3 key for the application Lambda zip
+  ApplicationCodeVersion:
+    Type: String
+    MinLength: 1
+    Description: Immutable S3 object version for the Lambda zip
+  MetadataTableName:
+    Type: String
+    MinLength: 3
+  MetadataTableArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:dynamodb:[^:]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$"
+  SourceBucketName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  SourceBucketArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  BetaTenantId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    Description: Single pre-provisioned fictional/public tenant exposed by this beta role
+  KnowledgeBaseId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9]{1,100}$"
+  DataSourceId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9]{1,100}$"
+  KnowledgeBaseArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:bedrock:[^:]+:[0-9]{12}:knowledge-base/[A-Za-z0-9]+$"
+  GuardrailIdentifier:
+    Type: String
+    MinLength: 1
+  GuardrailVersion:
+    Type: String
+    MinLength: 1
+  GuardrailArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:bedrock:[^:]+:[0-9]{12}:guardrail/[A-Za-z0-9]+$"
+  ResolverModelArn:
+    Type: String
+    AllowedPattern: "^arn:[^*?]+$"
+  WriterModelArn:
+    Type: String
+    AllowedPattern: "^arn:[^*?]+$"
+  ResolverFoundationModelArn:
+    Type: String
+    AllowedPattern: "^arn:[^:*?]+:bedrock:(?:[^:*?]+|\\*)::foundation-model/[A-Za-z0-9._:-]+$"
+    Description: Exact foundation model family reached through ResolverModelArn; region may be * for a cross-region inference profile
+  WriterFoundationModelArn:
+    Type: String
+    AllowedPattern: "^arn:[^:*?]+:bedrock:(?:[^:*?]+|\\*)::foundation-model/[A-Za-z0-9._:-]+$"
+    Description: Exact foundation model family reached through WriterModelArn; region may be * for a cross-region inference profile
+  HarnessArn:
+    Type: String
+    AllowedPattern: "^arn:[^*?]+$"
+  AgentRuntimeArn:
+    Type: String
+    AllowedPattern: "^arn:[^*?]+$"
+    Description: Existing AgentCore runtime ARN used by the deployed composition
+  GatewayUrl:
+    Type: String
+    AllowedPattern: '^https://[^?#\s]+$'
+  MemoryId:
+    Type: String
+    MinLength: 1
+  MemoryArn:
+    Type: String
+    AllowedPattern: "^arn:[^*?]+$"
+  OidcIssuer:
+    Type: String
+    AllowedPattern: '^https://[^?#\s]+$'
+  CognitoClientId:
+    Type: String
+    MinLength: 1
+    Description: Existing Phase 10 public Cognito client ID
+  OidcJwksUrl:
+    Type: String
+    AllowedPattern: '^https://[^?#\s]+$'
+  OidcAuthorizationEndpoint:
+    Type: String
+    AllowedPattern: '^https://[^?#\s]+$'
+  OidcTokenEndpoint:
+    Type: String
+    AllowedPattern: '^https://[^?#\s]+$'
+  OidcAudience:
+    Type: String
+    Default: ""
+  MatterCatalog:
+    Type: CommaDelimitedList
+    Description: Explicit fictional/public matter IDs; authorization never scans this table
+  PublicOrigin:
+    Type: String
+    AllowedPattern: "^https://[^/]+$"
+    Description: Exact browser origin. Bootstrap may use a temporary approved origin, then the CloudFront output.
+  ViewerDomainName:
+    Type: String
+    Default: ""
+    Description: Optional custom CloudFront hostname. Leave empty to use the distribution hostname during bootstrap.
+  AcmCertificateArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws[a-zA-Z-]*:acm:us-east-1:[0-9]{12}:certificate/[A-Za-z0-9-]+$"
+    Description: ACM certificate in us-east-1 for ViewerDomainName; required when that parameter is set.
+  CognitoHostedUiOrigin:
+    Type: String
+    AllowedPattern: "^https://[^/]+$"
+    Description: Exact Cognito hosted-UI origin used in form-action CSP
+  PresignedUploadOrigin:
+    Type: String
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$"
+    Description: Exact source-bucket HTTPS origin allowed by CSP connect-src for upload PUTs
+  TrustedEdgeSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    MaxLength: 256
+    AllowedPattern: "^[!-~]+$"
+    Description: Secret marker CloudFront overwrites on the API origin request; never log or output it.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90]
+  ApiThrottleRate:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    MaxValue: 1000
+  ApiThrottleBurst:
+    Type: Number
+    Default: 40
+    MinValue: 1
+    MaxValue: 2000
+  QuotaUploadsPerMonth:
+    Type: Number
+    Default: 50
+    MinValue: 1
+    MaxValue: 1000000
+  QuotaUploadBytesPerMonth:
+    Type: Number
+    Default: 524288000
+    MinValue: 1
+    MaxValue: 1000000000000
+  QuotaChatsPerMonth:
+    Type: Number
+    Default: 300
+    MinValue: 1
+    MaxValue: 10000000
+  QuotaIngestionStartsPerMonth:
+    Type: Number
+    Default: 50
+    MinValue: 1
+    MaxValue: 10000000
+  QuotaHarnessPerMonth:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 10000000
+  QuotaGatewayPerMonth:
+    Type: Number
+    Default: 500
+    MinValue: 1
+    MaxValue: 10000000
+
+Conditions:
+  HasCustomViewerDomain: !Not [!Equals [!Ref ViewerDomainName, ""]]
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentFrontendVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Description: LegalDesk private frontend S3 origin
+        Name: !Sub "${AWS::StackName}-frontend-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}-public-http"
+      RetentionInDays: !Ref LogRetentionDays
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowOnlyThisCloudFrontDistributionRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${PublicDistribution}"
+
+  PublicApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-public-http"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: true
+        AllowHeaders:
+          - content-type
+          - cookie
+          - origin
+          - x-csrf-token
+          - authorization
+        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        AllowOrigins:
+          - !Ref PublicOrigin
+        MaxAge: 300
+
+  PublicApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref PublicApi
+      StageName: "$default"
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        # Deliberately exclude path, query, headers, cookies, IP and user
+        # agent. The OAuth callback query contains an authorization code.
+        Format: >-
+          {"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","responseLatency":"$context.responseLatency","integrationStatus":"$context.integrationStatus"}
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: !Ref ApiThrottleBurst
+        ThrottlingRateLimit: !Ref ApiThrottleRate
+
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-application"
+      RetentionInDays: !Ref LogRetentionDays
+
+  ApplicationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Least-privilege public LegalDesk application role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskPublicApplicationDataPlane
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteApplicationLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${ApplicationLogGroup.Arn}:*"
+              - Sid: ReadAuthorizationAndApplicationState
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query]
+                Resource:
+                  - !Ref MetadataTableArn
+                  - !Sub "${MetadataTableArn}/index/*"
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - AUTH#USER#*
+                      - AUTH#MATTER#*
+                      - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                      - !Sub "CONVERSATION#${BetaTenantId}#*"
+                      - SESSION#*
+                      - GATEWAY#*
+                      - LEGALDESK#P14#STATE#*
+                      - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
+              - Sid: WriteOnlyApplicationOwnedState
+                Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
+                Resource: !Ref MetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                      - !Sub "CONVERSATION#${BetaTenantId}#*"
+                      - SESSION#*
+                      - GATEWAY#*
+                      - LEGALDESK#P14#STATE#*
+                      - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
+              - Sid: SourceDocumentObjectsOnly
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:GetObjectTagging]
+                Resource:
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf.metadata.json"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt.metadata.json"
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+              - Sid: BedrockKnowledgeBaseDataPlane
+                Effect: Allow
+                Action: [bedrock:Retrieve, bedrock:StartIngestionJob, bedrock:GetIngestionJob]
+                Resource: !Ref KnowledgeBaseArn
+              - Sid: GuardrailDataPlane
+                Effect: Allow
+                Action: bedrock:ApplyGuardrail
+                Resource: !Ref GuardrailArn
+              - Sid: ApprovedModelDataPlane
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Ref ResolverModelArn
+                  - !Ref WriterModelArn
+                  - !Ref ResolverFoundationModelArn
+                  - !Ref WriterFoundationModelArn
+              - Sid: ExistingAgentCoreHarness
+                Effect: Allow
+                Action: [bedrock-agentcore:InvokeHarness, bedrock-agentcore:InvokeAgentRuntime]
+                Resource:
+                  - !Ref HarnessArn
+                  - !Ref AgentRuntimeArn
+              - Sid: ExistingAgentCoreMemory
+                Effect: Allow
+                Action: [bedrock-agentcore:CreateEvent, bedrock-agentcore:ListEvents]
+                Resource: !Ref MemoryArn
+
+  ApplicationFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ApplicationLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-application"
+      Description: LegalDesk API Gateway HTTP API v2 application adapter
+      Runtime: python3.12
+      Handler: legaldesk.api_gateway.lambda_handler
+      Role: !GetAtt ApplicationExecutionRole.Arn
+      Timeout: 29
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref ApplicationCodeBucket
+        S3Key: !Ref ApplicationCodeKey
+        S3ObjectVersion: !Ref ApplicationCodeVersion
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          LEGALDESK_METADATA_TABLE_NAME: !Ref MetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
+          LEGALDESK_KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+          LEGALDESK_DATA_SOURCE_ID: !Ref DataSourceId
+          LEGALDESK_GUARDRAIL_ID: !Ref GuardrailIdentifier
+          LEGALDESK_GUARDRAIL_VERSION: !Ref GuardrailVersion
+          LEGALDESK_RESOLVER_MODEL_ID: !Ref ResolverModelArn
+          LEGALDESK_WRITER_MODEL_ID: !Ref WriterModelArn
+          LEGALDESK_HARNESS_ARN: !Ref HarnessArn
+          LEGALDESK_GATEWAY_URL: !Ref GatewayUrl
+          LEGALDESK_MEMORY_ID: !Ref MemoryId
+          LEGALDESK_JWKS_URL: !Ref OidcJwksUrl
+          LEGALDESK_OIDC_ISSUER: !Ref OidcIssuer
+          LEGALDESK_OIDC_CLIENT_ID: !Ref CognitoClientId
+          LEGALDESK_OIDC_AUTHORIZATION_ENDPOINT: !Ref OidcAuthorizationEndpoint
+          LEGALDESK_OIDC_TOKEN_ENDPOINT: !Ref OidcTokenEndpoint
+          LEGALDESK_OIDC_AUDIENCE: !Ref OidcAudience
+          LEGALDESK_MATTER_CATALOG: !Join [",", !Ref MatterCatalog]
+          LEGALDESK_PUBLIC_BASE_URL: !Ref PublicOrigin
+          LEGALDESK_REDIRECT_URI: !Join ["", [!Ref PublicOrigin, "/callback"]]
+          LEGALDESK_ALLOWED_HOSTS: !Sub "${PublicApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+          LEGALDESK_ALLOWED_ORIGINS: !Ref PublicOrigin
+          LEGALDESK_SECURE_COOKIES: "true"
+          LEGALDESK_PUBLIC_MODE: "true"
+          LEGALDESK_QUOTA_UPLOADS_PER_MONTH: !Ref QuotaUploadsPerMonth
+          LEGALDESK_QUOTA_UPLOAD_BYTES_PER_MONTH: !Ref QuotaUploadBytesPerMonth
+          LEGALDESK_QUOTA_CHATS_PER_MONTH: !Ref QuotaChatsPerMonth
+          LEGALDESK_QUOTA_INGESTION_STARTS_PER_MONTH: !Ref QuotaIngestionStartsPerMonth
+          LEGALDESK_QUOTA_HARNESS_PER_MONTH: !Ref QuotaHarnessPerMonth
+          LEGALDESK_QUOTA_GATEWAY_PER_MONTH: !Ref QuotaGatewayPerMonth
+          LEGALDESK_TRUSTED_EDGE_VALUE: !Ref TrustedEdgeSecret
+          LEGALDESK_SYSTEM_PROMPT_PATH: /var/task/prompts/legaldesk-system.md
+
+  PublicApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref PublicApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApplicationFunction.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 29000
+
+  PublicApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApplicationFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${PublicApi}/*"
+
+  LoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: GET /login
+      Target: !Sub "integrations/${PublicApiIntegration}"
+  CallbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: GET /callback
+      Target: !Sub "integrations/${PublicApiIntegration}"
+  LogoutRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: POST /logout
+      Target: !Sub "integrations/${PublicApiIntegration}"
+  ApiRootRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: ANY /api
+      Target: !Sub "integrations/${PublicApiIntegration}"
+  ApiProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: ANY /api/{proxy+}
+      Target: !Sub "integrations/${PublicApiIntegration}"
+
+  EdgeResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${AWS::StackName}-strict-public-headers"
+        Comment: Strict public beta headers; upload hosts are explicit CSP parameters.
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: !Sub
+              - "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${UploadOrigins}; form-action 'self' ${CognitoOrigin}"
+              - UploadOrigins: !Ref PresignedUploadOrigin
+                CognitoOrigin: !Ref CognitoHostedUiOrigin
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+            Override: true
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Value: "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+              Override: true
+
+  PublicDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn:
+      - PublicApiStage
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: LegalDesk public beta edge; dynamic paths are never cached.
+        Aliases: !If [HasCustomViewerDomain, [!Ref ViewerDomainName], !Ref AWS::NoValue]
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: frontend-s3
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOriginAccessControl.Id
+            S3OriginConfig: {}
+          - Id: public-http-api
+            DomainName: !Sub "${PublicApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+            OriginCustomHeaders:
+              - HeaderName: X-LegalDesk-Trusted-Edge
+                HeaderValue: !Ref TrustedEdgeSecret
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: frontend-s3
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          MinTTL: 0
+          DefaultTTL: 86400
+          MaxTTL: 31536000
+          ResponseHeadersPolicyId: !Ref EdgeResponseHeadersPolicy
+        CacheBehaviors:
+          - PathPattern: /login
+            TargetOriginId: public-http-api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            ForwardedValues:
+              QueryString: true
+              # Never forward the viewer Host: CloudFront must set the API
+              # origin Host, which is the exact value in ALLOWED_HOSTS.
+              # Cookies are forwarded by the dedicated Cookies block; Cookie
+              # is a CloudFront-disallowed explicit forwarded header.
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
+              Cookies:
+                Forward: all
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ResponseHeadersPolicyId: !Ref EdgeResponseHeadersPolicy
+          - PathPattern: /callback
+            TargetOriginId: public-http-api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            ForwardedValues:
+              QueryString: true
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
+              Cookies:
+                Forward: all
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ResponseHeadersPolicyId: !Ref EdgeResponseHeadersPolicy
+          - PathPattern: /logout
+            TargetOriginId: public-http-api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            ForwardedValues:
+              QueryString: true
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
+              Cookies:
+                Forward: all
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ResponseHeadersPolicyId: !Ref EdgeResponseHeadersPolicy
+          - PathPattern: /api
+            TargetOriginId: public-http-api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            ForwardedValues:
+              QueryString: true
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
+              Cookies:
+                Forward: all
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ResponseHeadersPolicyId: !Ref EdgeResponseHeadersPolicy
+          - PathPattern: /api/*
+            TargetOriginId: public-http-api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachedMethods: [GET, HEAD, OPTIONS]
+            ForwardedValues:
+              QueryString: true
+              Headers: [Origin, Content-Type, X-CSRF-Token, Authorization, Accept]
+              Cookies:
+                Forward: all
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ResponseHeadersPolicyId: !Ref EdgeResponseHeadersPolicy
+        PriceClass: PriceClass_100
+        ViewerCertificate: !If
+          - HasCustomViewerDomain
+          - AcmCertificateArn: !Ref AcmCertificateArn
+            MinimumProtocolVersion: TLSv1.2_2021
+            SslSupportMethod: sni-only
+          - CloudFrontDefaultCertificate: true
+
+Outputs:
+  CloudFrontDistributionId:
+    Value: !Ref PublicDistribution
+  CloudFrontDistributionDomainName:
+    Value: !GetAtt PublicDistribution.DomainName
+    Description: Use this exact origin in the deterministic Phase 10 callback and Phase 02 CORS update.
+  PublicApiId:
+    Value: !Ref PublicApi
+  PublicApiOriginHost:
+    Value: !Sub "${PublicApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+    Description: Exact allowed API Host; distinct from the browser PublicOrigin.
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  ApplicationFunctionArn:
+    Value: !GetAtt ApplicationFunction.Arn

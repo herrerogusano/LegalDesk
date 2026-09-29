@@ -8,13 +8,26 @@ Implementar LegalDesk siguiendo `MASTER_PLAN.md` y los `PLAN_XX_*.md`.
 
 No improvisar una arquitectura distinta sin necesidad demostrable.
 
+## Conocimiento reutilizable antes de implementar
+
+Consultar primero el índice compartido
+`C:\Users\herre\OneDrive\Desktop\herrerogusano's vault\04 Knowledge\AI Engineering\AI Engineering.md`
+y sus guías pertinentes de RAG, MCP, grounding, operación AWS y agentes.
+Reutilizar lecciones documentadas sin sustituir el plan/ADR ni ampliar permisos.
+Si el vault no está disponible, indicarlo y no inventar su contenido. Guardar
+aprendizajes generales en las guías existentes y contexto específico en el repo.
+
 # 2. Roles de modelos
 
 ## Supervisor / orchestrator
 
-Preferencia si el cliente Codex permite seleccionar este modelo:
+Configuración obligatoria si el cliente Codex permite seleccionar este modelo:
 - **GPT-5.6 Sol**
 - reasoning: **Medium**
+
+El supervisor debe crearse o seleccionarse explícitamente con esta
+configuración. Si una tarea ya iniciada no permite cambiar su modelo, debe
+informarse al usuario y aplicar la configuración en la siguiente tarea.
 
 Responsabilidades:
 - leer el plan activo;
@@ -38,9 +51,14 @@ Usar razonamiento superior solo para:
 
 ## Worker
 
-Preferencia:
+Configuración obligatoria:
 - **GPT-5.6 Luna**
 - reasoning: **High**
+
+Todo subagente nuevo debe crearse pasando explícitamente el modelo y el nivel
+de razonamiento, aunque el cliente permita heredar la configuración. No
+reutilizar un subagente existente si no se puede verificar que usa GPT-5.6
+Luna con reasoning High; crear uno nuevo para el siguiente bloque concreto.
 
 Responsabilidades:
 - implementar la tarea asignada;
@@ -50,9 +68,9 @@ Responsabilidades:
 - no ampliar alcance.
 
 Si esos nombres/modelos no están disponibles en el cliente Codex actual:
-- mantener la separación de roles;
-- usar el modelo más potente disponible únicamente para supervisor;
-- usar un modelo más ligero para trabajo rutinario.
+- detener la delegación;
+- informar al usuario antes de usar una configuración alternativa;
+- mantener la separación de roles solo tras recibir su indicación.
 
 # 3. Política de eficiencia de límites
 
@@ -126,10 +144,14 @@ No asumir que una operación AWS es gratuita.
 
 # 8. Git
 
-- trabajar en branch por fase;
+- usar `developer` como rama de integración y `prod` como rama de producción;
+- crear cada `phase/*` desde `developer` y abrir su PR contra `developer`;
+- al terminar y validar una fase, el supervisor puede crear y fusionar esa PR;
+- promover releases mediante PR de `developer` a `prod`;
+- mantener `main` como rama legacy mientras no se acuerde retirarla o cambiarla;
 - commits pequeños y descriptivos;
 - no reescribir historia compartida;
-- no hacer merge automático a `main` salvo instrucción explícita;
+- no fusionar directamente a `main` ni `prod` salvo instrucción explícita;
 - mantener el repo en estado ejecutable.
 
 Convención sugerida:

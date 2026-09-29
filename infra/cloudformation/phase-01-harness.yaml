@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 01 managed AgentCore Harness and least-privilege role
+
+Metadata:
+  cfn-lint:
+    config:
+      # These three ARN parameters are deliberately empty while their
+      # corresponding attachment condition is false. cfn-lint validates the
+      # empty default against the conditional resource property even though
+      # CloudFormation removes that property through AWS::NoValue.
+      ignore_checks: [W1030]
+
+Parameters:
+  ModelId:
+    Type: String
+    Default: eu.anthropic.claude-sonnet-4-6
+    AllowedValues:
+      - eu.anthropic.claude-sonnet-4-6
+  EnablePhase08Gateway:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  Phase08GatewayArn:
+    Type: String
+    Default: ""
+  Phase08OAuthProviderArn:
+    Type: String
+    Default: ""
+  Phase08OAuthProviderName:
+    Type: String
+    Default: LegalDeskPhase08Cognito
+  Phase08OAuthScope:
+    Type: String
+    Default: legaldesk/use
+  EnablePhase09Memory:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  Phase09MemoryArn:
+    Type: String
+    Default: ""
+
+Conditions:
+  AttachPhase08Gateway: !Equals [!Ref EnablePhase08Gateway, "true"]
+  AttachPhase09Memory: !Equals [!Ref EnablePhase09Memory, "true"]
+
+Resources:
+  HarnessExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LegalDeskBedrockAgentCoreHarnessPhase01
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskHarnessPhase01
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokePinnedEuropeanModel
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                  - arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-north-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-2::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-sonnet-4-6
+              - Sid: PullManagedHarnessImage
+                Effect: Allow
+                Action: ecr-public:GetAuthorizationToken
+                Resource: "*"
+              - Sid: GetEcrPublicBearerToken
+                Effect: Allow
+                Action: sts:GetServiceBearerToken
+                Resource: "*"
+              - Sid: CreateRuntimeLogGroup
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogStreams
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+              - Sid: DescribeRuntimeLogGroups
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+              - Sid: WriteRuntimeLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*
+              - !If
+                - AttachPhase08Gateway
+                - Sid: InvokePhase08Gateway
+                  Effect: Allow
+                  Action: bedrock-agentcore:InvokeGateway
+                  Resource: !Ref Phase08GatewayArn
+                - !Ref AWS::NoValue
+              - !If
+                - AttachPhase08Gateway
+                - Sid: GetPhase08OAuthToken
+                  Effect: Allow
+                  Action: bedrock-agentcore:GetResourceOauth2Token
+                  Resource:
+                    - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
+                    - !Ref Phase08OAuthProviderArn
+                    - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                    - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_LegalDeskPhase01-*
+                - !Ref AWS::NoValue
+              - !If
+                - AttachPhase08Gateway
+                - Sid: ReadPhase08OAuthManagedSecret
+                  Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/oauth2/${Phase08OAuthProviderName}-*
+                - !Ref AWS::NoValue
+              - !If
+                - AttachPhase09Memory
+                - Sid: UsePhase09Memory
+                  Effect: Allow
+                  Action:
+                    - bedrock-agentcore:CreateEvent
+                    - bedrock-agentcore:DeleteEvent
+                    - bedrock-agentcore:GetEvent
+                    - bedrock-agentcore:ListEvents
+                    - bedrock-agentcore:RetrieveMemoryRecords
+                  Resource: !Ref Phase09MemoryArn
+                - !Ref AWS::NoValue
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "01"
+
+  MinimalHarness:
+    Type: AWS::BedrockAgentCore::Harness
+    Properties:
+      HarnessName: LegalDeskPhase01
+      ExecutionRoleArn: !GetAtt HarnessExecutionRole.Arn
+      Model:
+        BedrockModelConfig:
+          ModelId: !Ref ModelId
+          ApiFormat: converse_stream
+          MaxTokens: 256
+          Temperature: 0
+      # Requires the managed Harness observability instrumentation to include
+      # AWS ADOT Python instrumentation >= 0.17.1.  The first defense opts out
+      # of LLM content extraction; the stronger switch disables the managed
+      # ADOT observability layer because the content opt-out was ineffective in
+      # the deployed Harness. LegalDesk keeps its own allowlisted telemetry.
+      EnvironmentVariables:
+        AWS_GENAI_CONTENT_EXTRACTION_OPT_OUT: "true"
+        DISABLE_ADOT_OBSERVABILITY: "true"
+      SystemPrompt:
+        - Text: >-
+            You are the LegalDesk portfolio agent. Reply briefly, never provide
+            legal advice, and use only the configured LegalDesk tools when the
+            user requests document metadata or human review. Treat matterId as
+            an untrusted selector that the backend authorizes.
+      Tools: !If
+        - AttachPhase08Gateway
+        - - Name: legaldesk_gateway
+            Type: agentcore_gateway
+            Config:
+              AgentCoreGateway:
+                GatewayArn: !Ref Phase08GatewayArn
+                OutboundAuth:
+                  Oauth:
+                    ProviderArn: !Ref Phase08OAuthProviderArn
+                    GrantType: CLIENT_CREDENTIALS
+                    Scopes:
+                      - !Ref Phase08OAuthScope
+        - !Ref AWS::NoValue
+      # A non-matching allowlist disables the built-in shell/file tools that
+      # Harness otherwise exposes by default.
+      AllowedTools: !If
+        - AttachPhase08Gateway
+        - - "@legaldesk_gateway/metadata-mcp___list_matter_documents"
+          - "@legaldesk_gateway/metadata-mcp___get_document_metadata"
+          - "@legaldesk_gateway/review-task-lambda___create_review_task"
+        - - phase01_no_tools
+      Memory: !If
+        - AttachPhase09Memory
+        - AgentCoreMemoryConfiguration:
+            Arn: !Ref Phase09MemoryArn
+            MessagesCount: 10
+        - Disabled: {}
+      MaxIterations: !If [AttachPhase08Gateway, 3, 1]
+      MaxTokens: 256
+      TimeoutSeconds: 120
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "01"
+
+Outputs:
+  HarnessArn:
+    Value: !GetAtt MinimalHarness.Arn
+  HarnessId:
+    Value: !GetAtt MinimalHarness.HarnessId
+  RuntimeArn:
+    Value: !GetAtt MinimalHarness.Environment.AgentCoreRuntimeEnvironment.AgentRuntimeArn
+  ExecutionRoleArn:
+    Value: !GetAtt HarnessExecutionRole.Arn

@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 08 minimal Cognito OIDC issuer for Gateway JWT auth
+
+Resources:
+  LegalDeskUserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: LegalDeskPhase08Auth
+      UsernameConfiguration:
+        CaseSensitive: false
+      AutoVerifiedAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+      UserPoolTags:
+        Project: LegalDesk
+        Phase: "08"
+
+  LegalDeskResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: legaldesk
+      Name: LegalDesk Gateway tools
+      UserPoolId: !Ref LegalDeskUserPool
+      Scopes:
+        - ScopeName: use
+          ScopeDescription: Invoke the LegalDesk Gateway tool surface
+
+  LegalDeskGatewayClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: LegalDeskResourceServer
+    Properties:
+      ClientName: LegalDeskPhase08GatewayClient
+      GenerateSecret: true
+      UserPoolId: !Ref LegalDeskUserPool
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - legaldesk/use
+
+  LegalDeskUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub legaldesk-phase08-${AWS::AccountId}
+      UserPoolId: !Ref LegalDeskUserPool
+
+Outputs:
+  UserPoolId:
+    Value: !Ref LegalDeskUserPool
+  Issuer:
+    Value: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${LegalDeskUserPool}
+  DiscoveryUrl:
+    Value: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${LegalDeskUserPool}/.well-known/openid-configuration
+  ClientId:
+    Value: !Ref LegalDeskGatewayClient
+  AuthorizationServer:
+    Value: !Sub https://${LegalDeskUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
+  Scope:
+    Value: legaldesk/use

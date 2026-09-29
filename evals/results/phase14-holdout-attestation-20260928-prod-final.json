@@ -1,0 +1,16 @@
+{
+  "attestationVersion": "1.0.0",
+  "decision": "needs_follow_up",
+  "independenceEvidence": "procedural_separation_only",
+  "metadataOnly": true,
+  "reasonCodes": [
+    "accepted_cases_incomplete",
+    "role_reversal_grounding_invalid",
+    "role_relationship_missing",
+    "approval_threshold_not_met"
+  ],
+  "reportName": "phase14-holdout-20260928-prod-final.json",
+  "reportSha256": "4035b8d3d64e099aa9f905c068c456331df9ef6ba5e7366c58331c57bf0fd890",
+  "reviewerId": "independent-reviewer-phase14-20260928",
+  "runnerSelfApproval": false
+}

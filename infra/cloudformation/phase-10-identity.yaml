@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 10 public Cognito client using Authorization Code + PKCE
+
+Parameters:
+  UserPoolId:
+    Type: String
+    AllowedPattern: "^[a-z0-9-]+_[A-Za-z0-9]+$"
+    Description: Existing Phase 08 Cognito UserPool; this stack never creates a pool
+  CallbackUrls:
+    Type: CommaDelimitedList
+    Default: http://localhost:8000/callback
+  LogoutUrls:
+    Type: CommaDelimitedList
+    Default: http://localhost:8000/logout
+
+Resources:
+  LegalDeskPublicClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: LegalDeskPhase10PublicClient
+      UserPoolId: !Ref UserPoolId
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - legaldesk/use
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs: !Ref CallbackUrls
+      LogoutURLs: !Ref LogoutUrls
+      PreventUserExistenceErrors: ENABLED
+
+Outputs:
+  PublicClientId:
+    Value: !Ref LegalDeskPublicClient
+    Description: Public client ID; Authorization Code + PKCE is enforced by the app

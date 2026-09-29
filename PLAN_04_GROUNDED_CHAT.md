@@ -37,12 +37,12 @@ Conectar retrieval con el agente para que las preguntas documentales se conteste
 
 ## Criterios de aceptación
 
-- pregunta answerable devuelve respuesta + cita correcta;
-- pregunta unanswerable devuelve not-found, no invención;
-- citations solo apuntan a retrieved passages;
-- cross-document funciona dentro del mismo matter;
-- cross-matter no contamina retrieval;
-- UI muestra citations.
+- [x] pregunta answerable devuelve respuesta + cita correcta;
+- [x] pregunta unanswerable devuelve not-found, no invención;
+- [x] citations solo apuntan a retrieved passages;
+- [x] cross-document funciona dentro del mismo matter;
+- [x] cross-matter no contamina retrieval;
+- [x] UI muestra citations en el panel local.
 
 ## Tests / verificación
 
@@ -70,9 +70,9 @@ Real-model tests pequeños y explícitos.
 
 ## Definition of Done
 
-- Código y documentación coherentes.
-- Tests relevantes verdes.
-- Acceptance criteria comprobados uno a uno.
-- Sin secretos ni datos legales reales.
-- Recursos AWS y posibles costes listados.
-- No se ejecuta automáticamente la siguiente fase.
+- [x] Código y documentación coherentes.
+- [x] Tests relevantes verdes.
+- [x] Acceptance criteria comprobados uno a uno.
+- [x] Sin secretos ni datos legales reales.
+- [x] Recursos AWS y posibles costes listados; no se crearon recursos.
+- [x] No se ejecuta automáticamente la siguiente fase.

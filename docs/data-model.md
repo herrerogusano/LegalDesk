@@ -10,6 +10,15 @@
 | `Conversation` | `userId` + `matterId` | A session cannot be reused across matters |
 | `ReviewTask` | `tenantId` + `matterId` | Creator must be authorized for the matter |
 
+`ReviewTask` stores the closed reason, lifecycle timestamps, due date, optional
+bounded notes, and a validated accepted-answer snapshot: question, answer,
+evidence status, prompt hashes when available, and exact citations with
+document/page/section/passage. It never stores an S3 key, source URI, or full
+document. `list_review_tasks` uses a metadata-only Query projection; the UI
+fetches the snapshot with `get_review_task` when a row is opened. `closed` is
+terminal for now and retention/archival after closure remains a production
+policy gap.
+
 IDs are opaque, stable strings. IDs reveal no entitlement: possession of an ID
 never grants access. Stored ownership/membership is the source of truth.
 
@@ -28,7 +37,46 @@ tools must reject raw browser scope and accept only the server-built context.
 
 ## Planned storage keys
 
-- S3: `tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original`
+- S3 original: `tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original.txt`
+  or `original.pdf`, chosen from the validated media type. Bedrock metadata is
+  stored beside it as `{source-key}.metadata.json` and never embedded as text.
+- Public upload quarantine: `quarantine/tenants/{tenantId}/matters/{matterId}/documents/{documentId}/original.txt`
+  or `.pdf`. `Document.s3Key` remains the canonical source key and
+  `quarantineS3Key` is the server-owned upload key. The Bedrock data source
+  includes only `tenants/`, never `quarantine/`.
 - Metadata partition: `TENANT#{tenantId}#MATTER#{matterId}`
-- Conversation scope: `{userId}:{matterId}:{sessionId}`
-- Memory actor/session namespaces must include the authorized user and matter.
+- Authorization User record: `pk=AUTH#USER#{verifiedSubject}`, `sk=PROFILE`
+- Authorization Matter record: `pk=AUTH#MATTER#{matterId}`, `sk=PROFILE`
+- Review task record: `pk=TENANT#{tenantId}#MATTER#{matterId}`,
+  `sk=REVIEW#{reviewTaskId}`
+- Gateway authorization grant: `pk=GATEWAY#GRANT#{grantId}`, `sk=PROFILE`;
+  stores only verified subject, requested matter, correlation ID, target tool,
+  and a five-minute `expiresAt` epoch checked by the consumer. A separate
+  `GATEWAY#EXPIRY#{utc-day}` operational index is maintained by grant and
+  invocation writes; the reconciler queries at most the current and previous
+  day, then point-reads and revalidates the grant before deletion. The index is
+  not an authorization source, and DynamoDB TTL remains the bounded fallback.
+  Grants are replayable during that TTL; review idempotency limits duplicate
+  writes. It contains no document body or client-provided scope.
+- Conversation scope is derived server-side from the authorized user/matter and
+  opaque conversation/session selectors. The AgentCore values are deterministic
+  opaque IDs, not the raw `{userId}:{matterId}:{sessionId}` string.
+- Conversation binding records reuse the existing metadata table with
+  `pk=CONVERSATION#{tenantId}#{matterId}#{userId}#{conversationId}` and
+  `sk=SESSION#{sessionSelector}`. Creation is conditional and reads require an
+  exact user/tenant/matter/conversation/session match; no new table is needed.
+- Memory actor/session namespaces include the authorized user and matter only
+  through the server-side derivation; raw tenant, user, matter, or browser
+  selectors are never sent as AgentCore IDs.
+
+## Public document safety gate
+
+`Document` stores `quarantineS3Key`, `malwareScanStatus`, `malwareScanETag`, and
+`malwareScanVersionId`. New uploads start as `PENDING`; only a corroborated
+`NO_THREATS_FOUND` result can create the Bedrock metadata sidecar and promote
+`PENDING_UPLOAD` to `UPLOADED`. Ingestion rejects every document whose scan is
+not clean, regardless of its lifecycle status. Threat, unsupported, access
+denied, and failed results delete the original/sidecar and persist `FAILED`.
+Missing, malformed, cross-scope, stale-object, or uncorroborated events fail
+closed without promotion. TTL/retention and production quarantine policy are
+operational concerns; they are not authorization checks.

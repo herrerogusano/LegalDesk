@@ -1,0 +1,11 @@
+{
+  "category": "not_started",
+  "cleanupErrors": [],
+  "errorType": "UnknownError",
+  "phase": "startup",
+  "providerRequestCount": 1,
+  "requestCounts": {},
+  "result": "FAIL",
+  "smoke": "phase14-public-browser",
+  "step": "startup"
+}

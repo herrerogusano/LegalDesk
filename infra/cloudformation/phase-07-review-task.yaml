@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: LegalDesk Phase 07 review-task Lambda tool and least-privilege role
+
+Parameters:
+  ReviewTaskTableName:
+    Type: String
+    Description: Existing Phase 02 DynamoDB table name used for review-task metadata
+    MinLength: 3
+    MaxLength: 255
+  ReviewTaskTableArn:
+    Type: String
+    Description: Existing Phase 02 DynamoDB table ARN; used to scope Lambda access
+    AllowedPattern: "^arn:[^:]+:dynamodb:[^:]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$"
+  ReviewTaskCodeBucket:
+    Type: String
+    Description: S3 bucket containing the versioned review-task Lambda zip
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  ReviewTaskCodeKey:
+    Type: String
+    Description: S3 object key for the review-task Lambda zip artifact
+    MinLength: 1
+    MaxLength: 1024
+  ReviewTaskCodeVersion:
+    Type: String
+    Description: Immutable S3 object version for the review-task Lambda artifact
+    MinLength: 1
+    MaxLength: 1024
+
+Resources:
+  ReviewTaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/LegalDeskReviewTaskPhase07
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "07"
+
+  ReviewTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Least-privilege role for the Phase 07 review-task Lambda
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskReviewTaskPhase07
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadReviewTaskForIdempotency
+                Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !Ref ReviewTaskTableArn
+              - Sid: CreateReviewTask
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                Resource: !Ref ReviewTaskTableArn
+              - Sid: WriteScopedExecutionLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${ReviewTaskLogGroup.Arn}:*
+
+  ReviewTaskFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: LegalDeskReviewTaskPhase07
+      Description: Creates an authorized, idempotent human review task
+      Runtime: python3.12
+      Handler: legaldesk.review_tasks.lambda_handler
+      Architectures:
+        - x86_64
+      Role: !GetAtt ReviewTaskExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref ReviewTaskCodeBucket
+        S3Key: !Ref ReviewTaskCodeKey
+        S3ObjectVersion: !Ref ReviewTaskCodeVersion
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          REVIEW_TASK_TABLE_NAME: !Ref ReviewTaskTableName
+          REVIEW_TASK_SCHEMA_VERSION: "2"
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "07"
+
+Outputs:
+  ReviewTaskFunctionArn:
+    Value: !GetAtt ReviewTaskFunction.Arn
+  ReviewTaskFunctionName:
+    Value: !Ref ReviewTaskFunction
+  ReviewTaskExecutionRoleArn:
+    Value: !GetAtt ReviewTaskExecutionRole.Arn
+  ReviewTaskLogGroupName:
+    Value: !Ref ReviewTaskLogGroup

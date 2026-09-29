@@ -1,0 +1,15 @@
+{
+  "attestationVersion": "1.0.0",
+  "decision": "needs_follow_up",
+  "independenceEvidence": "procedural_separation_only",
+  "metadataOnly": true,
+  "reasonCodes": [
+    "writer_provider_failures",
+    "unsupported_maxItems_schema",
+    "approval_threshold_not_met"
+  ],
+  "reportName": "phase14-holdout-20260929-prod-final3.json",
+  "reportSha256": "556f97c4bfef4f2d1070a627b084ad1ccfa2587de0624ce113611169530f8fdc",
+  "reviewerId": "independent-reviewer-phase14-20260929-final3",
+  "runnerSelfApproval": false
+}

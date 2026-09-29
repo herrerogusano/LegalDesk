@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  LegalDesk Phase 14 bounded reconciliation scheduler. Reuses the existing
+  metadata table and source bucket; no business-table scan or new data store is
+  created. Scope partitions are deployment configuration for one beta tenant.
+
+Parameters:
+  ReconciliationCodeBucket:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  ReconciliationCodeKey:
+    Type: String
+    MinLength: 1
+  ReconciliationCodeVersion:
+    Type: String
+    MinLength: 1
+  MetadataTableName:
+    Type: String
+    MinLength: 3
+  MetadataTableArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:dynamodb:[^:]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$"
+  SourceBucketName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  SourceBucketArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  BetaTenantId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    Description: One fictional/public beta tenant; all configured scopes must match it.
+  KnowledgeBaseId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9]{1,100}$"
+  DataSourceId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9]{1,100}$"
+  KnowledgeBaseArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:bedrock:[^:]+:[0-9]{12}:knowledge-base/[A-Za-z0-9]+$"
+  UploadScopes:
+    Type: String
+    MinLength: 2
+    Description: JSON array of explicit {tenantId,matterId} upload partitions.
+  IngestionScopes:
+    Type: String
+    MinLength: 2
+    Description: JSON array of explicit {subject,tenantId,matterId} state partitions.
+  UploadStaleSeconds:
+    Type: Number
+    Default: 86400
+    MinValue: 60
+    MaxValue: 604800
+  IngestionStaleSeconds:
+    Type: Number
+    Default: 1800
+    MinValue: 60
+    MaxValue: 86400
+  LimitPerScope:
+    Type: Number
+    Default: 25
+    MinValue: 1
+    MaxValue: 100
+  ScheduleExpression:
+    Type: String
+    Default: rate(15 minutes)
+    MinLength: 1
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90]
+  ReconciliationReservedConcurrency:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 20
+    Description: >-
+      Per-function concurrency reservation. Set to 0 only when the regional
+      account concurrency quota is itself the reviewed deployment ceiling.
+
+Conditions:
+  HasReconciliationReservedConcurrency: !Not [!Equals [!Ref ReconciliationReservedConcurrency, 0]]
+
+Resources:
+  ReconciliationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-reconciliation"
+      RetentionInDays: !Ref LogRetentionDays
+
+  ReconciliationDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ReconciliationDeadLetterQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref ReconciliationDeadLetterQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowScheduleToSendFailures
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ReconciliationDeadLetterQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt ReconciliationSchedule.Arn
+
+  ReconciliationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Bounded LegalDesk reconciliation data-plane role for one beta tenant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskReconciliationDataPlane
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteRetainedRedactedLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${ReconciliationLogGroup.Arn}:*"
+              - Sid: QueryAndTransitionBoundedState
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
+                Resource: !Ref MetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                      - "LEGALDESK#P14#STATE#*"
+                      - "GATEWAY#GRANT#*"
+                      - "GATEWAY#INVOCATION#*"
+                      - "GATEWAY#EXPIRY#*"
+              - Sid: DeleteOnlyBetaQuarantineObjects
+                Effect: Allow
+                Action: s3:DeleteObject
+                Resource:
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf.metadata.json"
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+                  - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt.metadata.json"
+              - Sid: ReadOnlyIngestionStatus
+                Effect: Allow
+                Action: bedrock:GetIngestionJob
+                Resource: !Ref KnowledgeBaseArn
+
+  ReconciliationFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ReconciliationLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-reconciliation"
+      Description: Bounded stale upload, ingestion and Gateway expiry reconciliation
+      Runtime: python3.12
+      Handler: legaldesk.reconciliation_lambda.lambda_handler
+      Role: !GetAtt ReconciliationExecutionRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      ReservedConcurrentExecutions: !If
+        - HasReconciliationReservedConcurrency
+        - !Ref ReconciliationReservedConcurrency
+        - !Ref AWS::NoValue
+      Code:
+        S3Bucket: !Ref ReconciliationCodeBucket
+        S3Key: !Ref ReconciliationCodeKey
+        S3ObjectVersion: !Ref ReconciliationCodeVersion
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          LEGALDESK_METADATA_TABLE_NAME: !Ref MetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
+          LEGALDESK_RECONCILIATION_BETA_TENANT_ID: !Ref BetaTenantId
+          LEGALDESK_RECONCILIATION_UPLOAD_SCOPES: !Ref UploadScopes
+          LEGALDESK_RECONCILIATION_INGESTION_SCOPES: !Ref IngestionScopes
+          LEGALDESK_RECONCILIATION_UPLOAD_STALE_SECONDS: !Ref UploadStaleSeconds
+          LEGALDESK_RECONCILIATION_INGESTION_STALE_SECONDS: !Ref IngestionStaleSeconds
+          LEGALDESK_RECONCILIATION_LIMIT_PER_SCOPE: !Ref LimitPerScope
+          LEGALDESK_KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+          LEGALDESK_DATA_SOURCE_ID: !Ref DataSourceId
+
+  ReconciliationSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Run bounded beta reconciliation without a DynamoDB scan
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Id: ReconciliationLambda
+          Arn: !GetAtt ReconciliationFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt ReconciliationDeadLetterQueue.Arn
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 3600
+            MaximumRetryAttempts: 2
+
+  ReconciliationInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ReconciliationFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ReconciliationSchedule.Arn
+
+Outputs:
+  ReconciliationFunctionArn:
+    Value: !GetAtt ReconciliationFunction.Arn
+  ReconciliationScheduleArn:
+    Value: !GetAtt ReconciliationSchedule.Arn
+  ReconciliationDeadLetterQueueArn:
+    Value: !GetAtt ReconciliationDeadLetterQueue.Arn
