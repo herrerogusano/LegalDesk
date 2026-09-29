@@ -5,12 +5,12 @@ assistant built on Amazon Bedrock AgentCore. It demonstrates how retrieval,
 authorization, citations, tool calls and bounded agentic workflows can be
 composed without allowing the browser or the model to define access scope.
 
-> **Status: `READY_FOR_CONSTRAINED_PROD_PROMOTION`**
+> **Status: `CONSTRAINED_PROD_BETA_DEPLOYED`**
 >
 > This is an educational MVP, not legal advice or a production legal system.
-> Promotion is limited to the authenticated beta using only public or wholly
-> fictional documents and pre-provisioned users. It is not certified for real
-> legal/client data or anonymous signup.
+> The deployed scope is limited to the authenticated beta using only public or
+> wholly fictional documents and pre-provisioned users. It is not certified
+> for real legal/client data, anonymous signup or strict TLS/custom domains.
 
 ## What it demonstrates
 
@@ -163,7 +163,10 @@ teardown procedure.
 - [Phase 14 public-beta plan](PLAN_14_PUBLIC_BETA.md)
 - [Phase 14 semantic holdout](docs/phase-14-holdout.md)
 - [Phase 14 operations runbook](docs/phase-14-operations-runbook.md)
+- [Periodic operations checklist](docs/phase-14-operations-checklist.md)
 - [Guided offline manual demo](docs/phase-13-manual-demo.md)
+- [Portfolio demo script for v1.0.0-beta.1](docs/portfolio-demo-v1.0.0-beta.1.md)
+- [Release notes for v1.0.0-beta.1](docs/release-notes-v1.0.0-beta.1.md)
 - [Phase 13 application run instructions](docs/phase-13-run.md)
 - [Threat model](docs/threat-model.md) and [authorization matrix](docs/authorization-matrix.md)
 - [Frontend boundary](frontend/README.md)

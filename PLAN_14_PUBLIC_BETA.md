@@ -2,8 +2,7 @@
 
 ## Status, scope and authority
 
-Status: **authenticated public-beta infrastructure deployed; ready for
-constrained production promotion**.
+Status: **CONSTRAINED_PROD_BETA_DEPLOYED**.
 
 This status is limited to the approved fictional/public beta. It is not a
 claim of strict TLS, broad legal accuracy, or certification for real
