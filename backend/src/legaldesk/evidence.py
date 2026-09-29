@@ -274,9 +274,13 @@ _DIRECTED_ACTION_TERMS = frozenset(
         "give", "giving", "issue", "issuing", "serve", "serving", "notify",
         "notifying", "pay", "paying", "submit", "submitting", "transfer",
         "transferring", "disclose", "disclosing", "report", "reporting",
+        "approve", "approving", "owe", "owing", "assign", "assigning",
+        "indemnify", "indemnifying", "reimburse", "reimbursing", "return",
+        "returning", "remit", "remitting", "furnish", "furnishing", "supply",
+        "supplying", "grant", "granting", "release", "releasing", "convey",
+        "conveying", "lend", "lending", "lease", "leasing",
     }
 )
-_DIRECTED_LINK_TERMS = frozenset({"to", "for", "from"})
 
 
 def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
@@ -344,8 +348,10 @@ def evidence_requires_relationship_projection(evidence: Sequence[object]) -> boo
 
     This is a deliberately conservative, server-side safety trigger. It does
     not infer the parties; it only prevents a writer from bypassing structured
-    validation when a passage contains a modal, a transfer/notice action, and
-    an explicit recipient link in that order.
+    validation when a passage contains a modal and a supported directed legal
+    action with a following object or recipient. English permits direct objects
+    without a linking preposition (for example, ``notify the buyer``), so a
+    preposition is deliberately not required.
     """
 
     for item in evidence:
@@ -359,10 +365,7 @@ def evidence_requires_relationship_projection(evidence: Sequence[object]) -> boo
             for action_index in range(modal_index + 1, len(tokens)):
                 if tokens[action_index] not in _DIRECTED_ACTION_TERMS:
                     continue
-                if any(
-                    tokens[link_index] in _DIRECTED_LINK_TERMS and link_index + 1 < len(tokens)
-                    for link_index in range(action_index + 1, len(tokens))
-                ):
+                if action_index + 1 < len(tokens):
                     return True
     return False
 
