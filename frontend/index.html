@@ -77,7 +77,20 @@
             <p id="document-count" class="document-count" role="status" aria-live="polite" aria-atomic="true">Sin documentos</p>
           </div>
           <p class="section-intro">Todos los documentos autorizados para este expediente. Solo los que estén listos podrán fundamentar una respuesta.</p>
-          <ul id="document-list" class="document-list"><li class="microcopy">Selecciona un expediente para ver sus documentos.</li></ul>
+          <div id="document-tabs" class="document-tabs" role="tablist" aria-label="Vistas de documentos">
+            <button id="document-tab-available" class="document-tab" type="button" role="tab" aria-selected="true" aria-controls="document-panel-available" tabindex="0">
+              <span>Documentos</span><span id="document-tab-available-count" class="document-tab-count" aria-label="0 documentos">0</span>
+            </button>
+            <button id="document-tab-incomplete" class="document-tab" type="button" role="tab" aria-selected="false" aria-controls="document-panel-incomplete" tabindex="-1">
+              <span>Cargas incompletas</span><span id="document-tab-incomplete-count" class="document-tab-count" aria-label="0 cargas incompletas">0</span>
+            </button>
+          </div>
+          <div id="document-panel-available" class="document-panel" role="tabpanel" aria-labelledby="document-tab-available">
+            <ul id="document-list" class="document-list"><li class="microcopy">Selecciona un expediente para ver sus documentos.</li></ul>
+          </div>
+          <div id="document-panel-incomplete" class="document-panel" role="tabpanel" aria-labelledby="document-tab-incomplete" hidden>
+            <ul id="document-incomplete-list" class="document-list"><li class="microcopy">Selecciona un expediente para ver sus cargas incompletas.</li></ul>
+          </div>
           <div class="document-actions">
             <button id="sync-button" class="text-button" type="button" disabled hidden aria-describedby="sync-helper">Comprobar estado</button>
             <p id="sync-helper" class="sync-helper" hidden>Comprueba el análisis y prepara solo los documentos listos para consulta.</p>

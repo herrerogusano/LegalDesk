@@ -14,23 +14,45 @@ class Element {
     this.hidden = false;
     this.disabled = false;
     this.textContent = "";
+    this.attributes = {};
+    this.listeners = Object.create(null);
   }
 
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
-  setAttribute() {}
-  removeAttribute() {}
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  removeAttribute(name) { delete this.attributes[name]; }
+  getAttribute(name) { return this.attributes[name]; }
+  addEventListener(type, listener) {
+    if (!this.listeners[type]) this.listeners[type] = [];
+    this.listeners[type].push(listener);
+  }
+  dispatchEvent(event) {
+    const dispatched = event || {};
+    if (!dispatched.target) dispatched.target = this;
+    if (!dispatched.preventDefault) dispatched.preventDefault = () => { dispatched.defaultPrevented = true; };
+    (this.listeners[dispatched.type] || []).forEach((listener) => listener(dispatched));
+    return !dispatched.defaultPrevented;
+  }
+  click() { this.dispatchEvent({ type: "click", target: this }); }
+  focus() { documentApi.activeElement = this; }
   querySelectorAll() { return []; }
 }
 
 const ids = [
-  "document-count", "document-status", "document-list", "matter-select", "document-file",
+  "document-count", "document-status", "document-list", "document-incomplete-list", "document-tabs",
+  "document-tab-available", "document-tab-available-count", "document-tab-incomplete", "document-tab-incomplete-count",
+  "document-panel-available", "document-panel-incomplete", "matter-select", "document-file",
   "upload-button", "question", "ask-button", "sync-button", "sync-helper", "metadata-button",
   "review-button", "audit-button", "login-button", "logout-button", "review-reason",
   "review-note", "review-due-at",
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, new Element()]));
+Object.entries(elements).forEach(([id, element]) => { element.id = id; });
+elements["document-tab-available"].setAttribute("aria-selected", "true");
+elements["document-tab-incomplete"].setAttribute("aria-selected", "false");
 const documentApi = {
+  activeElement: null,
   addEventListener() {},
   getElementById(id) { return elements[id] || new Element(); },
   createElement(tagName) { return new Element(tagName); },
@@ -44,21 +66,69 @@ assert.ok(view);
 
 const documents = [
   { documentId: "indexed-1", name: "manual-demo-evidence.txt", status: "INDEXED", fileSizeBytes: 38, uploadedAt: "2026-09-29T12:34:56Z" },
-  { documentId: "pending-1", name: "manual-demo-evidence.txt", status: "PENDING_UPLOAD", fileSizeBytes: 38, uploadedAt: "2026-09-29T12:35:56Z" },
-  { documentId: "pending-2", name: "manual-demo-evidence.txt", status: "PENDING_UPLOAD", fileSizeBytes: 38, uploadedAt: "2026-09-29T12:36:56Z" },
+  { documentId: "indexed-2", name: "manual-demo-contract.txt", status: "INDEXED", fileSizeBytes: 42, uploadedAt: "2026-09-29T12:35:56Z" },
+  { documentId: "pending-1", name: "manual-demo-evidence.txt", status: "PENDING_UPLOAD", fileSizeBytes: 38, uploadedAt: "2026-09-29T12:36:56Z" },
+  { documentId: "pending-2", name: "manual-demo-contract.txt", status: "PENDING_UPLOAD", fileSizeBytes: 42, uploadedAt: "2026-09-29T12:37:56Z" },
+  { documentId: "pending-3", name: "manual-demo-annex.txt", status: "PENDING_UPLOAD", fileSizeBytes: 41, uploadedAt: "2026-09-29T12:38:56Z" },
 ];
-assert.equal(JSON.stringify(view.summarizeDocuments(documents)), JSON.stringify({ indexed: 1, processing: 0, incomplete: 2, failed: 0 }));
-assert.equal(view.documentSummaryLabel(view.summarizeDocuments(documents)), "1 listo · 2 cargas incompletas");
-assert.equal(view.documentViewModel(documents[1]).statusLabel, "Subida incompleta");
-assert.match(view.documentViewModel(documents[1]).metadata, /ID pending-/);
-assert.match(view.documentViewModel(documents[1]).metadata, /38 B/);
-assert.match(view.documentViewModel(documents[1]).metadata, /autorizado/);
+assert.equal(JSON.stringify(view.summarizeDocuments(documents)), JSON.stringify({ indexed: 2, processing: 0, incomplete: 3, failed: 0 }));
+assert.equal(view.documentSummaryLabel(view.summarizeDocuments(documents)), "2 listos · 3 cargas incompletas");
+assert.equal(view.documentViewModel(documents[2]).statusLabel, "Subida incompleta");
+assert.match(view.documentViewModel(documents[2]).metadata, /ID pending-/);
+assert.match(view.documentViewModel(documents[2]).metadata, /38 B/);
+assert.match(view.documentViewModel(documents[2]).metadata, /autorizado/);
 
+// INDEXED, UPLOADED, PENDING_INGESTION and FAILED are operational/relevant;
+// only PENDING_UPLOAD is an incomplete upload and belongs in the second tab.
+// Unknown/future states remain visible in the main tab instead of disappearing.
+const statusGroups = view.partitionDocuments([
+  { documentId: "indexed", status: "INDEXED" },
+  { documentId: "uploaded", status: "UPLOADED" },
+  { documentId: "processing", status: "PENDING_INGESTION" },
+  { documentId: "failed", status: "FAILED" },
+  { documentId: "future", status: "FUTURE_STATUS" },
+  { documentId: "incomplete", status: "PENDING_UPLOAD" },
+]);
+assert.deepEqual(statusGroups.operational.map((item) => item.documentId), ["indexed", "uploaded", "processing", "failed", "future"]);
+assert.deepEqual(statusGroups.incomplete.map((item) => item.documentId), ["incomplete"]);
+
+view.bindDocumentTabs();
 view.renderDocuments(documents);
-assert.equal(elements["document-count"].textContent, "1 listo · 2 cargas incompletas");
-assert.match(elements["document-status"].textContent, /1 está listo para consultar/);
-assert.match(elements["document-status"].textContent, /2 tienen cargas incompletas/);
-assert.equal(elements["document-list"].children.length, 3);
-assert.equal(elements["document-list"].children[1].children[1].textContent, "Subida incompleta");
-assert.match(elements["document-list"].children[1].children[2].textContent, /38 B/);
+assert.equal(elements["document-count"].textContent, "2 listos · 3 cargas incompletas");
+assert.match(elements["document-status"].textContent, /2 están listos para consultar/);
+assert.match(elements["document-status"].textContent, /3 tienen cargas incompletas/);
+assert.equal(elements["document-tab-available-count"].textContent, "2");
+assert.equal(elements["document-tab-incomplete-count"].textContent, "3");
+assert.equal(elements["document-list"].children.length, 2);
+assert.equal(elements["document-incomplete-list"].children.length, 3);
+assert.equal(elements["document-list"].children[0].children[1].textContent, "Listo para consultar");
+assert.equal(elements["document-incomplete-list"].children[0].children[1].textContent, "Subida incompleta");
+assert.match(elements["document-incomplete-list"].children[0].children[2].textContent, /38 B/);
+assert.equal(elements["document-tab-available"].getAttribute("aria-selected"), "true");
+assert.equal(elements["document-tab-incomplete"].getAttribute("aria-selected"), "false");
+assert.equal(elements["document-tab-available"].getAttribute("tabindex"), "0");
+assert.equal(elements["document-tab-incomplete"].getAttribute("tabindex"), "-1");
+assert.equal(elements["document-panel-available"].hidden, false);
+assert.equal(elements["document-panel-incomplete"].hidden, true);
+
+elements["document-tab-incomplete"].click();
+assert.equal(elements["document-tab-incomplete"].getAttribute("aria-selected"), "true");
+assert.equal(elements["document-tab-available"].getAttribute("aria-selected"), "false");
+assert.equal(elements["document-tab-incomplete"].getAttribute("tabindex"), "0");
+assert.equal(elements["document-tab-available"].getAttribute("tabindex"), "-1");
+assert.equal(elements["document-panel-incomplete"].hidden, false);
+assert.equal(elements["document-panel-available"].hidden, true);
+
+elements["document-tabs"].dispatchEvent({ type: "keydown", key: "ArrowRight", target: elements["document-tab-incomplete"] });
+assert.equal(elements["document-tab-available"].getAttribute("aria-selected"), "true");
+assert.equal(documentApi.activeElement, elements["document-tab-available"]);
+elements["document-tabs"].dispatchEvent({ type: "keydown", key: "ArrowLeft", target: elements["document-tab-available"] });
+assert.equal(elements["document-tab-incomplete"].getAttribute("aria-selected"), "true");
+assert.equal(documentApi.activeElement, elements["document-tab-incomplete"]);
+elements["document-tabs"].dispatchEvent({ type: "keydown", key: "Home", target: elements["document-tab-incomplete"] });
+assert.equal(elements["document-tab-available"].getAttribute("aria-selected"), "true");
+assert.equal(documentApi.activeElement, elements["document-tab-available"]);
+elements["document-tabs"].dispatchEvent({ type: "keydown", key: "End", target: elements["document-tab-available"] });
+assert.equal(elements["document-tab-incomplete"].getAttribute("aria-selected"), "true");
+assert.equal(documentApi.activeElement, elements["document-tab-incomplete"]);
 console.log(JSON.stringify({ result: "PASS", test: "phase14-document-view" }));
