@@ -263,7 +263,7 @@ class Phase12RemediationTests(unittest.TestCase):
         self.assertEqual(preflight["resolverPromptVersion"], "1.2.0")
         self.assertEqual(preflight["resolverPromptHash"], "da65f6b0efa70e728d9c6c5b85c036a7fb3b71b1b24c1cde33e9caedabe8127c")
         self.assertEqual(preflight["writerPromptVersion"], "1.4.0")
-        self.assertEqual(preflight["writerPromptHash"], "b4b54b39e7d016af94534ff8078b43d2aac556f608c33a8c7bee8697430294e7")
+        self.assertEqual(preflight["writerPromptHash"], "04d46e6d66bd9b75d3be7ddedd0dd1734dd712a2285a7a5017ed11e6bff2c90f")
         self.assertEqual(preflight["maxModelInvocations"], 18)
         self.assertEqual(preflight["retryCount"], 0)
         self.assertTrue(preflight["structuredOutput"])

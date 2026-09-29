@@ -25,6 +25,7 @@ from legaldesk.evidence import (
     evidence_resolver_output_config,
     GroundingContractError,
     validate_answer_writer_result,
+    evidence_requires_relationship_projection,
     validate_writer_relationships_against_evidence,
     render_writer_relationships,
     validate_grounding_result,
@@ -222,6 +223,7 @@ class EvidenceResolverContractTests(unittest.TestCase):
             {"answer": "Supported.", "relationships": [{"actor": "supplier", "action": "send"}]},
             {"answer": "Supported.", "relationships": [{"actor": "supplier", "action": "send", "recipient": "buyer", "extra": "x"}]},
             {"answer": "Supported.", "relationships": [{"actor": "", "action": "send", "recipient": "buyer"}]},
+            {"answer": "Supported.", "relationships": [{"actor": "supplier", "action": "send to", "recipient": "buyer"}]},
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(EvidenceContractError):
@@ -242,9 +244,11 @@ class EvidenceResolverContractTests(unittest.TestCase):
 
     def test_structured_relationships_are_ordered_and_fail_closed(self) -> None:
         evidence = ({"text": "The supplier must send written notice to the buyer."},)
-        valid = ({"actor": "supplier", "action": "send", "recipient": "buyer"},)
+        valid = ({"actor": "supplier", "action": "send written notice", "recipient": "buyer"},)
         self.assertEqual(validate_writer_relationships_against_evidence(valid, evidence), valid)
-        self.assertEqual(render_writer_relationships(valid), "supplier must send to buyer.")
+        self.assertEqual(render_writer_relationships(valid), "supplier must send written notice to buyer.")
+        self.assertTrue(evidence_requires_relationship_projection(evidence))
+        self.assertFalse(evidence_requires_relationship_projection(({"text": "The inspection period is four years."},)))
         with self.assertRaises(EvidenceContractError):
             validate_writer_relationships_against_evidence(
                 ({"actor": "buyer", "action": "send", "recipient": "supplier"},),

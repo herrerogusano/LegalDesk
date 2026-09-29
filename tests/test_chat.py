@@ -242,7 +242,7 @@ class GroundedChatTests(unittest.TestCase):
             def write(self, request: object) -> Mapping[str, object]:
                 return {
                     "answer": "The buyer must send written notice to the supplier.",
-                    "relationships": [{"actor": "supplier", "action": "send", "recipient": "buyer"}],
+                    "relationships": [{"actor": "supplier", "action": "send written notice", "recipient": "buyer"}],
                 }
 
         resolver = FakeEvidenceResolver(
@@ -258,8 +258,24 @@ class GroundedChatTests(unittest.TestCase):
             ),
         )
         self.assertEqual(response.operation_status, "ok")
-        self.assertEqual(response.answer, "supplier must send to buyer.")
+        self.assertEqual(response.answer, "supplier must send written notice to buyer.")
         self.assertNotIn("buyer must send", response.answer)
+
+    def test_directed_evidence_requires_structured_relationship_projection(self) -> None:
+        resolver = FakeEvidenceResolver(
+            {"coverage": "complete", "conflict": False, "supportingCitationIds": ["citation-1"]}
+        )
+        response = self.answer(
+            [result("tnt_aurora", "mat_sundial", "doc-one", "The supplier must send written notice to the buyer.")],
+            FakeGenerator(),
+            evidence_resolver=resolver,
+            answer_writer=FakeAnswerWriter("The buyer must send written notice to the supplier."),
+            grounding_validator=FakeGroundingValidator(
+                {"grounded": True, "score": 0.95, "matchedCitationIds": ["citation-1"]}
+            ),
+        )
+        self.assertEqual(response.operation_status, "error")
+        self.assertEqual(response.answer, TECHNICAL_ERROR_ANSWER)
 
     def test_productive_grounding_uses_only_selected_passages_and_one_output_guardrail(self) -> None:
         resolver = FakeEvidenceResolver(

@@ -215,7 +215,7 @@ def preflight_holdout(
         raise RuntimeError("general system prompt artifact is not the approved release artifact")
     if EVIDENCE_RESOLVER_PROMPT_VERSION != "1.2.0" or EVIDENCE_RESOLVER_PROMPT_SHA256 != "da65f6b0efa70e728d9c6c5b85c036a7fb3b71b1b24c1cde33e9caedabe8127c":
         raise RuntimeError("resolver prompt contract changed")
-    if ANSWER_WRITER_PROMPT_VERSION != "1.4.0" or ANSWER_WRITER_PROMPT_SHA256 != "b4b54b39e7d016af94534ff8078b43d2aac556f608c33a8c7bee8697430294e7":
+    if ANSWER_WRITER_PROMPT_VERSION != "1.4.0" or ANSWER_WRITER_PROMPT_SHA256 != "04d46e6d66bd9b75d3be7ddedd0dd1734dd712a2285a7a5017ed11e6bff2c90f":
         raise RuntimeError("writer prompt contract changed")
     if output_path is not None:
         _assert_result_path(output_path, prefix=REPORT_PREFIX)
@@ -603,10 +603,19 @@ def _score_role_reversal(
         recipient = _relation_party(relationship.get("recipient"))
         if not actor or not action or not recipient:
             return False, "ROLE_RELATIONSHIP_MALFORMED"
+        action_tokens = tuple(action.split())
+        if action_tokens and action_tokens[0] in {"must", "shall", "may", "should"}:
+            action_tokens = action_tokens[1:]
+        action_verb = action_tokens[0] if action_tokens else ""
         if actor == "buyer" and recipient == "supplier":
             return False, "ROLE_REVERSAL"
-        if actor == "supplier" and recipient == "buyer" and action in actions:
-            if actor in evidence_terms and recipient in evidence_terms and evidence_action[action] in evidence_terms:
+        if actor == "supplier" and recipient == "buyer" and action_verb in actions:
+            if (
+                actor in evidence_terms
+                and recipient in evidence_terms
+                and evidence_action[action_verb] in evidence_terms
+                and all(token in evidence_terms for token in action_tokens)
+            ):
                 valid = True
     if not valid:
         return False, "ROLE_RELATIONSHIP_MISSING"

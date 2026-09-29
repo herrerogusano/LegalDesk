@@ -66,6 +66,7 @@ from .evidence import (
     validate_evidence_resolution,
     validate_grounding_result,
     validate_answer_writer_result,
+    evidence_requires_relationship_projection,
     validate_writer_relationships_against_evidence,
     render_writer_relationships,
     ANSWER_WRITER_PROMPT_SHA256,
@@ -620,9 +621,7 @@ def answer_question(
                     )
                 )
                 relationships: tuple[Mapping[str, str], ...] = ()
-                if isinstance(written, str):
-                    answer = written
-                elif isinstance(written, Mapping):
+                if isinstance(written, Mapping):
                     normalized_written = validate_answer_writer_result(written)
                     answer = normalized_written.get("answer")
                     raw_relationships = normalized_written.get("relationships", ())
@@ -642,6 +641,10 @@ def answer_question(
                     for item in generation_request.evidence
                     if item.citation_id in resolution.supporting_citation_ids
                 )
+                if evidence_requires_relationship_projection(selected_evidence) and not relationships:
+                    raise EvidenceContractError(
+                        "answer writer omitted a required directed relationship"
+                    )
                 if relationships:
                     relationships = validate_writer_relationships_against_evidence(
                         relationships,

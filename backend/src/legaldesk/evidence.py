@@ -138,9 +138,11 @@ reverse who owes, sends, receives, approves, or performs an action.
 When the selected evidence contains a directed relationship (for example an
 obligation or a transfer), include a `relationships` array with one or more
 concise objects of the form `{"actor":"...","action":"...","recipient":"..."}`.
-Use the documentary party names and a short verb from the evidence. Do not
-invent a relationship, and do not use this field to change the answer or its
-fixed evidence status.
+Use the documentary party names and a concise action phrase from the evidence,
+including its direct object when present (for example `send written notice`).
+Never end `action` with a linking preposition such as `to`; the backend adds
+the recipient link. Do not invent a relationship, and do not use this field to
+change the answer or its fixed evidence status.
 
 Prefer neutral words already present in the question or selected evidence.
 Do not add background facts, implications, recommendations, or interpretations
@@ -261,6 +263,20 @@ class GroundingContractError(ValueError):
 _WRITER_RELATIONSHIP_FIELDS = frozenset({"actor", "action", "recipient"})
 _MAX_WRITER_RELATIONSHIPS = 8
 _MAX_WRITER_RELATIONSHIP_VALUE_LENGTH = 256
+_MAX_WRITER_ACTION_TOKENS = 12
+_RELATIONSHIP_TERMINAL_PREPOSITIONS = frozenset({"to", "for", "from", "by", "with"})
+_DIRECTED_MODAL_TERMS = frozenset(
+    {"must", "shall", "required", "responsible", "obliged", "obligated", "may", "should"}
+)
+_DIRECTED_ACTION_TERMS = frozenset(
+    {
+        "send", "sending", "deliver", "delivering", "provide", "providing",
+        "give", "giving", "issue", "issuing", "serve", "serving", "notify",
+        "notifying", "pay", "paying", "submit", "submitting", "transfer",
+        "transferring", "disclose", "disclosing", "report", "reporting",
+    }
+)
+_DIRECTED_LINK_TERMS = frozenset({"to", "for", "from"})
 
 
 def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
@@ -289,6 +305,13 @@ def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
             ):
                 raise EvidenceContractError("writer relationship value is invalid")
             fields[field] = field_value.strip()
+        action_tokens = _relationship_tokens(fields["action"])
+        if (
+            not action_tokens
+            or len(action_tokens) > _MAX_WRITER_ACTION_TOKENS
+            or action_tokens[-1] in _RELATIONSHIP_TERMINAL_PREPOSITIONS
+        ):
+            raise EvidenceContractError("writer relationship action is invalid")
         key = tuple(fields[field].casefold() for field in ("actor", "action", "recipient"))
         if key in seen:
             raise EvidenceContractError("writer relationships must be unique")
@@ -314,6 +337,34 @@ def validate_answer_writer_result(result: Mapping[str, object]) -> dict[str, obj
 
 def _relationship_tokens(value: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def evidence_requires_relationship_projection(evidence: Sequence[object]) -> bool:
+    """Detect selected evidence whose directed obligation must be projected.
+
+    This is a deliberately conservative, server-side safety trigger. It does
+    not infer the parties; it only prevents a writer from bypassing structured
+    validation when a passage contains a modal, a transfer/notice action, and
+    an explicit recipient link in that order.
+    """
+
+    for item in evidence:
+        text = item.get("text") if isinstance(item, Mapping) else getattr(item, "text", None)
+        if not isinstance(text, str):
+            continue
+        tokens = _relationship_tokens(text)
+        for modal_index, token in enumerate(tokens):
+            if token not in _DIRECTED_MODAL_TERMS:
+                continue
+            for action_index in range(modal_index + 1, len(tokens)):
+                if tokens[action_index] not in _DIRECTED_ACTION_TERMS:
+                    continue
+                if any(
+                    tokens[link_index] in _DIRECTED_LINK_TERMS and link_index + 1 < len(tokens)
+                    for link_index in range(action_index + 1, len(tokens))
+                ):
+                    return True
+    return False
 
 
 def validate_writer_relationships_against_evidence(
@@ -780,6 +831,7 @@ __all__ = [
     "answer_writer_output_config",
     "evidence_resolver_output_config",
     "validate_answer_writer_result",
+    "evidence_requires_relationship_projection",
     "validate_writer_relationships_against_evidence",
     "render_writer_relationships",
     "validate_evidence_resolution",
