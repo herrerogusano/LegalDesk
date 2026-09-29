@@ -14,6 +14,49 @@
     return node;
   }
 
+  function ensureLoadingState(answer) {
+    let loading = answer.querySelector(".answer-loading");
+    if (loading) return loading;
+    loading = element("div", "answer-loading");
+    loading.hidden = true;
+    const message = element("p", "answer-loading-message");
+    const indicator = element("span", "answer-loading-indicator");
+    indicator.setAttribute("aria-hidden", "true");
+    [0, 1, 2].forEach((index) => {
+      const dot = element("span", "answer-loading-dot");
+      dot.style.setProperty("--dot-delay", `${index * 0.18}s`);
+      indicator.append(dot);
+    });
+    message.append(indicator);
+    message.append(document.createTextNode("Buscando en los documentos autorizados…"));
+    const skeleton = element("div", "answer-loading-skeleton");
+    skeleton.setAttribute("aria-hidden", "true");
+    ["92%", "76%", "58%"].forEach((width) => {
+      const line = element("span", "answer-loading-skeleton-line");
+      line.style.setProperty("--skeleton-width", width);
+      skeleton.append(line);
+    });
+    loading.append(message, skeleton);
+    answer.append(loading);
+    return loading;
+  }
+
+  function renderLoadingState() {
+    const answer = document.getElementById("answer");
+    const status = document.getElementById("evidence-status");
+    const loading = ensureLoadingState(answer);
+    loading.hidden = false;
+    status.dataset.status = "loading";
+    status.querySelector("span:last-child").textContent = "BUSCANDO RESPUESTA";
+    answer.setAttribute("aria-busy", "true");
+  }
+
+  function clearLoadingState(answer) {
+    const loading = answer.querySelector(".answer-loading");
+    if (loading) loading.hidden = true;
+    answer.setAttribute("aria-busy", "false");
+  }
+
   function renderChatResponse(response) {
     if (response && ["error", "blocked", "documents_processing"].includes(response.operationStatus)) {
       renderOperationalState(response.operationStatus);
@@ -29,6 +72,7 @@
     const list = document.getElementById("citation-list");
     const empty = document.getElementById("empty-citations");
     const citationNumbers = new Map();
+    clearLoadingState(answer);
     document.getElementById("citation-inspection").hidden = true;
     document.getElementById("inspection-meta").textContent = "";
     document.getElementById("inspection-passage").textContent = "";
@@ -104,6 +148,7 @@
     const disclaimer = document.getElementById("disclaimer");
     const list = document.getElementById("citation-list");
     const empty = document.getElementById("empty-citations");
+    clearLoadingState(answer);
     answer.replaceChildren();
     list.replaceChildren();
     list.hidden = true;
@@ -119,5 +164,5 @@
     answer.append(element("p", "", labels[operationStatus] || "La respuesta aparecerá aquí después de una consulta autorizada."));
   }
 
-  window.LegalDeskCitationPanel = Object.freeze({ renderChatResponse, renderOperationalState });
+  window.LegalDeskCitationPanel = Object.freeze({ renderChatResponse, renderOperationalState, renderLoadingState });
 })();
