@@ -21,6 +21,8 @@ from .authorization import (
     build_request_context,
     require_authorized_context,
 )
+from .documents import DocumentMetadataRepository
+from .domain.models import DocumentStatus, MalwareScanStatus
 from .observability import (
     TelemetryEventType,
     TelemetryOutcome,
@@ -45,6 +47,12 @@ class BedrockKnowledgeBaseClient(Protocol):
         retrievalQuery: Mapping[str, str],
         retrievalConfiguration: Mapping[str, Any],
     ) -> Mapping[str, Any]: ...
+
+
+class ObjectHeadStorage(Protocol):
+    """Minimal storage boundary used to revalidate canonical source objects."""
+
+    def head_object(self, *, key: str) -> Mapping[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +214,8 @@ def search_legal_documents(
     knowledge_base_id: str,
     correlation_id: str | None = None,
     telemetry_sink: TelemetrySink | None = None,
+    metadata_repository: DocumentMetadataRepository | None = None,
+    object_storage: ObjectHeadStorage | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     """Authorize a matter, retrieve with a server-built filter, and normalize.
 
@@ -225,6 +235,8 @@ def search_legal_documents(
         bedrock_client=bedrock_client,
         knowledge_base_id=knowledge_base_id,
         telemetry_sink=telemetry_sink,
+        metadata_repository=metadata_repository,
+        object_storage=object_storage,
     )
 
 
@@ -235,6 +247,8 @@ def _retrieve_with_context(
     bedrock_client: BedrockKnowledgeBaseClient,
     knowledge_base_id: str,
     telemetry_sink: TelemetrySink | None = None,
+    metadata_repository: DocumentMetadataRepository | None = None,
+    object_storage: ObjectHeadStorage | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     """Retrieve only with the RequestContext just authorized by the server."""
 
@@ -243,6 +257,8 @@ def _retrieve_with_context(
         raise ValueError("query is empty or outside the allowed length")
     if not isinstance(knowledge_base_id, str) or not knowledge_base_id.strip():
         raise ValueError("knowledge_base_id is not configured")
+    if object_storage is not None and metadata_repository is None:
+        raise ValueError("object_storage requires metadata_repository")
 
     started_at = time.perf_counter()
     emit_telemetry(
@@ -305,6 +321,34 @@ def _retrieve_with_context(
         raise ValueError("retrieval response is malformed")
     try:
         results = _normalize_results(response, context)
+        if metadata_repository is not None:
+            for passage in results:
+                document = metadata_repository.get_for_scope(
+                    tenant_id=context.tenant_id,
+                    matter_id=context.matter_id,
+                    document_id=passage.citation.document_id,
+                )
+                if (
+                    document is None
+                    or document.status is not DocumentStatus.INDEXED
+                    or document.malware_scan_status is not MalwareScanStatus.CLEAN
+                ):
+                    # A stale vector can remain after object/metadata
+                    # deletion until the next KB sync. Never pass it to a
+                    # resolver/writer: fail closed for the whole response.
+                    raise ValueError("retrieval result document is unavailable")
+                if object_storage is not None:
+                    # The provider URI is untrusted retrieval data.  Resolve
+                    # the key exclusively from the authorized, live Document
+                    # record so a stale vector cannot redirect this HEAD.
+                    try:
+                        head = object_storage.head_object(key=document.s3_key)
+                        if not isinstance(head, Mapping):
+                            raise ValueError("object HEAD response is malformed")
+                    except Exception as exc:
+                        raise ValueError(
+                            "retrieval result document object is unavailable"
+                        ) from exc
     except Exception:
         # Provider-shaped content is untrusted.  A malformed score/page or
         # another normalization failure must close the started retrieval span

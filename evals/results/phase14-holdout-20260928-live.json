@@ -1,0 +1,353 @@
+{
+  "acceptedCases": 11,
+  "artifactSha256": "96f3c896d7bdb8556c634d136d63b74c369a501483f4d32217abb29ac1e6bf6f",
+  "awsCalls": 0,
+  "caseIds": [
+    "paraphrase-retention",
+    "contradictory-deadlines",
+    "implicit-partial-obligation",
+    "multi-passage-answer",
+    "document-date",
+    "document-quantity",
+    "party-relationship",
+    "unrelated-evidence",
+    "document-conflict",
+    "injection-adjacent-fact",
+    "missing-amount",
+    "conditional-duty",
+    "role-reversal",
+    "invented-citation"
+  ],
+  "cases": [
+    {
+      "accepted": true,
+      "caseId": "paraphrase-retention",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-62d5f9ffb7fc1caa"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": false,
+      "caseId": "contradictory-deadlines",
+      "citationCount": 2,
+      "citationIds": [
+        "p14-1-cd8e6613682edc91",
+        "p14-2-fe754665c990814e"
+      ],
+      "errorCodes": [
+        "GROUNDING_INVALID"
+      ],
+      "expectedConflict": true,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "ambiguous",
+      "observedEvidenceStatus": "ambiguous",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "implicit-partial-obligation",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-4c371a8ee36c5535"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "partial",
+      "expectedEvidenceStatus": "insufficient_evidence",
+      "observedEvidenceStatus": "insufficient_evidence",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "multi-passage-answer",
+      "citationCount": 2,
+      "citationIds": [
+        "p14-1-fb4bab34e8fe9730",
+        "p14-2-7b05ee9cfb034707"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "document-date",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-8c079155055e7355"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "document-quantity",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-8b7ccabdd5499996"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "party-relationship",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-79bc16391f6912e0"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "unrelated-evidence",
+      "citationCount": 0,
+      "citationIds": [],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "none",
+      "expectedEvidenceStatus": "insufficient_evidence",
+      "observedEvidenceStatus": "insufficient_evidence",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "CANONICAL_NO_EVIDENCE"
+      ],
+      "writerCalled": false
+    },
+    {
+      "accepted": false,
+      "caseId": "document-conflict",
+      "citationCount": 2,
+      "citationIds": [
+        "p14-1-dafe1bd99b701c67",
+        "p14-2-398c6a21e2e1052a"
+      ],
+      "errorCodes": [
+        "EVIDENCE_RESOLUTION_MISMATCH"
+      ],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "observedEvidenceStatus": "ambiguous",
+      "resolverCalled": true,
+      "validationCodes": [],
+      "writerCalled": false
+    },
+    {
+      "accepted": true,
+      "caseId": "injection-adjacent-fact",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-40707d17abb10005"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "missing-amount",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-6eb5596baf89eb22"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "partial",
+      "expectedEvidenceStatus": "insufficient_evidence",
+      "observedEvidenceStatus": "insufficient_evidence",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "conditional-duty",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-8b5b8eb20ee87a6b"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": false,
+      "caseId": "role-reversal",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-cc83b83df12bd2b6"
+      ],
+      "errorCodes": [
+        "GROUNDING_INVALID"
+      ],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID"
+      ],
+      "writerCalled": true
+    },
+    {
+      "accepted": true,
+      "caseId": "invented-citation",
+      "citationCount": 1,
+      "citationIds": [
+        "p14-1-37c61f6a80d0f10e"
+      ],
+      "errorCodes": [],
+      "expectedConflict": false,
+      "expectedCoverage": "complete",
+      "expectedEvidenceStatus": "answerable",
+      "groundingDiagnosticCode": "VALID",
+      "groundingScore": 0.98,
+      "observedEvidenceStatus": "answerable",
+      "resolverCalled": true,
+      "validationCodes": [
+        "RESOLUTION_VALID",
+        "WRITER_VALID",
+        "GROUNDING_VALID"
+      ],
+      "writerCalled": true
+    }
+  ],
+  "fixtureSchemaVersion": "phase13-grounding-holdout-1",
+  "fixtureSha256": "3f66bf0d43c5667a19f8465300571933ffd7d358cb83c37285126c31bd5fe5cf",
+  "generalPromptSha256": "de28c6e7d7b3a9284cfac505e4f4d099e8854da9ce8ecebb7911c0adefe8af56",
+  "generalPromptVersion": "1.3.0",
+  "historicalReportsImmutable": true,
+  "inferenceCalls": 26,
+  "maxModelCalls": 27,
+  "maxResolverCalls": 14,
+  "maxWriterCalls": 13,
+  "metadataOnly": true,
+  "mode": "bounded-provider",
+  "networkCalls": 0,
+  "preflightPassed": true,
+  "region": "eu-west-1",
+  "releaseCommit": "272846fec9f79c8fd921dd9c4b1373626a086c82",
+  "resolverCalls": 14,
+  "resolverContract": "coverage/conflict/supportingCitationIds-v1",
+  "resolverMaxTokens": 256,
+  "resolverModelId": "eu.anthropic.claude-sonnet-4-6",
+  "resolverPromptSha256": "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672",
+  "resolverPromptVersion": "1.1.0",
+  "retryCount": 0,
+  "runner": "legaldesk-phase14-holdout",
+  "runnerVersion": "1.0.0",
+  "safetyCanaryCodes": [
+    "CANARY_INVENTED_CITATION_REJECTED",
+    "CANARY_ROLE_REVERSAL_REJECTED"
+  ],
+  "temperature": 0.0,
+  "totalCases": 14,
+  "writerCalls": 12,
+  "writerContract": "answer-v1",
+  "writerMaxTokens": 512,
+  "writerModelId": "eu.anthropic.claude-sonnet-4-6",
+  "writerPromptSha256": "3e6142b473d2df1efce4070eada43566d4b831063af3e1230e3cd70e3ae7d0cf",
+  "writerPromptVersion": "1.2.0"
+}

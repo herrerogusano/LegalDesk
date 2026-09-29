@@ -1,0 +1,15 @@
+{
+  "attestationVersion": "1.0.0",
+  "decision": "needs_follow_up",
+  "independenceEvidence": "procedural_separation_only",
+  "metadataOnly": true,
+  "reasonCodes": [
+    "document_conflict_missing_expected_citation",
+    "approval_threshold_not_met",
+    "provenance_review_incomplete"
+  ],
+  "reportName": "phase14-holdout-20260929-prod-final4.json",
+  "reportSha256": "503b867a355c4b95ca69cb23f5746d8b1a58935f35f7e0204cafacfcead404ef",
+  "reviewerId": "phase14-independent-luna-high",
+  "runnerSelfApproval": false
+}

@@ -33,11 +33,11 @@ except ImportError:  # Direct script execution.
     from synthetic_debug import SYNTHETIC_CASES  # type: ignore[no-redef]  # noqa: E402
 
 
-RUNNER_VERSION = "1.0.0"
+RUNNER_VERSION = "1.1.0"
 TARGET_CASE_ID = "synthetic-partial-03"
 MAX_MODEL_INVOCATIONS = 1
-EXPECTED_WRITER_PROMPT_VERSION = "1.2.0"
-EXPECTED_WRITER_PROMPT_SHA256 = "3e6142b473d2df1efce4070eada43566d4b831063af3e1230e3cd70e3ae7d0cf"
+EXPECTED_WRITER_PROMPT_VERSION = "1.4.0"
+EXPECTED_WRITER_PROMPT_SHA256 = "04d46e6d66bd9b75d3be7ddedd0dd1734dd712a2285a7a5017ed11e6bff2c90f"
 SOURCE_WRITER_REPORT = RESULTS_ROOT / "phase12-remediation-writer-v1-report.json"
 SOURCE_WRITER_REPORT_SHA256 = "3bab7aaa56921c4fe7b49ebbc9e19041535de3041b236621c3d0379bb718f3d9"
 DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-writer-v2-report.json"

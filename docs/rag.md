@@ -219,10 +219,15 @@ this change.
 Abandoned uploads can still remain in `PENDING_UPLOAD`; Phase 02 cleanup is not
 automated. A future production improvement is a bounded cleanup job that checks
 age and stored ownership before deleting an abandoned original and sidecar.
-The Phase 02 bucket also expires source objects after 30 days. S3 expiry does
-not itself run a Bedrock sync, so stored vectors can outlive their source until
-the next deliberate sync; source deletion/expiry reconciliation should be
-scheduled before production retention policies are enabled.
+The deployed Phase 02 bucket remains unversioned. Quarantine objects expire
+after one day and canonical fictional/public source objects after 30 days. S3
+expiry does not itself run a Bedrock sync, so stored vectors can outlive their
+source until the next deliberate sync; source deletion/expiry reconciliation
+should be scheduled before production retention policies are enabled. For the
+fictional/public beta, recovery is explicitly re-upload-only. A future
+versioned recovery design would need version-aware deletion, delete-marker
+handling, least-privilege version permissions and a tested restore procedure;
+it is not implemented here.
 
 ## Phase 04 — Grounded chat and citations
 
@@ -237,7 +242,13 @@ adapter.
 
 `answer_question` calls the existing authorized retrieval service before the
 generator. Retrieval derives scope from the authorization store and filters
-and rechecks tenant/matter server-side. An empty result returns this canonical
+and rechecks tenant/matter server-side. When the public composition injects
+object storage, every result that is live `INDEXED` and malware-clean also
+gets a `HeadObject` against the canonical `Document.s3Key` from metadata. The
+provider's returned URI is never used as the key. A missing/error object
+fails closed for the complete response before the evidence resolver or answer
+writer; compatibility callers without an injected storage verifier retain the
+metadata-only local contract. An empty result returns this canonical
 response without invoking a model:
 
 ```json

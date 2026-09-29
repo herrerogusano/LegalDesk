@@ -1,0 +1,11 @@
+{
+  "category": "chat_contract",
+  "cleanupErrors": [],
+  "errorType": "UnknownError",
+  "phase": "chat_citation",
+  "providerRequestCount": 45,
+  "requestCounts": {},
+  "result": "FAIL",
+  "smoke": "phase14-public-browser",
+  "step": "chat_citation"
+}

@@ -41,6 +41,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.match(await page.locator("#app-status").innerText(), /Subida completada\. Estado de indexación: Listo para consultar\./);
     assert.equal(await page.locator("#app-status").getAttribute("role"), "status");
     assert.equal(await page.locator("#app-status").getAttribute("data-state"), "success");
+    assert.match(await page.locator('[data-upload-stage="scan"]').innerText(), /Analizar/);
+    assert.equal(await page.locator("#upload-progress").getAttribute("role"), "group");
     assert.equal(await page.locator("#sync-button").isHidden(), true);
     assert.match(await page.locator("#review-button").innerText(), /Guardar para revisión/i);
     assert.equal(await page.locator("#technical-diagnostics").getAttribute("open"), null);

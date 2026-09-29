@@ -40,3 +40,44 @@ raw AgentCore payload logging, new log group, or dashboard was enabled. The
 deployment/smoke and teardown procedure are recorded in
 [`phase-11-acceptance.md`](../docs/phase-11-acceptance.md) and
 `phase-11-commands.md`.
+
+Phase 14 adds the local-only public edge definition
+([phase-14-public-edge.yaml](cloudformation/phase-14-public-edge.yaml)). It
+creates no AWS resources until a separately approved change set is deployed.
+The companion runbook ([phase-14-public-edge.md](../docs/phase-14-public-edge.md))
+documents the private S3/OAC frontend, exact API routes, trusted-edge
+contract, least privilege parameters, and the two-step callback/CORS
+bootstrap.
+
+The P14 document-security candidate
+([phase-14-document-security.yaml](cloudformation/phase-14-document-security.yaml))
+adds only the GuardDuty quarantine plan, exact EventBridge route, corroborating
+Lambda, bounded retries/DLQ, and retained logs. It reuses the existing S3
+bucket and DynamoDB table by parameter and has no KMS, WAF, public endpoint, or
+reconciliation scheduler.
+
+Release artifacts are assembled locally by `../scripts/package_release.py`
+from the exact Python 3.12 constraints in
+`../packaging/constraints-python312-manylinux-x86_64.txt`. The packager is
+offline and emits a Lambda zip that can be supplied to both the public
+application and malware-scan templates, plus a bounded four-file frontend zip
+and a SHA-256 manifest. Uploading artifacts, publishing frontend files, and
+CloudFront invalidation remain separately approved release operations.
+
+The Phase 14 operations candidate
+([phase-14-operations.yaml](cloudformation/phase-14-operations.yaml)) adds
+standard CloudWatch alarms for the public API, application/malware/reconciliation
+Lambdas and both DLQs, plus a configurable monthly Budget with direct email
+notifications. It creates no alarm topic by default. Operators can either
+provide an already-owned `ExistingAlarmTopicArn` or explicitly set
+`CreateAlarmTopic=true`; the existing NoEcho `BudgetEmail` parameter is reused
+for the managed subscription. The template rejects both modes together and all
+twelve alarms point to the
+effective topic. The managed email subscription remains pending until its
+recipient confirms it. The managed topic policy permits only CloudWatch alarm
+publishes from this account and region, binding both `aws:SourceAccount` and
+the exact `aws:SourceArn` alarm pattern to reduce confused-deputy risk. The
+effective topic ARN is available as a stack output. Do not reuse unrelated SNS
+topics; account for SNS request/delivery cost and owner-approved teardown. The no-AWS release,
+synthetic-fault and rollback procedure is in
+[`phase-14-operations-runbook.md`](../docs/phase-14-operations-runbook.md).

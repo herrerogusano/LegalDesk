@@ -1,0 +1,19 @@
+{
+  "auditEventCount": 17,
+  "citationCount": 2,
+  "cleanupErrors": [],
+  "crossMatterStatus": 403,
+  "indexedDocuments": 2,
+  "logoutStatus": 200,
+  "matterId": "mat_phase14_a_20260928",
+  "providerRequestCount": 59,
+  "requestCounts": {
+    "GET /api/audit": 1,
+    "GET /api/cross-matter/documents": 1,
+    "POST /api/chat": 1
+  },
+  "result": "PASS",
+  "reviewsListed": 0,
+  "reviewsOpened": 0,
+  "smoke": "phase14-public-browser"
+}

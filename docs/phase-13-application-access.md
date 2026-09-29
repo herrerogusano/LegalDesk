@@ -55,6 +55,10 @@ signed upload headers (content type, tenant/matter/document metadata, AES256).
 This permits a browser to use the short-lived presigned upload; it does not make
 objects public or grant access without a signature. No citation S3 URL is needed
 because evidence inspection goes through the authorized application endpoint.
+The SigV4 URL also binds the exact server-validated `Content-Length`. Browser
+fetch supplies that value from the `File`; application JavaScript must not set
+`Content-Length` manually. Confirmation repeats the exact size check with
+`HeadObject` before a lifecycle transition.
 This template change is local only and still requires approved deployment.
 
 Ingestion synchronizes a **whole configured data source**, not an individual

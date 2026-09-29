@@ -100,6 +100,9 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         self.assertGreaterEqual(client.call_count, 4)
         for call in client.call_args_list:
             self.assertEqual(call.kwargs["config"].retries["total_max_attempts"], 1)
+        s3_call = next(call for call in client.call_args_list if call.args[0] == "s3")
+        self.assertEqual(s3_call.kwargs["config"].signature_version, "s3v4")
+        self.assertEqual(s3_call.kwargs["config"].s3, {"addressing_style": "virtual"})
         resource.assert_called_once()
 
     def test_retrieval_and_ingestion_use_supported_distinct_bedrock_apis(self):
@@ -140,6 +143,8 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         self.assertIsNot(instances["bedrock-agent-runtime"], instances["bedrock-agent"])
         self.assertIs(observed["retrieval_client"], instances["bedrock-agent-runtime"])
         self.assertIsNot(observed["retrieval_client"], composition.sync_service.client)
+        self.assertIs(observed["metadata_repository"], composition.metadata_repository)
+        self.assertIs(observed["object_storage"], composition.object_storage)
         for kwargs in clients.values():
             self.assertEqual(kwargs["config"].retries["total_max_attempts"], 1)
 

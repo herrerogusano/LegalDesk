@@ -30,6 +30,8 @@ from legaldesk.guardrails import (
 )
 from legaldesk.prompts import FileSystemSystemPromptProvider
 from legaldesk.memory import InMemoryConversationBindingStore
+from legaldesk.documents import InMemoryDocumentMetadataRepository
+from legaldesk.domain.models import Document, DocumentStatus, MalwareScanStatus
 
 
 ALICE = test_identity("idp|alice-fictional")
@@ -187,6 +189,7 @@ class GroundedChatTests(unittest.TestCase):
         evidence_resolver: FakeEvidenceResolver | None = None,
         answer_writer: FakeAnswerWriter | None = None,
         grounding_validator: FakeGroundingValidator | None = None,
+        metadata_repository: InMemoryDocumentMetadataRepository | None = None,
     ):
         effective_request = chat_request or request()
         context = build_request_context(ALICE, effective_request.matter_id, self.auth)
@@ -210,6 +213,7 @@ class GroundedChatTests(unittest.TestCase):
             evidence_resolver=evidence_resolver,
             answer_writer=answer_writer,
             grounding_validator=grounding_validator,
+            metadata_repository=metadata_repository,
         )
 
     def test_separated_pipeline_derives_status_and_citations_server_side(self) -> None:
@@ -232,6 +236,46 @@ class GroundedChatTests(unittest.TestCase):
         self.assertEqual(response.answer, "El plazo documentado es de 17 días.")
         self.assertEqual(len(writer.requests), 1)
         self.assertEqual(len(grounder.requests), 1)
+
+    def test_structured_relationship_canonicalizes_reversed_writer_prose(self) -> None:
+        class StructuredWriter:
+            def write(self, request: object) -> Mapping[str, object]:
+                return {
+                    "answer": "The buyer must send written notice to the supplier.",
+                    "relationships": [{"actor": "supplier", "action": "send written notice", "recipient": "buyer"}],
+                }
+
+        resolver = FakeEvidenceResolver(
+            {"coverage": "complete", "conflict": False, "supportingCitationIds": ["citation-1"]}
+        )
+        response = self.answer(
+            [result("tnt_aurora", "mat_sundial", "doc-one", "The supplier must send written notice to the buyer.")],
+            FakeGenerator(),
+            evidence_resolver=resolver,
+            answer_writer=StructuredWriter(),  # type: ignore[arg-type]
+            grounding_validator=FakeGroundingValidator(
+                {"grounded": True, "score": 0.95, "matchedCitationIds": ["citation-1"]}
+            ),
+        )
+        self.assertEqual(response.operation_status, "ok")
+        self.assertEqual(response.answer, "supplier must send written notice to buyer.")
+        self.assertNotIn("buyer must send", response.answer)
+
+    def test_directed_evidence_requires_structured_relationship_projection(self) -> None:
+        resolver = FakeEvidenceResolver(
+            {"coverage": "complete", "conflict": False, "supportingCitationIds": ["citation-1"]}
+        )
+        response = self.answer(
+            [result("tnt_aurora", "mat_sundial", "doc-one", "The supplier must send written notice to the buyer.")],
+            FakeGenerator(),
+            evidence_resolver=resolver,
+            answer_writer=FakeAnswerWriter("The buyer must send written notice to the supplier."),
+            grounding_validator=FakeGroundingValidator(
+                {"grounded": True, "score": 0.95, "matchedCitationIds": ["citation-1"]}
+            ),
+        )
+        self.assertEqual(response.operation_status, "error")
+        self.assertEqual(response.answer, TECHNICAL_ERROR_ANSWER)
 
     def test_productive_grounding_uses_only_selected_passages_and_one_output_guardrail(self) -> None:
         resolver = FakeEvidenceResolver(
@@ -271,8 +315,8 @@ class GroundedChatTests(unittest.TestCase):
             grounding_validator=grounder,
         )
         self.assertEqual(response.operation_status, "ok")
-        self.assertEqual(response.resolver_prompt_version, "1.1.0")
-        self.assertEqual(response.writer_prompt_version, "1.2.0")
+        self.assertEqual(response.resolver_prompt_version, "1.2.0")
+        self.assertEqual(response.writer_prompt_version, "1.4.0")
         self.assertEqual([call["source"] for call in guardrail_client.calls], ["INPUT", "OUTPUT"])
         output_text = " ".join(
             block["text"]["text"]
@@ -491,6 +535,29 @@ class GroundedChatTests(unittest.TestCase):
         self.assertEqual(response.prompt_sha256, FileSystemSystemPromptProvider().load().sha256)
         self.assertEqual(response.correlation_id, "8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279")
         self.assertEqual(generator.requests, [])
+
+    def test_stale_deleted_failed_foreign_or_unscanned_vector_never_reaches_model(self) -> None:
+        for status, scan_status, present_scope in (
+            (DocumentStatus.FAILED, MalwareScanStatus.CLEAN, True),
+            (DocumentStatus.INDEXED, MalwareScanStatus.PENDING, True),
+            (DocumentStatus.INDEXED, MalwareScanStatus.CLEAN, False),
+        ):
+            repository = InMemoryDocumentMetadataRepository()
+            if present_scope:
+                repository.save(Document(
+                    document_id="doc-one", matter_id="mat_sundial", tenant_id="tnt_aurora",
+                    name="fictional.txt", s3_key="tenants/tnt_aurora/matters/mat_sundial/doc-one",
+                    media_type="text/plain", jurisdiction="fictional", document_date="2099-01-01",
+                    confidentiality="public-fictional", status=status, malware_scan_status=scan_status,
+                ))
+            generator = FakeGenerator()
+            response = self.answer(
+                [result("tnt_aurora", "mat_sundial", "doc-one", "stale evidence")],
+                generator,
+                metadata_repository=repository,
+            )
+            self.assertEqual(response.operation_status, "error")
+            self.assertEqual(generator.requests, [])
 
     def test_invalid_prompt_configuration_fails_closed_before_retrieval_or_generation(self) -> None:
         client = FakeKnowledgeBaseClient(

@@ -38,7 +38,10 @@ class FakeDynamoTable:
     def put_item(self, *, Item: Mapping[str, object], **kwargs: object) -> Mapping[str, object]:
         self.calls.append(("put_item", dict(Item)))
         key = (str(Item["pk"]), str(Item["sk"]))
-        if kwargs.get("ConditionExpression") and key in self.items:
+        condition = str(kwargs.get("ConditionExpression", ""))
+        if "attribute_not_exists" in condition and key in self.items:
+            raise RuntimeError("conditional check failed")
+        if "attribute_exists" in condition and key not in self.items:
             raise RuntimeError("conditional check failed")
         self.items[key] = dict(Item)
         return {}
@@ -48,8 +51,22 @@ class FakeDynamoTable:
         key = (str(Key["pk"]), str(Key["sk"]))
         if key not in self.items:
             raise RuntimeError("missing item")
-        self.items[key]["status"] = ExpressionAttributeValues[":status"]
+        if ":status" in ExpressionAttributeValues:
+            self.items[key]["status"] = ExpressionAttributeValues[":status"]
+        if ":correlation" in ExpressionAttributeValues:
+            self.items[key]["correlationId"] = ExpressionAttributeValues[":correlation"]
         return {}
+
+    def delete_item(self, *, Key: Mapping[str, str], **kwargs: object) -> Mapping[str, object]:
+        self.calls.append(("delete_item", dict(Key)))
+        key = (str(Key["pk"]), str(Key["sk"]))
+        item = self.items.get(key)
+        if kwargs.get("ConditionExpression") and item is None:
+            raise RuntimeError("conditional check failed")
+        if item is None:
+            return {}
+        del self.items[key]
+        return {"Attributes": dict(item)} if kwargs.get("ReturnValues") == "ALL_OLD" else {}
 
     def query(self, **kwargs: object) -> Mapping[str, object]:
         self.calls.append(("query", {}))
@@ -71,12 +88,16 @@ class FakeS3Client:
     def __init__(self) -> None:
         self.objects: dict[str, tuple[bytes, str, dict[str, str]]] = {}
         self.put_calls: list[str] = []
+        self.presign_calls: list[dict[str, object]] = []
+        self.presigned_content_lengths: dict[str, int] = {}
         self.put_server: _PresignedPutServer | None = None
 
     def generate_presigned_url(self, _operation: str, *, Params: Mapping[str, object], ExpiresIn: int, HttpMethod: str) -> str:
         if self.put_server is None:
             raise RuntimeError("presigned server not configured")
+        self.presign_calls.append(dict(Params))
         key = str(Params["Key"])
+        self.presigned_content_lengths[key] = int(Params["ContentLength"])
         token = base64.urlsafe_b64encode(key.encode()).decode().rstrip("=")
         return f"http://127.0.0.1:{self.put_server.port}/put/{token}"
 
@@ -89,6 +110,9 @@ class FakeS3Client:
         return {"ContentLength": len(body), "ContentType": content_type, "Metadata": dict(metadata)}
 
     def put_external(self, key: str, body: bytes, headers: Mapping[str, str]) -> None:
+        expected_length = self.presigned_content_lengths.get(key)
+        if expected_length is not None and len(body) != expected_length:
+            raise RuntimeError("presigned upload content length mismatch")
         metadata = {
             name[len("x-amz-meta-"):].lower(): value
             for name, value in headers.items()

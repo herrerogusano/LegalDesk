@@ -1,0 +1,13 @@
+{
+  "category": "browser_report_invalid",
+  "cleanupErrors": [
+    "state_cleanup:UnknownError"
+  ],
+  "errorType": "UnknownError",
+  "phase": "startup",
+  "providerRequestCount": 11,
+  "requestCounts": {},
+  "result": "FAIL",
+  "smoke": "phase14-public-browser",
+  "step": "logout"
+}

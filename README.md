@@ -5,11 +5,12 @@ assistant built on Amazon Bedrock AgentCore. It demonstrates how retrieval,
 authorization, citations, tool calls and bounded agentic workflows can be
 composed without allowing the browser or the model to define access scope.
 
-> **Status: `NOT_READY_FOR_PROD`**
+> **Status: `READY_FOR_CONSTRAINED_PROD_PROMOTION`**
 >
 > This is an educational MVP, not legal advice or a production legal system.
-> Use only public or wholly fictional documents. No public deployment is
-> claimed.
+> Promotion is limited to the authenticated beta using only public or wholly
+> fictional documents and pre-provisioned users. It is not certified for real
+> legal/client data or anonymous signup.
 
 ## What it demonstrates
 
@@ -29,10 +30,13 @@ flowchart LR
   B[Browser] --> I[Cognito/OIDC identity]
   I --> A[Backend authorization\nsealed RequestContext]
   A --> U[Upload API]
-  U --> S3[(S3 originals)]
+  U --> Z[(S3 quarantine)]
+  Z --> V[Malware + content validation]
+  V --> S3[(S3 authorized source)]
   A --> D[(DynamoDB\nmetadata/membership/review)]
   A --> R[Authorized retrieval filter]
-  R --> KB[Knowledge Base + S3 Vectors]
+  S3 --> KB[Knowledge Base + S3 Vectors]
+  R --> KB
   KB --> Q[Resolver → Writer →\nGuardrails grounding]
   Q --> B
   A -->|fixed tools/call| GW[AgentCore Gateway]
@@ -70,20 +74,36 @@ for the complete trust and data lifecycle.
 - Gateway interceptors and tool handlers reauthorize independently.
 - Guardrails protect content but do not replace authorization.
 - Retrieved documents are treated as untrusted data, not instructions.
-- Sessions, citation handles, audit data and accepted history are bounded
-  process-local demo state; long-term Memory and direct model credentials are
-  not exposed to the browser.
+- The public composition persists sessions, OAuth state, citation handles,
+  accepted history/reviews and redacted audit records in bounded DynamoDB
+  items. The loopback fixture may still use in-memory adapters for local demos.
+- Public uploads are bound to a server-owned key and exact signed byte length,
+  remain outside the retrieval prefix until malware/content validation passes,
+  and are rechecked with `HeadObject` before lifecycle promotion.
+- Long-term Memory and direct model credentials are not exposed to the browser.
 
 ## Verified evidence
 
-- **413 tests passed** in the final local verification.
+- **574 tests passed** in the current local release-candidate verification
+  (`1` platform-specific symlink test skipped on Windows).
 - **24/24 deterministic evaluations passed** with zero AWS calls.
-- **Final bounded AWS browser smoke: PASS** for the fixed synthetic journey:
-  Cognito login, presigned upload and indexing, factual and absent-evidence
-  RAG, citations, Gateway → MCP metadata, Gateway → Lambda review, cross-matter
-  denial, audit and logout.
-- Temporary smoke resources were removed and shared stacks restored. The
-  independent 14-case semantic holdout remains unexecuted against AWS.
+- **All 15 CloudFormation/SAM templates pass lint**, including the public edge,
+  quarantine, reconciliation and operations candidates.
+- **Final bounded AWS browser smoke: PASS** for the fixed synthetic journey
+  (`phase14-public-smoke-20260929-final4-02.json`, report SHA-256
+  `1431503bd4a336bf552853af4cb8eb7b87a8cc488a44e59b7542e9624281d153`): one
+  chat, two citations, cross-matter `403`, 17 audit events, logout `200`, and
+  `cleanupErrors=[]`.
+  It covered Cognito login, indexed-document display, grounded RAG, citations,
+  cross-matter denial, audit and logout. The earlier supervised walkthrough
+  separately verified presigned upload, malware validation and indexing.
+- The final metadata-only holdout `phase14-holdout-20260929-prod-final4.json`
+  passed 14/14 with 27 calls and zero retries. It is pinned to release commit
+  `0c8bb718e58811afff2085114dad7821cf573e3f` and artifact SHA-256
+  `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`; the
+  approved independent attestation v1.1.0 has SHA-256
+  `3d833232cabb1d290544009c31c7b9ecda0201264d9c331dc7d52cb799d48dc2`.
+  Earlier failed reports and attestations remain immutable history.
 
 Evidence classes, acceptance scenarios and remaining gates are recorded in the
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md). The smoke result is
@@ -125,11 +145,12 @@ docs/      Architecture, trust boundaries, acceptance and release gates
 
 ## Limits and cost considerations
 
-This repository is intentionally a loopback portfolio application, not an
-internet-facing production server. Sessions, citation handles and audit state
-are process-local; production TLS hosting, durable multi-instance state,
-retention/deletion controls, reconciliation jobs, operational SLOs and the
-independent semantic holdout remain release gates.
+The repository contains both a loopback demo and a deployed candidate for a
+constrained authenticated beta using CloudFront, API Gateway, Lambda and
+durable DynamoDB state. Promotion evidence is complete for this narrow scope;
+the default CloudFront TLS certificate is an accepted documented residual and
+is not claimed as strict TLS. Anonymous signup and real legal/client documents
+remain outside the approved scope.
 
 S3, S3 Vectors, DynamoDB, Bedrock, AgentCore, Lambda and CloudWatch can incur
 charges. Local tests and deterministic evaluations use no AWS calls. Any AWS
@@ -139,6 +160,9 @@ teardown procedure.
 ## Further reading
 
 - [Production readiness gate](docs/production-readiness.md)
+- [Phase 14 public-beta plan](PLAN_14_PUBLIC_BETA.md)
+- [Phase 14 semantic holdout](docs/phase-14-holdout.md)
+- [Phase 14 operations runbook](docs/phase-14-operations-runbook.md)
 - [Guided offline manual demo](docs/phase-13-manual-demo.md)
 - [Phase 13 application run instructions](docs/phase-13-run.md)
 - [Threat model](docs/threat-model.md) and [authorization matrix](docs/authorization-matrix.md)

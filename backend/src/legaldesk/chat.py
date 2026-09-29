@@ -20,6 +20,7 @@ from .authorization import (
     build_request_context,
 )
 from .memory import ConversationBindingStore
+from .documents import DocumentMetadataRepository
 from .observability import (
     TelemetryEventType,
     TelemetryOutcome,
@@ -47,6 +48,7 @@ from .retrieval import (
     Citation,
     RetrievedPassage,
     _retrieve_with_context,
+    ObjectHeadStorage,
 )
 from .evidence import (
     AnswerWriter,
@@ -63,6 +65,10 @@ from .evidence import (
     legacy_resolution_from_generation,
     validate_evidence_resolution,
     validate_grounding_result,
+    validate_answer_writer_result,
+    evidence_requires_relationship_projection,
+    validate_writer_relationships_against_evidence,
+    render_writer_relationships,
     ANSWER_WRITER_PROMPT_SHA256,
     ANSWER_WRITER_PROMPT_VERSION,
 )
@@ -360,6 +366,8 @@ def answer_question(
     answer_writer: AnswerWriter | None = None,
     grounding_validator: GroundingValidator | None = None,
     authorized_evidence_sink: Callable[[VerifiedIdentity, RequestContext, ChatRequest, ChatResponse, tuple[RetrievedPassage, ...]], None] | None = None,
+    metadata_repository: DocumentMetadataRepository | None = None,
+    object_storage: ObjectHeadStorage | None = None,
 ) -> ChatResponse:
     """Load the server prompt, authorize and retrieve, then generate from evidence."""
 
@@ -509,6 +517,8 @@ def answer_question(
             bedrock_client=retrieval_client,
             knowledge_base_id=knowledge_base_id,
             telemetry_sink=telemetry_sink,
+            metadata_repository=metadata_repository,
+            object_storage=object_storage,
         )
     except Exception:
         emit_telemetry(
@@ -610,10 +620,14 @@ def answer_question(
                         resolution=resolution,
                     )
                 )
-                if isinstance(written, str):
-                    answer = written
-                elif isinstance(written, Mapping) and set(written) == {"answer"}:
-                    answer = written.get("answer")
+                relationships: tuple[Mapping[str, str], ...] = ()
+                if isinstance(written, Mapping):
+                    normalized_written = validate_answer_writer_result(written)
+                    answer = normalized_written.get("answer")
+                    raw_relationships = normalized_written.get("relationships", ())
+                    if not isinstance(raw_relationships, (list, tuple)):
+                        raise EvidenceContractError("answer writer relationships are invalid")
+                    relationships = tuple(raw_relationships)  # type: ignore[arg-type]
                 else:
                     raise EvidenceContractError("answer writer returned an unsupported shape")
                 if (
@@ -622,6 +636,24 @@ def answer_question(
                     or len(answer) > MAX_ANSWER_LENGTH
                 ):
                     raise EvidenceContractError("answer writer returned invalid answer text")
+                selected_evidence = tuple(
+                    item
+                    for item in generation_request.evidence
+                    if item.citation_id in resolution.supporting_citation_ids
+                )
+                if evidence_requires_relationship_projection(selected_evidence) and not relationships:
+                    raise EvidenceContractError(
+                        "answer writer omitted a required directed relationship"
+                    )
+                if relationships:
+                    relationships = validate_writer_relationships_against_evidence(
+                        relationships,
+                        selected_evidence,
+                    )
+                    # Structured relationships are the authoritative public
+                    # rendering for directional claims; this prevents prose
+                    # from reversing a validated actor/action/recipient.
+                    answer = render_writer_relationships(relationships)
                 emit_telemetry(
                     telemetry_sink,
                     TelemetryEventType.MODEL,
@@ -648,13 +680,10 @@ def answer_question(
                         GroundingRequest(
                             question=question,
                             answer=answer.strip(),
-                            evidence=tuple(
-                                item
-                                for item in generation_request.evidence
-                                if item.citation_id in resolution.supporting_citation_ids
-                            ),
+                            evidence=selected_evidence,
                             supporting_citation_ids=resolution.supporting_citation_ids,
                             correlation_id=context.correlation_id,
+                            relationships=relationships,
                         )
                     )
                     validate_grounding_result(

@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
 from fixture_loader import load_authorization_store, test_identity
 from legaldesk.authorization import AuthorizationDenied, VerifiedIdentity, build_request_context
+from legaldesk.documents import InMemoryDocumentMetadataRepository
+from legaldesk.domain.models import Document, DocumentStatus, MalwareScanStatus
 from legaldesk.retrieval import (
     build_matter_filter,
     search_legal_documents,
@@ -59,11 +61,34 @@ class FakeKnowledgeBaseClient:
         return {"retrievalResults": self.results}
 
 
+class HeadRecordingStorage:
+    def __init__(self, *, existing_keys: set[str] | None = None, error: Exception | None = None) -> None:
+        self.existing_keys = existing_keys or set()
+        self.error = error
+        self.calls: list[str] = []
+
+    def head_object(self, *, key: str) -> Mapping[str, Any]:
+        self.calls.append(key)
+        if self.error is not None:
+            raise self.error
+        if key not in self.existing_keys:
+            raise KeyError(key)
+        return {"ContentLength": 1}
+
+
 class RetrievalTests(unittest.TestCase):
     def setUp(self) -> None:
         self.auth = load_authorization_store()
 
-    def search(self, identity: VerifiedIdentity, matter_id: str, client: FakeKnowledgeBaseClient):
+    def search(
+        self,
+        identity: VerifiedIdentity,
+        matter_id: str,
+        client: FakeKnowledgeBaseClient,
+        *,
+        metadata_repository: InMemoryDocumentMetadataRepository | None = None,
+        object_storage: HeadRecordingStorage | None = None,
+    ):
         return search_legal_documents(
             identity,
             matter_id,
@@ -72,7 +97,27 @@ class RetrievalTests(unittest.TestCase):
             bedrock_client=client,
             knowledge_base_id="kb-fictional",
             correlation_id="8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279",
+            metadata_repository=metadata_repository,
+            object_storage=object_storage,
         )
+
+    @staticmethod
+    def indexed_document_repository() -> InMemoryDocumentMetadataRepository:
+        repository = InMemoryDocumentMetadataRepository()
+        repository.save(Document(
+            document_id="doc-sundial",
+            matter_id="mat_sundial",
+            tenant_id="tnt_aurora",
+            name="sundial.pdf",
+            s3_key="tenants/tnt_aurora/matters/mat_sundial/doc-sundial.pdf",
+            media_type="application/pdf",
+            jurisdiction="fictional",
+            document_date="2099-01-01",
+            confidentiality="fictional-internal",
+            status=DocumentStatus.INDEXED,
+            malware_scan_status=MalwareScanStatus.CLEAN,
+        ))
+        return repository
 
     def test_filter_is_mandatory_and_uses_server_derived_scope(self) -> None:
         context = build_request_context(ALICE, "mat_sundial", self.auth)
@@ -145,6 +190,69 @@ class RetrievalTests(unittest.TestCase):
         with self.assertRaises(AuthorizationDenied):
             self.search(ALICE, "mat_glacier", client)
         self.assertEqual(client.calls, [])
+
+    def test_live_indexed_clean_document_requires_existing_canonical_object(self) -> None:
+        repository = self.indexed_document_repository()
+        storage = HeadRecordingStorage(existing_keys={"tenants/tnt_aurora/matters/mat_sundial/doc-sundial.pdf"})
+        passages = self.search(
+            ALICE,
+            "mat_sundial",
+            FakeKnowledgeBaseClient([result(
+                "tnt_aurora", "mat_sundial", "doc-sundial", "Authorized evidence.",
+            )]),
+            metadata_repository=repository,
+            object_storage=storage,
+        )
+        self.assertEqual(len(passages), 1)
+        self.assertEqual(storage.calls, ["tenants/tnt_aurora/matters/mat_sundial/doc-sundial.pdf"])
+
+    def test_missing_or_unreadable_canonical_object_blocks_entire_response(self) -> None:
+        repository = self.indexed_document_repository()
+        for storage in (
+            HeadRecordingStorage(),
+            HeadRecordingStorage(error=RuntimeError("storage unavailable")),
+        ):
+            with self.assertRaises(ValueError):
+                self.search(
+                    ALICE,
+                    "mat_sundial",
+                    FakeKnowledgeBaseClient([result(
+                        "tnt_aurora", "mat_sundial", "doc-sundial", "Stale evidence.",
+                    )]),
+                    metadata_repository=repository,
+                    object_storage=storage,
+                )
+            self.assertEqual(len(storage.calls), 1)
+
+    def test_provider_uri_cannot_control_canonical_head_key(self) -> None:
+        repository = self.indexed_document_repository()
+        storage = HeadRecordingStorage(existing_keys={"tenants/tnt_aurora/matters/mat_sundial/doc-sundial.pdf"})
+        provider_result = result(
+            "tnt_aurora", "mat_sundial", "doc-sundial", "Authorized evidence."
+        )
+        provider_result["location"]["s3Location"]["uri"] = "s3://attacker/foreign-key"
+        self.search(
+            ALICE,
+            "mat_sundial",
+            FakeKnowledgeBaseClient([provider_result]),
+            metadata_repository=repository,
+            object_storage=storage,
+        )
+        self.assertEqual(storage.calls, ["tenants/tnt_aurora/matters/mat_sundial/doc-sundial.pdf"])
+
+    def test_cross_matter_denial_happens_before_canonical_head(self) -> None:
+        storage = HeadRecordingStorage(existing_keys={"tenants/tnt_borealis/matters/mat_glacier/doc-glacier.pdf"})
+        with self.assertRaises(AuthorizationDenied):
+            self.search(
+                ALICE,
+                "mat_glacier",
+                FakeKnowledgeBaseClient([result(
+                    "tnt_borealis", "mat_glacier", "doc-glacier", "Foreign evidence."
+                )]),
+                metadata_repository=self.indexed_document_repository(),
+                object_storage=storage,
+            )
+        self.assertEqual(storage.calls, [])
 
     def test_empty_results_and_results_missing_scope_fail_closed(self) -> None:
         self.assertEqual(self.search(ALICE, "mat_sundial", FakeKnowledgeBaseClient()), ())

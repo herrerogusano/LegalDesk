@@ -1,5 +1,24 @@
 # Phase 12 local evaluation
 
+## Phase 14 frozen semantic holdout
+
+The independent 14-case holdout runner is documented in
+[`docs/phase-14-holdout.md`](../docs/phase-14-holdout.md) and implemented in
+`phase14_holdout_runner.py`. Its default preflight makes zero AWS/network
+calls and pins the fixture, prompt hashes, exact resolver/writer model IDs,
+release commit, artifact hash, and a hard ceiling of 14 resolver plus up to 13
+writer calls. It runs local negative canaries for the forged citation and role
+reversal, recording only closed metadata codes. Provider execution requires a
+separate explicit `--execute` acknowledgement; it has no retry path. Reports
+are create-only metadata artifacts, and reviewer attestations are separate
+create-only artifacts. A reviewer ID provides procedural separation only; it
+is not cryptographic proof of human independence. The holdout remains
+unexecuted against AWS until the Phase 14 cost and release gates are approved.
+An `approved` attestation is fail-closed: all 14 cases must be accepted,
+preflight and canaries must pass, retries must be zero, and inference calls
+must remain at or below 27; failed reports can only be rejected or marked for
+follow-up.
+
 `phase12_dataset.json` contains 24 synthetic cases across the eight required
 categories. `run_evals.py` invokes `runner.py`, which uses local fakes around
 the authorization, retrieval/chat, Guardrails, review-task, and tool-routing
@@ -94,6 +113,14 @@ The resolver schema is exposed locally as a Bedrock Converse
 `outputConfig.textFormat` JSON Schema fragment. Server-side citation validation
 remains mandatory. Native provider citations are not enabled because this
 design uses its own `supportingCitationIds` contract.
+
+The separated writer contract is version `1.4.0`. It preserves the required
+`answer` field and may additionally return a bounded `relationships` array of
+server-validated `{actor, action, recipient}` objects. The holdout's directed
+relationship check uses that structured projection for actor/recipient
+direction; it does not infer the direction from answer prose. Missing,
+malformed, duplicated, or reversed relationships fail closed, and relationship
+values are never written to metadata-only reports.
 
 After the `3/9` real result, runner `5.1.0` isolates the resolver and writer
 with dedicated prompt contracts instead of sending both stages the general

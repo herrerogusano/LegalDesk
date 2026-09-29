@@ -11,6 +11,8 @@ Parameters:
 Resources:
   DocumentBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       CorsConfiguration:
         CorsRules:
@@ -19,6 +21,7 @@ Resources:
             AllowedMethods:
               - PUT
             AllowedHeaders:
+              - Content-Length
               - Content-Type
               - x-amz-meta-tenant-id
               - x-amz-meta-matter-id
@@ -36,7 +39,12 @@ Resources:
         RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
+          - Id: ExpireQuarantineUploads
+            Prefix: quarantine/
+            Status: Enabled
+            ExpirationInDays: 1
           - Id: ExpireFictionalOriginals
+            Prefix: tenants/
             Status: Enabled
             ExpirationInDays: 30
       Tags:
@@ -65,6 +73,8 @@ Resources:
 
   DocumentMetadataTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
       SSESpecification:
@@ -79,6 +89,11 @@ Resources:
           KeyType: HASH
         - AttributeName: sk
           KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
       Tags:
         - Key: Project
           Value: LegalDesk

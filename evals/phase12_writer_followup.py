@@ -1,8 +1,9 @@
 """Bounded writer-only follow-up for the validated Phase 12 resolver result.
 
-The immutable resolver-v3 report proves that resolver prompt 1.1.0 matched all
-nine fixture resolutions. This runner reuses those server-validated expected
-resolutions and calls only writer prompt 1.2.0. Execution requires both
+The immutable resolver-v3 report proves that the historical resolver prompt
+1.1.0 matched all nine fixture resolutions. This runner reuses those
+server-validated expected resolutions while the current runtime calls writer
+prompt 1.3.0. Execution requires both
 ``--execute`` and ``--preflight``; reports contain metadata only.
 """
 
@@ -48,12 +49,14 @@ except ImportError:  # Direct script execution.
     from synthetic_debug import SYNTHETIC_CASES  # type: ignore[no-redef]  # noqa: E402
 
 
-RUNNER_VERSION = "1.0.0"
+RUNNER_VERSION = "1.1.0"
 MAX_WRITER_INVOCATIONS = 9
-EXPECTED_RESOLVER_PROMPT_VERSION = "1.1.0"
-EXPECTED_RESOLVER_PROMPT_SHA256 = "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672"
-EXPECTED_WRITER_PROMPT_VERSION = "1.2.0"
-EXPECTED_WRITER_PROMPT_SHA256 = "3e6142b473d2df1efce4070eada43566d4b831063af3e1230e3cd70e3ae7d0cf"
+EXPECTED_RESOLVER_PROMPT_VERSION = "1.2.0"
+EXPECTED_RESOLVER_PROMPT_SHA256 = "da65f6b0efa70e728d9c6c5b85c036a7fb3b71b1b24c1cde33e9caedabe8127c"
+EXPECTED_WRITER_PROMPT_VERSION = "1.4.0"
+EXPECTED_WRITER_PROMPT_SHA256 = "04d46e6d66bd9b75d3be7ddedd0dd1734dd712a2285a7a5017ed11e6bff2c90f"
+HISTORICAL_RESOLVER_PROMPT_VERSION = "1.1.0"
+HISTORICAL_RESOLVER_PROMPT_SHA256 = "ae9fba28e300f69656e4bdd53ea288fb1139c5f448d7857519f28fadb1dee672"
 SOURCE_RESOLVER_REPORT = RESULTS_ROOT / "phase12-remediation-resolver-v3-report.json"
 SOURCE_RESOLVER_REPORT_SHA256 = "9e2ac4fb1bf87336a25fd261d800b7de7688722fc2f5698327071ebc8c2709f3"
 DEFAULT_OUTPUT = RESULTS_ROOT / "phase12-remediation-writer-v1-report.json"
@@ -114,8 +117,8 @@ def _source_report() -> Mapping[str, object]:
     cases = report.get("cases")
     if (
         report.get("runnerVersion") != "6.0.0"
-        or report.get("resolverPromptVersion") != EXPECTED_RESOLVER_PROMPT_VERSION
-        or report.get("resolverPromptHash") != EXPECTED_RESOLVER_PROMPT_SHA256
+        or report.get("resolverPromptVersion") != HISTORICAL_RESOLVER_PROMPT_VERSION
+        or report.get("resolverPromptHash") != HISTORICAL_RESOLVER_PROMPT_SHA256
         or report.get("resolverCalls") != 9
         or not isinstance(cases, list)
         or len(cases) != 9

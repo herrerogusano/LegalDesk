@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import unittest
-from dataclasses import replace
 from unittest.mock import patch
 from urllib.request import Request, urlopen
 
@@ -116,6 +115,18 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         self.assertEqual(self.fixture.runtime.retrieve_calls, [])
         self.assertEqual(self.fixture.runtime.guardrail_calls, [])
 
+    def test_processing_upload_does_not_block_existing_indexed_evidence(self):
+        scope = self.start()
+        self.upload()
+        self.upload(sync=False, text="A second upload is still being processed.")
+
+        answer = self.ask(scope)
+
+        self.assertEqual(answer["operationStatus"], "ok")
+        self.assertEqual(answer["evidenceStatus"], "answerable")
+        self.assertEqual(len(answer["citations"]), 1)
+        self.assertEqual(len(self.fixture.runtime.retrieve_calls), 1)
+
     def test_model_failure_is_operational_without_rejected_answer_or_not_found(self):
         scope = self.start()
         self.upload()
@@ -192,7 +203,11 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(citation["passage"], passage)
         self.assertNotIn("s3://", json.dumps(citation))
-        self.app.citation_handles[handle] = replace(self.app.citation_handles[handle], expires_at=0)
+        citation_item = next(
+            item for item in self.fixture.table.items.values()
+            if item.get("entityType") == "P14Citation" and item.get("handle") == handle
+        )
+        citation_item["expiresAt"] = 0
         status, _, _ = self.request("GET", f"/api/citations?handle={handle}")
         self.assertEqual(status, 403)
 
@@ -245,7 +260,7 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         self.assertEqual(tasks[0]["reviewTaskId"], review["reviewTaskId"])
         self.fixture.table.calls.clear()
         _, audit, _ = self.request("GET", "/api/audit")
-        self.assertEqual(len(self.fixture.table.calls), 2)  # user + one matter, not every event
+        self.assertEqual(len(self.fixture.table.calls), 4)  # session + audit query + user + one matter
         events = [event for event in audit["events"] if event.get("correlation_id", event.get("correlationId")) == origin]
         operations = {event.get("operation") for event in events}
         self.assertTrue({"knowledge_base_retrieve", "resolve_evidence", "write_answer", "grounding_validate", "gateway_request", "create_review_task"}.issubset(operations), operations)
@@ -389,12 +404,12 @@ class Phase13JourneySecurityTests(unittest.TestCase):
 
     def test_session_rechecks_signed_token_expiry_before_storage_reads(self):
         self.start()
-        for key, record in list(self.app.sessions.items()):
-            self.app.sessions[key] = replace(record, access_token=self.fixture._token("alice", expired=True))
+        session_item = next(item for item in self.fixture.table.items.values() if item.get("entityType") == "P14Session")
+        session_item["accessToken"] = self.fixture._token("alice", expired=True)
         self.fixture.table.calls.clear()
         status, _, _ = self.request("GET", "/api/matters")
         self.assertEqual(status, 403)
-        self.assertEqual(self.fixture.table.calls, [])
+        self.assertEqual([name for name, _ in self.fixture.table.calls], ["get_item", "delete_item"])
 
     def test_static_allowlist_has_single_correct_mime_and_no_source_access(self):
         import http.client

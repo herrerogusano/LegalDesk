@@ -54,6 +54,7 @@ GATEWAY_GRANT_SORT_KEY = "PROFILE"
 GATEWAY_GRANT_TTL_SECONDS = 300
 GATEWAY_INVOCATION_ENTITY = "HarnessInvocationBinding"
 GATEWAY_INVOCATION_TTL_SECONDS = 300
+GATEWAY_EXPIRY_INDEX_ENTITY = "GatewayExpiryIndex"
 GATEWAY_TOOL_DELIMITER = "___"
 _APPLICATION_ALLOWED_TOOL_NAMES = frozenset(
     {
@@ -123,6 +124,7 @@ class GatewayAuthorizationGrant:
             "correlationId": self.correlation_id,
             "toolName": self.tool_name,
             "expiresAt": self.expires_at,
+            "ttl": self.expires_at,
         }
 
 
@@ -131,9 +133,15 @@ class GatewayGrantRepository(Protocol):
 
     def get(self, grant_id: str) -> Mapping[str, object] | None: ...
 
+    def delete(self, grant_id: str) -> None: ...
+
     def put_invocation(self, grant: "HarnessInvocationGrant") -> None: ...
 
     def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None: ...
+
+    def delete_invocation(self, invocation_id: str) -> None: ...
+
+    def list_expired_candidates(self, *, now: float, limit: int) -> tuple[Mapping[str, object], ...]: ...
 
 
 def gateway_grant_partition_key(grant_id: str) -> str:
@@ -144,28 +152,79 @@ def gateway_grant_partition_key(grant_id: str) -> str:
 class InMemoryGatewayGrantRepository:
     grants: dict[str, Mapping[str, object]]
     invocations: dict[str, Mapping[str, object]]
+    expiry_index: dict[tuple[str, str], Mapping[str, object]]
 
     def __init__(self) -> None:
         self.grants = {}
         self.invocations = {}
+        self.expiry_index: dict[tuple[str, str], Mapping[str, object]] = {}
+
+    @staticmethod
+    def _expiry_item(*, record_id: str, kind: str, item: Mapping[str, object]) -> dict[str, object]:
+        expires_at = item.get("expiresAt")
+        if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+            raise ValueError("gateway expiry is invalid")
+        expires = int(expires_at)
+        return {
+            "pk": gateway_expiry_index_partition_key(expires),
+            "sk": gateway_expiry_index_sort_key(expires, kind, record_id),
+            "entityType": GATEWAY_EXPIRY_INDEX_ENTITY,
+            "recordId": record_id,
+            "kind": kind,
+            "verifiedSubject": item.get("verifiedSubject"),
+            "requestedMatterId": item.get("requestedMatterId"),
+            "expiresAt": expires,
+            "ttl": expires,
+        }
 
     def put(self, grant: GatewayAuthorizationGrant) -> None:
         if grant.grant_id in self.grants:
             if self.grants[grant.grant_id] == grant.item:
+                index = self._expiry_item(record_id=grant.grant_id, kind="grant", item=grant.item)
+                self.expiry_index[(index["pk"], index["sk"])] = index
                 return
             raise RuntimeError("grant collision")
         self.grants[grant.grant_id] = grant.item
+        index = self._expiry_item(record_id=grant.grant_id, kind="grant", item=grant.item)
+        self.expiry_index[(index["pk"], index["sk"])] = index
 
     def get(self, grant_id: str) -> Mapping[str, object] | None:
         return self.grants.get(grant_id)
+
+    def delete(self, grant_id: str) -> None:
+        item = self.grants.pop(grant_id, None)
+        if item is not None:
+            index = self._expiry_item(record_id=grant_id, kind="grant", item=item)
+            self.expiry_index.pop((index["pk"], index["sk"]), None)
 
     def put_invocation(self, grant: "HarnessInvocationGrant") -> None:
         if grant.invocation_id in self.invocations:
             raise RuntimeError("invocation collision")
         self.invocations[grant.invocation_id] = grant.item
+        index = self._expiry_item(record_id=grant.invocation_id, kind="invocation", item=grant.item)
+        self.expiry_index[(index["pk"], index["sk"])] = index
 
     def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None:
         return self.invocations.get(invocation_id)
+
+    def delete_invocation(self, invocation_id: str) -> None:
+        item = self.invocations.pop(invocation_id, None)
+        if item is not None:
+            index = self._expiry_item(record_id=invocation_id, kind="invocation", item=item)
+            self.expiry_index.pop((index["pk"], index["sk"]), None)
+
+    def list_expired_candidates(self, *, now: float, limit: int) -> tuple[Mapping[str, object], ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= 100:
+            raise ValueError("gateway expiry query limit is invalid")
+        cutoff = int(now)
+        items = [
+            item for item in self.expiry_index.values()
+            if isinstance(item.get("expiresAt"), (int, float))
+            and not isinstance(item.get("expiresAt"), bool)
+            and float(item["expiresAt"]) <= cutoff
+        ]
+        items.sort(key=lambda item: (int(item["expiresAt"]), str(item.get("sk", ""))))
+        return tuple(items[:limit])
 
 
 class Boto3DynamoGatewayGrantRepository:
@@ -187,10 +246,13 @@ class Boto3DynamoGatewayGrantRepository:
                 Item=grant.item,
                 ConditionExpression="attribute_not_exists(pk)",
             )
+            self._put_expiry_index(grant_id=grant.grant_id, kind="grant", item=grant.item)
         except Exception:
             existing = self.get(grant.grant_id)
             if existing != grant.item:
                 raise
+            # An idempotent retry also repairs a missing index entry.
+            self._put_expiry_index(grant_id=grant.grant_id, kind="grant", item=grant.item)
 
     def get(self, grant_id: str) -> Mapping[str, object] | None:
         response = self.table.get_item(
@@ -200,11 +262,27 @@ class Boto3DynamoGatewayGrantRepository:
         item = response.get("Item") if isinstance(response, Mapping) else None
         return item if isinstance(item, Mapping) else None
 
+    def delete(self, grant_id: str) -> None:
+        item = self.get(grant_id)
+        self.table.delete_item(Key={"pk": gateway_grant_partition_key(grant_id), "sk": GATEWAY_GRANT_SORT_KEY})
+        if isinstance(item, Mapping):
+            self._delete_expiry_index(grant_id=grant_id, kind="grant", item=item)
+
     def put_invocation(self, grant: "HarnessInvocationGrant") -> None:
-        self.table.put_item(
-            Item=grant.item,
-            ConditionExpression="attribute_not_exists(pk)",
-        )
+        try:
+            self.table.put_item(
+                Item=grant.item,
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+            self._put_expiry_index(grant_id=grant.invocation_id, kind="invocation", item=grant.item)
+        except Exception:
+            existing = self.get_invocation(grant.invocation_id)
+            if existing != grant.item:
+                raise
+            # If the primary write succeeded but the index write failed, a
+            # retry must repair the index instead of treating the condition
+            # failure as a permanent collision.
+            self._put_expiry_index(grant_id=grant.invocation_id, kind="invocation", item=grant.item)
 
     def get_invocation(self, invocation_id: str) -> Mapping[str, object] | None:
         response = self.table.get_item(
@@ -213,6 +291,75 @@ class Boto3DynamoGatewayGrantRepository:
         )
         item = response.get("Item") if isinstance(response, Mapping) else None
         return item if isinstance(item, Mapping) else None
+
+    def delete_invocation(self, invocation_id: str) -> None:
+        item = self.get_invocation(invocation_id)
+        self.table.delete_item(Key={"pk": gateway_invocation_partition_key(invocation_id), "sk": GATEWAY_GRANT_SORT_KEY})
+        if isinstance(item, Mapping):
+            self._delete_expiry_index(grant_id=invocation_id, kind="invocation", item=item)
+
+    def _put_expiry_index(self, *, grant_id: str, kind: str, item: Mapping[str, object]) -> None:
+        expires_at = item.get("expiresAt")
+        if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float, Decimal)):
+            raise ValueError("gateway expiry is invalid")
+        expires = int(expires_at)
+        self.table.put_item(
+            Item={
+                "pk": gateway_expiry_index_partition_key(expires),
+                "sk": gateway_expiry_index_sort_key(expires, kind, grant_id),
+                "entityType": GATEWAY_EXPIRY_INDEX_ENTITY,
+                "recordId": grant_id,
+                "kind": kind,
+                "verifiedSubject": item.get("verifiedSubject"),
+                "requestedMatterId": item.get("requestedMatterId"),
+                "expiresAt": expires,
+                "ttl": expires,
+            },
+        )
+
+    def _delete_expiry_index(self, *, grant_id: str, kind: str, item: Mapping[str, object]) -> None:
+        expires_at = item.get("expiresAt")
+        if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float, Decimal)):
+            return
+        expires = int(expires_at)
+        self.table.delete_item(
+            Key={
+                "pk": gateway_expiry_index_partition_key(expires),
+                "sk": gateway_expiry_index_sort_key(expires, kind, grant_id),
+            }
+        )
+
+    def list_expired_candidates(self, *, now: float, limit: int) -> tuple[Mapping[str, object], ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= 100:
+            raise ValueError("gateway expiry query limit is invalid")
+        from boto3.dynamodb.conditions import Key
+
+        cutoff = int(now)
+        # Expiry partitions are UTC-day buckets. Query today and yesterday only;
+        # DynamoDB TTL remains the bounded fallback for a missed older window.
+        items: list[Mapping[str, object]] = []
+        for day in (cutoff // 86_400, (cutoff // 86_400) - 1):
+            response = self.table.query(
+                KeyConditionExpression=(
+                    Key("pk").eq(gateway_expiry_index_partition_key(day * 86_400))
+                    & Key("sk").lte(f"EXP#{cutoff:013d}~")
+                ),
+                ProjectionExpression="#entity,#record,#kind,#subject,#matter,#expires,#pk,#sk",
+                ExpressionAttributeNames={
+                    "#entity": "entityType", "#record": "recordId", "#kind": "kind",
+                    "#subject": "verifiedSubject", "#matter": "requestedMatterId",
+                    "#expires": "expiresAt", "#pk": "pk", "#sk": "sk",
+                },
+                Limit=limit,
+                ScanIndexForward=True,
+                ConsistentRead=True,
+            )
+            page = response.get("Items", ()) if isinstance(response, Mapping) else ()
+            items.extend(item for item in page if isinstance(item, Mapping))
+            if len(items) >= limit:
+                break
+        items.sort(key=lambda item: (float(item.get("expiresAt", float("inf"))), str(item.get("sk", ""))))
+        return tuple(items[:limit])
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,11 +388,20 @@ class HarnessInvocationGrant:
             "memorySessionId": self.memory_session_id,
             "allowedTools": list(self.allowed_tools),
             "expiresAt": self.expires_at,
+            "ttl": self.expires_at,
         }
 
 
 def gateway_invocation_partition_key(invocation_id: str) -> str:
     return f"GATEWAY#INVOCATION#{invocation_id}"
+
+
+def gateway_expiry_index_partition_key(expires_at: int | float) -> str:
+    return f"GATEWAY#EXPIRY#{int(expires_at) // 86_400 * 86_400}"
+
+
+def gateway_expiry_index_sort_key(expires_at: int | float, kind: str, record_id: str) -> str:
+    return f"EXP#{int(expires_at):013d}#{kind.upper()}#{record_id}"
 
 
 def _decode_verified_subject(authorization: object) -> str:
@@ -391,11 +547,15 @@ def _resolve_invocation_binding(
         item = grant_repository.get_invocation(invocation_id)
     except Exception as exc:
         raise AuthorizationDenied("access denied") from exc
-    if not isinstance(item, Mapping) or set(item) != {
+    if not isinstance(item, Mapping) or set(item) not in ({
         "pk", "sk", "entityType", "verifiedSubject", "requestedMatterId",
         "correlationId", "memoryActorId", "memorySessionId", "allowedTools",
         "expiresAt",
-    } or any(
+    }, {
+        "pk", "sk", "entityType", "verifiedSubject", "requestedMatterId",
+        "correlationId", "memoryActorId", "memorySessionId", "allowedTools",
+        "expiresAt", "ttl",
+    }) or any(
         (
             item.get("pk") != gateway_invocation_partition_key(invocation_id),
             item.get("sk") != GATEWAY_GRANT_SORT_KEY,
@@ -415,6 +575,9 @@ def _resolve_invocation_binding(
     if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float, Decimal)):
         raise AuthorizationDenied("access denied")
     if not math.isfinite(float(expires_at)) or float(expires_at) <= time.time():
+        raise AuthorizationDenied("access denied")
+    ttl = item.get("ttl", expires_at)
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float, Decimal)) or not math.isfinite(float(ttl)):
         raise AuthorizationDenied("access denied")
     try:
         correlation_id = str(UUID(item["correlationId"]))

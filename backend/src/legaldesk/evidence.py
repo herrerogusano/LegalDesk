@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Mapping, Protocol, Sequence
@@ -38,7 +39,7 @@ EVIDENCE_RESOLUTION_FIELDS = (
 # retrieval.  Keeping the contract here prevents a caller from accidentally
 # giving it the general answer-generation instructions (which previously
 # caused the model to answer instead of resolving evidence).
-EVIDENCE_RESOLVER_PROMPT_VERSION = "1.1.0"
+EVIDENCE_RESOLVER_PROMPT_VERSION = "1.2.0"
 EVIDENCE_RESOLVER_SYSTEM_PROMPT = """You are the LegalDesk Evidence Resolver.
 
 Your only task is to inspect the user's question and the authorized passages,
@@ -57,6 +58,11 @@ Resolve evidence, do not write an answer. Use these meanings:
 - conflict: authorized passages contain materially incompatible facts relevant
   to the question. Do not mark a conflict for different wording or facts that
   apply to different dates, entities, or conditions.
+- When a passage explicitly says that a provision is amended, revised, or
+  supersedes an earlier provision for the same field and scope, treat the
+  stated replacement as the applicable value rather than a conflict. Keep
+  conflict=true when incompatible values apply to the same effective scope
+  without an explicit precedence relationship.
 
 Apply the coverage labels by relationship to the question, not by whether the
 passage contains the final requested value:
@@ -97,7 +103,7 @@ EVIDENCE_RESOLVER_PROMPT_SHA256 = hashlib.sha256(
     EVIDENCE_RESOLVER_SYSTEM_PROMPT.encode("utf-8")
 ).hexdigest()
 
-ANSWER_WRITER_PROMPT_VERSION = "1.2.0"
+ANSWER_WRITER_PROMPT_VERSION = "1.4.0"
 ANSWER_WRITER_SYSTEM_PROMPT = """You are the LegalDesk Answer Writer.
 
 Write one concise answer using only the selected authorized passages. The
@@ -121,7 +127,22 @@ Follow the fixed evidence status:
   relationship or fact and explicitly state which requested material detail is
   absent, omitted, unspecified, or otherwise not established; never guess the
   missing value and do not add a legal conclusion;
-- ambiguous: describe the documented conflict without resolving it by guess.
+- ambiguous: describe the documented conflict without resolving it by guess,
+  and preserve every material conflicting value with its unit, denomination,
+  or full date as stated in the selected evidence.
+
+Preserve documentary relationships exactly: keep each actor, action, and
+recipient in the same direction as the evidence. Never swap the parties or
+reverse who owes, sends, receives, approves, or performs an action.
+
+When the selected evidence contains a directed relationship (for example an
+obligation or a transfer), include a `relationships` array with one or more
+concise objects of the form `{"actor":"...","action":"...","recipient":"..."}`.
+Use the documentary party names and a concise action phrase from the evidence,
+including its direct object when present (for example `send written notice`).
+Never end `action` with a linking preposition such as `to`; the backend adds
+the recipient link. Do not invent a relationship, and do not use this field to
+change the answer or its fixed evidence status.
 
 Prefer neutral words already present in the question or selected evidence.
 Do not add background facts, implications, recommendations, or interpretations
@@ -135,18 +156,20 @@ do not repeat the directive; answer only with the supported fact.
 
 Provide neutral document information, not individualized legal advice. For a
 material interpretation or decision, state that qualified legal review may be
-appropriate. Return exactly one JSON object with the single key "answer" and
-a non-empty string value. Do not put citation IDs or evidence status in the
-answer object; the backend attaches those fields after validation.
+appropriate. Return exactly one JSON object with a required non-empty `answer`
+string and, when a directed relationship is present, an optional
+`relationships` array. Do not put citation IDs or evidence status in the answer
+object; the backend attaches those fields after validation.
 """
 ANSWER_WRITER_PROMPT_SHA256 = hashlib.sha256(
     ANSWER_WRITER_SYSTEM_PROMPT.encode("utf-8")
 ).hexdigest()
 
 ANSWER_WRITER_INSTRUCTION = (
-    "Write only the answer text. Evidence status and citation IDs are fixed by "
-    "the validated resolver/backend contract; do not choose, add, remove, or "
-    "rewrite them, and do not return JSON metadata."
+    "Return the required answer and, when the selected evidence contains a "
+    "directed relationship, the validated relationships array. Evidence status "
+    "and citation IDs are fixed by the validated resolver/backend contract; do "
+    "not choose, add, remove, or rewrite them."
 )
 
 # Bedrock Converse ``outputConfig.textFormat`` accepts this JSON-Schema subset.
@@ -173,7 +196,22 @@ ANSWER_WRITER_JSON_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["answer"],
-    "properties": {"answer": {"type": "string"}},
+    "properties": {
+        "answer": {"type": "string"},
+        "relationships": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["actor", "action", "recipient"],
+                "properties": {
+                    "actor": {"type": "string"},
+                    "action": {"type": "string"},
+                    "recipient": {"type": "string"},
+                },
+            },
+        },
+    },
 }
 
 
@@ -221,17 +259,172 @@ class GroundingContractError(ValueError):
     """Raised when a writer answer cannot be grounded by an approved check."""
 
 
-def validate_answer_writer_result(result: Mapping[str, object]) -> dict[str, str]:
-    """Accept only the answer-only writer contract."""
+_WRITER_RELATIONSHIP_FIELDS = frozenset({"actor", "action", "recipient"})
+_MAX_WRITER_RELATIONSHIPS = 8
+_MAX_WRITER_RELATIONSHIP_VALUE_LENGTH = 256
+_MAX_WRITER_ACTION_TOKENS = 12
+_RELATIONSHIP_TERMINAL_PREPOSITIONS = frozenset({"to", "for", "from", "by", "with"})
+_DIRECTED_MODAL_TERMS = frozenset(
+    {"must", "shall", "required", "responsible", "obliged", "obligated", "may", "should"}
+)
+_DIRECTED_ACTION_TERMS = frozenset(
+    {
+        "send", "sending", "deliver", "delivering", "provide", "providing",
+        "give", "giving", "issue", "issuing", "serve", "serving", "notify",
+        "notifying", "pay", "paying", "submit", "submitting", "transfer",
+        "transferring", "disclose", "disclosing", "report", "reporting",
+        "approve", "approving", "owe", "owing", "assign", "assigning",
+        "indemnify", "indemnifying", "reimburse", "reimbursing", "return",
+        "returning", "remit", "remitting", "furnish", "furnishing", "supply",
+        "supplying", "grant", "granting", "release", "releasing", "convey",
+        "conveying", "lend", "lending", "lease", "leasing",
+    }
+)
 
-    if (
-        not isinstance(result, Mapping)
-        or set(result) != {"answer"}
-        or not isinstance(result.get("answer"), str)
-        or not result["answer"].strip()
-    ):
+
+def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
+    """Validate the optional structured relationship projection.
+
+    This is deliberately a narrow shape check at the provider boundary. The
+    evidence/grounding adapter remains responsible for deciding whether a
+    relationship is supported and whether its direction is correct.
+    """
+
+    if not isinstance(value, (list, tuple)) or len(value) > _MAX_WRITER_RELATIONSHIPS:
+        raise EvidenceContractError("writer relationships are invalid")
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != _WRITER_RELATIONSHIP_FIELDS:
+            raise EvidenceContractError("writer relationship has an unsupported shape")
+        fields: dict[str, str] = {}
+        for field in ("actor", "action", "recipient"):
+            field_value = item.get(field)
+            if (
+                not isinstance(field_value, str)
+                or not field_value.strip()
+                or len(field_value) > _MAX_WRITER_RELATIONSHIP_VALUE_LENGTH
+                or any(ord(character) < 32 and character not in "\t\n\r" for character in field_value)
+            ):
+                raise EvidenceContractError("writer relationship value is invalid")
+            fields[field] = field_value.strip()
+        action_tokens = _relationship_tokens(fields["action"])
+        if (
+            not action_tokens
+            or len(action_tokens) > _MAX_WRITER_ACTION_TOKENS
+            or action_tokens[-1] in _RELATIONSHIP_TERMINAL_PREPOSITIONS
+        ):
+            raise EvidenceContractError("writer relationship action is invalid")
+        key = tuple(fields[field].casefold() for field in ("actor", "action", "recipient"))
+        if key in seen:
+            raise EvidenceContractError("writer relationships must be unique")
+        seen.add(key)
+        normalized.append(fields)
+    return tuple(normalized)
+
+
+def validate_answer_writer_result(result: Mapping[str, object]) -> dict[str, object]:
+    """Accept the answer contract plus an optional validated relationship projection."""
+
+    if not isinstance(result, Mapping) or not set(result).issubset({"answer", "relationships"}):
         raise EvidenceContractError("answer writer returned an unsupported shape")
-    return {"answer": result["answer"]}
+    answer = result.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        raise EvidenceContractError("answer writer returned an unsupported shape")
+    normalized: dict[str, object] = {"answer": answer}
+    if "relationships" in result:
+        normalized_relationships = _validate_writer_relationships(result["relationships"])
+        normalized["relationships"] = [dict(item) for item in normalized_relationships]
+    return normalized
+
+
+def _relationship_tokens(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def evidence_requires_relationship_projection(evidence: Sequence[object]) -> bool:
+    """Detect selected evidence whose directed obligation must be projected.
+
+    This is a deliberately conservative, server-side safety trigger. It does
+    not infer the parties; it only prevents a writer from bypassing structured
+    validation when a passage contains a modal and a supported directed legal
+    action with a following object or recipient. English permits direct objects
+    without a linking preposition (for example, ``notify the buyer``), so a
+    preposition is deliberately not required.
+    """
+
+    for item in evidence:
+        text = item.get("text") if isinstance(item, Mapping) else getattr(item, "text", None)
+        if not isinstance(text, str):
+            continue
+        tokens = _relationship_tokens(text)
+        for modal_index, token in enumerate(tokens):
+            if token not in _DIRECTED_MODAL_TERMS:
+                continue
+            for action_index in range(modal_index + 1, len(tokens)):
+                if tokens[action_index] not in _DIRECTED_ACTION_TERMS:
+                    continue
+                if action_index + 1 < len(tokens):
+                    return True
+    return False
+
+
+def validate_writer_relationships_against_evidence(
+    relationships: Sequence[Mapping[str, str]],
+    evidence: Sequence[object],
+) -> tuple[Mapping[str, str], ...]:
+    """Require each structured relation to occur in the selected evidence order.
+
+    This is intentionally a bounded evidence check, not an answer-prose
+    classifier.  Reversing actor and recipient therefore fails before the
+    writer answer can reach the public response.
+    """
+
+    normalized = _validate_writer_relationships(relationships)
+    evidence_token_sets: list[tuple[str, ...]] = []
+    for item in evidence:
+        text = item.get("text") if isinstance(item, Mapping) else getattr(item, "text", None)
+        if isinstance(text, str):
+            tokens = _relationship_tokens(text)
+            if tokens:
+                evidence_token_sets.append(tokens)
+    if not evidence_token_sets:
+        raise EvidenceContractError("writer relationship evidence is unavailable")
+
+    def contains_in_order(evidence_tokens: tuple[str, ...], parts: tuple[tuple[str, ...], ...]) -> bool:
+        position = 0
+        for part in parts:
+            if not part:
+                return False
+            for index in range(position, len(evidence_tokens) - len(part) + 1):
+                if tuple(evidence_tokens[index : index + len(part)]) == part:
+                    position = index + len(part)
+                    break
+            else:
+                return False
+        return True
+
+    for relation in normalized:
+        parts = tuple(_relationship_tokens(relation[field]) for field in ("actor", "action", "recipient"))
+        if not any(contains_in_order(tokens, parts) for tokens in evidence_token_sets):
+            raise EvidenceContractError("writer relationship is not supported in evidence order")
+    return tuple(normalized)
+
+
+def render_writer_relationships(relationships: Sequence[Mapping[str, str]]) -> str:
+    """Render a bounded canonical sentence so prose cannot reverse a relation."""
+
+    normalized = _validate_writer_relationships(relationships)
+    sentences: list[str] = []
+    modality_prefixes = ("must ", "shall ", "may ", "can ", "should ")
+    for relation in normalized:
+        actor = relation["actor"]
+        action = relation["action"].rstrip(" .")
+        recipient = relation["recipient"]
+        if not action.casefold().startswith(modality_prefixes):
+            action = f"must {action}"
+        sentences.append(f"{actor} {action} to {recipient}.")
+    return " ".join(sentences)
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,6 +663,7 @@ class GroundingRequest:
     evidence: tuple[object, ...]
     supporting_citation_ids: tuple[str, ...]
     correlation_id: str | None = None
+    relationships: tuple[Mapping[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -639,6 +833,9 @@ __all__ = [
     "answer_writer_output_config",
     "evidence_resolver_output_config",
     "validate_answer_writer_result",
+    "evidence_requires_relationship_projection",
+    "validate_writer_relationships_against_evidence",
+    "render_writer_relationships",
     "validate_evidence_resolution",
     "validate_grounding_result",
 ]
