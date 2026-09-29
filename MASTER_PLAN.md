@@ -53,14 +53,15 @@ Fases 09–10.
 
 Memoria, identidad y aislamiento comprobados.
 
-### M6 — Portfolio readiness (production gates pending)
+### M6 — Portfolio readiness (constrained promotion ready)
 Fases 11–14.
 
 Fases 11–12 acreditan componentes, evaluación acotada y checklist de demo,
 no una aplicación integrada. Fase 13 integra y verifica el recorrido local.
 Fase 14 ha desplegado y probado la beta pública autenticada. La promoción a
-`prod` sigue bloqueada hasta cerrar la evidencia semántica, los ejercicios de
-operación/recuperación y las decisiones de propiedad, retención y coste.
+`prod` está lista únicamente para el alcance restringido de usuarios
+preprovisionados y datos ficticios/públicos; no es certificación para datos
+legales reales.
 
 ## Reglas de avance
 
@@ -99,26 +100,30 @@ No confiar en el LLM para ninguna decisión de acceso.
 
 ## Estado
 
-Auditoría: `NOT_READY_FOR_PROD` (ver `docs/production-readiness.md`). Fases
-00–13 conservan su aceptación acotada. La infraestructura de beta autenticada
-de Fase 14 está desplegada y el smoke público pasó; la promoción a `prod`
-permanece cerrada hasta completar los gates restantes.
+Auditoría: `READY_FOR_CONSTRAINED_PROD_PROMOTION` (ver
+`docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.
+La infraestructura de beta autenticada de Fase 14 está desplegada y la
+evidencia final de smoke, holdout y operaciones está registrada. El TLS por
+defecto de CloudFront queda documentado como riesgo residual aceptado; no se
+afirma strict TLS ni certificación para datos legales reales.
 
-- [x] Phase 13 integration, bounded live smoke and local release hardening (413 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; fail-closed endpoint/retrieval hardening; independent holdout, production hosting/distributed state and prod promotion remain pending, NOT_READY_FOR_PROD)
+- [x] Phase 13 integration, bounded live smoke and local release hardening (413 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; fail-closed endpoint/retrieval hardening; Phase 14 promotion evidence follows the constrained-beta scope)
 
-- [ ] Phase 14 authenticated public beta architecture and production gates
+- [x] Phase 14 authenticated public beta architecture and production gates
   (`PLAN_14_PUBLIC_BETA.md`): planning tranche approved for CloudFront + private
   S3 frontend + API Gateway HTTP API + Lambda application, durable DynamoDB
   state, asynchronous ingestion, exact-origin security, and pre-provisioned
   authenticated users only; the local release candidate, bounded holdout
   runner, quarantine/reconciliation and operations controls are implemented
-  and validated (562 tests, 24/24 deterministic evaluations, all 15 templates
+  and validated (574 tests, 24/24 deterministic evaluations, all 15 templates
   lint-clean). AWS deployment and the bounded browser smoke are complete;
   bounded rollback/forward-recovery, PITR restore/delete and reconciliation
-  evidence are recorded. The final provider holdout remains 13/14 with
-  `needs_follow_up`; the synthetic malware alarm was diagnosed, remediated and
-  returned to `OK`. Strict custom-domain TLS is absent, owner decisions remain
-  open, and prod promotion remains pending.
+  evidence are recorded. The final provider holdout is 14/14 with 27 calls and
+  zero retries and has independent approved attestation v1.1.0. The synthetic
+  malware alarm was diagnosed, remediated and returned to `OK`; all 12 alarms
+  are `OK` with actions enabled. Default CloudFront TLS is an accepted residual
+  because no custom domain is owned, so this is constrained promotion readiness,
+  not strict TLS or real-legal-data certification.
 
 - [x] Phase 00
 - [x] Phase 01

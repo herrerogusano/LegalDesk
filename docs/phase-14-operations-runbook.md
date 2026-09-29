@@ -186,3 +186,24 @@ For teardown, disable alarm actions, remove the managed subscription and topic
 through the stack, and retain only the minimum release/incident evidence. Do
 not delete or modify an existing topic supplied through
 `ExistingAlarmTopicArn`; its owner controls its lifecycle.
+
+## Final4 release evidence — 2026-09-29
+
+Current status is **ready for constrained production promotion** for
+pre-provisioned authenticated users and fictional/public documents only. This
+does not certify real legal data or strict TLS.
+
+- App commit `0c8bb718e58811afff2085114dad7821cf573e3f`; artifact SHA-256
+  `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`.
+- Deployment stack `UPDATE_COMPLETE`; only Lambda Code and dynamic API
+  integration changed, with no replacement. Lambda S3 object version is
+  `.VmAi0D4.baSxBpc61lKMBFkXobwoMyf`.
+- Smoke `phase14-public-smoke-20260929-final4-02.json` passed with one chat,
+  two citations, cross-matter `403`, audit `17`, logout `200`, and no cleanup
+  errors. Report SHA-256:
+  `1431503bd4a336bf552853af4cb8eb7b87a8cc488a44e59b7542e9624281d153`.
+- Twelve alarms are `OK` and actions are enabled. Governance ownership is the
+  AWS/repository owner role for this solo project.
+- No custom domain is owned; the default CloudFront TLS residual is accepted
+  and documented, without claiming strict TLS. Anonymous signup and real
+  legal/client data remain prohibited.

@@ -1,12 +1,15 @@
 # Phase 14 resume checkpoint
 
-Recorded on 2026-09-28 after pausing the public-beta validation work.
+Recorded on 2026-09-28 after pausing the public-beta validation work. Sections
+through **Deployed state** preserve the historical checkpoint and are not the
+current release verdict; **Final4 closure — 2026-09-29** supersedes them.
 
-## Continuation result — 2026-09-28
+## Historical continuation result — 2026-09-28
 
-This checkpoint now includes the bounded evidence completed after the original
-walkthrough. The release remains a constrained authenticated beta and is not
-`READY_FOR_PROD`.
+This checkpoint records the bounded evidence completed after the original
+walkthrough. At this historical point the release was not ready for promotion;
+the later Final4 closure records the constrained-production decision. Neither
+state certifies real legal data or claims strict TLS.
 
 - Added a bounded public-browser smoke with a short-lived technical Cognito
   identity. Passwords remain process-memory-only; the runner performs no upload,
@@ -90,7 +93,7 @@ walkthrough. The release remains a constrained authenticated beta and is not
   authorized holdout. The custom domain is absent, so strict TLS remains
   blocked.
 
-## Source state
+## Historical source state
 
 - Branch: `phase/14-public-beta`
 - Current release-candidate commit used by the revised holdout preflight:
@@ -100,7 +103,7 @@ walkthrough. The release remains a constrained authenticated beta and is not
 - Local-only `.agents/`, `skills-lock.json`, and `tmp/` are intentionally not
   part of the branch.
 
-## Validation completed
+## Historical validation completed
 
 - Full local suite: 555 tests passed, 1 skipped.
 - Authenticated manual login and matter selection succeeded through CloudFront.
@@ -130,7 +133,7 @@ walkthrough. The release remains a constrained authenticated beta and is not
    that Bedrock had created no corresponding ingestion jobs. Documents and
    audit records were not removed.
 
-## Deployed state
+## Historical deployed state
 
 - `LegalDeskPhase14PublicEdge`: `UPDATE_COMPLETE`; the prior rollback artifact
   from commit `50dd36f` and forward recovery to final commit
@@ -141,15 +144,28 @@ walkthrough. The release remains a constrained authenticated beta and is not
   alarms, budget, Cognito, Gateway, Knowledge Base, and document stack remain
   deployed in `eu-west-1`.
 
-## Remaining gates
+## Final disposition of the historical gates
 
-1. The final holdout still requires a fresh explicit authorization for runner
-   `1.2.0` / adapter `2.1.0`; only a new 14/14 report with independent
-   approval can close that gate.
-2. The custom CloudFront domain/strict TLS posture is still absent and remains
-   a production transport blocker.
-3. Complete the privacy/retention and operations owner sign-offs, then create
-   the Phase 14 PR to `developer` after every gate passes. Promote `developer`
-   to `prod` only through its separate release PR.
-4. Update the shared session/vault again only after the remaining Phase 14 gates
-   are complete; the earlier checkpoint has already been saved and synced.
+1. The final4 holdout and independent attestation close the semantic gate.
+2. No custom CloudFront domain is owned; default CloudFront TLS is an accepted
+   documented residual for this constrained beta, not strict TLS.
+3. Governance signoff uses the AWS/repository owner role for this solo project.
+   Promote `developer` to `prod` only through its separate release PR.
+4. Earlier failed reports and attestations remain immutable history.
+
+## Final4 closure — 2026-09-29
+
+- Release app commit `0c8bb718e58811afff2085114dad7821cf573e3f`; artifact
+  SHA-256 `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`.
+- Holdout final4 passed 14/14 with 27 calls and zero retries. Report SHA-256
+  `503b867a355c4b95ca69cb23f5746d8b1a58935f35f7e0204cafacfcead404ef`;
+  independent approved attestation v1.1.0 SHA-256
+  `3d833232cabb1d290544009c31c7b9ecda0201264d9c331dc7d52cb799d48dc2`.
+- Passing smoke is `phase14-public-smoke-20260929-final4-02.json`: one chat,
+  two citations, cross-matter `403`, audit `17`, logout `200`,
+  `cleanupErrors=[]`; report SHA-256
+  `1431503bd4a336bf552853af4cb8eb7b87a8cc488a44e59b7542e9624281d153`.
+- Deployment is `UPDATE_COMPLETE`; only Lambda Code and dynamic API
+  integration changed, with no replacement. S3 object version:
+  `.VmAi0D4.baSxBpc61lKMBFkXobwoMyf`. All 12 alarms are `OK` with actions
+  enabled.

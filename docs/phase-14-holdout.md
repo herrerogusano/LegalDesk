@@ -189,3 +189,23 @@ separate attestation is `needs_follow_up` with the approval threshold unmet
 (SHA-256 `580b25b01f9bcacdb98d70c3ad6b8d17cd01018b9154ae863374836da06af644`).
 The local adapter correction still requires a newly authorized holdout; no
 provider result is upgraded retroactively.
+
+## Final4 approved evidence — 2026-09-29
+
+The final4 provider execution is preserved in
+`evals/results/phase14-holdout-20260929-prod-final4.json`. It is pinned to
+release commit `0c8bb718e58811afff2085114dad7821cf573e3f` and artifact SHA-256
+`99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`. All
+14 cases were accepted with exactly 27 model calls and zero retries. The
+metadata-only report SHA-256 is
+`503b867a355c4b95ca69cb23f5746d8b1a58935f35f7e0204cafacfcead404ef`.
+
+Independent approval is preserved in
+`evals/results/phase14-holdout-attestation-20260929-prod-final4-approved.json`:
+attestation v1.1.0, decision `approved`, report hash pinned, and SHA-256
+`3d833232cabb1d290544009c31c7b9ecda0201264d9c331dc7d52cb799d48dc2`.
+The approved attestation is procedural separation only; it does not expand
+the beta beyond fictional/public data or certify real legal data.
+
+All prior failed reports and non-approved attestations remain immutable history
+and are not rescored or overwritten.

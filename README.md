@@ -5,11 +5,12 @@ assistant built on Amazon Bedrock AgentCore. It demonstrates how retrieval,
 authorization, citations, tool calls and bounded agentic workflows can be
 composed without allowing the browser or the model to define access scope.
 
-> **Status: `NOT_READY_FOR_PROD`**
+> **Status: `READY_FOR_CONSTRAINED_PROD_PROMOTION`**
 >
 > This is an educational MVP, not legal advice or a production legal system.
-> Use only public or wholly fictional documents. An authenticated public-beta
-> stack is deployed, but production promotion remains gated.
+> Promotion is limited to the authenticated beta using only public or wholly
+> fictional documents and pre-provisioned users. It is not certified for real
+> legal/client data or anonymous signup.
 
 ## What it demonstrates
 
@@ -83,22 +84,26 @@ for the complete trust and data lifecycle.
 
 ## Verified evidence
 
-- **562 tests passed** in the current local release-candidate verification
+- **574 tests passed** in the current local release-candidate verification
   (`1` platform-specific symlink test skipped on Windows).
 - **24/24 deterministic evaluations passed** with zero AWS calls.
 - **All 15 CloudFormation/SAM templates pass lint**, including the public edge,
   quarantine, reconciliation and operations candidates.
-- **Final bounded AWS browser smoke: PASS** for the fixed synthetic journey:
-  Cognito login, presigned upload and indexing, factual and absent-evidence
-  RAG, citations, Gateway → MCP metadata, Gateway → Lambda review, cross-matter
-  denial, audit and logout.
-- Temporary Phase 13 smoke resources were removed and shared stacks restored.
-  The bounded 14-case holdout has been executed three times with immutable,
-  metadata-only evidence. The latest authorized run reached 13/14 with zero
-  retries; runner `1.2.0` / grounding adapter `2.1.0` contains the subsequent
-  locally tested directed-relation correction. The semantic gate remains open
-  until a newly authorized run passes 14/14 and receives independent
-  attestation.
+- **Final bounded AWS browser smoke: PASS** for the fixed synthetic journey
+  (`phase14-public-smoke-20260929-final4-02.json`, report SHA-256
+  `1431503bd4a336bf552853af4cb8eb7b87a8cc488a44e59b7542e9624281d153`): one
+  chat, two citations, cross-matter `403`, 17 audit events, logout `200`, and
+  `cleanupErrors=[]`.
+  It covered Cognito login, indexed-document display, grounded RAG, citations,
+  cross-matter denial, audit and logout. The earlier supervised walkthrough
+  separately verified presigned upload, malware validation and indexing.
+- The final metadata-only holdout `phase14-holdout-20260929-prod-final4.json`
+  passed 14/14 with 27 calls and zero retries. It is pinned to release commit
+  `0c8bb718e58811afff2085114dad7821cf573e3f` and artifact SHA-256
+  `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`; the
+  approved independent attestation v1.1.0 has SHA-256
+  `3d833232cabb1d290544009c31c7b9ecda0201264d9c331dc7d52cb799d48dc2`.
+  Earlier failed reports and attestations remain immutable history.
 
 Evidence classes, acceptance scenarios and remaining gates are recorded in the
 [Phase 13 acceptance ledger](docs/phase-13-acceptance.md). The smoke result is
@@ -140,12 +145,12 @@ docs/      Architecture, trust boundaries, acceptance and release gates
 
 ## Limits and cost considerations
 
-The repository contains both a loopback demo and a locally validated candidate
-for an authenticated public beta using CloudFront, API Gateway, Lambda and
-durable DynamoDB state. It is not yet a public service: the AWS change sets,
-real browser journey, semantic holdout, alarms/budget notifications, rollback
-exercise and owner sign-off remain release gates. Anonymous signup and real
-legal/client documents are outside the approved beta scope.
+The repository contains both a loopback demo and a deployed candidate for a
+constrained authenticated beta using CloudFront, API Gateway, Lambda and
+durable DynamoDB state. Promotion evidence is complete for this narrow scope;
+the default CloudFront TLS certificate is an accepted documented residual and
+is not claimed as strict TLS. Anonymous signup and real legal/client documents
+remain outside the approved scope.
 
 S3, S3 Vectors, DynamoDB, Bedrock, AgentCore, Lambda and CloudWatch can incur
 charges. Local tests and deterministic evaluations use no AWS calls. Any AWS

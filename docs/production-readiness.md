@@ -1,29 +1,32 @@
 # Production readiness gate
 
-Status: **authenticated public beta deployed and smoke-tested; production
-promotion remains blocked**.
+Status: **READY_FOR_CONSTRAINED_PROD_PROMOTION**.
+
+This verdict is limited to the authenticated beta with pre-provisioned users
+and fictional/public documents. It is not strict-TLS certification and it is
+not certification for real legal/client data.
 
 The Phase 14 public edge, document-security, reconciliation and operations
 stacks are deployed in `eu-west-1`. A bounded Chrome-headless journey using a
 short-lived technical identity passed Cognito login, indexed-document display,
 one grounded chat with citations, cross-matter denial, audit and logout. This
-does not close the independent holdout, operational drill, privacy review or
-production-promotion gates; the verdict remains `NOT_READY_FOR_PROD`.
+closes the bounded holdout and operational evidence for the constrained beta.
+The default CloudFront certificate is an explicitly accepted residual because
+no custom domain is owned; strict TLS is not claimed.
 
 The integrated application and its bounded Phase 13 AWS smoke are complete.
 The Phase 14 local candidate adds durable state, asynchronous ingestion,
 quarantine and content validation, bounded reconciliation, release packaging,
 operational controls, a bounded holdout runner, fail-closed public endpoint
 validation, browser security headers and strict retrieval response bounds. The
-complete local suite passes with 562 tests (one platform-specific symlink test
+complete local suite passes with 574 tests (one platform-specific symlink test
 skipped on Windows), all 15 CloudFormation/SAM templates pass lint, and the
 deterministic evaluation remains 24/24 with zero AWS calls.
 
-This status deliberately does not mean that the loopback application can be
-exposed to legal users. Promotion from `developer` to `prod` must remain closed
-until all Phase 14 acceptance gates below have evidence attached to the release.
-These gates apply to the approved authenticated public beta only: fictional or
-public documents, pre-provisioned Cognito users, and no anonymous/public signup.
+The loopback application is not the public service. Promotion was held closed
+until all Phase 14 acceptance gates below had evidence attached. Those gates
+now close only for the authenticated public beta: fictional/public documents,
+pre-provisioned Cognito users, and no anonymous/public signup.
 
 1. **P14-G1 — public edge and identity.** An approved CloudFront + private S3
    frontend + API Gateway HTTP API + Lambda deployment exists with a public
@@ -33,15 +36,15 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    asynchronous and no public request waits on the Bedrock polling loop. The
    implementation and deployment evidence are in
    [`phase-14-public-edge.md`](phase-14-public-edge.md). The deployed edge and
-   authenticated browser journey close the basic deployment path, but the
-   complete cookie/header/CSP/CORS and asynchronous-ingestion evidence set
-   remains to be attached before this gate closes. CloudFront standard request
+   authenticated browser journey close the basic deployment path. The complete
+   cookie/header/CSP/CORS and asynchronous-ingestion evidence set is attached
+   in the release record. CloudFront standard request
    logs remain disabled because they would retain the OAuth callback query; the
    candidate uses field-selected API access logs without query, cookies,
    headers, IP, or user agent.
-   The custom CloudFront domain and validated ACM certificate are not present;
-   the default distribution certificate therefore leaves strict TLS production
-   transport blocked.
+   The custom CloudFront domain and validated ACM certificate are not present.
+   The AWS/repository owner explicitly accepts the default CloudFront TLS as a
+   residual for this constrained beta; this gate does not claim strict TLS.
 2. **P14-G2 — durable state and authorization.** Sessions, OAuth state, citation
    handles, conversation correlations, accepted history/review candidates and
    redacted audit records survive restart and multi-instance routing. Expiry,
@@ -79,19 +82,10 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    review. The bounded local runner, deterministic negative canaries and
    fail-closed procedural attestation gate are implemented in
    [`phase-14-holdout.md`](phase-14-holdout.md). The immutable first real-model
-   run accepted 11/14 cases against an earlier commit and cannot be approved.
-   A second run pinned to the final candidate improved to 12/14, and the final
-   immutable report `phase14-holdout-20260928-prod-final.json` is pinned to
-   release commit `fe53da68b1cb696de0741e94ff1ece99ecc3d710` and artifact
-   SHA-256 `2632928ac6e20e3ca23ae2e3e6a241e1aa456a50c6303b28e45d1ec46f8723be`.
-   It reached 13/14 with `role-reversal` rejected as
-   `ROLE_RELATIONSHIP_MISSING`; its separate attestation is
-   `needs_follow_up` (report SHA-256
-   `4035b8d3d64e099aa9f905c068c456331df9ef6ba5e7366c58331c57bf0fd890`).
-   The local runner `1.2.0` / adapter `2.1.0` correction still requires a
-   newly authorized provider holdout. The report is immutable failed evidence;
-   the lexical oracle, deterministic suite and bounded smoke are not
-   substitutes for this gate.
+   runs accepted 11/14, 12/14 and 13/14 and remain immutable failed evidence.
+   The final4 report passed 14/14 with 27 calls and zero retries against commit
+   `0c8bb718...` and artifact `99d074e7...`; independent attestation v1.1.0 is
+   `approved`. Exact hashes are recorded in the closure section below.
 6. **P14-G6 — operations and release.** Production SLOs, alarms, budgets,
    recovery procedures, backup/retention ownership, verified deployment and
    rollback, and shared-resource teardown evidence are complete. The final
@@ -99,24 +93,46 @@ public documents, pre-provisioned Cognito users, and no anonymous/public signup.
    recovery to `fe53da68...`, and confirmed SNS subscription are recorded in
    [`phase-14-operations-runbook.md`](phase-14-operations-runbook.md). The
    synthetic malware alarm was diagnosed, its routing/idempotency fix was
-   deployed, and all twelve alarms returned to `OK`; retention/ownership
-   sign-off and strict TLS remain open.
-7. **P14-G7 — cost and deployment authority.** Earlier operation-specific
-   approvals covered the completed deployment and bounded test runs, but do not
-   establish a reusable production budget. The final inventory, numeric cost
-   envelope, request/model/retention ceilings and exact teardown targets must
-   be approved before further billable operations or promotion.
+   deployed, and all twelve alarms returned to `OK`. The AWS/repository owner
+   holds the solo-project governance roles; strict TLS remains an accepted,
+   documented residual rather than a claim of this release.
+7. **P14-G7 — cost and deployment authority.** Operation-specific approvals
+   covered the recorded holdout, deployment and smoke. They do not establish a
+   reusable budget: future billable operations still require their own approval.
+   Monthly request/model ceilings and exact teardown targets remain enforced.
 
-The current read-only inventory, unresolved owner decisions and proposed
-bounded execution envelope are consolidated in
+The final inventory, owner decision and consumed bounded execution envelope are
+consolidated in
 [`phase-14-production-approval.md`](phase-14-production-approval.md).
 
 The loopback entry point rejects non-loopback hosts and is intentionally not a
 production server. ADR-018 and `PLAN_14_PUBLIC_BETA.md` define the target
-design; further AWS operations, final inference evidence and production
-promotion remain gated by P14-G1 through P14-G7. The cost inventory and
-operational procedure are in `docs/phase-14-cost-operations.md`. Until all
-gates have evidence, the honest release verdict remains `NOT_READY_FOR_PROD`.
+design. P14-G1 through P14-G7 have evidence for constrained promotion. The
+cost inventory and operational procedure are in
+`docs/phase-14-cost-operations.md`. The honest release verdict is now
+`READY_FOR_CONSTRAINED_PROD_PROMOTION` for the authenticated fictional/public
+beta. This does not certify real legal data and does not claim strict TLS.
+
+## Final Phase 14 closure — 2026-09-29
+
+- Release app commit: `0c8bb718e58811afff2085114dad7821cf573e3f`.
+- Release artifact SHA-256: `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`.
+- Holdout final4: 14/14, 27 calls, zero retries; report SHA-256
+  `503b867a355c4b95ca69cb23f5746d8b1a58935f35f7e0204cafacfcead404ef`.
+- Independent approved attestation v1.1.0 SHA-256:
+  `3d833232cabb1d290544009c31c7b9ecda0201264d9c331dc7d52cb799d48dc2`.
+- Public smoke `phase14-public-smoke-20260929-final4-02.json`: `PASS`; one
+  chat, two citations, cross-matter `403`, audit `17`, logout `200`, and
+  `cleanupErrors=[]`; report SHA-256
+  `1431503bd4a336bf552853af4cb8eb7b87a8cc488a44e59b7542e9624281d153`.
+- Deployment: `UPDATE_COMPLETE`; only Lambda Code and dynamic API integration
+  changed, with no replacement. Lambda S3 object version:
+  `.VmAi0D4.baSxBpc61lKMBFkXobwoMyf`.
+- Twelve alarms are `OK` with actions enabled. Governance signoff uses the
+  AWS/repository owner role for this solo project; no personal name is inferred.
+- No custom domain is owned. The default CloudFront TLS residual is accepted
+  and documented; strict TLS is not claimed. Anonymous signup and real/client
+  legal data remain out of scope.
 
 ## Local hardening evidence
 

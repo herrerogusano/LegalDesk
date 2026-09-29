@@ -2,8 +2,12 @@
 
 ## Status, scope and authority
 
-Status: **authenticated public-beta infrastructure deployed and bounded
-release/operations evidence recorded; production promotion remains gated**.
+Status: **authenticated public-beta infrastructure deployed; ready for
+constrained production promotion**.
+
+This status is limited to the approved fictional/public beta. It is not a
+claim of strict TLS, broad legal accuracy, or certification for real
+legal/client data.
 
 The approved product scope is an authenticated public beta for fictional or
 public documents only. It is not a legal-data service and it does not assume
@@ -19,7 +23,7 @@ cleanup, or release promotion. The remaining gates below continue to apply.
 ## Approved target architecture
 
 ```text
-Browser -- HTTPS --> CloudFront custom domain + ACM (+ approved edge limits)
+Browser -- HTTPS --> CloudFront default hostname (+ approved edge limits)
                        |                    |
                        |                    +--> private S3 frontend bucket (OAC)
                        +--> API Gateway HTTP API --> Lambda application adapter
@@ -158,12 +162,13 @@ resources. The local candidate is `infra/cloudformation/phase-14-operations.yaml
 with the procedure in `docs/phase-14-operations-runbook.md`; it uses standard
 metrics, an optional already-owned alarm topic, and direct-email Budget alerts
 without creating SNS or dashboard resources. A bounded release exercise has
-  now recorded smoke, rollback/forward recovery, isolated PITR restore/delete,
-  reconciliation, confirmed SNS subscription, and alarm evidence; keep
-  `MalwareScanErrorsAlarm` was traced to delayed synthetic cleanup events,
-  remediated, and returned to `OK`. Keep production promotion closed while
-  semantic evidence is incomplete, strict TLS/custom-domain transport is
-  absent, and owner sign-off is pending.
+now recorded smoke, rollback/forward recovery, isolated PITR restore/delete,
+reconciliation, confirmed SNS subscription, and alarm evidence.
+`MalwareScanErrorsAlarm` was traced to delayed synthetic cleanup events,
+  remediated, and returned to `OK`; all 12 alarms are `OK` with actions
+  enabled. Governance signoff uses the AWS/repository owner role for this solo
+  project. No custom domain is owned, so the default CloudFront TLS posture is
+  an explicitly accepted residual; do not describe it as strict TLS.
 
 The public application additionally reserves a durable, fail-closed monthly
 tenant quota before uploads and potentially billable chat, ingestion, Harness,
@@ -202,10 +207,20 @@ Phase 14 is complete only when every criterion below has release evidence:
    fictional/public beta data class.
 7. **Semantic holdout:** all 14 frozen cases run against the release candidate;
    an independent reviewer signs the immutable metadata-only result and the
-   approved threshold is met or the release is rejected.
+   approved threshold is met or the release is rejected. Final4 passed 14/14
+   with 27 calls and zero retries, pinned to release commit
+   `0c8bb718e58811afff2085114dad7821cf573e3f`, artifact SHA-256
+   `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`, and
+   report SHA-256
+   `503b867a355c4b95ca69cb23f5746d8b1a58935f35f7e0204cafacfcead404ef`.
+   Independent approved attestation v1.1.0 is SHA-256
+   `3d833232cabb1d290544009c31c7b9ecda0201264d9c331dc7d52cb799d48dc2`.
 8. **Operations/release:** SLO metrics and alarms, budget alerts, recovery and
    rollback are exercised with synthetic faults; change-set/IaC review,
-   retained-resource ownership, and teardown evidence are complete.
+   retained-resource ownership, and teardown evidence are complete. Deployment
+   evidence records `UPDATE_COMPLETE`, Lambda Code and dynamic API integration
+   updates only (no replacement), and immutable S3 object version
+   `.VmAi0D4.baSxBpc61lKMBFkXobwoMyf`.
 9. **Cost gate:** the final resource inventory, numeric cost envelope, request
    limits, retention period, and teardown targets are approved before any AWS
    deployment or real-model evaluation.
