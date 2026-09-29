@@ -1,6 +1,6 @@
 # Phase 14 production-promotion decision record
 
-Status: **ready for constrained production promotion**. Updated on 2026-09-29
+Status: **CONSTRAINED_PROD_BETA_DEPLOYED**. Updated on 2026-09-29
 with the final holdout, smoke and deployment evidence. This file is not an AWS authorization and contains no
 secret, token, document body, prompt, answer or credential.
 

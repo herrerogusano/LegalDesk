@@ -1,6 +1,6 @@
 # Production readiness gate
 
-Status: **READY_FOR_CONSTRAINED_PROD_PROMOTION**.
+Status: **CONSTRAINED_PROD_BETA_DEPLOYED**.
 
 This verdict is limited to the authenticated beta with pre-provisioned users
 and fictional/public documents. It is not strict-TLS certification and it is
@@ -107,11 +107,12 @@ consolidated in
 
 The loopback entry point rejects non-loopback hosts and is intentionally not a
 production server. ADR-018 and `PLAN_14_PUBLIC_BETA.md` define the target
-design. P14-G1 through P14-G7 have evidence for constrained promotion. The
+design. P14-G1 through P14-G7 have evidence for the constrained beta. The
 cost inventory and operational procedure are in
-`docs/phase-14-cost-operations.md`. The honest release verdict is now
-`READY_FOR_CONSTRAINED_PROD_PROMOTION` for the authenticated fictional/public
-beta. This does not certify real legal data and does not claim strict TLS.
+`docs/phase-14-cost-operations.md`. The current release state is now
+`CONSTRAINED_PROD_BETA_DEPLOYED` for the authenticated fictional/public beta.
+This does not certify real legal data and does not claim strict TLS or a custom
+domain.
 
 ## Final Phase 14 closure — 2026-09-29
 

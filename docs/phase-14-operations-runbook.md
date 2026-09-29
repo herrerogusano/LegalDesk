@@ -189,9 +189,9 @@ not delete or modify an existing topic supplied through
 
 ## Final4 release evidence — 2026-09-29
 
-Current status is **ready for constrained production promotion** for
-pre-provisioned authenticated users and fictional/public documents only. This
-does not certify real legal data or strict TLS.
+Current status is **CONSTRAINED_PROD_BETA_DEPLOYED** for pre-provisioned
+authenticated users and fictional/public documents only. This does not certify
+real legal data or strict TLS/custom domains.
 
 - App commit `0c8bb718e58811afff2085114dad7821cf573e3f`; artifact SHA-256
   `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`.

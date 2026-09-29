@@ -1,9 +1,14 @@
 # LegalDesk architecture — Phase 13 application
 
+> Historical Phase 13 snapshot. Its release verdict is superseded by the
+> Phase 14 state `CONSTRAINED_PROD_BETA_DEPLOYED` in
+> [`production-readiness.md`](production-readiness.md).
+
 Phases 00–12 remain complete in their recorded component/bounded scopes.
 Phase 13 composes those services through one loopback HTTP application. Local
 provider-double integration is distinct from live AWS evidence; release status
-remains `NOT_READY_FOR_PROD` until the separately authorized cloud gate.
+at this historical checkpoint remained `NOT_READY_FOR_PROD` until the separately
+authorized cloud gate.
 
 ## Executable application
 

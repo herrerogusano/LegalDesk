@@ -100,7 +100,7 @@ No confiar en el LLM para ninguna decisión de acceso.
 
 ## Estado
 
-Auditoría: `READY_FOR_CONSTRAINED_PROD_PROMOTION` (ver
+Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
 `docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.
 La infraestructura de beta autenticada de Fase 14 está desplegada y la
 evidencia final de smoke, holdout y operaciones está registrada. El TLS por
@@ -122,7 +122,7 @@ afirma strict TLS ni certificación para datos legales reales.
   zero retries and has independent approved attestation v1.1.0. The synthetic
   malware alarm was diagnosed, remediated and returned to `OK`; all 12 alarms
   are `OK` with actions enabled. Default CloudFront TLS is an accepted residual
-  because no custom domain is owned, so this is constrained promotion readiness,
+  because no custom domain is owned, so this is a deployed constrained beta,
   not strict TLS or real-legal-data certification.
 
 - [x] Phase 00
