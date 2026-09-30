@@ -238,7 +238,8 @@
     state.reviewDetails = Object.create(null);
     state.hasAcceptedAnswer = false;
     renderReviews([]);
-    setDefaultReviewDueDate();
+    setReviewDueDateMinimum();
+    resetReviewValidation();
     setQueryLoadingState(false);
   }
 
@@ -633,27 +634,64 @@
     refreshControls();
   }
 
-  function setDefaultReviewDueDate() {
+  function setReviewDueDateMinimum() {
     const input = $("review-due-at");
     if (!input) return;
-    const date = new Date();
-    let businessDays = 0;
-    while (businessDays < 3) {
-      date.setDate(date.getDate() + 1);
-      if (date.getDay() !== 0 && date.getDay() !== 6) businessDays += 1;
-    }
-    const value = date.toISOString().slice(0, 10);
     input.min = new Date().toISOString().slice(0, 10);
-    if (!input.value) input.value = value;
   }
 
-  function setReviewReason(evidenceStatus) {
-    const reason = evidenceStatus === "insufficient_evidence"
-      ? "insufficient_evidence"
-      : evidenceStatus === "ambiguous"
-        ? "ambiguous_evidence"
-        : "user_requested_review";
-    $("review-reason").value = reason;
+  function setReviewFieldError(fieldId, errorId, message) {
+    const field = $(fieldId);
+    const error = $(errorId);
+    if (!field || !error) return;
+    field.setAttribute("aria-invalid", "true");
+    error.textContent = message;
+    error.hidden = false;
+  }
+
+  function clearReviewFieldError(fieldId, errorId) {
+    const field = $(fieldId);
+    const error = $(errorId);
+    if (field) field.setAttribute("aria-invalid", "false");
+    if (error) {
+      error.textContent = "";
+      error.hidden = true;
+    }
+    const reason = $("review-reason");
+    const due = $("review-due-at");
+    const status = $("review-form-status");
+    if (status && reason && due && reason.getAttribute("aria-invalid") !== "true" && due.getAttribute("aria-invalid") !== "true") {
+      status.textContent = "";
+      status.hidden = true;
+    }
+  }
+
+  function resetReviewValidation() {
+    [["review-reason", "review-reason-error"], ["review-due-at", "review-due-at-error"]].forEach(([fieldId, errorId]) => {
+      const field = $(fieldId);
+      const error = $(errorId);
+      if (field) field.setAttribute("aria-invalid", "false");
+      if (error) {
+        error.textContent = "";
+        error.hidden = true;
+      }
+    });
+    const status = $("review-form-status");
+    if (status) {
+      status.textContent = "";
+      status.hidden = true;
+    }
+  }
+
+  function resetReviewForm() {
+    const reason = $("review-reason");
+    if (reason) reason.value = "";
+    const note = $("review-note");
+    if (note) note.value = "";
+    const due = $("review-due-at");
+    if (due) due.value = "";
+    setReviewDueDateMinimum();
+    resetReviewValidation();
   }
 
   function hasValidReviewDueDate(value) {
@@ -664,19 +702,33 @@
     return due.getTime() >= today.getTime();
   }
 
-  function resetReviewFormAfterSubmit(reasonCode, dueAt) {
+  function validateReviewForm() {
+    resetReviewValidation();
     const reason = $("review-reason");
-    if (reason && REVIEW_REASON_LABELS[reasonCode]) reason.value = reasonCode;
-    const note = $("review-note");
-    if (note) note.value = "";
     const due = $("review-due-at");
-    if (!due) return;
-    if (hasValidReviewDueDate(dueAt)) {
-      due.value = dueAt;
-      return;
+    const reasonCode = reason ? reason.value.trim() : "";
+    const dueAt = due ? due.value.trim() : "";
+    let firstInvalid = null;
+    if (!reasonCode) {
+      setReviewFieldError("review-reason", "review-reason-error", "Selecciona un motivo.");
+      firstInvalid = reason;
     }
-    due.value = "";
-    setDefaultReviewDueDate();
+    if (!dueAt) {
+      setReviewFieldError("review-due-at", "review-due-at-error", "Indica una fecha objetivo.");
+      if (!firstInvalid) firstInvalid = due;
+    } else if (!hasValidReviewDueDate(dueAt)) {
+      setReviewFieldError("review-due-at", "review-due-at-error", "Usa una fecha objetivo de hoy o posterior.");
+      if (!firstInvalid) firstInvalid = due;
+    }
+    if (!firstInvalid) return true;
+    const status = $("review-form-status");
+    if (status) {
+      status.textContent = "Revisa los campos marcados antes de guardar la revisión.";
+      status.hidden = false;
+    }
+    setMessage("Revisa los campos marcados antes de guardar la revisión.", true);
+    try { firstInvalid.focus({ preventScroll: true }); } catch (_error) { firstInvalid.focus(); }
+    return false;
   }
 
   function focusNewReview(reviewTaskId) {
@@ -934,7 +986,7 @@
       } else {
         window.LegalDeskCitationPanel.renderChatResponse(response);
         state.hasAcceptedAnswer = Boolean(response && response.operationStatus === "ok" && response.evidenceStatus && ["answerable", "ambiguous", "insufficient_evidence"].includes(response.evidenceStatus));
-        setReviewReason(response.evidenceStatus);
+        resetReviewForm();
         setMessage("Consulta completada. Puedes guardar esta respuesta para revisión.", false);
       }
       refreshControls();
@@ -985,7 +1037,7 @@
     const reasonCode = $("review-reason").value;
     const dueAt = $("review-due-at").value;
     const note = $("review-note").value.trim();
-    if (!$("review-reason").value || !dueAt) return setMessage("Indica un motivo y una fecha objetivo para guardar la revisión.", true);
+    if (!validateReviewForm()) return;
     if (reviewButton) {
       reviewButton.textContent = "Guardando…";
       reviewButton.disabled = true;
@@ -995,7 +1047,7 @@
     try {
       const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews`, { method: "POST", body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, reasonCode, note, dueAt, originCorrelationId: state.correlationId, idempotencyKey: `${state.conversationId}:${state.correlationId}:review` }), signal: state.controller.signal });
       if (isCurrent(generation)) {
-        resetReviewFormAfterSubmit(reasonCode, dueAt);
+        resetReviewForm();
         await loadReviews(generation);
         if (isCurrent(generation)) {
           setMessage(`Revisión guardada en estado Pendiente. Fecha objetivo: ${formatReviewDate(dueAt)}. No se ha asignado ni notificado automáticamente.`, false, "success");
@@ -1071,6 +1123,8 @@
       }
     }));
     $("metadata-button").addEventListener("click", metadata);
+    $("review-reason").addEventListener("change", () => clearReviewFieldError("review-reason", "review-reason-error"));
+    $("review-due-at").addEventListener("input", () => clearReviewFieldError("review-due-at", "review-due-at-error"));
     $("review-button").addEventListener("click", requestReview);
     $("audit-button").addEventListener("click", audit);
     $("sync-button").addEventListener("click", async () => {
@@ -1099,7 +1153,7 @@
         await loadDocuments(generation);
       } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
     });
-    setDefaultReviewDueDate();
+    setReviewDueDateMinimum();
     refreshControls();
     loadMe().catch((error) => setMessage(error.message, true));
   });
