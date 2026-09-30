@@ -14,6 +14,17 @@ const IDP_HOST = process.env.LEGALDESK_P14_IDP_HOST || "";
 const USERNAME = process.env.LEGALDESK_P14_USERNAME;
 const PASSWORD = process.env.LEGALDESK_P14_PASSWORD;
 const APPROVED = process.env.LEGALDESK_P14_AUTH_ONLY_APPROVED === "1";
+let stage = "startup";
+
+const SAFE_CATEGORIES = new Set([
+  "auth_only_gate_required", "invalid_public_origin", "invalid_idp_host", "missing_credentials",
+  "cognito_login_controls", "first_login_session", "logout_response", "provider_logout_not_requested",
+  "provider_logout_uri", "provider_logout_params", "local_session_survived",
+]);
+
+function setStage(value) {
+  stage = value;
+}
 
 function validOrigin(value) {
   try {
@@ -27,6 +38,15 @@ function validOrigin(value) {
 function safeErrorType(error) {
   const allowed = new Set(["Error", "TimeoutError", "TypeError", "ReferenceError", "RangeError", "AssertionError"]);
   return error && allowed.has(error.name) ? error.name : "UnknownError";
+}
+
+function safeCategory(error) {
+  const message = error && typeof error.message === "string" ? error.message : "";
+  if (SAFE_CATEGORIES.has(message)) return message;
+  if (/locator|selector|visible|click|fill/i.test(message)) return "selector_failure";
+  if (/goto|waitForURL|navigation|net::|ERR_FAILED|connection|response/i.test(message)) return "navigation_or_network_failure";
+  if (error && error.name === "AssertionError") return "assertion_failure";
+  return "unexpected_failure";
 }
 
 function validateInputs() {
@@ -63,8 +83,10 @@ async function run() {
       } catch (_error) { /* closed diagnostic only */ }
     });
 
+    setStage("login");
     await page.goto(base.toString(), { waitUntil: "domcontentloaded", timeout: 120_000 });
     await page.locator("#login-button").click();
+    setStage("login_form");
     await waitForFirstVisible(page, ["input[name='username']", "input[type='email']", "#signInFormUsername"], { timeout: 120_000 });
     const username = await findFirstVisible(page, ["input[name='username']", "input[type='email']", "#signInFormUsername"]);
     const password = await findFirstVisible(page, ["input[name='password']", "#signInFormPassword"]);
@@ -72,14 +94,18 @@ async function run() {
     if (!username || !password || !submit) throw new Error("cognito_login_controls");
     await username.fill(USERNAME);
     await password.fill(PASSWORD);
+    setStage("login_submit");
     await submit.click();
+    setStage("callback");
     await page.waitForURL(url => url.origin === base.origin && ["/", "/index.html"].includes(url.pathname), { timeout: 120_000 });
+    setStage("bootstrap");
     const me = await page.evaluate(async () => {
       const response = await fetch("/api/me", { credentials: "same-origin" });
       return response.status;
     });
     if (me !== 200) throw new Error("first_login_session");
 
+    setStage("local_logout");
     const providerLogoutRequestPromise = page.waitForRequest(request => {
       try {
         const url = new URL(request.url());
@@ -107,9 +133,16 @@ async function run() {
     await page.locator("#logout-button").click();
     const logoutResponse = await logoutResponsePromise;
     if (!logoutResponse.ok()) throw new Error("logout_response");
+    setStage("provider_logout");
     await providerLogoutRequestPromise;
+    setStage("landing");
     await landingResponsePromise;
     await page.waitForURL(url => url.origin === base.origin && ["/", "/index.html"].includes(url.pathname), { timeout: 120_000 });
+    // A URL match alone can still refer to the pre-logout document during
+    // redirect processing. Its login button is hidden while authenticated;
+    // wait for the returned logged-out page before evaluating a fetch.
+    await page.locator("#login-button").waitFor({ state: "visible", timeout: 30_000 });
+    await page.waitForLoadState("domcontentloaded");
     if (!providerLogoutUrl) throw new Error("provider_logout_not_requested");
     if (providerLogoutUrl.searchParams.get("logout_uri") !== `${BASE_URL.replace(/\/$/, "")}/logout`) throw new Error("provider_logout_uri");
     if (!providerLogoutUrl.searchParams.get("client_id") || [...providerLogoutUrl.searchParams.keys()].some(key => !["client_id", "logout_uri"].includes(key))) throw new Error("provider_logout_params");
@@ -118,6 +151,7 @@ async function run() {
 
     // If Cognito retained its hosted-UI cookie, this click redirects straight
     // back to the app. A visible username form proves provider logout worked.
+    setStage("second_login");
     await page.locator("#login-button").click();
     await waitForFirstVisible(page, ["input[name='username']", "input[type='email']", "#signInFormUsername"], { timeout: 120_000 });
     return { result: "PASS", smoke: "phase14-logout-auth-only", logoutStatus: logoutResponse.status(), providerLogoutPath: providerLogoutUrl.pathname, secondLoginFormVisible: true };
@@ -131,7 +165,7 @@ async function run() {
   try {
     process.stdout.write(JSON.stringify(await run()) + "\n");
   } catch (error) {
-    process.stdout.write(JSON.stringify({ result: "FAIL", smoke: "phase14-logout-auth-only", category: error && error.message && /^[a-z0-9_]+$/.test(error.message) ? error.message : "logout_smoke_failed", errorType: safeErrorType(error) }) + "\n");
+    process.stdout.write(JSON.stringify({ result: "FAIL", smoke: "phase14-logout-auth-only", stage, category: safeCategory(error), errorType: safeErrorType(error) }) + "\n");
     process.exitCode = 1;
   }
 })();
