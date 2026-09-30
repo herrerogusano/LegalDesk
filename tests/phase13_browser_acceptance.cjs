@@ -125,9 +125,45 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.match(await page.locator("#reviews-pending .review-item-body").innerText(), /fictional\.txt/);
     // Review details keep native keyboard semantics while motion is reversible.
     await page.locator("#reviews-pending details").first().locator("summary").focus();
+    const closeGeometryPromise = page.evaluate(async () => new Promise(resolve => {
+      const samples = [];
+      let frame = 0;
+      const sample = () => {
+        const details = document.querySelector("#reviews-pending details[open]");
+        const summary = details?.querySelector("summary");
+        const body = details?.querySelector(".review-item-body");
+        samples.push({ open: Boolean(details), y: summary?.getBoundingClientRect().y, height: body?.getBoundingClientRect().height });
+        if (++frame < 24) requestAnimationFrame(sample);
+        else resolve(samples);
+      };
+      requestAnimationFrame(sample);
+    }));
     await page.keyboard.press("Enter");
+    const closeGeometry = await closeGeometryPromise;
+    const closeVisible = closeGeometry.filter(sample => sample.open && Number.isFinite(sample.height));
+    assert.ok(closeVisible.length > 4, "close motion should expose measurable body frames");
+    assert.ok(Math.max(...closeVisible.map(sample => sample.y)) - Math.min(...closeVisible.map(sample => sample.y)) <= 1, "summary should stay anchored while closing");
+    assert.ok(closeVisible.every((sample, index) => index === 0 || sample.height <= closeVisible[index - 1].height + 1), "body height should collapse monotonically");
     await page.waitForFunction(() => !document.querySelector("#reviews-pending details")?.open);
+    const openGeometryPromise = page.evaluate(async () => new Promise(resolve => {
+      const samples = [];
+      let frame = 0;
+      const sample = () => {
+        const details = document.querySelector("#reviews-pending details[open]");
+        const summary = details?.querySelector("summary");
+        const body = details?.querySelector(".review-item-body");
+        samples.push({ open: Boolean(details), y: summary?.getBoundingClientRect().y, height: body?.getBoundingClientRect().height });
+        if (++frame < 24) requestAnimationFrame(sample);
+        else resolve(samples);
+      };
+      requestAnimationFrame(sample);
+    }));
     await page.keyboard.press("Enter");
+    const openGeometry = await openGeometryPromise;
+    const openVisible = openGeometry.filter(sample => sample.open && Number.isFinite(sample.height));
+    assert.ok(openVisible.length > 4, "open motion should expose measurable body frames");
+    assert.ok(Math.max(...openVisible.map(sample => sample.y)) - Math.min(...openVisible.map(sample => sample.y)) <= 1, "summary should stay anchored while opening");
+    assert.ok(openVisible.every((sample, index) => index === 0 || sample.height >= openVisible[index - 1].height - 1), "body height should expand monotonically");
     await page.waitForFunction(() => document.querySelector("#reviews-pending details")?.open);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.keyboard.press("Enter");
@@ -186,6 +222,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.unroute(`**/api/matters/matter-integration/reviews/${reviewTaskId}`);
     assert.equal(await page.locator(`#reviews-pending details[data-review-id="${reviewTaskId}"]`).count(), 0);
     assert.equal(await page.locator(`#reviews-resolved details[data-review-id="${reviewTaskId}"]`).count(), 1);
+    const resolvedSummary = page.locator(`#reviews-resolved details[data-review-id="${reviewTaskId}"] summary`);
+    await resolvedSummary.click();
+    await resolvedSummary.press("Enter");
+    await resolvedSummary.press("Enter");
+    await page.waitForFunction((id) => {
+      const details = document.querySelector(`#reviews-resolved details[data-review-id="${id}"]`);
+      const body = details?.querySelector(".review-item-body");
+      return details?.open && body && body.getBoundingClientRect().height > 20 && !body.style.height;
+    }, reviewTaskId);
     await page.locator("#audit-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("grounding_validate"));
     assert.ok((await page.locator("#history-list").innerText()).includes("four years"));

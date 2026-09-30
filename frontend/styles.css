@@ -206,7 +206,7 @@ select[aria-invalid="true"], input[aria-invalid="true"] { border-color: var(--ox
 .review-queues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; margin-top: 28px; }
 .review-queues h3 { margin: 0 0 12px; color: var(--navy); font: 600 13px/1.3 var(--body); letter-spacing: .08em; text-transform: uppercase; }
 .review-list { display: grid; gap: 10px; list-style: none; margin: 0; padding: 0; }
-.review-item { border: 1px solid var(--line); background: rgb(250 248 242 / 72%); }
+.review-item { border: 1px solid var(--line); background: rgb(250 248 242 / 72%); overflow-anchor: none; }
 .review-item--motion-clone { position: fixed; z-index: 20; pointer-events: none; margin: 0; transform-origin: top left; box-shadow: 0 14px 28px rgb(35 57 71 / 16%); }
 .review-item[data-urgency="overdue"] { border-left: 4px solid var(--oxblood); }
 .review-item[data-urgency="today"] { border-left: 4px solid #9a6a19; }
@@ -221,13 +221,14 @@ select[aria-invalid="true"], input[aria-invalid="true"] { border-color: var(--ox
 .review-item summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 11px 13px; cursor: pointer; list-style: none; }
 .review-item summary::-webkit-details-marker { display: none; }
 .review-item summary::after { content: "+"; color: var(--oxblood); font: 600 18px/1 var(--body); }
-.review-item[open] summary::after { content: "−"; }
+.review-item details[open] summary::after { content: "−"; }
 .review-item summary:focus-visible { outline: 3px solid var(--oxblood); outline-offset: -3px; }
 .review-item summary:hover { background: var(--paper-deep); }
 .review-item summary:active { background: var(--paper); }
 .review-item-title { display: block; color: var(--navy); font-weight: 700; }
 .review-item-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.35; }
-.review-item-body { border-top: 1px solid var(--line); padding: 14px; }
+.review-item-body { overflow: hidden; border-top: 1px solid var(--line); padding: 0; }
+.review-item-body-content { padding: 14px; }
 .review-item-body p { margin: 0 0 12px; color: var(--navy); line-height: 1.5; }
 .review-item-body p:last-of-type { margin-bottom: 0; }
 .review-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -288,7 +289,7 @@ select[aria-invalid="true"], input[aria-invalid="true"] { border-color: var(--ox
 .document-item[data-status="INDEXED"] .document-status { color: var(--green); font-weight: 700; }
 .document-item[data-status="FAILED"] .document-status { color: var(--oxblood); font-weight: 700; }
 .operator-output { min-height: 50px; max-height: 220px; margin: 14px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font: 11px/1.45 var(--body); }
-.technical-diagnostics { min-width: 0; overflow: hidden; border: 1px solid var(--line); background: rgb(250 248 242 / 72%); }
+.technical-diagnostics { min-width: 0; overflow: hidden; border: 1px solid var(--line); background: rgb(250 248 242 / 72%); overflow-anchor: none; }
 .technical-diagnostics summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 14px 16px; cursor: pointer; list-style: none; transition: background-color 160ms ease, border-color 160ms ease; }
 .technical-diagnostics summary::-webkit-details-marker { display: none; }
 .technical-diagnostics summary:hover { background: var(--paper-deep); }

@@ -560,33 +560,40 @@
   function cleanDetailsAnimation(details) {
     const body = details.querySelector(".review-item-body, .technical-diagnostics-body");
     if (body) body.style.removeProperty("opacity");
-    if (body) body.style.removeProperty("transform");
-    if (body) body.style.removeProperty("clip-path");
     if (body) body.style.removeProperty("height");
     if (body) body.style.removeProperty("overflow");
   }
 
-  function animateReviewDetails(details, opening) {
+  function animateReviewDetails(details, opening, options) {
     const body = details.querySelector(".review-item-body, .technical-diagnostics-body");
+    const previous = detailsMotion.get(details);
     if (!body || reducedMotionPreferred()) {
+      if (previous && previous.animation) previous.animation.cancel();
+      detailsMotion.delete(details);
       cleanDetailsAnimation(details);
       return Promise.resolve();
     }
-    const previous = detailsMotion.get(details);
     const renderedHeight = body.getBoundingClientRect().height;
-    if (previous && previous.animation) previous.animation.cancel();
-    const naturalHeight = body.getBoundingClientRect().height;
-    const startHeight = previous ? renderedHeight : opening ? 0 : naturalHeight;
+    if (previous && previous.animation) {
+      previous.animation.cancel();
+      // An interrupted first opening may still have its synchronous 0px
+      // priming height. Reveal the natural box before measuring the next leg.
+      body.style.removeProperty("height");
+    }
+    const naturalHeight = options && Number.isFinite(options.naturalHeight) ? options.naturalHeight : body.getBoundingClientRect().height;
+    const startHeight = options && Number.isFinite(options.startHeight)
+      ? options.startHeight
+      : previous ? renderedHeight : opening ? 0 : naturalHeight;
     body.style.overflow = "hidden";
     const animation = body.animate(
       opening
         ? [
-          { height: `${startHeight}px`, opacity: 0, transform: "translateY(-6px)", clipPath: "inset(0 0 8% 0)" },
-          { height: `${naturalHeight}px`, opacity: 1, transform: "translateY(0)", clipPath: "inset(0 0 0 0)" },
+          { height: `${startHeight}px` },
+          { height: `${naturalHeight}px` },
         ]
         : [
-          { height: `${startHeight}px`, opacity: 1, transform: "translateY(0)", clipPath: "inset(0 0 0 0)" },
-          { height: "0px", opacity: 0, transform: "translateY(-4px)", clipPath: "inset(0 0 8% 0)" },
+          { height: `${startHeight}px` },
+          { height: "0px" },
         ],
       { duration: motionTiming("--motion-duration-details", 240), easing: motionEasing("--motion-ease-emphasized", "cubic-bezier(.22, 1, .36, 1)"), fill: "both" },
     );
@@ -599,6 +606,25 @@
         cleanDetailsAnimation(details);
       }
     });
+  }
+
+  function openAnimatedDetails(details) {
+    if (details.open) return;
+    if (reducedMotionPreferred()) {
+      details.open = true;
+    } else {
+      details.dataset.motionOpening = "true";
+      details.open = true;
+      const body = details.querySelector(".review-item-body, .technical-diagnostics-body");
+      const naturalHeight = body ? body.getBoundingClientRect().height : 0;
+      if (body) {
+        body.style.overflow = "hidden";
+        body.style.height = "0px";
+      }
+      animateReviewDetails(details, true, { naturalHeight, startHeight: 0 });
+    }
+    const reviewId = details.dataset.reviewId;
+    if (reviewId && !state.reviewDetails[reviewId]) loadReviewDetail(reviewId, details);
   }
 
   function animateDetailsClose(details) {
@@ -631,7 +657,11 @@
     if (!summary || summary.dataset.motionBound === "true") return;
     summary.dataset.motionBound = "true";
     summary.addEventListener("click", (event) => {
-      if (!details.open) return;
+      if (!details.open) {
+        event.preventDefault();
+        openAnimatedDetails(details);
+        return;
+      }
       event.preventDefault();
       animateDetailsClose(details);
     });
@@ -642,6 +672,10 @@
       }
       if (details.dataset.motionRestore) {
         delete details.dataset.motionRestore;
+        return;
+      }
+      if (details.dataset.motionOpening) {
+        delete details.dataset.motionOpening;
         return;
       }
       if (details.dataset.motionCommit) return;
@@ -757,16 +791,18 @@
 
     const body = document.createElement("div");
     body.className = "review-item-body";
+    const bodyContent = document.createElement("div");
+    bodyContent.className = "review-item-body-content";
     const snapshot = task && task.snapshot && typeof task.snapshot === "object" ? task.snapshot : null;
     if (!snapshot) {
       const stateMessage = document.createElement("p");
       stateMessage.className = "review-detail-state";
       stateMessage.setAttribute("role", "status");
       stateMessage.textContent = "Abre esta revisión para cargar la respuesta y sus fuentes autorizadas.";
-      body.append(stateMessage);
+      bodyContent.append(stateMessage);
     } else {
-      appendReviewField(body, "Pregunta", snapshot.question);
-      appendReviewField(body, "Respuesta guardada", snapshot.answer);
+      appendReviewField(bodyContent, "Pregunta", snapshot.question);
+      appendReviewField(bodyContent, "Respuesta guardada", snapshot.answer);
     }
     const citations = snapshot && Array.isArray(snapshot.citations) ? snapshot.citations : [];
     if (snapshot && citations.length) {
@@ -786,11 +822,11 @@
         citationList.append(citationItem);
       });
       citationWrap.append(citationList);
-      body.append(citationWrap);
+      bodyContent.append(citationWrap);
     }
     if (snapshot) {
-      appendReviewField(body, "Nota de solicitud", task.note);
-      if (task.status === "closed") appendReviewField(body, "Nota de resolución", task.resolutionNote);
+      appendReviewField(bodyContent, "Nota de solicitud", task.note);
+      if (task.status === "closed") appendReviewField(bodyContent, "Nota de resolución", task.resolutionNote);
     }
 
     if (task.status !== "closed" && typeof task.reviewTaskId === "string") {
@@ -826,8 +862,9 @@
       close.disabled = updating;
       resolution.append(resolutionLabel, resolutionInput);
       actions.append(resolution, close);
-      body.append(actions);
+      bodyContent.append(actions);
     }
+    body.append(bodyContent);
     details.append(body);
     bindAnimatedDetails(details);
     item.append(details);
@@ -838,9 +875,10 @@
     if (state.reviewDetails[reviewTaskId]) return;
     if (state.reviewDetailRequests[reviewTaskId]) return state.reviewDetailRequests[reviewTaskId];
     const body = details.querySelector(".review-item-body");
+    const bodyContent = body && body.querySelector(".review-item-body-content") || body;
     const loading = Object.assign(document.createElement("p"), { className: "review-detail-state", textContent: "Cargando detalle de la revisión…" });
     loading.setAttribute("role", "status");
-    body.replaceChildren(loading);
+    bodyContent.replaceChildren(loading);
     const generation = currentGeneration();
     const request = (async () => {
       try {
@@ -854,7 +892,7 @@
         if (error.name !== "AbortError" && isCurrent(generation) && details.isConnected) {
           const errorNode = Object.assign(document.createElement("p"), { className: "review-detail-state review-detail-error", textContent: `${error.message} Puedes cerrar y volver a abrir para reintentarlo.` });
           errorNode.setAttribute("role", "alert");
-          body.replaceChildren(errorNode);
+          bodyContent.replaceChildren(errorNode);
         }
       } finally {
         if (state.reviewDetailRequests[reviewTaskId] === request) delete state.reviewDetailRequests[reviewTaskId];
@@ -1382,7 +1420,7 @@
       if (!details) return;
       event.preventDefault();
       details.closest(".review-item").scrollIntoView({ behavior: reducedMotionPreferred() ? "auto" : "smooth", block: "center" });
-      details.open = true;
+      openAnimatedDetails(details);
       try { details.querySelector("summary").focus({ preventScroll: true }); } catch (_error) { details.querySelector("summary").focus(); }
     });
     $("login-button").addEventListener("click", () => { window.location.assign("/login"); });
