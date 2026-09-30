@@ -60,11 +60,32 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.match(await page.locator("#technical-diagnostics summary").innerText(), /Ocultar herramientas/);
     assert.match(await page.locator("#technical-diagnostics summary").innerText(), /2 herramientas/i);
     assert.equal(await page.locator("#technical-diagnostics #review-button").count(), 0);
+    let reviewPostCount = 0;
+    page.on("request", request => {
+      if (request.method() === "POST" && request.url().includes("/api/matters/matter-integration/reviews")) reviewPostCount += 1;
+    });
+    await page.locator("#review-button").click();
+    await page.waitForFunction(() => {
+      const reason = document.querySelector("#review-reason");
+      const due = document.querySelector("#review-due-at");
+      return reason?.getAttribute("aria-invalid") === "true"
+        && due?.getAttribute("aria-invalid") === "true"
+        && !document.querySelector("#review-reason-error")?.hidden
+        && !document.querySelector("#review-due-at-error")?.hidden
+        && document.activeElement === reason;
+    });
+    assert.equal(reviewPostCount, 0);
+    assert.match(await page.locator("#review-reason-error").innerText(), /Selecciona un motivo/);
+    assert.match(await page.locator("#review-due-at-error").innerText(), /fecha objetivo/);
+    assert.match(await page.locator("#review-reason").getAttribute("aria-describedby"), /review-reason-error/);
+    assert.match(await page.locator("#review-due-at").getAttribute("aria-describedby"), /review-due-at-error/);
+    assert.match(await page.locator("#review-form-status").innerText(), /Revisa los campos marcados/);
     await page.locator("#metadata-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("fictional.txt"));
     await page.locator("#review-reason").selectOption("user_requested_review");
     await page.locator("#review-note").fill("Revisar el cómputo con criterio profesional.");
-    const dueAtBeforeSubmit = await page.locator("#review-due-at").inputValue();
+    const dueAtBeforeSubmit = await page.locator("#review-due-at").getAttribute("min");
+    await page.locator("#review-due-at").fill(dueAtBeforeSubmit);
     let reviewPostSeen = false;
     await page.route("**/api/matters/matter-integration/reviews", async route => {
       if (route.request().method() === "POST" && !reviewPostSeen) {
@@ -86,8 +107,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.waitForFunction(() => document.querySelector("#app-status").textContent.includes("Revisión guardada en estado Pendiente"));
     await page.waitForFunction(() => document.querySelector("#reviews-pending").textContent.includes("Pendiente"));
     assert.equal(await page.locator("#review-note").inputValue(), "");
-    assert.equal(await page.locator("#review-reason").inputValue(), "user_requested_review");
-    assert.equal(await page.locator("#review-due-at").inputValue(), dueAtBeforeSubmit);
+    assert.equal(await page.locator("#review-reason").inputValue(), "");
+    assert.equal(await page.locator("#review-due-at").inputValue(), "");
     await page.waitForFunction((reviewTaskId) => {
       const details = Array.from(document.querySelectorAll("#reviews-pending details[data-review-id]"))
         .find(candidate => candidate.dataset.reviewId === reviewTaskId);

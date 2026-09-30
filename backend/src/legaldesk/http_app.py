@@ -57,6 +57,7 @@ from .review_tasks import (
     ReviewTaskError,
     ReviewReasonCode,
     MAX_REVIEW_NOTE_LENGTH,
+    parse_review_task_input,
     default_due_at,
 )
 from .state import (
@@ -545,7 +546,7 @@ class LoopbackLegalDeskApp:
                 if method == "GET":
                     return self._review_list(environ, identity, matter_id, session)
                 if method == "POST":
-                    return self._review_create(environ, identity, matter_id, session)
+                    return self._review_create(environ, identity, matter_id, session, require_explicit_due=True)
             if len(parts) == 6 and parts[4] == "reviews" and method == "GET":
                 return self._review_get(environ, identity, matter_id, parts[5], session)
             if len(parts) == 6 and parts[4] == "reviews" and method in {"PATCH", "POST"}:
@@ -929,7 +930,15 @@ class LoopbackLegalDeskApp:
             raise ReviewTaskError("review task unavailable")
         return dict(payload, correlationId=context.correlation_id)
 
-    def _review_create(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, session: SessionRecord):
+    def _review_create(
+        self,
+        environ: Mapping[str, Any],
+        identity: VerifiedIdentity,
+        matter_id: str,
+        session: SessionRecord,
+        *,
+        require_explicit_due: bool = True,
+    ):
         data = dict(self._body(environ))
         allowed = {"conversationId", "sessionId", "reasonCode", "note", "dueAt", "idempotencyKey", "originCorrelationId"}
         if set(data) - allowed or not isinstance(data.get("reasonCode"), str):
@@ -941,6 +950,17 @@ class LoopbackLegalDeskApp:
         note = data.get("note", "")
         if not isinstance(note, str) or len(note) > MAX_REVIEW_NOTE_LENGTH:
             raise ValueError("review note is invalid")
+        due_at = data.get("dueAt")
+        if require_explicit_due and (not isinstance(due_at, str) or not due_at.strip()):
+            # The public workflow requires an explicit target date. Keep this
+            # route stricter than the legacy tool contract, which intentionally
+            # permits callers to omit dueAt for backwards compatibility.
+            raise ValueError("review due date is required")
+        if due_at is not None:
+            try:
+                parse_review_task_input({"reasonCode": data["reasonCode"], "note": note, "dueAt": due_at})
+            except ReviewTaskError as exc:
+                raise ValueError("review due date is invalid") from exc
         conversation_id, session_id = data.get("conversationId"), data.get("sessionId")
         context, binding = self._review_binding(identity, matter_id, session, conversation_id, session_id, data.get("originCorrelationId"))
         candidate_entry = self.state_store.get_review_candidate(
@@ -951,7 +971,6 @@ class LoopbackLegalDeskApp:
             # No accepted server-side answer means there is no review task to
             # create; client-supplied snapshots are deliberately ignored.
             raise ReviewTaskError("accepted answer unavailable")
-        due_at = data.get("dueAt")
         if due_at is None:
             due_at = default_due_at().isoformat()
         arguments: dict[str, object] = {
@@ -1009,7 +1028,7 @@ class LoopbackLegalDeskApp:
     def _review(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, session: SessionRecord):
         """Compatibility route retained for the Phase 13 manual demo."""
 
-        return self._review_create(environ, identity, matter_id, session)
+        return self._review_create(environ, identity, matter_id, session, require_explicit_due=False)
 
     def _invoke_harness_tool(self, binding: Any, request: Mapping[str, object], *, application_action: str, expected_tool: str | None = None) -> dict[str, object]:
         if self.composition.harness_invoker is None:

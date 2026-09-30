@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import date, timedelta
 from unittest.mock import patch
 from urllib.request import Request, urlopen
 
@@ -280,7 +281,7 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         status, _, _ = self.request("POST", "/api/matters/matter-integration/reviews", forged, csrf=self.csrf)
         self.assertEqual(status, 400)
         status, created, _ = self.request("POST", "/api/matters/matter-integration/reviews", {
-            "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "reasonCode": "user_requested_review", "note": "Comprobar el cómputo.", "originCorrelationId": origin,
+            "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "reasonCode": "user_requested_review", "note": "Comprobar el cómputo.", "dueAt": (date.today() + timedelta(days=1)).isoformat(), "originCorrelationId": origin,
         }, csrf=self.csrf)
         self.assertEqual(status, 201, created)
         self.assertEqual(created["status"], "open")
@@ -318,9 +319,25 @@ class Phase13JourneySecurityTests(unittest.TestCase):
         scope = self.start()
         status, body, _ = self.request("POST", "/api/matters/matter-integration/reviews", {
             "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "reasonCode": "user_requested_review",
+            "dueAt": (date.today() + timedelta(days=1)).isoformat(),
         }, csrf=self.csrf)
         self.assertEqual(status, 400)
         self.assertEqual(body, {"error": "review_task_failed"})
+
+    def test_review_workflow_requires_due_date_before_gateway(self):
+        scope = self.start()
+        self.upload()
+        self.ask(scope)
+        transport = self.app.composition.gateway_invoker.transport
+        gateway_count = len(transport.calls)
+        for due_fields in ({}, {"dueAt": "   "}):
+            status, body, _ = self.request("POST", "/api/matters/matter-integration/reviews", {
+                "conversationId": scope["conversationId"], "sessionId": scope["sessionId"], "reasonCode": "user_requested_review", **due_fields,
+            }, csrf=self.csrf)
+            self.assertEqual(status, 400)
+            self.assertEqual(body, {"error": "invalid_request"})
+        self.assertEqual(len(transport.calls), gateway_count)
+        self.assertEqual([item for item in self.fixture.table.items.values() if item.get("entityType") == "ReviewTask"], [])
 
     def test_guessed_metadata_and_forged_origin_never_invoke_gateway(self):
         scope = self.start()
