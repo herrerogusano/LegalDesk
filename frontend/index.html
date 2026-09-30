@@ -132,23 +132,27 @@
               <div class="review-form-grid">
                 <div class="control-group">
                   <label class="field-label" for="review-reason">MOTIVO</label>
-                  <select id="review-reason" aria-describedby="review-form-helper" disabled>
+                  <select id="review-reason" aria-describedby="review-form-helper review-reason-error" aria-invalid="false" disabled>
+                    <option value="">Selecciona un motivo</option>
                     <option value="user_requested_review">Necesito criterio profesional</option>
                     <option value="insufficient_evidence">Falta evidencia suficiente</option>
                     <option value="ambiguous_evidence">La evidencia es ambigua</option>
                     <option value="material_legal_judgment">Requiere juicio jurídico material</option>
                     <option value="safety_escalation">Escalado de seguridad</option>
                   </select>
+                  <p id="review-reason-error" class="field-error" role="alert" hidden></p>
                 </div>
                 <div class="control-group">
                   <label class="field-label" for="review-due-at">FECHA OBJETIVO</label>
-                  <input id="review-due-at" type="date" aria-describedby="review-form-helper" disabled>
+                  <input id="review-due-at" type="date" aria-describedby="review-form-helper review-due-at-error" aria-invalid="false" disabled>
+                  <p id="review-due-at-error" class="field-error" role="alert" hidden></p>
                 </div>
                 <div class="control-group control-group-wide">
                   <label class="field-label" for="review-note">NOTA OPCIONAL</label>
                   <textarea id="review-note" rows="2" maxlength="2000" placeholder="Añade contexto breve, sin copiar el documento." aria-describedby="review-form-helper" disabled></textarea>
                 </div>
               </div>
+              <p id="review-form-status" class="app-message" role="status" aria-live="polite" hidden></p>
               <p id="review-form-helper" class="review-helper">Se guardará la última respuesta aceptada y sus pasajes citados, no el documento completo.</p>
             </div>
             <button id="review-button" class="button" type="button" disabled aria-describedby="review-helper">Guardar para revisión</button>
