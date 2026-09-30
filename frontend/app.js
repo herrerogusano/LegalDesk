@@ -13,6 +13,9 @@
     documents: [],
     reviews: [],
     reviewDetails: Object.create(null),
+    reviewDetailRequests: Object.create(null),
+    reviewUpdates: Object.create(null),
+    reviewMove: null,
     hasAcceptedAnswer: false,
     busy: false,
     activeDocumentTab: "available",
@@ -40,6 +43,21 @@
     material_legal_judgment: "Requiere juicio jurídico material",
     safety_escalation: "Escalado de seguridad",
   });
+  const detailsMotion = new WeakMap();
+
+  function reducedMotionPreferred() {
+    return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
+
+  function motionTiming(name, fallback) {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function motionEasing(name, fallback) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  }
 
   function setMessage(message, error, tone) {
     const node = $(error ? "app-error" : "app-status");
@@ -197,6 +215,7 @@
   }
 
   function clearMatterView() {
+    clearReviewMotion();
     $("matter-kicker").textContent = "SELECCIONA UN EXPEDIENTE";
     $("document-status").textContent = "Selecciona un expediente para empezar.";
     $("document-count").textContent = "Sin documentos";
@@ -236,6 +255,8 @@
     setDocumentTab("available");
     state.reviews = [];
     state.reviewDetails = Object.create(null);
+    state.reviewDetailRequests = Object.create(null);
+    state.reviewUpdates = Object.create(null);
     state.hasAcceptedAnswer = false;
     renderReviews([]);
     setReviewDueDateMinimum();
@@ -489,12 +510,239 @@
     parent.append(paragraph);
   }
 
+  function reviewViewState() {
+    const view = {
+      open: new Set(),
+      focus: null,
+      resolutionNotes: Object.create(null),
+    };
+    document.querySelectorAll("#reviews-section details[data-review-id]").forEach((details) => {
+      const reviewId = details.dataset.reviewId;
+      if (!reviewId) return;
+      if (details.open) view.open.add(reviewId);
+      const resolution = details.querySelector("textarea[data-resolution-for]");
+      if (resolution) view.resolutionNotes[reviewId] = resolution.value;
+      if (document.activeElement && details.contains(document.activeElement)) {
+        const active = document.activeElement;
+        view.focus = {
+          reviewId,
+          kind: active.matches("summary") ? "summary" : active.dataset.reviewAction || (active.dataset.resolutionFor ? "resolution" : "body"),
+        };
+      }
+    });
+    return view;
+  }
+
+  function restoreReviewView(view) {
+    if (!view) return;
+    view.open.forEach((reviewId) => {
+      const details = document.querySelector(`#reviews-section details[data-review-id="${CSS.escape(reviewId)}"]`);
+      if (!details) return;
+      details.dataset.motionRestore = "true";
+      details.open = true;
+    });
+    Object.entries(view.resolutionNotes).forEach(([reviewId, value]) => {
+      const field = document.querySelector(`#reviews-section textarea[data-resolution-for="${CSS.escape(reviewId)}"]`);
+      if (field && field.value !== value) field.value = value;
+    });
+    if (view.focus) {
+      const details = document.querySelector(`#reviews-section details[data-review-id="${CSS.escape(view.focus.reviewId)}"]`);
+      if (!details) return;
+      const target = view.focus.kind === "summary"
+        ? details.querySelector("summary")
+        : details.querySelector(`[data-review-action="${CSS.escape(view.focus.kind)}"], [data-resolution-for="${CSS.escape(view.focus.reviewId)}"]`) || details.querySelector("summary");
+      if (target) {
+        try { target.focus({ preventScroll: true }); } catch (_error) { target.focus(); }
+      }
+    }
+  }
+
+  function cleanDetailsAnimation(details) {
+    const body = details.querySelector(".review-item-body, .technical-diagnostics-body");
+    if (body) body.style.removeProperty("opacity");
+    if (body) body.style.removeProperty("transform");
+    if (body) body.style.removeProperty("clip-path");
+    if (body) body.style.removeProperty("height");
+    if (body) body.style.removeProperty("overflow");
+  }
+
+  function animateReviewDetails(details, opening) {
+    const body = details.querySelector(".review-item-body, .technical-diagnostics-body");
+    if (!body || reducedMotionPreferred()) {
+      cleanDetailsAnimation(details);
+      return Promise.resolve();
+    }
+    const previous = detailsMotion.get(details);
+    const renderedHeight = body.getBoundingClientRect().height;
+    if (previous && previous.animation) previous.animation.cancel();
+    const naturalHeight = body.getBoundingClientRect().height;
+    const startHeight = previous ? renderedHeight : opening ? 0 : naturalHeight;
+    body.style.overflow = "hidden";
+    const animation = body.animate(
+      opening
+        ? [
+          { height: `${startHeight}px`, opacity: 0, transform: "translateY(-6px)", clipPath: "inset(0 0 8% 0)" },
+          { height: `${naturalHeight}px`, opacity: 1, transform: "translateY(0)", clipPath: "inset(0 0 0 0)" },
+        ]
+        : [
+          { height: `${startHeight}px`, opacity: 1, transform: "translateY(0)", clipPath: "inset(0 0 0 0)" },
+          { height: "0px", opacity: 0, transform: "translateY(-4px)", clipPath: "inset(0 0 8% 0)" },
+        ],
+      { duration: motionTiming("--motion-duration-details", 240), easing: motionEasing("--motion-ease-emphasized", "cubic-bezier(.22, 1, .36, 1)"), fill: "both" },
+    );
+    const current = { animation, closing: !opening };
+    detailsMotion.set(details, current);
+    return animation.finished.catch(() => {}).then(() => {
+      if (detailsMotion.get(details) === current && !current.closing) {
+        detailsMotion.delete(details);
+        current.animation.cancel();
+        cleanDetailsAnimation(details);
+      }
+    });
+  }
+
+  function animateDetailsClose(details) {
+    if (reducedMotionPreferred() || !details.querySelector(".review-item-body, .technical-diagnostics-body") || typeof details.querySelector("summary")?.animate !== "function") {
+      details.open = false;
+      return;
+    }
+    const current = detailsMotion.get(details);
+    if (current && current.closing) {
+      current.closing = false;
+      animateReviewDetails(details, true);
+      return;
+    }
+    const closingAnimation = animateReviewDetails(details, false);
+    const closing = detailsMotion.get(details);
+    if (closing) closing.closing = true;
+    closingAnimation.then(() => {
+      if (!closing || !details.isConnected || detailsMotion.get(details) !== closing || !closing.closing) return;
+      details.dataset.motionCommit = "true";
+      details.open = false;
+      delete details.dataset.motionCommit;
+      detailsMotion.delete(details);
+      closing.animation.cancel();
+      cleanDetailsAnimation(details);
+    });
+  }
+
+  function bindAnimatedDetails(details) {
+    const summary = details.querySelector("summary");
+    if (!summary || summary.dataset.motionBound === "true") return;
+    summary.dataset.motionBound = "true";
+    summary.addEventListener("click", (event) => {
+      if (!details.open) return;
+      event.preventDefault();
+      animateDetailsClose(details);
+    });
+    details.addEventListener("toggle", () => {
+      if (!details.open) {
+        if (!details.dataset.motionCommit) cleanDetailsAnimation(details);
+        return;
+      }
+      if (details.dataset.motionRestore) {
+        delete details.dataset.motionRestore;
+        return;
+      }
+      if (details.dataset.motionCommit) return;
+      animateReviewDetails(details, true);
+      const reviewId = details.dataset.reviewId;
+      if (reviewId && !state.reviewDetails[reviewId]) loadReviewDetail(reviewId, details);
+    });
+  }
+
+  function captureReviewMove(reviewTaskId) {
+    if (reducedMotionPreferred()) return null;
+    const item = Array.from(document.querySelectorAll("#reviews-section .review-item")).find((candidate) => candidate.querySelector(`details[data-review-id="${CSS.escape(reviewTaskId)}"]`));
+    if (!item) return null;
+    const rect = item.getBoundingClientRect();
+    const clone = item.cloneNode(true);
+    clone.classList.add("review-item--motion-clone");
+    clone.setAttribute("aria-hidden", "true");
+    clone.setAttribute("inert", "");
+    clone.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+    clone.style.left = `${rect.left}px`;
+    clone.style.top = `${rect.top}px`;
+    clone.style.width = `${rect.width}px`;
+    clone.style.transformOrigin = "top left";
+    document.body.append(clone);
+    return { reviewTaskId, rect, clone };
+  }
+
+  function isInViewport(rect) {
+    return rect.top >= 0 && rect.bottom <= window.innerHeight && rect.left >= 0 && rect.right <= window.innerWidth;
+  }
+
+  function announceResolvedReview(reviewTaskId) {
+    const status = $("app-status");
+    if (!status) return;
+    status.replaceChildren(document.createTextNode("Revisión cerrada y conservada en el historial del expediente. "));
+    const link = document.createElement("a");
+    link.href = "#reviews-resolved";
+    link.className = "review-jump-link";
+    link.dataset.reviewJump = reviewTaskId;
+    link.textContent = "Ver revisión resuelta";
+    status.append(link);
+    status.hidden = false;
+    status.dataset.state = "success";
+    $("app-error").hidden = true;
+  }
+
+  function animateReviewMove(reviewTaskId) {
+    const move = state.reviewMove;
+    if (!move || move.reviewTaskId !== reviewTaskId) return;
+    state.reviewMove = null;
+    const destination = Array.from(document.querySelectorAll("#reviews-resolved details[data-review-id]")).find((details) => details.dataset.reviewId === reviewTaskId);
+    const destinationItem = destination && destination.closest(".review-item");
+    const clone = move.clone;
+    if (!destinationItem || !clone || !clone.isConnected) {
+      if (clone && clone.isConnected) clone.remove();
+      return;
+    }
+    const destinationRect = destinationItem.getBoundingClientRect();
+    if (!isInViewport(destinationRect)) {
+      clone.remove();
+      announceResolvedReview(reviewTaskId);
+      return;
+    }
+    destinationItem.style.opacity = "0";
+    const dx = destinationRect.left - move.rect.left;
+    const dy = destinationRect.top - move.rect.top;
+    const scaleX = destinationRect.width / move.rect.width;
+    const scaleY = destinationRect.height / move.rect.height;
+    const animation = clone.animate(
+      [{ transform: "translate(0, 0) scale(1, 1)", opacity: 1 }, { transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`, opacity: .15 }],
+      { duration: motionTiming("--motion-duration-review-travel", 420), easing: motionEasing("--motion-ease-emphasized", "cubic-bezier(.22, 1, .36, 1)") },
+    );
+    animation.finished.catch(() => {}).then(() => {
+      clone.remove();
+      destinationItem.style.removeProperty("opacity");
+      destination.animate([{ opacity: 0, transform: "translateY(5px)" }, { opacity: 1, transform: "translateY(0)" }], {
+        duration: motionTiming("--motion-duration-details", 240),
+        easing: motionEasing("--motion-ease-emphasized", "cubic-bezier(.22, 1, .36, 1)"),
+      });
+    });
+  }
+
+  function clearReviewMotion() {
+    if (state.reviewMove && state.reviewMove.clone && state.reviewMove.clone.isConnected) state.reviewMove.clone.remove();
+    state.reviewMove = null;
+    document.querySelectorAll("#reviews-section details").forEach((details) => {
+      const current = detailsMotion.get(details);
+      if (current && current.animation) current.animation.cancel();
+      detailsMotion.delete(details);
+      cleanDetailsAnimation(details);
+    });
+    document.querySelectorAll(".review-item--motion-clone").forEach((clone) => clone.remove());
+  }
+
   function renderReviewItem(task) {
     const item = document.createElement("li");
     item.className = "review-item";
     item.dataset.urgency = reviewUrgency(task.dueAt, task.status);
     const details = document.createElement("details");
     details.dataset.reviewId = typeof task.reviewTaskId === "string" ? task.reviewTaskId : "";
+    if (task.reviewTaskId && state.reviewUpdates[task.reviewTaskId]) details.setAttribute("aria-busy", "true");
     const summary = document.createElement("summary");
     const summaryText = document.createElement("span");
     const title = document.createElement("span");
@@ -546,6 +794,7 @@
     }
 
     if (task.status !== "closed" && typeof task.reviewTaskId === "string") {
+      const updating = Boolean(state.reviewUpdates[task.reviewTaskId]);
       const actions = document.createElement("div");
       actions.className = "review-actions";
       const inReview = document.createElement("button");
@@ -553,8 +802,8 @@
       inReview.className = "button review-action-button";
       inReview.dataset.reviewAction = "in-review";
       inReview.dataset.reviewId = task.reviewTaskId;
-      inReview.textContent = "Marcar en revisión";
-      inReview.disabled = task.status === "in_review";
+      inReview.textContent = updating ? "Actualizando…" : "Marcar en revisión";
+      inReview.disabled = updating || task.status === "in_review";
       actions.append(inReview);
       const resolution = document.createElement("div");
       resolution.className = "review-resolution";
@@ -573,45 +822,50 @@
       close.className = "button button-primary review-action-button";
       close.dataset.reviewAction = "close";
       close.dataset.reviewId = task.reviewTaskId;
-      close.textContent = "Cerrar revisión";
+      close.textContent = updating ? "Actualizando…" : "Cerrar revisión";
+      close.disabled = updating;
       resolution.append(resolutionLabel, resolutionInput);
       actions.append(resolution, close);
       body.append(actions);
     }
     details.append(body);
-    details.addEventListener("toggle", () => {
-      if (details.open && !snapshot && task.reviewTaskId) loadReviewDetail(task.reviewTaskId, details);
-    });
+    bindAnimatedDetails(details);
     item.append(details);
     return item;
   }
 
   async function loadReviewDetail(reviewTaskId, details) {
     if (state.reviewDetails[reviewTaskId]) return;
+    if (state.reviewDetailRequests[reviewTaskId]) return state.reviewDetailRequests[reviewTaskId];
     const body = details.querySelector(".review-item-body");
     const loading = Object.assign(document.createElement("p"), { className: "review-detail-state", textContent: "Cargando detalle de la revisión…" });
     loading.setAttribute("role", "status");
     body.replaceChildren(loading);
     const generation = currentGeneration();
-    try {
+    const request = (async () => {
+      try {
       const query = `conversationId=${encodeURIComponent(state.conversationId)}&sessionId=${encodeURIComponent(state.sessionId)}`;
       const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews/${encodeURIComponent(reviewTaskId)}?${query}`, { signal: state.controller.signal });
       if (!isCurrent(generation) || !result || !result.snapshot) throw new Error("El detalle de la revisión no está disponible.");
       state.reviewDetails[reviewTaskId] = result;
       state.reviews = state.reviews.map((task) => task.reviewTaskId === reviewTaskId ? { ...task, ...result } : task);
       renderReviews(state.reviews);
-      const refreshed = document.querySelector(`#reviews-section details[data-review-id="${CSS.escape(reviewTaskId)}"]`);
-      if (refreshed) refreshed.open = true;
-    } catch (error) {
-      if (error.name !== "AbortError" && isCurrent(generation)) {
-        const errorNode = Object.assign(document.createElement("p"), { className: "review-detail-state review-detail-error", textContent: `${error.message} Puedes cerrar y volver a abrir para reintentarlo.` });
-        errorNode.setAttribute("role", "alert");
-        body.replaceChildren(errorNode);
+      } catch (error) {
+        if (error.name !== "AbortError" && isCurrent(generation) && details.isConnected) {
+          const errorNode = Object.assign(document.createElement("p"), { className: "review-detail-state review-detail-error", textContent: `${error.message} Puedes cerrar y volver a abrir para reintentarlo.` });
+          errorNode.setAttribute("role", "alert");
+          body.replaceChildren(errorNode);
+        }
+      } finally {
+        if (state.reviewDetailRequests[reviewTaskId] === request) delete state.reviewDetailRequests[reviewTaskId];
       }
-    }
+    })();
+    state.reviewDetailRequests[reviewTaskId] = request;
+    return request;
   }
 
   function renderReviews(tasks) {
+    const view = reviewViewState();
     state.reviews = (Array.isArray(tasks) ? tasks : []).map((task) => task && task.reviewTaskId && state.reviewDetails[task.reviewTaskId] ? { ...task, ...state.reviewDetails[task.reviewTaskId] } : task);
     const pending = state.reviews.filter((task) => task && task.status !== "closed").sort((left, right) => {
       const urgency = { overdue: 0, today: 1, soon: 2, "on-track": 3 };
@@ -631,6 +885,8 @@
       if (!listItems.length) list.append(Object.assign(document.createElement("li"), { className: "microcopy", textContent: emptyText }));
       else listItems.forEach((task) => list.append(renderReviewItem(task)));
     });
+    restoreReviewView(view);
+    if (state.reviewMove) animateReviewMove(state.reviewMove.reviewTaskId);
     refreshControls();
   }
 
@@ -1066,6 +1322,8 @@
   async function updateReviewTask(reviewTaskId, status, resolutionNote) {
     if (!authorized() || state.busy || !reviewTaskId) return;
     const generation = currentGeneration();
+    state.reviewUpdates[reviewTaskId] = { status };
+    renderReviews(state.reviews);
     setBusy(true);
     try {
       const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews/${encodeURIComponent(reviewTaskId)}`, {
@@ -1074,11 +1332,29 @@
         signal: state.controller.signal,
       });
       if (isCurrent(generation)) {
+        if (status === "closed") state.reviewMove = captureReviewMove(reviewTaskId);
         if (result && result.reviewTaskId) state.reviewDetails[reviewTaskId] = result;
+        delete state.reviewUpdates[reviewTaskId];
         setMessage(status === "closed" ? "Revisión cerrada y conservada en el historial del expediente." : "Revisión marcada En revisión.", false, "success");
         await loadReviews(generation);
+        if (status === "closed" && state.reviewMove === null) {
+          const destination = document.querySelector(`#reviews-resolved details[data-review-id="${CSS.escape(reviewTaskId)}"]`);
+          const destinationItem = destination && destination.closest(".review-item");
+          if (destinationItem && !isInViewport(destinationItem.getBoundingClientRect())) announceResolvedReview(reviewTaskId);
+          else if (destination) {
+            try { destination.querySelector("summary").focus({ preventScroll: true }); } catch (_error) { destination.querySelector("summary").focus(); }
+          }
+        }
       }
-    } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
+    } catch (error) {
+      if (isCurrent(generation)) {
+        delete state.reviewUpdates[reviewTaskId];
+        renderReviews(state.reviews);
+        if (error.name !== "AbortError") setMessage(error.message, true);
+      }
+    } finally {
+      if (isCurrent(generation)) setBusy(false);
+    }
   }
 
   async function audit() {
@@ -1097,6 +1373,18 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     bindDocumentTabs();
+    bindAnimatedDetails($("technical-diagnostics"));
+    document.addEventListener("click", (event) => {
+      const jump = event.target.closest("[data-review-jump]");
+      if (!jump) return;
+      const reviewId = jump.dataset.reviewJump;
+      const details = document.querySelector(`#reviews-resolved details[data-review-id="${CSS.escape(reviewId)}"]`);
+      if (!details) return;
+      event.preventDefault();
+      details.closest(".review-item").scrollIntoView({ behavior: reducedMotionPreferred() ? "auto" : "smooth", block: "center" });
+      details.open = true;
+      try { details.querySelector("summary").focus({ preventScroll: true }); } catch (_error) { details.querySelector("summary").focus(); }
+    });
     $("login-button").addEventListener("click", () => { window.location.assign("/login"); });
     $("logout-button").addEventListener("click", logout);
     $("matter-select").addEventListener("change", (event) => chooseMatter(event.target.value));

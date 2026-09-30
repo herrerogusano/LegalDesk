@@ -123,6 +123,69 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.waitForFunction(() => document.querySelector("#reviews-pending .review-item-body").textContent.includes("What is the inspection period?"));
     assert.match(await page.locator("#reviews-pending .review-item-body").innerText(), /four years/);
     assert.match(await page.locator("#reviews-pending .review-item-body").innerText(), /fictional\.txt/);
+    // Review details keep native keyboard semantics while motion is reversible.
+    await page.locator("#reviews-pending details").first().locator("summary").focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => !document.querySelector("#reviews-pending details")?.open);
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector("#reviews-pending details")?.open);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => !document.querySelector("#reviews-pending details")?.open);
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector("#reviews-pending details")?.open);
+    await page.emulateMedia({ reducedMotion: null });
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => !document.querySelector("#reviews-pending details")?.open);
+    const expansion = await page.evaluate(async () => {
+      const details = document.querySelector("#reviews-pending details");
+      details.querySelector("summary").click();
+      await new Promise(resolve => setTimeout(resolve, 40));
+      const body = details.querySelector(".review-item-body");
+      const animation = body.getAnimations()[0];
+      if (!animation) return null;
+      animation.pause();
+      animation.currentTime = 80;
+      const partial = body.getBoundingClientRect().height;
+      animation.finish();
+      await animation.finished;
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      return { partial, full: body.getBoundingClientRect().height };
+    });
+    assert.ok(expansion && expansion.partial > 0 && expansion.partial < expansion.full, "details must expand through an intermediate height");
+    // Reversing a close mid-flight must leave the native details state usable.
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector("#reviews-pending details")?.open);
+    const reviewTaskId = await page.locator("#reviews-pending details").first().getAttribute("data-review-id");
+    const resolution = page.locator(`#resolution-${reviewTaskId}`);
+    await resolution.fill("Conservar esta nota si falla la actualización.");
+    await page.route(`**/api/matters/matter-integration/reviews/${reviewTaskId}`, route => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "temporary_review_failure" }),
+    }));
+    await page.locator(`button[data-review-action="close"][data-review-id="${reviewTaskId}"]`).click();
+    await page.waitForFunction(() => !document.querySelector("#app-error")?.hidden);
+    assert.equal(await page.locator(`#reviews-pending details[data-review-id="${reviewTaskId}"]`).count(), 1);
+    assert.equal(await page.locator(`#resolution-${reviewTaskId}`).inputValue(), "Conservar esta nota si falla la actualización.");
+    await page.unroute(`**/api/matters/matter-integration/reviews/${reviewTaskId}`);
+    let releasePatch;
+    const patchGate = new Promise(resolve => { releasePatch = resolve; });
+    await page.route(`**/api/matters/matter-integration/reviews/${reviewTaskId}`, async route => {
+      await patchGate;
+      await route.continue();
+    });
+    await page.locator(`button[data-review-action="close"][data-review-id="${reviewTaskId}"]`).click();
+    await page.waitForFunction((id) => {
+      const details = document.querySelector(`#reviews-pending details[data-review-id="${id}"]`);
+      return details?.getAttribute("aria-busy") === "true" && details.textContent.includes("Actualizando…");
+    }, reviewTaskId);
+    releasePatch();
+    await page.waitForFunction((id) => document.querySelector(`#reviews-resolved details[data-review-id="${id}"]`), reviewTaskId);
+    await page.unroute(`**/api/matters/matter-integration/reviews/${reviewTaskId}`);
+    assert.equal(await page.locator(`#reviews-pending details[data-review-id="${reviewTaskId}"]`).count(), 0);
+    assert.equal(await page.locator(`#reviews-resolved details[data-review-id="${reviewTaskId}"]`).count(), 1);
     await page.locator("#audit-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("grounding_validate"));
     assert.ok((await page.locator("#history-list").innerText()).includes("four years"));
