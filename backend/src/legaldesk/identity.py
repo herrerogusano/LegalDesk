@@ -12,7 +12,7 @@ import base64
 import hashlib
 import secrets
 from dataclasses import dataclass
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from typing import Any, Protocol
 
 from .authorization import AuthorizationDenied, VerifiedIdentity, _IDENTITY_FACTORY_TOKEN
@@ -53,6 +53,50 @@ def validate_https_endpoint(value: object, *, field_name: str) -> str:
     ):
         raise ValueError(f"{field_name} must be a real HTTPS URL without credentials, query, or fragment")
     return value
+
+
+def create_cognito_logout_url(
+    authorization_endpoint: str,
+    *,
+    client_id: str,
+    logout_uri: str,
+) -> str:
+    """Build Cognito's hosted-UI logout URL from trusted server config.
+
+    Cognito's logout endpoint is the same origin as the authorization endpoint,
+    but uses the fixed ``/logout`` path.  The return URI is deliberately passed
+    by the server and validated as an exact application landing URI; callers
+    must not copy it from browser input.
+    """
+
+    endpoint = validate_https_endpoint(
+        authorization_endpoint, field_name="authorization_endpoint"
+    )
+    if (
+        not isinstance(client_id, str)
+        or not client_id.strip()
+        or any(ord(char) < 0x21 or ord(char) > 0x7E for char in client_id)
+    ):
+        raise ValueError("client_id is invalid")
+    if not isinstance(logout_uri, str) or not logout_uri.strip():
+        raise ValueError("logout_uri is required")
+    try:
+        parsed = urlsplit(logout_uri)
+    except ValueError as exc:
+        raise ValueError("logout_uri is malformed") from exc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != "/logout"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("logout_uri must be the exact /logout URI")
+    auth = urlsplit(endpoint)
+    provider_endpoint = urlunsplit((auth.scheme, auth.netloc, "/logout", "", ""))
+    return f"{provider_endpoint}?{urlencode({'client_id': client_id, 'logout_uri': logout_uri})}"
 
 
 def pkce_code_challenge(code_verifier: str) -> str:
@@ -271,6 +315,7 @@ class OidcTokenVerifier:
 
 
 __all__ = [
+    "create_cognito_logout_url",
     "IdentityVerificationError",
     "PkceAuthorizationRequest",
     "OidcTokenVerifier",

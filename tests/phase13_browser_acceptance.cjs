@@ -20,6 +20,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       if (url.hostname === "issuer.integration" && url.pathname === "/authorize") {
         return route.fulfill({ status: 302, headers: { location: `${base}/callback?state=${encodeURIComponent(url.searchParams.get("state"))}&code=integration-code` } });
       }
+      if (url.hostname === "issuer.integration" && url.pathname === "/logout") {
+        return route.fulfill({ status: 302, headers: { location: `${base}/logout` } });
+      }
       if (["localhost", "127.0.0.1"].includes(url.hostname)) return route.continue();
       throw new Error(`Non-local browser request forbidden: ${url.hostname}`);
     });
@@ -123,6 +126,114 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.waitForFunction(() => document.querySelector("#reviews-pending .review-item-body").textContent.includes("What is the inspection period?"));
     assert.match(await page.locator("#reviews-pending .review-item-body").innerText(), /four years/);
     assert.match(await page.locator("#reviews-pending .review-item-body").innerText(), /fictional\.txt/);
+    // Review details keep native keyboard semantics while motion is reversible.
+    await page.locator("#reviews-pending details").first().locator("summary").focus();
+    const closeGeometryPromise = page.evaluate(async () => new Promise(resolve => {
+      const samples = [];
+      let frame = 0;
+      const sample = () => {
+        const details = document.querySelector("#reviews-pending details[open]");
+        const summary = details?.querySelector("summary");
+        const body = details?.querySelector(".review-item-body");
+        samples.push({ open: Boolean(details), y: summary?.getBoundingClientRect().y, height: body?.getBoundingClientRect().height });
+        if (++frame < 24) requestAnimationFrame(sample);
+        else resolve(samples);
+      };
+      requestAnimationFrame(sample);
+    }));
+    await page.keyboard.press("Enter");
+    const closeGeometry = await closeGeometryPromise;
+    const closeVisible = closeGeometry.filter(sample => sample.open && Number.isFinite(sample.height));
+    assert.ok(closeVisible.length > 4, "close motion should expose measurable body frames");
+    assert.ok(Math.max(...closeVisible.map(sample => sample.y)) - Math.min(...closeVisible.map(sample => sample.y)) <= 1, "summary should stay anchored while closing");
+    assert.ok(closeVisible.every((sample, index) => index === 0 || sample.height <= closeVisible[index - 1].height + 1), "body height should collapse monotonically");
+    await page.waitForFunction(() => !document.querySelector("#reviews-pending details")?.open);
+    const openGeometryPromise = page.evaluate(async () => new Promise(resolve => {
+      const samples = [];
+      let frame = 0;
+      const sample = () => {
+        const details = document.querySelector("#reviews-pending details[open]");
+        const summary = details?.querySelector("summary");
+        const body = details?.querySelector(".review-item-body");
+        samples.push({ open: Boolean(details), y: summary?.getBoundingClientRect().y, height: body?.getBoundingClientRect().height });
+        if (++frame < 24) requestAnimationFrame(sample);
+        else resolve(samples);
+      };
+      requestAnimationFrame(sample);
+    }));
+    await page.keyboard.press("Enter");
+    const openGeometry = await openGeometryPromise;
+    const openVisible = openGeometry.filter(sample => sample.open && Number.isFinite(sample.height));
+    assert.ok(openVisible.length > 4, "open motion should expose measurable body frames");
+    assert.ok(Math.max(...openVisible.map(sample => sample.y)) - Math.min(...openVisible.map(sample => sample.y)) <= 1, "summary should stay anchored while opening");
+    assert.ok(openVisible.every((sample, index) => index === 0 || sample.height >= openVisible[index - 1].height - 1), "body height should expand monotonically");
+    await page.waitForFunction(() => document.querySelector("#reviews-pending details")?.open);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => !document.querySelector("#reviews-pending details")?.open);
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector("#reviews-pending details")?.open);
+    await page.emulateMedia({ reducedMotion: null });
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => !document.querySelector("#reviews-pending details")?.open);
+    const expansion = await page.evaluate(async () => {
+      const details = document.querySelector("#reviews-pending details");
+      details.querySelector("summary").click();
+      await new Promise(resolve => setTimeout(resolve, 40));
+      const body = details.querySelector(".review-item-body");
+      const animation = body.getAnimations()[0];
+      if (!animation) return null;
+      animation.pause();
+      animation.currentTime = 80;
+      const partial = body.getBoundingClientRect().height;
+      animation.finish();
+      await animation.finished;
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      return { partial, full: body.getBoundingClientRect().height };
+    });
+    assert.ok(expansion && expansion.partial > 0 && expansion.partial < expansion.full, "details must expand through an intermediate height");
+    // Reversing a close mid-flight must leave the native details state usable.
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector("#reviews-pending details")?.open);
+    const reviewTaskId = await page.locator("#reviews-pending details").first().getAttribute("data-review-id");
+    const resolution = page.locator(`#resolution-${reviewTaskId}`);
+    await resolution.fill("Conservar esta nota si falla la actualización.");
+    await page.route(`**/api/matters/matter-integration/reviews/${reviewTaskId}`, route => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "temporary_review_failure" }),
+    }));
+    await page.locator(`button[data-review-action="close"][data-review-id="${reviewTaskId}"]`).click();
+    await page.waitForFunction(() => !document.querySelector("#app-error")?.hidden);
+    assert.equal(await page.locator(`#reviews-pending details[data-review-id="${reviewTaskId}"]`).count(), 1);
+    assert.equal(await page.locator(`#resolution-${reviewTaskId}`).inputValue(), "Conservar esta nota si falla la actualización.");
+    await page.unroute(`**/api/matters/matter-integration/reviews/${reviewTaskId}`);
+    let releasePatch;
+    const patchGate = new Promise(resolve => { releasePatch = resolve; });
+    await page.route(`**/api/matters/matter-integration/reviews/${reviewTaskId}`, async route => {
+      await patchGate;
+      await route.continue();
+    });
+    await page.locator(`button[data-review-action="close"][data-review-id="${reviewTaskId}"]`).click();
+    await page.waitForFunction((id) => {
+      const details = document.querySelector(`#reviews-pending details[data-review-id="${id}"]`);
+      return details?.getAttribute("aria-busy") === "true" && details.textContent.includes("Actualizando…");
+    }, reviewTaskId);
+    releasePatch();
+    await page.waitForFunction((id) => document.querySelector(`#reviews-resolved details[data-review-id="${id}"]`), reviewTaskId);
+    await page.unroute(`**/api/matters/matter-integration/reviews/${reviewTaskId}`);
+    assert.equal(await page.locator(`#reviews-pending details[data-review-id="${reviewTaskId}"]`).count(), 0);
+    assert.equal(await page.locator(`#reviews-resolved details[data-review-id="${reviewTaskId}"]`).count(), 1);
+    const resolvedSummary = page.locator(`#reviews-resolved details[data-review-id="${reviewTaskId}"] summary`);
+    await resolvedSummary.click();
+    await resolvedSummary.press("Enter");
+    await resolvedSummary.press("Enter");
+    await page.waitForFunction((id) => {
+      const details = document.querySelector(`#reviews-resolved details[data-review-id="${id}"]`);
+      const body = details?.querySelector(".review-item-body");
+      return details?.open && body && body.getBoundingClientRect().height > 20 && !body.style.height;
+    }, reviewTaskId);
     await page.locator("#audit-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("grounding_validate"));
     assert.ok((await page.locator("#history-list").innerText()).includes("four years"));
@@ -181,6 +292,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#ask-button").click();
     await page.waitForFunction(() => document.querySelector("#evidence-status").dataset.status === "insufficient_evidence");
     assert.equal(await page.locator(".citation-inspect").count(), 0);
+    let failNextLogout = true;
+    const failedLogoutRoute = async route => {
+      if (failNextLogout && route.request().method() === "POST") {
+        failNextLogout = false;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "operation_failed" }) });
+      }
+      return route.continue();
+    };
+    await page.route("**/logout", failedLogoutRoute);
+    await page.locator("#logout-button").click();
+    await page.waitForFunction(() => !document.querySelector("#app-error").hidden);
+    assert.equal(new URL(page.url()).origin, new URL(base).origin);
+    assert.equal(await page.evaluate(async () => (await fetch("/api/me", { credentials: "same-origin" })).status), 200);
+    await page.unroute("**/logout", failedLogoutRoute);
     await page.locator("#logout-button").click();
     await page.waitForFunction(() => document.querySelector("#question").disabled);
     assert.ok(!(await page.locator("#answer").innerText()).includes("four years"));

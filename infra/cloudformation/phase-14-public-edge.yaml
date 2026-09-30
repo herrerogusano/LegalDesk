@@ -466,6 +466,12 @@ Resources:
       ApiId: !Ref PublicApi
       RouteKey: POST /logout
       Target: !Sub "integrations/${PublicApiIntegration}"
+  LogoutLandingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PublicApi
+      RouteKey: GET /logout
+      Target: !Sub "integrations/${PublicApiIntegration}"
   ApiRootRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
