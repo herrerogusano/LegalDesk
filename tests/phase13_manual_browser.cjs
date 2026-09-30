@@ -96,6 +96,10 @@ async function main() {
         headers: { location: callbackLocation(baseUrl.toString(), idpUrl.searchParams.get("state")) },
       });
     }
+    const destination = new URL(requestUrl);
+    if (destination.origin === "https://issuer.integration" && destination.pathname === "/logout") {
+      return route.fulfill({ status: 302, headers: { location: `${baseUrl.origin}/logout` } });
+    }
     if (isLoopbackUrl(requestUrl)) return route.continue();
     console.error(`[manual-demo] blocked non-loopback destination: ${new URL(requestUrl).hostname}`);
     return route.abort("blockedbyclient");

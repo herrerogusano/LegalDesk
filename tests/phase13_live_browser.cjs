@@ -279,8 +279,9 @@ async function run() {
     finishPhase("audit");
 
     beginPhase("logout");
-    // The UI navigates to `/` immediately after logout.  Validate the status
-    // without racing that navigation to read the response body a second time.
+    // The UI first completes the local CSRF-protected POST, then navigates to
+    // the server-generated Cognito logout URL. Validate the POST status without
+    // racing the hosted-UI redirect to read the response body a second time.
     const logoutResponsePromise = page.waitForResponse((response) => {
       try {
         const url = new URL(response.url());

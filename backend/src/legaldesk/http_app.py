@@ -35,7 +35,11 @@ from .documents import (
     validate_upload_metadata,
 )
 from .domain.models import Document, DocumentStatus
-from .identity import PkceAuthorizationRequest, create_pkce_authorization_request
+from .identity import (
+    PkceAuthorizationRequest,
+    create_cognito_logout_url,
+    create_pkce_authorization_request,
+)
 from .ingestion import IngestionConflictError, KnowledgeBaseSyncResult, run_knowledge_base_sync
 from .mcp_server import GET_DOCUMENT_METADATA, LIST_MATTER_DOCUMENTS, MCPServer
 from .memory import ConversationBindingStore, MemoryScope, derive_memory_scope_for_identity
@@ -411,11 +415,32 @@ class LoopbackLegalDeskApp:
             return self._login()
         if path == PurePosixPath("/callback") and method == "GET":
             return self._callback(environ)
+        if path == PurePosixPath("/logout") and method == "GET":
+            # Cognito redirects here after clearing its hosted-UI cookie.  A
+            # safe landing route must never mutate the local session: logout
+            # is a CSRF-protected POST below, and GET is only a redirect.
+            return HTTPStatus.FOUND, {}, [("Location", "/")]
         if path == PurePosixPath("/logout") and method == "POST":
             key, session = self._session(environ)
             self._request_guards(environ, session=session, mutating=True)
+            try:
+                logout_url = create_cognito_logout_url(
+                    self.composition.authorization_endpoint,
+                    client_id=self.composition.oauth_client_id,
+                    logout_uri=f"{self.composition.public_base_url.rstrip('/')}/logout",
+                )
+            except ValueError:
+                # Local fixture compositions may omit a real provider endpoint;
+                # production/public mode must fail closed instead of claiming
+                # that provider logout happened.
+                if self.composition.public_mode:
+                    raise
+                logout_url = None
             self.state_store.delete_session(key)
-            return HTTPStatus.OK, {"ok": True}, [("Set-Cookie", self._set_cookie(SESSION_COOKIE, "", max_age=0))]
+            body: dict[str, object] = {"ok": True}
+            if logout_url is not None:
+                body["logoutUrl"] = logout_url
+            return HTTPStatus.OK, body, [("Set-Cookie", self._set_cookie(SESSION_COOKIE, "", max_age=0))]
         key, session = self._session(environ)
         mutating = method not in _SAFE_METHODS
         self._request_guards(environ, session=session, mutating=mutating)

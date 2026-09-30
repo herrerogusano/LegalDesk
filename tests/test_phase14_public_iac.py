@@ -37,6 +37,7 @@ class Phase14PublicInfrastructureTests(unittest.TestCase):
         for route in (
             "GET /login",
             "GET /callback",
+            "GET /logout",
             "POST /logout",
             "ANY /api",
             "ANY /api/{proxy+}",

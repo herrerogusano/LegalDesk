@@ -1406,7 +1406,20 @@
   }
 
   async function logout() {
-    try { await api("/logout", { method: "POST", body: "{}" }); } finally { window.location.assign("/"); }
+    try {
+      const result = await api("/logout", { method: "POST", body: "{}" });
+      // The server constructs and validates the provider URL.  Local fixtures
+      // may omit a provider and return to the app after clearing local state.
+      if (result && typeof result.logoutUrl === "string" && result.logoutUrl) {
+        window.location.assign(result.logoutUrl);
+      } else {
+        window.location.assign("/");
+      }
+    } catch (error) {
+      // Do not navigate after a failed logout: otherwise a failed provider or
+      // CSRF response would look like a successful sign-out to the user.
+      if (error.name !== "AbortError") setMessage(error.message, true);
+    }
   }
 
   document.addEventListener("DOMContentLoaded", () => {

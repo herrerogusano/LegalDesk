@@ -20,6 +20,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       if (url.hostname === "issuer.integration" && url.pathname === "/authorize") {
         return route.fulfill({ status: 302, headers: { location: `${base}/callback?state=${encodeURIComponent(url.searchParams.get("state"))}&code=integration-code` } });
       }
+      if (url.hostname === "issuer.integration" && url.pathname === "/logout") {
+        return route.fulfill({ status: 302, headers: { location: `${base}/logout` } });
+      }
       if (["localhost", "127.0.0.1"].includes(url.hostname)) return route.continue();
       throw new Error(`Non-local browser request forbidden: ${url.hostname}`);
     });
@@ -289,6 +292,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#ask-button").click();
     await page.waitForFunction(() => document.querySelector("#evidence-status").dataset.status === "insufficient_evidence");
     assert.equal(await page.locator(".citation-inspect").count(), 0);
+    let failNextLogout = true;
+    const failedLogoutRoute = async route => {
+      if (failNextLogout && route.request().method() === "POST") {
+        failNextLogout = false;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "operation_failed" }) });
+      }
+      return route.continue();
+    };
+    await page.route("**/logout", failedLogoutRoute);
+    await page.locator("#logout-button").click();
+    await page.waitForFunction(() => !document.querySelector("#app-error").hidden);
+    assert.equal(new URL(page.url()).origin, new URL(base).origin);
+    assert.equal(await page.evaluate(async () => (await fetch("/api/me", { credentials: "same-origin" })).status), 200);
+    await page.unroute("**/logout", failedLogoutRoute);
     await page.locator("#logout-button").click();
     await page.waitForFunction(() => document.querySelector("#question").disabled);
     assert.ok(!(await page.locator("#answer").innerText()).includes("four years"));
