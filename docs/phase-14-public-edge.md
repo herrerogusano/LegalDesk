@@ -13,8 +13,8 @@ The stack owns only:
 - a CloudFront distribution with an S3 default behavior and uncached dynamic
   behaviors for exactly `/login`, `/callback`, `/logout`, and `/api*`;
 - an API Gateway HTTP API v2, `$default` auto-deploy stage, bounded throttles,
-  and the five exact routes `/login`, `/callback`, `/logout`, `/api`, and
-  `/api/{proxy+}`;
+  and the six exact routes `GET /login`, `GET /callback`, `GET /logout`,
+  `POST /logout`, `ANY /api`, and `ANY /api/{proxy+}`;
 - a version-pinned `python3.12` Lambda using
   `legaldesk.api_gateway.lambda_handler`; and
 - retained, bounded-retention API access and Lambda log groups.
@@ -29,6 +29,13 @@ before WSGI business handling. A direct `execute-api` request therefore fails
 the existing adapter's trusted-edge check. The API origin host is derived from
 the HTTP API ID and is placed in `LEGALDESK_ALLOWED_HOSTS`; it is deliberately
 different from the browser `PublicOrigin`/`LEGALDESK_ALLOWED_ORIGINS`.
+
+The browser sends a CSRF-protected `POST /logout` to invalidate the server
+session. The application derives Cognito's hosted-UI `/logout` URL from the
+server-configured authorization endpoint and client ID, with the exact
+`PublicOrigin/logout` return URI. Cognito then reaches the non-mutating
+`GET /logout` landing route and is redirected to `/`; no browser-supplied
+return URI is accepted and GET never deletes a local session.
 
 The response headers policy provides HSTS, `nosniff`, `DENY` framing,
 `strict-origin-when-cross-origin`, a restrictive baseline CSP, and a narrow

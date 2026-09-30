@@ -254,6 +254,40 @@ class Phase13HttpAppTests(unittest.TestCase):
         status, _, _ = self.request("GET", "/api/me")
         self.assertEqual(status, 403)
 
+    def test_logout_invalidates_local_session_and_builds_server_provider_redirect(self):
+        self.login()
+        status, _, _ = self.request("GET", "/logout")
+        self.assertEqual(status, 302)
+        self.assertEqual(self.app.sessions and len(self.app.sessions), 1)
+        status, body, headers = self.request("POST", "/logout", {}, csrf=self.csrf)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["ok"], True)
+        logout_url = body["logoutUrl"]
+        self.assertEqual(
+            logout_url,
+            "https://issuer.test/logout?client_id=client&logout_uri=http%3A%2F%2Flocalhost%3A8000%2Flogout",
+        )
+        self.assertNotIn(self.token, logout_url)
+        self.assertNotIn("access_token", logout_url)
+        self.assertEqual(headers.get("Set-Cookie", "").split(";", 1)[0], "legaldesk_session=")
+        status, _, _ = self.request("GET", "/api/me")
+        self.assertEqual(status, 403)
+        status, _, headers = self.request("GET", "/logout")
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["Location"], "/")
+
+    def test_logout_get_is_non_destructive_and_csrf_fail_closed(self):
+        self.login()
+        status, _, _ = self.request("POST", "/logout", {})
+        self.assertEqual(status, 403)
+        self.assertEqual(len(self.app.sessions), 1)
+        status, _, headers = self.request("GET", "/logout")
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["Location"], "/")
+        status, body, _ = self.request("GET", "/api/me")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["subject"], "subject-alice")
+
 
 if __name__ == "__main__":
     unittest.main()
