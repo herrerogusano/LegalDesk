@@ -28,7 +28,8 @@ provide document summaries and a bounded event timeline, with raw JSON optional.
 ![Local workspace with a synthetic answer and its inspected source](docs/images/workspace-local-desktop.png)
 
 [Mobile preview](docs/images/workspace-local-mobile.png). These captures show
-the **local candidate**, not a newly deployed release. All displayed data is fictional.
+the **local candidate UI**, whose approved static assets are now deployed in
+the constrained public beta. All displayed data is fictional.
 
 ## What it demonstrates
 
@@ -134,10 +135,11 @@ accuracy.
 ## Local verification
 
 Local candidate checked on **2026-10-01**: **591 tests**, one Windows-specific
-skip; Chrome E2E passed at 375/768/1024/1365/1440 px, including upload, citations,
-review transitions, diagnostics and logout. Targeted frontend behavior and
-document/diagnostic contracts passed. No AWS calls or deployment were performed.
-The new PR workflow is prepared but has not yet run on GitHub.
+skip; the pinned CI Chrome E2E gate passed at 375/768/1024/1365/1440 px,
+including citations, review transitions, diagnostics and logout. Targeted
+frontend behavior and document/diagnostic contracts passed. The approved
+release is deployed as a constrained public beta; this evidence does not claim
+real-provider auth, RAG, ingestion or business-data smoke coverage.
 
 The supported local checks require Python 3.11+:
 
@@ -236,6 +238,7 @@ teardown procedure.
 - [Phase 12 evaluation report](docs/phase-12-evaluation-report.md)
 - [Phase 13 live-smoke ledger](docs/phase-13-live-smoke.md)
 - [Logout security release note](docs/release-logout-motion-2026-09-30.md)
+- [Verified public release record (2026-10-01)](docs/release-preparation-2026-10-01.md)
 - [What must change before real legal data](docs/what-i-would-change-before-real-legal-data.md)
 
 Historical phase reports and the detailed release chronology remain in `docs/`;

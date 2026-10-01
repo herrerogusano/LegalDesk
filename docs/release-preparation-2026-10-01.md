@@ -1,14 +1,14 @@
 # Release preparation — 2026-10-01
 
-Status: **prepared for review; not published**.
+Status: **published and verified**.
 
 This record covers the approved workspace refinement release: review-motion and
 workspace UI changes, expired-session logout recovery, diagnostics, catalog and
 error metadata updates, plus the associated tests and offline CI. It does not
 change RAG, prompts, retrieval, ingestion, Guardrails, model configuration,
-IAM policy, data-plane resources or user data. No AWS write, artifact upload,
-CloudFormation change-set execution, frontend upload or CloudFront invalidation
-was performed in this preparation step.
+IAM policy, data-plane resources or user data. The initial preparation was
+read-only; the reviewed artifact uploads, change-set execution and CloudFront
+invalidation are recorded below.
 
 ## Inventory and deployment boundary
 
@@ -20,8 +20,8 @@ was performed in this preparation step.
   bucket, logs and execution role. No new resource was created.
 - The current public baseline returned `200` for the root/static legacy assets,
   `302` for `GET /logout`, and `403` for unauthenticated `/api/me`. The new
-  `/diagnostics.js` path is not present in that baseline (`403`), so publication
-  remains visibly pending review.
+  `/diagnostics.js` path was not present in that baseline (`403`); the published
+  result below verifies the new asset.
 
 ## Reproducible artifacts
 
@@ -62,39 +62,67 @@ frontend payload differ.
 - `sam validate --lint --template infra/cloudformation/phase-14-public-edge.yaml`:
   passed.
 - `git diff --check`: passed.
-- The owner-provided offline browser acceptance remains the authoritative
-  browser evidence for this workspace. It was not rerun during this release
-  preparation because the prior PASS evidence already covers the approved UI
-  changes; no new browser evidence is claimed here.
+- GitHub Actions run `36874101068` passed the final tested commit with 591
+  Python tests (one Windows-specific skip), Node/document-view checks,
+  JavaScript syntax checks and the offline browser gate. The original local
+  shell did not have its Playwright module set, but the CI run used the pinned
+  Playwright 1.62.1 environment and passed the approved synthetic journey.
 
-## Deferred change set and publication procedure
+## Publication procedure (completed)
 
-After review, upload the Lambda zip to the existing versioned artifact bucket,
-record its immutable S3 object version, and create (but do not execute) a
-reviewed CloudFormation update change set using the existing parameter values.
-Use `UsePreviousValue` for every unchanged parameter and provide only the new
-immutable application key/version. The expected application change is a
-Lambda code update; no IAM replacement, route replacement or data-plane
-resource change is expected. Review the change set before execution.
+After review, the Lambda zip was uploaded to the existing versioned artifact
+bucket and a reviewed CloudFormation update change set was created using the
+existing parameter values. `UsePreviousValue` was used for every unchanged
+parameter and only the immutable application key/version changed. The change
+set was executed after CI passed; its expected and observed changes were a
+Lambda code update plus the dependent integration URI refresh, with no IAM
+replacement, route replacement or data-plane resource change.
 
-Separately extract the five frontend files into a clean staging directory and
-upload them to the existing private, versioned frontend bucket. Invalidate `/`,
+The five frontend files were extracted into a clean staging directory and
+uploaded to the existing private, versioned frontend bucket. Invalidation of `/`,
 `/index.html`, `/styles.css`, `/app.js`, `/citations.js` and `/diagnostics.js`
-only after the reviewed update is executed. These steps are intentionally
-deferred until the supervisor sends the execution approval.
+completed only after the reviewed update was executed.
 
 Expected small costs are S3 requests/versioned storage and one CloudFront
 invalidation. No new capacity, IAM permissions, inference or business-data
 operation is part of this release.
 
+## Deployment result
+
+- Application/frontend artifact source commit: `3293580` (the final tested
+  commit is `d52feb5`; its test-only changes do not alter either artifact).
+- Lambda object: `phase-14/3293580/legaldesk-lambda.zip`, S3 object version
+  `.9gggf7Tl1cXZ1TEAsm.5_zuard1tDuM`.
+- Lambda `CodeSha256`: `JnhA8Lu3/fxkTI3EG8yty5PGiVlzjfighXGc3smtggA=`;
+  deployed state `Active`, matching the candidate ZIP.
+- CloudFormation `LegalDeskPhase14PublicEdge`: `UPDATE_COMPLETE`.
+  Change set `logout-motion-3293580` executed successfully and was consumed
+  by CloudFormation.
+- Frontend object versions after upload:
+
+| Key | Version |
+|---|---|
+| `index.html` | `r5SQAEXVtyn_87qjR0GEOS4I.jubHlIc` |
+| `styles.css` | `a8gXlZX7F.yv.tKi_F8tyHm1Jq_nmOpF` |
+| `app.js` | `BDWETZijNl2i8WTsoublOFyrM.RVRZ_4` |
+| `citations.js` | `xgqLA5BOQatF22C4Of1bXVYN2m7fZOlM` |
+| `diagnostics.js` | `uynQINZE3kGKtrkEJX.pUjMSoeagsa9U` |
+
+- CloudFront invalidation `ID1FQ9ML4BUQE8WAW506DM8ETF` completed for `/`,
+  `/index.html`, `/styles.css`, `/app.js`, `/citations.js` and
+  `/diagnostics.js`.
+- CDN verification returned `200` and exact manifest SHA-256 values for all
+  five assets. `GET /logout` returned `302` with `Location: /`; unauthenticated
+  `GET /api/me` returned `403`.
+
 ## Rollback
 
-Keep the current immutable Lambda artifact available:
+Keep the previous immutable Lambda artifact available for rollback:
 
 - key: `phase-14/dfa85e43cc24bbe1e152ccc76423b1950ed1259a/legaldesk-lambda.zip`
 - object version: `TSoCDD85EtPDArDp73KIC_wRkOXee.eX`
 
-For the frontend, restore the current object versions in the existing bucket:
+For the frontend, restore the pre-release object versions in the existing bucket:
 
 | Key | Previous version |
 |---|---|
@@ -111,5 +139,7 @@ root, logout landing and unauthenticated API response. Preserve the stack,
 frontend bucket, logs and all existing data-plane resources; never delete user
 documents or the stack as a rollback mechanism.
 
-Execution, publication and rollback remain gated on the supervisor's explicit
-follow-up after reviewing this record and the PR.
+Execution and publication are complete. Rollback remains a reviewed operation:
+restore the previous immutable Lambda/object versions above, restore the
+pre-release frontend versions, invalidate all six paths, and verify the same
+unauthenticated checks before resuming traffic.
