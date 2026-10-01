@@ -63,7 +63,7 @@ frontend payload differ.
   passed.
 - `git diff --check`: passed.
 - GitHub Actions run `36874101068` passed the final tested commit with 591
-  Python tests (one Windows-specific skip), Node/document-view checks,
+  Python tests on Linux, Node/document-view checks,
   JavaScript syntax checks and the offline browser gate. The original local
   shell did not have its Playwright module set, but the CI run used the pinned
   Playwright 1.62.1 environment and passed the approved synthetic journey.

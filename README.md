@@ -135,11 +135,12 @@ accuracy.
 ## Local verification
 
 Local candidate checked on **2026-10-01**: **591 tests**, one Windows-specific
-skip; the pinned CI Chrome E2E gate passed at 375/768/1024/1365/1440 px,
-including citations, review transitions, diagnostics and logout. Targeted
-frontend behavior and document/diagnostic contracts passed. The approved
-release is deployed as a constrained public beta; this evidence does not claim
-real-provider auth, RAG, ingestion or business-data smoke coverage.
+skip; prior local Chrome E2E evidence passed at 375/768/1024/1365/1440 px.
+GitHub Actions run `36874101068` passed 591 Python tests on Linux and the
+pinned offline frontend behavior gate at its 1365/reduced viewports, including
+citations, review transitions, diagnostics and logout. The approved release is
+deployed as a constrained public beta; this evidence does not claim real-provider
+auth, RAG, ingestion or business-data smoke coverage.
 
 The supported local checks require Python 3.11+:
 
