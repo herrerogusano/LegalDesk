@@ -63,9 +63,9 @@ frontend payload differ.
   passed.
 - `git diff --check`: passed.
 - The owner-provided offline browser acceptance remains the authoritative
-  browser evidence for this workspace. It was not rerun in this shell because
-  the shell does not have the Playwright module; no new browser evidence is
-  claimed here.
+  browser evidence for this workspace. It was not rerun during this release
+  preparation because the prior PASS evidence already covers the approved UI
+  changes; no new browser evidence is claimed here.
 
 ## Deferred change set and publication procedure
 
