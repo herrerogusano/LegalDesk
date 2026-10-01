@@ -135,10 +135,11 @@ accuracy.
 ## Local verification
 
 Local candidate checked on **2026-10-01**: **591 tests**, one Windows-specific
-skip; prior local Chrome E2E evidence passed at 375/768/1024/1365/1440 px.
+skip; prior local Chrome E2E evidence passed at 375/768/1024/1365/1440 px,
+including citations, review transitions, diagnostics and logout.
 GitHub Actions run `36874101068` passed 591 Python tests on Linux and the
-pinned offline frontend behavior gate at its 1365/reduced viewports, including
-citations, review transitions, diagnostics and logout. The approved release is
+pinned offline frontend behavior gate at its 1365/reduced viewports, covering
+document actions, upload safety and query feedback. The approved release is
 deployed as a constrained public beta; this evidence does not claim real-provider
 auth, RAG, ingestion or business-data smoke coverage.
 
