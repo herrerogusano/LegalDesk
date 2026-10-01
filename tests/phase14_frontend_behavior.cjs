@@ -9,6 +9,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
   try {
     const context = await browser.newContext({ viewport: { width: 1365, height: 1000 } });
     const page = await context.newPage();
+    let stage = "startup";
+    const responseStatuses = [];
+    const pageErrorNames = [];
+    const baseOrigin = new URL(base).origin;
+    page.on("pageerror", error => {
+      pageErrorNames.push(error && error.name ? error.name : "Error");
+    });
+    page.on("response", response => {
+      try {
+        const url = new URL(response.url());
+        const relevant = url.origin === baseOrigin && ["/login", "/callback", "/api/me", "/api/matters"].includes(url.pathname);
+        if (relevant) responseStatuses.push({ path: url.pathname, status: response.status() });
+      } catch (_error) {
+        // Diagnostics must never affect the behavior gate.
+      }
+    });
     await context.route("**/*", async route => {
       const url = new URL(route.request().url());
       if (url.hostname === "issuer.integration" && url.pathname === "/authorize") {
@@ -117,9 +133,31 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ operationId: "behavior-op", operationStatus: "documents_indexed" }) });
     });
 
+    stage = "open";
     await page.goto(base);
+    stage = "login_click";
     await page.locator("#login-button").click();
-    await page.locator("#matter-select").selectOption("matter-integration");
+    stage = "matter_select";
+    try {
+      await page.locator("#matter-select").selectOption("matter-integration");
+    } catch (error) {
+      const currentUrl = new URL(page.url());
+      console.error(JSON.stringify({
+        result: "FAIL",
+        smoke: "phase14-frontend-behavior",
+        stage,
+        origin: currentUrl.origin,
+        pathname: currentUrl.pathname,
+        responseStatuses,
+        pageErrorNames,
+        selectors: {
+          loginButton: await page.locator("#login-button").count(),
+          matterSelect: await page.locator("#matter-select").count(),
+        },
+        errorType: error && error.constructor ? error.constructor.name : "Error",
+      }));
+      throw error;
+    }
     await page.locator("#workspace-tab-documents").click();
     await page.waitForFunction(() => !document.querySelector("#document-file").disabled);
     assert.equal(await page.locator("#sync-button").isDisabled(), false, "refresh is available for an authorized matter");
