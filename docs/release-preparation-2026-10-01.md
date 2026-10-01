@@ -26,11 +26,12 @@ was performed in this preparation step.
 ## Reproducible artifacts
 
 The only packager used was `scripts/package_release.py`. It ran offline against
-the previously prepared Linux dependency payload from `dist/phase14-442435a`;
-there were no dependency upgrades, downloads, pip calls or AWS calls. Two
-independent builds produced identical artifact and manifest digests.
+the previously prepared Linux dependency payload `tmp/package-deps-50dd36f`;
+there were no dependency upgrades, downloads, pip calls or AWS calls. The
+post-fix rebuild after the symlink-root guard produced the same artifact and
+manifest digests as the first two builds.
 
-Output directory: `dist/phase14-20261001-a/` (ignored build output).
+Output directory: `dist/phase14-20261001-c/` (ignored build output).
 
 | Artifact | Size | SHA-256 |
 |---|---:|---|
