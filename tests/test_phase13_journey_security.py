@@ -430,7 +430,7 @@ class Phase13JourneySecurityTests(unittest.TestCase):
 
     def test_static_allowlist_has_single_correct_mime_and_no_source_access(self):
         import http.client
-        for path, mime in (("/", "text/html"), ("/app.js", "text/javascript"), ("/styles.css", "text/css")):
+        for path, mime in (("/", "text/html"), ("/app.js", "text/javascript"), ("/styles.css", "text/css"), ("/diagnostics.js", "text/javascript")):
             connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
             connection.request("GET", path)
             response = connection.getresponse()

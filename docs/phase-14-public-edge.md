@@ -37,6 +37,18 @@ server-configured authorization endpoint and client ID, with the exact
 `GET /logout` landing route and is redirected to `/`; no browser-supplied
 return URI is accepted and GET never deletes a local session.
 
+If the local session record is already absent/expired, `POST /logout` has one
+narrow cleanup exception: it requires the exact configured `Origin`, the
+trusted edge/host checks above, and a non-simple marker header. The deployed
+browser's existing `X-CSRF-Token` header may serve as that marker in this
+branch, but its value is deliberately **not** compared to a server token when
+no record exists; it is not an authorization source and cannot create a
+session or grant. `X-LegalDesk-Logout: 1` is an equivalent explicit marker for
+non-browser callers. If `Sec-Fetch-Site` is present it must be `same-origin`;
+missing/null/cross-site origin evidence fails closed. This branch only clears
+the cookie and returns the server-derived provider URL. Store read/delete
+failures remain errors and never produce a successful logout response.
+
 The response headers policy provides HSTS, `nosniff`, `DENY` framing,
 `strict-origin-when-cross-origin`, a restrictive baseline CSP, and a narrow
 Permissions-Policy. `PresignedUploadOrigin` is the one exact source-bucket
@@ -71,7 +83,7 @@ prepared externally on Linux, it creates:
   the malware corroboration Lambda because it contains
   `legaldesk.malware_scan_lambda.lambda_handler`.
 - `legaldesk-frontend.zip`, containing exactly `index.html`, `styles.css`,
-  `app.js`, and `citations.js`.
+  `app.js`, `citations.js`, and `diagnostics.js`.
 - `legaldesk-release-manifest.json`, with per-file and whole-artifact
   SHA-256 digests.
 
@@ -102,13 +114,13 @@ to CloudFormation. No dependency download or artifact upload is performed by
 local tests.
 
 The frontend zip is a release/verification artifact, not a file served by
-CloudFront. In a separately approved deployment step, extract only those four
+CloudFront. In a separately approved deployment step, extract only those five
 files into a clean staging directory and upload them explicitly to the
 private frontend bucket (never make the bucket public). After the upload,
-invalidate `/`, `/index.html`, `/styles.css`, `/app.js`, and `/citations.js`
-for the reviewed distribution. Preserve the manifest and resulting object
-version/digest for rollback; do not run this upload or invalidation as part of
-Phase 14 local validation.
+invalidate `/`, `/index.html`, `/styles.css`, `/app.js`, `/citations.js`, and
+`/diagnostics.js` for the reviewed distribution. Preserve the manifest and
+resulting object version/digest for rollback; do not run this upload or
+invalidation as part of Phase 14 local validation.
 
 ## Immutable Lambda artifact
 

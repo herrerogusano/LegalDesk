@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import http.client
+import io
 import json
 import sys
 import threading
 import time
+from dataclasses import replace
 import unittest
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 import jwt
@@ -123,7 +126,7 @@ class Phase13HttpAppTests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.server.server_close()
 
-    def request(self, method, path, body=None, *, origin=None, csrf=None):
+    def request(self, method, path, body=None, *, origin=None, csrf=None, custom_headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         headers = {"Host": f"127.0.0.1:{self.port}"}
         if self.cookies:
@@ -132,6 +135,8 @@ class Phase13HttpAppTests(unittest.TestCase):
             headers["Origin"] = origin
         if csrf is not None:
             headers["X-CSRF-Token"] = csrf
+        if custom_headers:
+            headers.update(custom_headers)
         encoded = None
         if body is not None:
             encoded = json.dumps(body).encode()
@@ -287,6 +292,171 @@ class Phase13HttpAppTests(unittest.TestCase):
         status, body, _ = self.request("GET", "/api/me")
         self.assertEqual(status, 200)
         self.assertEqual(body["subject"], "subject-alice")
+
+    def test_logout_accepts_expired_jwt_when_local_record_and_csrf_are_valid(self):
+        self.login()
+        key = next(iter(self.app.sessions))
+        record = self.app.sessions[key]
+        # The local session is still live, but the IdP token is no longer
+        # usable.  Logout must not re-run the application JWT authorization.
+        expired_token = jwt.encode(
+            {
+                "sub": "subject-alice", "iss": "https://issuer.test", "exp": int(time.time()) - 1,
+                "token_use": "access", "client_id": "client", "scope": "openid legaldesk/use",
+            },
+            self.private, algorithm="RS256", headers={"kid": "test-key"},
+        )
+        self.app.sessions[key] = type(record)(record.identity, expired_token, record.csrf_token, record.expires_at)
+        status, body, _ = self.request("POST", "/logout", {}, csrf=self.csrf)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertNotIn(key, self.app.sessions)
+
+    def test_logout_expired_or_missing_record_requires_origin_and_custom_intent(self):
+        self.login()
+        key = next(iter(self.app.sessions))
+        record = self.app.sessions[key]
+        self.app.sessions[key] = type(record)(record.identity, record.access_token, record.csrf_token, time.time() - 1)
+        marker = {"X-LegalDesk-Logout": "1"}
+
+        status, _, _ = self.request("POST", "/logout", {}, custom_headers=marker)
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/logout", {}, origin="http://localhost:8000")
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/logout", {}, origin="http://localhost:8000", csrf="stale-csrf-marker")
+        self.assertEqual(status, 200)
+        self.cookies = {"legaldesk_session": "missing-session"}
+        status, _, _ = self.request("POST", "/logout", {}, origin="http://localhost:8000", custom_headers={"X-LegalDesk-Logout": "0"})
+        self.assertEqual(status, 403)
+        status, body, headers = self.request("POST", "/logout", {}, origin="http://localhost:8000", custom_headers=marker)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(headers.get("Set-Cookie", "").split(";", 1)[0], "legaldesk_session=")
+
+        self.cookies = {"legaldesk_session": "missing-session"}
+        status, _, _ = self.request("POST", "/logout", {}, origin="http://localhost:8000", custom_headers={"X-LegalDesk-Logout": "1", "Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(status, 403)
+        status, _, _ = self.request("POST", "/logout", {}, origin="null", custom_headers=marker)
+        self.assertEqual(status, 403)
+        status, body, _ = self.request("POST", "/logout", {}, origin="http://localhost:8000", custom_headers=marker)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+
+    def test_logout_active_record_rejects_invalid_csrf_even_with_anonymous_marker(self):
+        self.login()
+        status, _, _ = self.request(
+            "POST", "/logout", {}, origin="http://localhost:8000",
+            csrf="wrong", custom_headers={"X-LegalDesk-Logout": "1"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(len(self.app.sessions), 1)
+
+    def test_logout_storage_failure_fails_closed_without_cookie_or_provider_url(self):
+        class BrokenStore:
+            def get_session(self, _key):
+                raise RuntimeError("storage unavailable")
+
+        self.app.state_store = BrokenStore()
+        self.cookies = {"legaldesk_session": "opaque-session"}
+        status, body, headers = self.request(
+            "POST", "/logout", {}, origin="http://localhost:8000",
+            custom_headers={"X-LegalDesk-Logout": "1"},
+        )
+        self.assertEqual(status, 500)
+        self.assertEqual(body["error"], "operation_failed")
+        UUID(body["errorId"])
+        self.assertNotIn("storage unavailable", json.dumps(body))
+        self.assertNotIn("Set-Cookie", headers)
+
+    def test_logout_delete_failure_fails_closed_without_clearing_cookie(self):
+        self.login()
+        key = next(iter(self.app.sessions))
+        record = self.app.sessions[key]
+
+        class DeleteBrokenStore:
+            def get_session(self, requested_key):
+                return record if requested_key == key else None
+
+            def delete_session(self, _requested_key):
+                raise RuntimeError("delete unavailable")
+
+        self.app.state_store = DeleteBrokenStore()
+        status, body, headers = self.request("POST", "/logout", {}, csrf=self.csrf)
+        self.assertEqual(status, 500)
+        self.assertEqual(body["error"], "operation_failed")
+        UUID(body["errorId"])
+        self.assertNotIn("delete unavailable", json.dumps(body))
+        self.assertNotIn("Set-Cookie", headers)
+
+    def test_public_logout_fallback_keeps_trusted_edge_host_and_origin_guards(self):
+        self.login()
+        composition = replace(
+            self.app.composition,
+            public_mode=True,
+            secure_cookies=True,
+            public_base_url="https://beta.example.com",
+            redirect_uri="https://beta.example.com/callback",
+            allowed_hosts=frozenset({"api.example.com"}),
+            allowed_origins=frozenset({"https://beta.example.com"}),
+            trusted_edge_value="edge-secret",
+            quota=InMemoryQuotaLedger(),
+        )
+        public_app = create_http_app(composition)
+
+        def call(method, path, *, host="api.example.com", origin=None, cookie="missing-session", csrf=None, edge=True):
+            environ = {
+                "REQUEST_METHOD": method,
+                "PATH_INFO": path,
+                "HTTP_HOST": host,
+                "HTTP_COOKIE": f"legaldesk_session={cookie}" if cookie else "",
+                "wsgi.input": io.BytesIO(b"{}"),
+                "CONTENT_LENGTH": "2",
+            }
+            if origin is not None:
+                environ["HTTP_ORIGIN"] = origin
+            if csrf is not None:
+                environ["HTTP_X_CSRF_TOKEN"] = csrf
+            if edge:
+                environ["legaldesk.edge_verified"] = True
+            captured = {}
+
+            def start_response(status, headers):
+                captured["status"] = int(status.split(" ", 1)[0])
+                captured["headers"] = dict(headers)
+
+            payload = b"".join(public_app(environ, start_response))
+            return captured["status"], json.loads(payload.decode()), captured["headers"]
+
+        key = next(iter(self.app.sessions))
+        record = self.app.sessions[key]
+        expired_token = jwt.encode(
+            {
+                "sub": "subject-alice", "iss": "https://issuer.test", "exp": int(time.time()) - 1,
+                "token_use": "access", "client_id": "client", "scope": "openid legaldesk/use",
+            },
+            self.private, algorithm="RS256", headers={"kid": "test-key"},
+        )
+        self.app.sessions[key] = type(record)(record.identity, expired_token, record.csrf_token, record.expires_at)
+        status, _, _ = call("GET", "/api/me", cookie=key, origin="https://beta.example.com")
+        self.assertEqual(status, 403)
+        # The failed JWT verification removed the record; it must not make any
+        # other authenticated getter available before the logout fallback.
+        status, _, _ = call("GET", "/api/me", cookie=key, origin="https://beta.example.com")
+        self.assertEqual(status, 403)
+
+        marker = "stale-marker"
+        status, _, _ = call("POST", "/logout", host="evil.example.com", origin="https://beta.example.com", csrf=marker)
+        self.assertEqual(status, 403)
+        status, _, _ = call("POST", "/logout", origin="https://evil.example.com", csrf=marker)
+        self.assertEqual(status, 403)
+        status, _, _ = call("POST", "/logout", origin=None, csrf=marker)
+        self.assertEqual(status, 403)
+        status, _, _ = call("POST", "/logout", origin="https://beta.example.com", csrf=marker, edge=False)
+        self.assertEqual(status, 403)
+        status, body, headers = call("POST", "/logout", origin="https://beta.example.com", csrf=marker)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(headers["Set-Cookie"].split(";", 1)[0], "legaldesk_session=")
 
 
 if __name__ == "__main__":

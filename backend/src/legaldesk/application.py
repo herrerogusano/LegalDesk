@@ -154,7 +154,20 @@ class AWSResourceConfig:
                 raise ValueError(f"{name} is required")
             return value
 
-        catalog = tuple(item for item in values.get("LEGALDESK_MATTER_CATALOG", "").split(",") if item)
+        raw_catalog = values.get("LEGALDESK_MATTER_CATALOG")
+        if raw_catalog is None:
+            # Preserve the existing unset/default behavior: the explicit
+            # AWS composition gate below still rejects an unconfigured
+            # catalog rather than scanning authorization state.
+            catalog = ()
+        else:
+            if not isinstance(raw_catalog, str):
+                raise ValueError("LEGALDESK_MATTER_CATALOG must be a comma-separated string")
+            catalog = tuple(item.strip() for item in raw_catalog.split(","))
+            if not raw_catalog.strip() or any(not item for item in catalog):
+                raise ValueError("LEGALDESK_MATTER_CATALOG contains an empty matter ID")
+            if len(set(catalog)) != len(catalog):
+                raise ValueError("LEGALDESK_MATTER_CATALOG contains duplicate matter IDs")
         if not catalog or len(catalog) > 64 or any(len(item) > 128 for item in catalog):
             raise ValueError("LEGALDESK_MATTER_CATALOG is required; authorization scans are forbidden")
         prompt = values.get("LEGALDESK_SYSTEM_PROMPT_PATH")

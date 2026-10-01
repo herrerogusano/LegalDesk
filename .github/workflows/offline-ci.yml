@@ -1,0 +1,63 @@
+name: Offline checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONFIG_FILE: "/dev/null"
+      AWS_SHARED_CREDENTIALS_FILE: "/dev/null"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set up Node LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+      - name: Install local packages
+        run: python -m pip install --disable-pip-version-check -e ".[aws]" -e agent
+      - name: Run Python unit and integration tests
+        run: python -B -m unittest discover -s tests -q
+      - name: Check Node helper contracts
+        run: |
+          node tests/phase13_live_browser_helpers.test.cjs
+          node tests/phase13_manual_browser_helpers.test.cjs
+          node tests/test_phase14_diagnostics.cjs
+          node tests/test_phase14_document_view.cjs
+      - name: Check frontend JavaScript syntax
+        run: |
+          node --check frontend/app.js
+          node --check frontend/citations.js
+          node --check frontend/diagnostics.js
+      - name: Install local Playwright browser for behavior gate
+        run: |
+          npm install --prefix "$RUNNER_TEMP/playwright" --no-save --ignore-scripts playwright@1.62.1
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Run offline frontend behavior gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="backend/src:agent/src:tests"
+          python tests/phase13_browser_server.py > "$RUNNER_TEMP/legaldesk-server.json" &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if test -s "$RUNNER_TEMP/legaldesk-server.json"; then break; fi
+            sleep 1
+          done
+          base_url=$(python -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())["baseUrl"])' "$RUNNER_TEMP/legaldesk-server.json")
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/playwright/node_modules/playwright" \
+            PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" \
+            node tests/phase14_frontend_behavior.cjs "$base_url"

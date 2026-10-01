@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import sys
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
 from pathlib import Path
+from uuid import UUID
 from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
@@ -15,6 +17,7 @@ import legaldesk.api_gateway as adapter
 from legaldesk.api_gateway import lambda_handler
 from legaldesk.authorization import AuthorizationDenied
 from legaldesk.http_app import ApplicationComposition, MAX_HTTP_BODY, LoopbackLegalDeskApp, TRUSTED_EDGE_HEADER
+from legaldesk.observability import InMemoryTelemetrySink
 from legaldesk.quota import InMemoryQuotaLedger
 
 
@@ -90,11 +93,17 @@ class Phase14ApiGatewayTests(unittest.TestCase):
             raise RuntimeError("provider secret")
 
         config = type("PublicConfig", (), {"public_mode": True, "trusted_edge_value": "edge-secret"})()
-        with patch.object(adapter, "AWSResourceConfig") as config_factory, patch.object(adapter, "build_aws_composition", side_effect=factory):
+        sink = InMemoryTelemetrySink()
+        with patch.object(adapter, "AWSResourceConfig") as config_factory, patch.object(adapter, "build_aws_composition", side_effect=factory), patch.object(adapter, "DEFAULT_TELEMETRY_SINK", sink):
             config_factory.from_environment.return_value = config
             response = lambda_handler(_event(), None)
         self.assertEqual(response["statusCode"], 500)
         self.assertNotIn("provider secret", response["body"])
+        payload = json.loads(response["body"])
+        self.assertEqual(payload["error"], "operation_failed")
+        UUID(payload["errorId"])
+        self.assertEqual(sink.events[0].to_dict()["error_code"], "internal_error")
+        self.assertNotIn("provider secret", sink.events[0].to_dict())
         self.assertEqual(calls, [True])
 
         adapter.reset_application_for_tests()

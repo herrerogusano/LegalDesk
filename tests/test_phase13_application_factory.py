@@ -35,6 +35,29 @@ class _Session:
 
 
 class Phase13ApplicationFactoryTests(unittest.TestCase):
+    def environment(self, catalog: str | None = "matter-a") -> dict[str, str]:
+        values = {
+            "LEGALDESK_METADATA_TABLE_NAME": "table",
+            "LEGALDESK_SOURCE_BUCKET": "bucket",
+            "LEGALDESK_KNOWLEDGE_BASE_ID": "kb-id",
+            "LEGALDESK_DATA_SOURCE_ID": "source-id",
+            "LEGALDESK_GUARDRAIL_ID": "guardrail-id",
+            "LEGALDESK_GUARDRAIL_VERSION": "1",
+            "LEGALDESK_RESOLVER_MODEL_ID": "resolver-model",
+            "LEGALDESK_WRITER_MODEL_ID": "writer-model",
+            "LEGALDESK_HARNESS_ARN": "arn:aws:bedrock-agentcore:eu-west-1:123:harness/test",
+            "LEGALDESK_GATEWAY_URL": "https://gateway.example.test/mcp",
+            "LEGALDESK_MEMORY_ID": "memory-id",
+            "LEGALDESK_JWKS_URL": "https://issuer.example.test/.well-known/jwks.json",
+            "LEGALDESK_OIDC_ISSUER": "https://issuer.example.test",
+            "LEGALDESK_OIDC_CLIENT_ID": "client-id",
+            "LEGALDESK_OIDC_AUTHORIZATION_ENDPOINT": "https://issuer.example.test/oauth2/authorize",
+            "LEGALDESK_OIDC_TOKEN_ENDPOINT": "https://issuer.example.test/oauth2/token",
+        }
+        if catalog is not None:
+            values["LEGALDESK_MATTER_CATALOG"] = catalog
+        return values
+
     def config(self) -> AWSResourceConfig:
         return AWSResourceConfig(
             region="eu-west-1",
@@ -67,6 +90,18 @@ class Phase13ApplicationFactoryTests(unittest.TestCase):
         client.assert_not_called()
         resource.assert_not_called()
         resolver.assert_not_called()
+
+    def test_environment_catalog_strips_ids_and_rejects_empty_or_duplicate_entries(self):
+        config = AWSResourceConfig.from_environment(self.environment(" matter-a , matter-b "))
+        self.assertEqual(config.matter_catalog, ("matter-a", "matter-b"))
+        for raw in ("", "   ", ",", "matter-a,,matter-b", "matter-a, matter-a"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                AWSResourceConfig.from_environment(self.environment(raw))
+
+    def test_environment_catalog_unset_preserves_required_default_gate(self):
+        values = self.environment(None)
+        with self.assertRaisesRegex(ValueError, "LEGALDESK_MATTER_CATALOG is required"):
+            AWSResourceConfig.from_environment(values)
 
     def test_aws_public_endpoint_configuration_fails_closed(self):
         fields = {

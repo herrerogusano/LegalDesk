@@ -20,7 +20,7 @@ from typing import Iterable
 RUNTIME = "python3.12"
 PLATFORM = "manylinux_x86_64"
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
-FRONTEND_FILES = ("index.html", "styles.css", "app.js", "citations.js")
+FRONTEND_FILES = ("index.html", "styles.css", "citations.js", "diagnostics.js", "app.js")
 EXCLUDED_NAMES = frozenset(
     {
         ".git",
@@ -166,7 +166,6 @@ def _build_zip(output: Path, package: str, entries: list[tuple[str, Path]]) -> d
 
 def build_release(*, repo_root: Path, dependency_root: Path, output_dir: Path) -> dict[str, object]:
     repo_root = repo_root.resolve()
-    dependency_root = dependency_root.resolve()
     output_dir = output_dir.resolve()
     app_entries = _merge(
         [

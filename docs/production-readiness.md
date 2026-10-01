@@ -6,22 +6,31 @@ This verdict is limited to the authenticated beta with pre-provisioned users
 and fictional/public documents. It is not strict-TLS certification and it is
 not certification for real legal/client data.
 
+The constrained public beta entry point is
+[`https://d3nxeyrpa3juwl.cloudfront.net`](https://d3nxeyrpa3juwl.cloudfront.net)
+and requires pre-provisioned Cognito access. The local loopback entry point is
+the reproducible development/test path; neither path supports anonymous signup
+or real legal/client data.
+
 The Phase 14 public edge, document-security, reconciliation and operations
-stacks are deployed in `eu-west-1`. A bounded Chrome-headless journey using a
+stacks were historically deployed in `eu-west-1`. A bounded Chrome-headless journey using a
 short-lived technical identity passed Cognito login, indexed-document display,
 one grounded chat with citations, cross-matter denial, audit and logout. This
 closes the bounded holdout and operational evidence for the constrained beta.
 The default CloudFront certificate is an explicitly accepted residual because
 no custom domain is owned; strict TLS is not claimed.
 
-The integrated application and its bounded Phase 13 AWS smoke are complete.
+The integrated application and its bounded Phase 13 AWS smoke are historical
+release evidence, not a claim that this working tree has just run AWS.
 The Phase 14 local candidate adds durable state, asynchronous ingestion,
 quarantine and content validation, bounded reconciliation, release packaging,
 operational controls, a bounded holdout runner, fail-closed public endpoint
 validation, browser security headers and strict retrieval response bounds. The
-complete local suite passes with 574 tests (one platform-specific symlink test
-skipped on Windows), all 15 CloudFormation/SAM templates pass lint, and the
-deterministic evaluation remains 24/24 with zero AWS calls.
+historical release baseline passed 574 local tests (one platform-specific
+symlink test skipped on Windows), and all 15 CloudFormation/SAM templates
+passed lint. Run the current local verification command in the repository
+README for the working-tree count; no AWS calls are required. The
+deterministic evaluation remains a separate 24/24 historical result.
 
 The loopback application is not the public service. Promotion was held closed
 until all Phase 14 acceptance gates below had evidence attached. Those gates
@@ -105,11 +114,12 @@ The final inventory, owner decision and consumed bounded execution envelope are
 consolidated in
 [`phase-14-production-approval.md`](phase-14-production-approval.md).
 
-The loopback entry point rejects non-loopback hosts and is intentionally not a
-production server. ADR-018 and `PLAN_14_PUBLIC_BETA.md` define the target
-design. P14-G1 through P14-G7 have evidence for the constrained beta. The
+The loopback entry point rejects non-loopback hosts and is intentionally not the
+public service; it remains the local reproduction path. ADR-018 and
+`PLAN_14_PUBLIC_BETA.md` define the target design. P14-G1 through P14-G7 have
+historical evidence for the constrained beta. The
 cost inventory and operational procedure are in
-`docs/phase-14-cost-operations.md`. The current release state is now
+`docs/phase-14-cost-operations.md`. The release record state is
 `CONSTRAINED_PROD_BETA_DEPLOYED` for the authenticated fictional/public beta.
 This does not certify real legal data and does not claim strict TLS or a custom
 domain.

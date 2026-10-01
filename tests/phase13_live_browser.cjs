@@ -240,7 +240,7 @@ async function run() {
     beginPhase("metadata_tool");
     const operationCorrelationId = absent.correlationId;
     if (!safeId(operationCorrelationId)) fail("absent_correlation");
-    await page.locator("#technical-diagnostics summary").click();
+    await page.locator("#technical-diagnostics > summary").click();
     const metadataResponsePromise = apiResponse(page, "/api/mcp", "POST", "metadata_response");
     await page.locator("#metadata-button").click();
     const metadata = await metadataResponsePromise;
