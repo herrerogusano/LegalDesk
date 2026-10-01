@@ -1,18 +1,38 @@
 /* Offline browser behavior test for the public upload safety gate and query loading state. */
 const assert = require("node:assert/strict");
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
+const { chromium, request } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 (async () => {
   const base = process.argv[2];
   assert.match(base || "", /^http:\/\/localhost:\d+$/);
   const browser = await chromium.launch({ executablePath: process.env.BROWSER_EXECUTABLE, headless: true });
+  const providerApi = await request.newContext();
   try {
     const context = await browser.newContext({ viewport: { width: 1365, height: 1000 } });
     const page = await context.newPage();
     let stage = "startup";
     const responseStatuses = [];
     const pageErrorNames = [];
+    const failedRequests = [];
     const baseOrigin = new URL(base).origin;
+    const loginResponse = await providerApi.get(`${base}/login`, { maxRedirects: 0 });
+    assert.equal(loginResponse.status(), 302);
+    const providerLocation = loginResponse.headers()["location"];
+    assert.ok(providerLocation);
+    const providerUrl = new URL(providerLocation);
+    assert.equal(providerUrl.origin, "https://issuer.integration");
+    assert.equal(providerUrl.pathname, "/authorize");
+    const loginState = providerUrl.searchParams.get("state");
+    assert.ok(loginState);
+    const loginCookies = loginResponse.headersArray()
+      .filter(header => header.name.toLowerCase() === "set-cookie")
+      .map(header => header.value.split(";", 1)[0])
+      .map(pair => {
+        const separator = pair.indexOf("=");
+        return separator > 0 ? { name: pair.slice(0, separator), value: pair.slice(separator + 1), url: base } : null;
+      })
+      .filter(Boolean);
+    if (loginCookies.length) await context.addCookies(loginCookies);
     page.on("pageerror", error => {
       pageErrorNames.push(error && error.name ? error.name : "Error");
     });
@@ -25,8 +45,25 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
         // Diagnostics must never affect the behavior gate.
       }
     });
+    page.on("requestfailed", request => {
+      try {
+        const url = new URL(request.url());
+        const failure = request.failure();
+        const errorText = failure && failure.errorText ? failure.errorText : "unknown";
+        const allowedErrors = new Set(["net::ERR_BLOCKED_BY_CLIENT", "net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS", "net::ERR_FAILED"]);
+        failedRequests.push({ origin: url.origin, pathname: url.pathname, errorText: allowedErrors.has(errorText) ? errorText : "other" });
+      } catch (_error) {
+        // Diagnostics must never affect the behavior gate.
+      }
+    });
     await context.route("**/*", async route => {
       const url = new URL(route.request().url());
+      if (["localhost", "127.0.0.1"].includes(url.hostname) && url.pathname === "/login") {
+        // Complete the synthetic callback on localhost. The preflight above
+        // created and installed the server's state cookie without contacting a
+        // provider, so redirect handling is browser-independent.
+        return route.fulfill({ status: 302, headers: { location: `${base}/callback?state=${encodeURIComponent(loginState)}&code=integration-code` } });
+      }
       if (url.hostname === "issuer.integration" && url.pathname === "/authorize") {
         return route.fulfill({ status: 302, headers: { location: `${base}/callback?state=${encodeURIComponent(url.searchParams.get("state"))}&code=integration-code` } });
       }
@@ -150,6 +187,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
         pathname: currentUrl.pathname,
         responseStatuses,
         pageErrorNames,
+        failedRequests,
         selectors: {
           loginButton: await page.locator("#login-button").count(),
           matterSelect: await page.locator("#matter-select").count(),
@@ -289,6 +327,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await reducedContext.close();
     console.log(JSON.stringify({ result: "PASS", documentGets, pendingPolls: verifiedPendingPolls, ingestionPosts: ingestionPosts.length, failedStarted: false, queryLoadingState: true }));
   } finally {
+    await providerApi.dispose();
     await browser.close();
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
