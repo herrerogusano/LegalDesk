@@ -24,15 +24,8 @@ const { chromium, request } = require(process.env.PLAYWRIGHT_MODULE || "playwrig
     assert.equal(providerUrl.pathname, "/authorize");
     const loginState = providerUrl.searchParams.get("state");
     assert.ok(loginState);
-    const loginCookies = loginResponse.headersArray()
-      .filter(header => header.name.toLowerCase() === "set-cookie")
-      .map(header => header.value.split(";", 1)[0])
-      .map(pair => {
-        const separator = pair.indexOf("=");
-        return separator > 0 ? { name: pair.slice(0, separator), value: pair.slice(separator + 1), url: base } : null;
-      })
-      .filter(Boolean);
-    if (loginCookies.length) await context.addCookies(loginCookies);
+    const providerState = await providerApi.storageState();
+    if (providerState.cookies.length) await context.addCookies(providerState.cookies);
     page.on("pageerror", error => {
       pageErrorNames.push(error && error.name ? error.name : "Error");
     });
