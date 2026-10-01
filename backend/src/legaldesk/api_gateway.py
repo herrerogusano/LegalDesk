@@ -20,6 +20,7 @@ from urllib.parse import parse_qsl
 
 from .application import AWSResourceConfig, build_aws_composition
 from .http_app import MAX_HTTP_BODY, TRUSTED_EDGE_ENVIRON, TRUSTED_EDGE_HEADER, create_http_app
+from .observability import DEFAULT_TELEMETRY_SINK, internal_error_response
 
 
 _HEADER_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
@@ -40,11 +41,14 @@ class TrustedEdgeDenied(APIGatewayEventError):
     """Raised when a request did not arrive through the approved edge."""
 
 
-def _error(status: int, code: str) -> dict[str, object]:
+def _error(status: int, code: str, *, error_id: str | None = None) -> dict[str, object]:
+    payload: dict[str, str] = {"error": code}
+    if error_id is not None:
+        payload["errorId"] = error_id
     return {
         "statusCode": status,
         "headers": {"content-type": "application/json; charset=utf-8", "cache-control": "no-store"},
-        "body": json.dumps({"error": code}, separators=(",", ":")),
+        "body": json.dumps(payload, separators=(",", ":")),
         "isBase64Encoded": False,
     }
 
@@ -277,7 +281,8 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
     except APIGatewayEventError:
         return _error(400, "invalid_request")
     except Exception:
-        return _error(500, "operation_failed")
+        diagnostic = internal_error_response(DEFAULT_TELEMETRY_SINK)
+        return _error(500, diagnostic["error"], error_id=diagnostic["errorId"])
 
 
 def reset_application_for_tests() -> None:

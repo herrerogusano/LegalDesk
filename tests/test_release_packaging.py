@@ -44,7 +44,7 @@ class ReleasePackagingTests(unittest.TestCase):
             with zipfile.ZipFile(release_dir / "legaldesk-frontend.zip") as archive:
                 self.assertEqual(
                     archive.namelist(),
-                    ["app.js", "citations.js", "index.html", "styles.css"],
+                    ["app.js", "citations.js", "diagnostics.js", "index.html", "styles.css"],
                 )
             written = json.loads((release_dir / "legaldesk-release-manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(written, manifest)

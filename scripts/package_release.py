@@ -20,7 +20,7 @@ from typing import Iterable
 RUNTIME = "python3.12"
 PLATFORM = "manylinux_x86_64"
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
-FRONTEND_FILES = ("index.html", "styles.css", "app.js", "citations.js")
+FRONTEND_FILES = ("index.html", "styles.css", "citations.js", "diagnostics.js", "app.js")
 EXCLUDED_NAMES = frozenset(
     {
         ".git",

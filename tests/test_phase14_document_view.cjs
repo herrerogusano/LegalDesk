@@ -56,9 +56,12 @@ const documentApi = {
   addEventListener() {},
   getElementById(id) { return elements[id] || new Element(); },
   createElement(tagName) { return new Element(tagName); },
+  querySelector() { return null; },
 };
 const windowApi = {};
 const context = vm.createContext({ window: windowApi, document: documentApi, Intl, DOMException, AbortController, setTimeout, clearTimeout });
+const diagnosticsSource = fs.readFileSync(path.join(__dirname, "..", "frontend", "diagnostics.js"), "utf8");
+vm.runInContext(diagnosticsSource, context);
 const source = fs.readFileSync(path.join(__dirname, "..", "frontend", "app.js"), "utf8");
 vm.runInContext(source, context);
 const view = windowApi.LegalDeskDocumentView;
@@ -73,7 +76,7 @@ const documents = [
 ];
 assert.equal(JSON.stringify(view.summarizeDocuments(documents)), JSON.stringify({ indexed: 2, processing: 0, incomplete: 3, failed: 0 }));
 assert.equal(view.documentSummaryLabel(view.summarizeDocuments(documents)), "2 listos · 3 cargas incompletas");
-assert.equal(view.documentViewModel(documents[2]).statusLabel, "Carga incompleta");
+assert.equal(view.documentViewModel(documents[2]).statusLabel, "Análisis interrumpido · revisa y sube de nuevo");
 assert.match(view.documentViewModel(documents[2]).metadata, /ID reconcil/);
 assert.match(view.documentViewModel(documents[2]).metadata, /38 B/);
 assert.match(view.documentViewModel(documents[2]).metadata, /autorizado/);
@@ -100,19 +103,19 @@ assert.deepEqual(statusGroups.incomplete.map((item) => item.documentId), ["pendi
 
 const mixedDocuments = [...documents, { documentId: "real-failure", status: "FAILED", malwareScanStatus: "THREATS_FOUND" }];
 assert.equal(JSON.stringify(view.summarizeDocuments(mixedDocuments)), JSON.stringify({ indexed: 2, processing: 0, incomplete: 3, failed: 1 }));
-assert.equal(view.documentViewModel(mixedDocuments.at(-1)).statusLabel, "Requiere atención");
+assert.equal(view.documentViewModel(mixedDocuments.at(-1)).statusLabel, "Rechazado por análisis · sube otra versión");
 
 view.bindDocumentTabs();
 view.renderDocuments(documents);
 assert.equal(elements["document-count"].textContent, "2 listos · 3 cargas incompletas");
 assert.match(elements["document-status"].textContent, /2 están listos para consultar/);
-assert.match(elements["document-status"].textContent, /3 tienen cargas incompletas/);
+assert.match(elements["document-status"].textContent, /3 cargas incompletas/);
 assert.equal(elements["document-tab-available-count"].textContent, "2");
 assert.equal(elements["document-tab-incomplete-count"].textContent, "3");
 assert.equal(elements["document-list"].children.length, 2);
 assert.equal(elements["document-incomplete-list"].children.length, 3);
 assert.equal(elements["document-list"].children[0].children[1].textContent, "Listo para consultar");
-assert.equal(elements["document-incomplete-list"].children[0].children[1].textContent, "Carga incompleta");
+assert.equal(elements["document-incomplete-list"].children[0].children[1].textContent, "Análisis interrumpido · revisa y sube de nuevo");
 assert.match(elements["document-incomplete-list"].children[0].children[2].textContent, /38 B/);
 assert.equal(elements["document-tab-available"].getAttribute("aria-selected"), "true");
 assert.equal(elements["document-tab-incomplete"].getAttribute("aria-selected"), "false");
@@ -148,6 +151,6 @@ assert.equal(elements["document-tab-available-count"].textContent, "3");
 assert.equal(elements["document-tab-incomplete-count"].textContent, "3");
 assert.equal(elements["document-list"].children.length, 3);
 assert.equal(elements["document-incomplete-list"].children.length, 3);
-assert.equal(elements["document-list"].children.at(-1).children[1].textContent, "Requiere atención");
-assert.equal(elements["document-incomplete-list"].children[0].children[1].textContent, "Carga incompleta");
+assert.equal(elements["document-list"].children.at(-1).children[1].textContent, "Rechazado por análisis · sube otra versión");
+assert.equal(elements["document-incomplete-list"].children[0].children[1].textContent, "Análisis interrumpido · revisa y sube de nuevo");
 console.log(JSON.stringify({ result: "PASS", test: "phase14-document-view" }));

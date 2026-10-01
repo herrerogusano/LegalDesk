@@ -70,7 +70,7 @@ async function run() {
       const url = new URL(request.url());
       if (url.hostname === IDP_HOST) return route.continue();
       if (url.origin !== base.origin) return route.abort("blockedbyclient");
-      const readOnlyPaths = new Set(["/", "/index.html", "/styles.css", "/citations.js", "/app.js", "/login", "/callback", "/logout", "/api/me", "/api/matters"]);
+      const readOnlyPaths = new Set(["/", "/index.html", "/styles.css", "/citations.js", "/diagnostics.js", "/app.js", "/login", "/callback", "/logout", "/api/me", "/api/matters"]);
       const methodAllowed = ["GET", "HEAD", "OPTIONS"].includes(request.method()) || (url.pathname === "/logout" && request.method() === "POST");
       if (!methodAllowed || !readOnlyPaths.has(url.pathname)) return route.abort("blockedbyclient");
       return route.continue();

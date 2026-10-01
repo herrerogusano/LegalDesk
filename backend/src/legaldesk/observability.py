@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 
 _SEMVER = re.compile(
@@ -42,6 +42,7 @@ class TelemetryOutcome(StrEnum):
 
 
 class TelemetryOperation(StrEnum):
+    HTTP_REQUEST = "http_request"
     INVOKE_HARNESS = "invoke_harness"
     ANSWER_QUESTION = "answer_question"
     GENERATE_ANSWER = "generate_answer"
@@ -63,6 +64,7 @@ class TelemetryOperation(StrEnum):
 
 
 class TelemetryErrorCode(StrEnum):
+    INTERNAL_ERROR = "internal_error"
     ACCESS_DENIED = "access_denied"
     REVIEW_TASK_ERROR = "review_task_error"
     INVALID_PARAMETERS = "invalid_parameters"
@@ -266,6 +268,30 @@ def emit_telemetry(
     )
     (sink or DEFAULT_TELEMETRY_SINK).record(event)
 
+
+def internal_error_response(sink: TelemetrySink | None) -> dict[str, str]:
+    """Return a safe 500 diagnostic and emit only allowlisted metadata.
+
+    The generated UUID is an operator correlation handle, not a client- or
+    provider-supplied value.  Exception text, traceback data and payloads are
+    intentionally never inspected or serialized here.  A failing telemetry
+    sink cannot turn the already-safe response into a second failure.
+    """
+
+    error_id = str(uuid4())
+    try:
+        emit_telemetry(
+            sink,
+            TelemetryEventType.ERROR,
+            error_id,
+            TelemetryOutcome.ERROR,
+            operation=TelemetryOperation.HTTP_REQUEST,
+            error_code=TelemetryErrorCode.INTERNAL_ERROR,
+        )
+    except Exception:
+        pass
+    return {"error": "operation_failed", "errorId": error_id}
+
 __all__ = [
     "DEFAULT_TELEMETRY_SINK",
     "InMemoryTelemetrySink",
@@ -278,4 +304,5 @@ __all__ = [
     "TelemetryOutcome",
     "TelemetrySink",
     "emit_telemetry",
+    "internal_error_response",
 ]

@@ -5,12 +5,30 @@ assistant built on Amazon Bedrock AgentCore. It demonstrates how retrieval,
 authorization, citations, tool calls and bounded agentic workflows can be
 composed without allowing the browser or the model to define access scope.
 
-> **Status: `CONSTRAINED_PROD_BETA_DEPLOYED`**
+> **Release-record status: `CONSTRAINED_PROD_BETA_DEPLOYED`**
 >
 > This is an educational MVP, not legal advice or a production legal system.
 > The deployed scope is limited to the authenticated beta using only public or
 > wholly fictional documents and pre-provisioned users. It is not certified
 > for real legal/client data, anonymous signup or strict TLS/custom domains.
+
+The constrained public beta is reachable at
+[`https://d3nxeyrpa3juwl.cloudfront.net`](https://d3nxeyrpa3juwl.cloudfront.net)
+with pre-provisioned Cognito access and fictional/public documents only. The
+loopback entry point remains the reproducible local development path; neither
+path permits anonymous signup or real legal/client data.
+
+## Workspace preview
+
+The local candidate separates **Consulta**, **Documentos**, and **Revisiones**,
+keeps answers beside their sources, and reveals review fields only when needed.
+The cream/navy/burgundy interface remains dependency-free. Technical diagnostics
+provide document summaries and a bounded event timeline, with raw JSON optional.
+
+![Local workspace with a synthetic answer and its inspected source](docs/images/workspace-local-desktop.png)
+
+[Mobile preview](docs/images/workspace-local-mobile.png). These captures show
+the **local candidate**, not a newly deployed release. All displayed data is fictional.
 
 ## What it demonstrates
 
@@ -82,14 +100,17 @@ for the complete trust and data lifecycle.
   and are rechecked with `HeadObject` before lifecycle promotion.
 - Long-term Memory and direct model credentials are not exposed to the browser.
 
-## Verified evidence
+## Evidence and verification
 
-- **574 tests passed** in the current local release-candidate verification
-  (`1` platform-specific symlink test skipped on Windows).
+The following release evidence is historical and is kept separate from the
+current local working tree. Run the local commands below for the current count.
+
+- Historical release baseline: **574 tests passed** (`1` platform-specific
+  symlink test skipped on Windows).
 - **24/24 deterministic evaluations passed** with zero AWS calls.
 - **All 15 CloudFormation/SAM templates pass lint**, including the public edge,
   quarantine, reconciliation and operations candidates.
-- **Final bounded AWS browser smoke: PASS** for the fixed synthetic journey
+- **Historical bounded AWS browser smoke: PASS** for the fixed synthetic journey
   (`phase14-public-smoke-20260929-final4-02.json`, report SHA-256
   `1431503bd4a336bf552853af4cb8eb7b87a8cc488a44e59b7542e9624281d153`): one
   chat, two citations, cross-matter `403`, 17 audit events, logout `200`, and
@@ -97,7 +118,7 @@ for the complete trust and data lifecycle.
   It covered Cognito login, indexed-document display, grounded RAG, citations,
   cross-matter denial, audit and logout. The earlier supervised walkthrough
   separately verified presigned upload, malware validation and indexing.
-- The final metadata-only holdout `phase14-holdout-20260929-prod-final4.json`
+- **Historical** metadata-only holdout `phase14-holdout-20260929-prod-final4.json`
   passed 14/14 with 27 calls and zero retries. It is pinned to release commit
   `0c8bb718e58811afff2085114dad7821cf573e3f` and artifact SHA-256
   `99d074e793335f2867266b07ae091cb110a4747b8ad51e9180b031a2091f4f31`; the
@@ -112,6 +133,12 @@ accuracy.
 
 ## Local verification
 
+Local candidate checked on **2026-10-01**: **591 tests**, one Windows-specific
+skip; Chrome E2E passed at 375/768/1024/1365/1440 px, including upload, citations,
+review transitions, diagnostics and logout. Targeted frontend behavior and
+document/diagnostic contracts passed. No AWS calls or deployment were performed.
+The new PR workflow is prepared but has not yet run on GitHub.
+
 The supported local checks require Python 3.11+:
 
 ```powershell
@@ -119,6 +146,24 @@ python -m pip install -e '.[aws]' -e agent
 python -B -m unittest discover -s tests -q
 python -m legaldesk --help
 ```
+
+The pull-request checks reproduce the offline gate without AWS credentials or
+deployment steps:
+
+```powershell
+$env:AWS_EC2_METADATA_DISABLED = "true"
+python -B -m unittest discover -s tests -q
+node tests/phase13_live_browser_helpers.test.cjs
+node tests/phase13_manual_browser_helpers.test.cjs
+node --check frontend/app.js
+node --check frontend/citations.js
+```
+
+These checks use local doubles and syntax/helper tests only; they do not run
+the public URL, invoke AWS, or publish artifacts.
+The GitHub workflow additionally runs the document-view contract and the
+offline frontend behavior gate with Node 24 and pinned Playwright 1.62.1;
+neither gate uses provider credentials or deployment steps.
 
 Run the deterministic evaluation without AWS or model inference:
 
@@ -136,12 +181,29 @@ not enable AWS mode without the separately authorized smoke gate.
 ```text
 backend/   Domain services, authorization, retrieval and HTTP application
 agent/     AgentCore integration adapters and package
-frontend/  Dependency-free loopback UI and citation panel
+frontend/  Dependency-free shared local/public UI and citation panel
 infra/     CloudFormation templates and scoped deployment/teardown notes
 evals/     Synthetic datasets, deterministic runner and evidence reports
 tests/     Unit, integration, security and browser acceptance coverage
 docs/      Architecture, trust boundaries, acceptance and release gates
 ```
+
+For a reproducible local preview, set `PYTHONPATH` to the repository's
+`backend/src`, `agent/src`, and `tests`, start
+`tests/phase13_browser_server.py`, then run the interactive offline browser
+against the printed loopback URL (fictional login; no credentials required):
+
+```powershell
+$env:PYTHONPATH = "backend/src;agent/src;tests"
+python tests/phase13_browser_server.py
+# In a second terminal, use the baseUrl printed by the server:
+node tests/phase13_manual_browser.cjs http://localhost:PORT
+```
+
+The runner requires a locally installed Playwright module (and optionally
+`BROWSER_EXECUTABLE`); it blocks non-loopback traffic and uses fictional IdP
+doubles. The manual browser flow is documented in
+[`docs/phase-13-manual-demo.md`](docs/phase-13-manual-demo.md).
 
 ## Limits and cost considerations
 
@@ -173,6 +235,7 @@ teardown procedure.
 - [Infrastructure notes](infra/README.md)
 - [Phase 12 evaluation report](docs/phase-12-evaluation-report.md)
 - [Phase 13 live-smoke ledger](docs/phase-13-live-smoke.md)
+- [Logout security release note](docs/release-logout-motion-2026-09-30.md)
 - [What must change before real legal data](docs/what-i-would-change-before-real-legal-data.md)
 
 Historical phase reports and the detailed release chronology remain in `docs/`;

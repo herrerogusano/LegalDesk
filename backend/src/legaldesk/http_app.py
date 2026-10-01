@@ -43,7 +43,7 @@ from .identity import (
 from .ingestion import IngestionConflictError, KnowledgeBaseSyncResult, run_knowledge_base_sync
 from .mcp_server import GET_DOCUMENT_METADATA, LIST_MATTER_DOCUMENTS, MCPServer
 from .memory import ConversationBindingStore, MemoryScope, derive_memory_scope_for_identity
-from .observability import InMemoryTelemetrySink, TelemetrySink
+from .observability import InMemoryTelemetrySink, TelemetrySink, internal_error_response
 from .gateway_interceptor import InMemoryGatewayGrantRepository
 from .quota import (
     CHATS,
@@ -79,6 +79,7 @@ REVIEW_CANDIDATE_TTL_SECONDS = 15 * 60
 SESSION_COOKIE = "legaldesk_session"
 STATE_COOKIE = "legaldesk_oauth_state"
 CSRF_HEADER = "HTTP_X_CSRF_TOKEN"
+LOGOUT_INTENT_HEADER = "HTTP_X_LEGALDESK_LOGOUT"
 TRUSTED_EDGE_HEADER = "X-LegalDesk-Trusted-Edge"
 TRUSTED_EDGE_ENVIRON = "legaldesk.edge_verified"
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -296,7 +297,7 @@ class LoopbackLegalDeskApp:
             status, body = HTTPStatus.BAD_REQUEST, {"error": "review_task_failed"}
         except Exception:
             # Never expose provider details, JWTs, prompts, or document data.
-            status, body = HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "operation_failed"}
+            status, body = HTTPStatus.INTERNAL_SERVER_ERROR, internal_error_response(self.composition.telemetry_sink)
         if isinstance(body, (bytes, bytearray)):
             payload = bytes(body)
         else:
@@ -354,6 +355,53 @@ class LoopbackLegalDeskApp:
             raise AuthorizationDenied("access denied") from exc
         return key, SessionRecord(identity, record.access_token, record.csrf_token, record.expires_at)
 
+    def _logout_session(self, environ: Mapping[str, Any]) -> tuple[str | None, SessionRecord | None]:
+        """Read the local logout record without re-authorizing application access.
+
+        Logout is the one recovery operation allowed after an IdP JWT expires.
+        A still-live local record must prove CSRF, while an absent/expired
+        record may only take the anonymous cleanup path guarded by exact
+        browser-origin evidence.  This helper is deliberately private to the
+        ``POST /logout`` branch; all other routes continue through ``_session``.
+        """
+
+        cookie = self._cookies(environ).get(SESSION_COOKIE)
+        if cookie is None:
+            return None, None
+        key = cookie.value
+        # Storage errors propagate to the WSGI fail-closed handler.  They must
+        # never be mistaken for an anonymous session and must not emit a
+        # successful Set-Cookie response.
+        record = self.state_store.get_session(key)
+        if record is None or record.expires_at <= time.time():
+            return None, None
+        return key, record
+
+    def _anonymous_logout_guards(self, environ: Mapping[str, Any]) -> None:
+        """Require browser proof for cleanup when no local session remains."""
+
+        # Host/trusted-edge checks are shared with every mutating route.  This
+        # call intentionally does not pass ``mutating=True`` because there is
+        # no session to satisfy the ordinary CSRF branch below.
+        self._request_guards(environ, session=None, mutating=False)
+        origin = environ.get("HTTP_ORIGIN")
+        if origin not in self.composition.allowed_origins:
+            raise AuthorizationDenied("exact origin is required")
+        explicit_intent = environ.get(LOGOUT_INTENT_HEADER)
+        csrf_marker = environ.get(CSRF_HEADER)
+        # X-CSRF-Token is already a non-simple header forwarded by the public
+        # edge and retained by the browser.  The explicit logout marker is a
+        # narrow equivalent for non-browser clients/tests; neither value is
+        # treated as an authorization token on this anonymous path.
+        if not (
+            (isinstance(explicit_intent, str) and explicit_intent == "1")
+            or (isinstance(csrf_marker, str) and bool(csrf_marker))
+        ):
+            raise AuthorizationDenied("logout intent is required")
+        fetch_site = environ.get("HTTP_SEC_FETCH_SITE")
+        if fetch_site is not None and str(fetch_site).strip().lower() != "same-origin":
+            raise AuthorizationDenied("same-origin fetch is required")
+
     def _request_guards(self, environ: Mapping[str, Any], *, session: SessionRecord | None, mutating: bool) -> None:
         if self.composition.public_mode and environ.get(TRUSTED_EDGE_ENVIRON) is not True:
             raise AuthorizationDenied("trusted edge required")
@@ -398,6 +446,7 @@ class LoopbackLegalDeskApp:
             "/index.html": ("index.html", "text/html; charset=utf-8"),
             "/styles.css": ("styles.css", "text/css; charset=utf-8"),
             "/citations.js": ("citations.js", "text/javascript; charset=utf-8"),
+            "/diagnostics.js": ("diagnostics.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
         }
         asset = static_assets.get(str(path))
@@ -421,8 +470,15 @@ class LoopbackLegalDeskApp:
             # is a CSRF-protected POST below, and GET is only a redirect.
             return HTTPStatus.FOUND, {}, [("Location", "/")]
         if path == PurePosixPath("/logout") and method == "POST":
-            key, session = self._session(environ)
-            self._request_guards(environ, session=session, mutating=True)
+            key, session = self._logout_session(environ)
+            if session is None:
+                # The IdP JWT or the local record may have expired before the
+                # browser could submit logout.  This exception only clears
+                # local browser state and returns the fixed provider URL; it
+                # does not establish an authenticated application session.
+                self._anonymous_logout_guards(environ)
+            else:
+                self._request_guards(environ, session=session, mutating=True)
             try:
                 logout_url = create_cognito_logout_url(
                     self.composition.authorization_endpoint,
@@ -436,7 +492,8 @@ class LoopbackLegalDeskApp:
                 if self.composition.public_mode:
                     raise
                 logout_url = None
-            self.state_store.delete_session(key)
+            if key is not None:
+                self.state_store.delete_session(key)
             body: dict[str, object] = {"ok": True}
             if logout_url is not None:
                 body["logoutUrl"] = logout_url
