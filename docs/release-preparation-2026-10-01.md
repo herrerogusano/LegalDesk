@@ -45,6 +45,10 @@ cffi 2.1.1, cryptography 50.0.1, jmespath 1.1.0, PyJWT 2.14.0,
 pycparser 3.0, s3transfer 0.19.2 and urllib3 2.8.0 (with the existing
 transitive `python-dateutil` and `six` payload).
 
+The 2,377 dependency-input file hashes match the prior deployed `dfa85e4`
+manifest exactly; only the application source payload and the new five-file
+frontend payload differ.
+
 ## Gates run
 
 - Release packaging tests: 4 passed, 1 platform-dependent skip.
@@ -84,21 +88,21 @@ operation is part of this release.
 
 ## Rollback
 
-Keep the previous immutable Lambda artifact available:
+Keep the current immutable Lambda artifact available:
 
-- key: `phase-14/58ecf162761680fe9c2f12dbfa0c365cf5894382/legaldesk-lambda.zip`
-- object version: `iyY9N4gVK6.8nWZUP2sJawT5PTqMyPER`
+- key: `phase-14/dfa85e43cc24bbe1e152ccc76423b1950ed1259a/legaldesk-lambda.zip`
+- object version: `TSoCDD85EtPDArDp73KIC_wRkOXee.eX`
 
-For the frontend, restore the previous object versions in the existing bucket:
+For the frontend, restore the current object versions in the existing bucket:
 
 | Key | Previous version |
 |---|---|
-| `index.html` | `jemksl7ZSvsa2T5wFdBPav9SL.5RmLZP` |
-| `styles.css` | `Kl6YZWc4ZKJ._NphBYBXJVwZy9s.1SFy` |
-| `app.js` | `em0oVYMLtyZGHR6vY.pbkI2HTmVQ44t.` |
-| `citations.js` | `lWcsGy7Ph_RUCmXiGwM7Az8rZ8fU5.ZF` |
+| `index.html` | `CowPTAA4O4TrT1tbJrIZOOgPzdOXpvW0` |
+| `styles.css` | `yzjTN4k2bB5shUqsBJnDBpF.I7ykKjye` |
+| `app.js` | `5Unp82YGfVcWT89mQivqNAulR8l9By3m` |
+| `citations.js` | `m9_Hw7ij4bLo7VK.ZnIlvE9VUTFzxVWd` |
 
-The pre-release baseline had no usable `diagnostics.js`; if the candidate adds
+The pre-release baseline has no `diagnostics.js` object. If the candidate adds
 that object, restore that absence with the bucket's versioned delete-marker
 procedure rather than deleting historical versions. Invalidate all six paths
 above, restore the Lambda through a reviewed change set, and verify the public
