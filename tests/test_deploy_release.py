@@ -117,6 +117,7 @@ class FakeCfn:
     def create_change_set(self, **kwargs: Any) -> dict[str, Any]:
         self.created = True
         self.change_parameters = kwargs["Parameters"]
+        self.parameters = kwargs["Parameters"]
         return {"Id": "cs-1"}
 
     def describe_change_set(self, **kwargs: Any) -> dict[str, Any]:
@@ -163,6 +164,43 @@ class ProgressCfn(FakeCfn):
         response = super().describe_stacks(**kwargs)
         if self.executed and self.stack_calls == 2:
             response["Stacks"][0]["StackStatus"] = "UPDATE_IN_PROGRESS"
+        return response
+
+
+class StableCompleteThenProgressCfn(FakeCfn):
+    """Expose the prior stable status before this execution progresses."""
+
+    def create_change_set(self, **kwargs: Any) -> dict[str, Any]:
+        self.created = True
+        self.change_parameters = kwargs["Parameters"]
+        self.pending_parameters = kwargs["Parameters"]
+        return {"Id": "cs-1"}
+
+    def describe_stacks(self, **kwargs: Any) -> dict[str, Any]:
+        response = super().describe_stacks(**kwargs)
+        if self.executed and self.stack_calls == 3:
+            response["Stacks"][0]["StackStatus"] = "UPDATE_IN_PROGRESS"
+        elif self.executed and self.stack_calls >= 4:
+            self.parameters = self.pending_parameters
+            response["Stacks"][0]["StackStatus"] = "UPDATE_COMPLETE"
+            response["Stacks"][0]["Parameters"] = self.parameters
+        return response
+
+
+class RollbackCompleteCfn(FakeCfn):
+    def describe_stacks(self, **kwargs: Any) -> dict[str, Any]:
+        response = super().describe_stacks(**kwargs)
+        response["Stacks"][0]["StackStatus"] = "UPDATE_ROLLBACK_COMPLETE"
+        return response
+
+
+class RollbackThenProgressCfn(StableCompleteThenProgressCfn):
+    def describe_stacks(self, **kwargs: Any) -> dict[str, Any]:
+        response = super().describe_stacks(**kwargs)
+        if not self.executed and self.stack_calls == 1:
+            response["Stacks"][0]["StackStatus"] = "UPDATE_ROLLBACK_COMPLETE"
+        elif self.executed and self.stack_calls == 2:
+            response["Stacks"][0]["StackStatus"] = "UPDATE_ROLLBACK_COMPLETE"
         return response
 
 
@@ -302,6 +340,124 @@ class ReleaseDeployTests(unittest.TestCase):
             result = deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=cfn, s3=FakeS3(), cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
             self.assertEqual(result.status, "PASS")
             self.assertGreaterEqual(cfn.stack_calls, 2)
+
+    def test_prior_stable_status_is_not_taken_as_update_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            cfn = StableCompleteThenProgressCfn(TEMPLATE)
+            app_hash = json.loads((root / "legaldesk-release-manifest.json").read_text())["artifacts"][0]["sha256"]
+
+            def opener(request: Any, timeout: int) -> Any:
+                path = request.full_url.rsplit("edge.example", 1)[-1]
+                status = {"/": 200, "/logout": 302, "/api/me": 403}.get(path, 200)
+                body = next(((name + "\n").encode() for name in ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js") if "/" + name == path), b"")
+                return type("Response", (), {"status": status, "read": lambda self: body})()
+
+            result = deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=cfn, s3=FakeS3(), cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
+            self.assertEqual(result.status, "PASS")
+            self.assertGreaterEqual(cfn.stack_calls, 4)
+
+    def test_prior_rollback_status_is_fenced_until_progress_and_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            cfn = RollbackThenProgressCfn(TEMPLATE)
+            app_hash = json.loads((root / "legaldesk-release-manifest.json").read_text())["artifacts"][0]["sha256"]
+
+            def opener(request: Any, timeout: int) -> Any:
+                path = request.full_url.rsplit("edge.example", 1)[-1]
+                status = {"/": 200, "/logout": 302, "/api/me": 403}.get(path, 200)
+                body = next(((name + "\n").encode() for name in ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js") if "/" + name == path), b"")
+                return type("Response", (), {"status": status, "read": lambda self: body})()
+
+            result = deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=cfn, s3=FakeS3(), cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
+            self.assertEqual(result.status, "PASS")
+            self.assertGreaterEqual(cfn.stack_calls, 4)
+
+    def test_same_code_parameters_skip_change_set_and_verify_lambda(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            commit = "b" * 40
+            key = "phase-14/" + commit + "/legaldesk-lambda.zip"
+            app, _ = validate_release(root, commit, "artifacts", key)
+            s3 = FakeS3()
+            s3.objects[("artifacts", key)] = (app.path.read_bytes(), "v1", app.sha256)
+            cfn = FakeCfn(TEMPLATE)
+            cfn.parameters[1:] = [
+                {"ParameterKey": "ApplicationCodeKey", "ParameterValue": key},
+                {"ParameterKey": "ApplicationCodeVersion", "ParameterValue": "v1"},
+                {"ParameterKey": "TrustedEdgeSecret", "ParameterValue": "****"},
+            ]
+
+            def opener(request: Any, timeout: int) -> Any:
+                path = request.full_url.rsplit("edge.example", 1)[-1]
+                status = {"/": 200, "/logout": 302, "/api/me": 403}.get(path, 200)
+                body = next(((name + "\n").encode() for name in ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js") if "/" + name == path), b"")
+                return type("Response", (), {"status": status, "read": lambda self: body})()
+
+            result = deploy(ReleaseInput(commit, root, "artifacts", key), cfn=cfn, s3=s3, cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app.sha256), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
+            self.assertEqual(result.change_set_name, "NO_OP")
+            self.assertFalse(cfn.created)
+            self.assertFalse(cfn.executed)
+
+    def test_same_code_parameters_with_wrong_lambda_hash_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            commit = "b" * 40
+            key = "phase-14/" + commit + "/legaldesk-lambda.zip"
+            app, _ = validate_release(root, commit, "artifacts", key)
+            s3 = FakeS3()
+            s3.objects[("artifacts", key)] = (app.path.read_bytes(), "v1", app.sha256)
+            cfn = FakeCfn(TEMPLATE)
+            cfn.parameters[1:] = [
+                {"ParameterKey": "ApplicationCodeKey", "ParameterValue": key},
+                {"ParameterKey": "ApplicationCodeVersion", "ParameterValue": "v1"},
+                {"ParameterKey": "TrustedEdgeSecret", "ParameterValue": "****"},
+            ]
+            with self.assertRaises(DeploymentError) as error:
+                deploy(ReleaseInput(commit, root, "artifacts", key), cfn=cfn, s3=s3, cloudfront=FakeCloudFront(), lambda_client=FakeLambda("0" * 64), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, sleeper=lambda _: None)
+            self.assertEqual(str(error.exception), "lambda_code_hash_mismatch")
+            self.assertFalse(cfn.created)
+            self.assertFalse(cfn.executed)
+
+    def test_update_rollback_complete_is_stable_for_verified_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            commit = "b" * 40
+            key = "phase-14/" + commit + "/legaldesk-lambda.zip"
+            app, _ = validate_release(root, commit, "artifacts", key)
+            s3 = FakeS3()
+            s3.objects[("artifacts", key)] = (app.path.read_bytes(), "v1", app.sha256)
+            cfn = RollbackCompleteCfn(TEMPLATE)
+            cfn.parameters[1:] = [
+                {"ParameterKey": "ApplicationCodeKey", "ParameterValue": key},
+                {"ParameterKey": "ApplicationCodeVersion", "ParameterValue": "v1"},
+                {"ParameterKey": "TrustedEdgeSecret", "ParameterValue": "****"},
+            ]
+
+            def opener(request: Any, timeout: int) -> Any:
+                path = request.full_url.rsplit("edge.example", 1)[-1]
+                status = {"/": 200, "/logout": 302, "/api/me": 403}.get(path, 200)
+                body = next(((name + "\n").encode() for name in ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js") if "/" + name == path), b"")
+                return type("Response", (), {"status": status, "read": lambda self: body})()
+
+            result = deploy(ReleaseInput(commit, root, "artifacts", key), cfn=cfn, s3=s3, cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app.sha256), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
+            self.assertEqual(result.status, "PASS")
+            self.assertFalse(cfn.created)
 
     def test_template_drift_is_rejected_before_artifact_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

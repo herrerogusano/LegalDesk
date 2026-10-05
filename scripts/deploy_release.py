@@ -335,7 +335,9 @@ def _stack(stack_response: Mapping[str, Any]) -> Mapping[str, Any]:
     stack = stacks[0]
     if stack.get("StackName") != STACK_NAME:
         raise DeploymentError("stack_inventory_invalid")
-    if stack.get("StackStatus") not in {"CREATE_COMPLETE", "UPDATE_COMPLETE"}:
+    # UPDATE_ROLLBACK_COMPLETE is stable and CloudFormation permits a later
+    # update from it.  In-progress and failed states remain fail-closed.
+    if stack.get("StackStatus") not in {"CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}:
         raise DeploymentError("stack_not_updateable")
     return stack
 
@@ -549,57 +551,91 @@ def deploy(
     _record(record_path, prepared)
     artifact_version: str | None = None
     frontend_versions = rollback_frontend
+    effective_change_set_name = change_set_name
     try:
         artifact_version = _put_immutable(s3, config.artifact_bucket, config.artifact_key, application, config.commit)
         params = build_previous_value_parameters(stack, template, config.artifact_bucket, config.artifact_key, artifact_version)
-        create_kwargs: dict[str, Any] = {
-            "StackName": STACK_NAME,
-            "ChangeSetName": change_set_name,
-            "ChangeSetType": "UPDATE",
-            "UsePreviousTemplate": True,
-            "Parameters": params,
-            "Capabilities": ["CAPABILITY_IAM"],
-            "Description": f"LegalDesk code-only release {config.commit}",
-        }
-        if execution_role_arn:
-            create_kwargs["RoleARN"] = execution_role_arn
-        try:
-            created = cfn.create_change_set(**create_kwargs)
-        except Exception as exc:
-            raise DeploymentError("change_set_create_failed") from exc
-        change_id = created.get("Id") if isinstance(created, Mapping) else None
-        if not isinstance(change_id, str):
-            change_id = change_set_name
-        described: Mapping[str, Any] | None = None
-        for _ in range(30):
-            try:
-                described = cfn.describe_change_set(StackName=STACK_NAME, ChangeSetName=change_id)
-            except Exception as exc:
-                raise DeploymentError("change_set_describe_failed") from exc
-            status = described.get("Status")
-            if status in {"CREATE_COMPLETE", "FAILED"}:
-                break
-            sleeper(2)
-        if not isinstance(described, Mapping) or described.get("Status") != "CREATE_COMPLETE":
-            raise DeploymentError("change_set_not_ready")
-        changes = described.get("Changes")
-        if not isinstance(changes, list):
-            raise DeploymentError("change_set_shape_invalid")
-        validate_change_set(changes)
-        try:
-            cfn.execute_change_set(StackName=STACK_NAME, ChangeSetName=change_id)
-        except Exception as exc:
-            raise DeploymentError("change_set_execute_failed") from exc
         current: Mapping[str, Any] | None = None
-        for _ in range(60):
-            current = _stack_status(cfn.describe_stacks(StackName=STACK_NAME))
-            if current.get("StackStatus") == "UPDATE_COMPLETE":
-                break
-            if str(current.get("StackStatus", "")).endswith("_FAILED") or current.get("StackStatus") == "UPDATE_ROLLBACK_COMPLETE":
-                raise DeploymentError("stack_update_failed")
-            sleeper(5)
+        current_code = (
+            old_values.get("ApplicationCodeBucket"),
+            old_values.get("ApplicationCodeKey"),
+            old_values.get("ApplicationCodeVersion"),
+        )
+        target_code = (config.artifact_bucket, config.artifact_key, artifact_version)
+        # A timed-out/restarted run may have completed the code-only update
+        # after the caller stopped waiting.  Exact parameter equality is the
+        # only safe no-op proof; it avoids an empty change set and still runs
+        # Lambda/frontend/CDN verification below.
+        no_op = current_code == target_code
+        effective_change_set_name = "NO_OP" if no_op else change_set_name
+        if not no_op:
+            create_kwargs: dict[str, Any] = {
+                "StackName": STACK_NAME,
+                "ChangeSetName": change_set_name,
+                "ChangeSetType": "UPDATE",
+                "UsePreviousTemplate": True,
+                "Parameters": params,
+                "Capabilities": ["CAPABILITY_IAM"],
+                "Description": f"LegalDesk code-only release {config.commit}",
+            }
+            if execution_role_arn:
+                create_kwargs["RoleARN"] = execution_role_arn
+            try:
+                created = cfn.create_change_set(**create_kwargs)
+            except Exception as exc:
+                raise DeploymentError("change_set_create_failed") from exc
+            change_id = created.get("Id") if isinstance(created, Mapping) else None
+            if not isinstance(change_id, str):
+                change_id = change_set_name
+            described: Mapping[str, Any] | None = None
+            for _ in range(30):
+                try:
+                    described = cfn.describe_change_set(StackName=STACK_NAME, ChangeSetName=change_id)
+                except Exception as exc:
+                    raise DeploymentError("change_set_describe_failed") from exc
+                status = described.get("Status")
+                if status in {"CREATE_COMPLETE", "FAILED"}:
+                    break
+                sleeper(2)
+            if not isinstance(described, Mapping) or described.get("Status") != "CREATE_COMPLETE":
+                # A failed no-diff change set is not a retry proof.  The
+                # explicit parameter-equality path above is the only NO_OP.
+                raise DeploymentError("change_set_not_ready")
+            changes = described.get("Changes")
+            if not isinstance(changes, list):
+                raise DeploymentError("change_set_shape_invalid")
+            validate_change_set(changes)
+            try:
+                cfn.execute_change_set(StackName=STACK_NAME, ChangeSetName=change_id)
+            except Exception as exc:
+                raise DeploymentError("change_set_execute_failed") from exc
+            seen_update_progress = False
+            for _ in range(60):
+                current = _stack_status(cfn.describe_stacks(StackName=STACK_NAME))
+                status = current.get("StackStatus")
+                current_parameters = current.get("Parameters")
+                current_code_after = (
+                    next((item.get("ParameterValue") for item in current_parameters or [] if isinstance(item, Mapping) and item.get("ParameterKey") == "ApplicationCodeBucket"), None),
+                    next((item.get("ParameterValue") for item in current_parameters or [] if isinstance(item, Mapping) and item.get("ParameterKey") == "ApplicationCodeKey"), None),
+                    next((item.get("ParameterValue") for item in current_parameters or [] if isinstance(item, Mapping) and item.get("ParameterKey") == "ApplicationCodeVersion"), None),
+                )
+                # CloudFormation can briefly report the stable pre-update
+                # status immediately after ExecuteChangeSet.  Require the
+                # expected immutable code parameters as well, so that prior
+                # UPDATE_COMPLETE is not mistaken for this execution.
+                if status == "UPDATE_IN_PROGRESS":
+                    seen_update_progress = True
+                if status == "UPDATE_COMPLETE" and current_code_after == target_code:
+                    break
+                if str(status).endswith("_FAILED") or (status == "UPDATE_ROLLBACK_COMPLETE" and seen_update_progress):
+                    raise DeploymentError("stack_update_failed")
+                sleeper(5)
+            else:
+                raise DeploymentError("stack_update_timeout")
         else:
-            raise DeploymentError("stack_update_timeout")
+            # The initial inventory was validated by _stack, so a stable
+            # UPDATE_ROLLBACK_COMPLETE is also safe to verify without polling.
+            current = stack
         outputs = {item.get("OutputKey"): item.get("OutputValue") for item in (current or {}).get("Outputs", []) if isinstance(item, Mapping)}
         function_arn = outputs.get("ApplicationFunctionArn")
         if lambda_client is None or not isinstance(function_arn, str):
@@ -642,14 +678,14 @@ def deploy(
         if isinstance(check_origin, str) and not check_origin.startswith("https://"):
             check_origin = "https://" + check_origin
         checks = _public_checks(check_origin, expected_files, public_opener)
-        result = DeployResult("PASS", config.commit, application.sha256, artifact_version, frontend_versions, change_set_name, invalidation_id, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), checks, rollback_frontend)
+        result = DeployResult("PASS", config.commit, application.sha256, artifact_version, frontend_versions, effective_change_set_name, invalidation_id, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), checks, rollback_frontend)
         _record(record_path, result)
         return result
     except DeploymentError:
-        _record(record_path, DeployResult("FAILED", config.commit, application.sha256, artifact_version, frontend_versions, change_set_name, None, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), (), rollback_frontend))
+        _record(record_path, DeployResult("FAILED", config.commit, application.sha256, artifact_version, frontend_versions, effective_change_set_name, None, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), (), rollback_frontend))
         raise
     except Exception as exc:
-        _record(record_path, DeployResult("FAILED", config.commit, application.sha256, artifact_version, frontend_versions, change_set_name, None, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), (), rollback_frontend))
+        _record(record_path, DeployResult("FAILED", config.commit, application.sha256, artifact_version, frontend_versions, effective_change_set_name, None, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), (), rollback_frontend))
         raise DeploymentError("deployment_failed") from exc
 
 
