@@ -226,6 +226,7 @@ teardown procedure.
 ## Further reading
 
 - [Production readiness gate](docs/production-readiness.md)
+- [Continuous delivery and rollback gate](docs/continuous-delivery.md)
 - [Phase 14 public-beta plan](PLAN_14_PUBLIC_BETA.md)
 - [Phase 14 semantic holdout](docs/phase-14-holdout.md)
 - [Phase 14 operations runbook](docs/phase-14-operations-runbook.md)

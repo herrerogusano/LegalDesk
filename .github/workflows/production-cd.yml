@@ -1,0 +1,198 @@
+name: LegalDesk production CD
+
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type DEPLOY_PROD to authorize the manual production path
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legaldesk-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Offline quality gates
+    uses: ./.github/workflows/offline-ci.yml
+    permissions:
+      contents: read
+
+  release-tooling:
+    name: Release tooling and IaC lint
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONFIG_FILE: "/dev/null"
+      AWS_SHARED_CREDENTIALS_FILE: "/dev/null"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python 3.12
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned release tools
+        run: python -m pip install --disable-pip-version-check -e ".[release-tools]"
+      - name: Lint CloudFormation templates
+        run: cfn-lint --non-zero-exit-code error infra/cloudformation/phase-14-public-edge.yaml infra/cloudformation/cd-iam.yaml
+      - name: Validate deployment boundary tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -B -m unittest tests.test_cd_iam tests.test_deploy_release -q
+
+  deploy:
+    name: Deploy existing public beta (OIDC)
+    needs: [quality, release-tooling]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: eu-west-1
+      AWS_DEFAULT_REGION: eu-west-1
+      STACK_NAME: LegalDeskPhase14PublicEdge
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.LEGALDESK_PROD_DEPLOY_ROLE_ARN }}
+      AWS_CLOUDFORMATION_ROLE_ARN: ${{ vars.LEGALDESK_PROD_CLOUDFORMATION_ROLE_ARN }}
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONFIG_FILE: "/dev/null"
+      AWS_SHARED_CREDENTIALS_FILE: "/dev/null"
+    steps:
+      - name: Reject an unsafe manual dispatch
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm != 'DEPLOY_PROD'
+        run: |
+          echo "Manual production dispatch must use the exact DEPLOY_PROD confirmation." >&2
+          exit 1
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python 3.12
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned Linux x86_64 Lambda dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/legaldesk-cd-venv"
+          source "$RUNNER_TEMP/legaldesk-cd-venv/bin/activate"
+          python -m pip install --disable-pip-version-check --upgrade pip
+          python -m pip install --disable-pip-version-check -e ".[release-tools]"
+          mkdir -p "$RUNNER_TEMP/legaldesk-wheels" "$RUNNER_TEMP/legaldesk-python312-deps"
+          python -m pip download --only-binary=:all: \
+            --platform manylinux_2_28_x86_64 \
+            --platform manylinux_2_17_x86_64 \
+            --platform manylinux2014_x86_64 \
+            --implementation cp --python-version 3.12 \
+            --dest "$RUNNER_TEMP/legaldesk-wheels" \
+            -r packaging/constraints-python312-manylinux-x86_64.txt
+          python -m pip install --no-index --find-links "$RUNNER_TEMP/legaldesk-wheels" \
+            --target "$RUNNER_TEMP/legaldesk-python312-deps" \
+            -r packaging/constraints-python312-manylinux-x86_64.txt
+          python -m pip install --no-index --find-links "$RUNNER_TEMP/legaldesk-wheels" \
+            boto3==1.43.97 botocore==1.43.97
+          PYTHONPATH="$RUNNER_TEMP/legaldesk-python312-deps" python - <<'PY'
+          import boto3, botocore, cffi, cryptography, jwt
+          expected = {
+              "boto3": "1.43.97", "botocore": "1.43.97", "cffi": "2.1.1",
+              "cryptography": "50.0.1", "PyJWT": "2.14.0",
+          }
+          actual = {
+              "boto3": boto3.__version__, "botocore": botocore.__version__,
+              "cffi": cffi.__version__, "cryptography": cryptography.__version__,
+              "PyJWT": jwt.__version__,
+          }
+          if actual != expected:
+              raise SystemExit(f"dependency version mismatch: {actual}")
+          PY
+      - name: Package immutable release artifacts offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/legaldesk-cd-venv/bin/activate"
+          python -B scripts/package_release.py \
+            --dependency-root "$RUNNER_TEMP/legaldesk-python312-deps" \
+            --output-dir "$RUNNER_TEMP/legaldesk-release"
+      - name: Reject stale or non-prod queued deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/prod"
+          remote_prod_sha="$(git ls-remote origin refs/heads/prod | awk '{print $1}')"
+          test -n "$remote_prod_sha" -a "$remote_prod_sha" = "$GITHUB_SHA"
+      - name: Obtain the exact GitHub OIDC claim without printing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AWS_DEPLOY_ROLE_ARN"
+          oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com"
+          oidc_token="$(curl --fail --silent --show-error --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$oidc_url" | python -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          credentials="$(aws sts assume-role-with-web-identity \
+            --role-arn "$AWS_DEPLOY_ROLE_ARN" \
+            --role-session-name "legaldesk-${GITHUB_RUN_ID}" \
+            --web-identity-token "$oidc_token" \
+            --duration-seconds 900 \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text)"
+          read -r access_key secret_key session_token <<< "$credentials"
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "::add-mask::$session_token"
+          export AWS_ACCESS_KEY_ID="$access_key"
+          export AWS_SECRET_ACCESS_KEY="$secret_key"
+          export AWS_SESSION_TOKEN="$session_token"
+          identity="$(aws sts get-caller-identity --query '[Account,Arn]' --output text)"
+          read -r identity_account identity_arn <<< "$identity"
+          test "$identity_account" = "344774635844"
+          case "$identity_arn" in
+            arn:aws:sts::344774635844:assumed-role/LegalDeskProductionDeployment/*) ;;
+            *) echo "Unexpected deployment role identity" >&2; exit 1 ;;
+          esac
+          {
+            echo "AWS_ACCESS_KEY_ID=$access_key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret_key"
+            echo "AWS_SESSION_TOKEN=$session_token"
+          } >> "$GITHUB_ENV"
+          unset oidc_token credentials access_key secret_key session_token
+      - name: Resolve existing artifact bucket and deploy role inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_bucket="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].Parameters[?ParameterKey==`ApplicationCodeBucket`].ParameterValue | [0]' --output text)"
+          test -n "$artifact_bucket" -a "$artifact_bucket" != "None"
+          echo "LEGALDESK_ARTIFACT_BUCKET=$artifact_bucket" >> "$GITHUB_ENV"
+      - name: Deploy code-only change set, frontend versions, and bounded smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/legaldesk-cd-venv/bin/activate"
+          commit="$GITHUB_SHA"
+          python -B scripts/deploy_release.py \
+            --commit "$commit" \
+            --release-dir "$RUNNER_TEMP/legaldesk-release" \
+            --artifact-bucket "$LEGALDESK_ARTIFACT_BUCKET" \
+            --artifact-key "phase-14/$commit/legaldesk-lambda.zip" \
+            --execution-role-arn "$AWS_CLOUDFORMATION_ROLE_ARN" \
+            --change-set-name "legaldesk-$GITHUB_RUN_ID-$GITHUB_SHA" \
+            --record "$RUNNER_TEMP/legaldesk-release-record.json" \
+            --execute \
+            --approval I_UNDERSTAND_LEGALDESK_PROD_CODE_ONLY
+      - name: Preserve metadata-only rollback evidence
+        if: always()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: legaldesk-release-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/legaldesk-release/legaldesk-release-manifest.json
+            ${{ runner.temp }}/legaldesk-release-record.json
