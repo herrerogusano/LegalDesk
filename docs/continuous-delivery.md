@@ -35,9 +35,12 @@ can invoke Lambda, access application S3/document keys, read or write
 DynamoDB/Bedrock/Gateway/Memory, mutate application IAM policies, create or
 delete stacks, or modify business resources. `ValidateTemplate` is the only
 intentionally unscoped action because CloudFormation does not support a
-resource scope for that API. Do not execute the bootstrap until the supervisor
-has reviewed account inventory, exact ARNs, OIDC provider reuse, and service
-role behavior.
+resource scope for that API. The bootstrap is now complete; do not repeat it or
+broaden its roles without a new inventory and supervisor review. The current
+operational gap is GitHub branch protection: the repository plan cannot enforce
+required PR checks against a direct push, so the `developer`→`prod` PR procedure
+and the workflow's exact prod/SHA guards remain procedural controls rather than
+a claim of platform enforcement.
 
 The local `scripts/deploy_release.py` command is dry-run by default. Production
 execution requires `--execute` plus
