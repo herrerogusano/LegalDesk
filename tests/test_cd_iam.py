@@ -57,6 +57,15 @@ class CdIamTemplateTests(unittest.TestCase):
         self.assertNotIn("iam:PutRolePolicy", actions)
         self.assertNotIn("cloudformation:CreateStack", actions)
 
+    def test_cloudformation_role_reads_only_the_unchanged_lambda_role(self) -> None:
+        statements = self.template["Resources"]["CloudFormationExecutionRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+        read_statement = next(statement for statement in statements if statement["Sid"] == "ReadUnchangedApplicationRolePolicy")
+        self.assertEqual(
+            set(read_statement["Action"]),
+            {"iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:GetRolePolicy"},
+        )
+        self.assertEqual(read_statement["Resource"], "ApplicationExecutionRoleArn")
+
     def test_application_function_arn_contract_uses_colon_form(self) -> None:
         pattern = self.template["Parameters"]["ApplicationFunctionArn"]["AllowedPattern"]
         self.assertIsNotNone(re.fullmatch(pattern, "arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskPhase14PublicEdge-application"))
