@@ -146,7 +146,7 @@ auth, RAG, ingestion or business-data smoke coverage.
 The supported local checks require Python 3.11+:
 
 ```powershell
-python -m pip install -e '.[aws]' -e agent
+python -m pip install -e '.[aws,release-tools]' -e agent
 python -B -m unittest discover -s tests -q
 python -m legaldesk --help
 ```
@@ -223,12 +223,21 @@ charges. Local tests and deterministic evaluations use no AWS calls. Any AWS
 deployment or real-model run requires the documented approval, budget and
 teardown procedure.
 
+CD is triggered automatically only when publishing to `prod`; manual dispatch
+requires `DEPLOY_PROD`. Its scope is limited to the existing public-beta stack,
+immutable artifact prefix, five frontend keys, and the Lambda code/API
+integration update allowed by the change set. Promotion by PR is the intended
+procedure; mandatory branch protection is unavailable on the current GitHub
+plan, so this project does not claim platform enforcement against direct pushes.
+
 ## Further reading
 
 - [Production readiness gate](docs/production-readiness.md)
+- [Continuous delivery and rollback gate](docs/continuous-delivery.md)
 - [Phase 14 public-beta plan](PLAN_14_PUBLIC_BETA.md)
 - [Phase 14 semantic holdout](docs/phase-14-holdout.md)
 - [Phase 14 operations runbook](docs/phase-14-operations-runbook.md)
+
 - [Periodic operations checklist](docs/phase-14-operations-checklist.md)
 - [Guided offline manual demo](docs/phase-13-manual-demo.md)
 - [Portfolio demo script for v1.0.0-beta.1](docs/portfolio-demo-v1.0.0-beta.1.md)

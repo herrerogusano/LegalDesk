@@ -1,0 +1,180 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Least-privilege GitHub Actions OIDC roles for LegalDesk production release
+  artifacts. This bootstrap is deliberately separate from the public beta
+  application stack and does not create or modify application resources.
+
+Parameters:
+  OidcProviderArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:iam::[0-9]{12}:oidc-provider/token\\.actions\\.githubusercontent\\.com$"
+    Description: Existing account-wide GitHub Actions OIDC provider; never recreate it here.
+  GitHubSubject:
+    Type: String
+    Default: repo:herrerogusano@112490238/LegalDesk@1362771339:ref:refs/heads/prod
+    AllowedPattern: "^repo:herrerogusano@112490238/LegalDesk@1362771339:ref:refs/heads/prod$"
+    Description: Exact immutable subject emitted by this repository for the prod branch.
+  PublicStackArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:cloudformation:[^:]+:[0-9]{12}:stack/LegalDeskPhase14PublicEdge/[A-Za-z0-9-]+$"
+  ArtifactBucketArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  FrontendBucketArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  CloudFrontDistributionArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:cloudfront::[0-9]{12}:distribution/[A-Z0-9]+$"
+  ApplicationFunctionArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:lambda:[^:]+:[0-9]{12}:function:LegalDeskPhase14PublicEdge-application$"
+  ApplicationExecutionRoleArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_-]{1,64}$"
+  PublicApiIntegrationArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:apigateway:[^:]+::/apis/[A-Za-z0-9]+/integrations/[A-Za-z0-9]+$"
+  DeploymentRoleName:
+    Type: String
+    Default: LegalDeskProductionDeployment
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+  CloudFormationRoleName:
+    Type: String
+    Default: LegalDeskProductionCloudFormation
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+
+Resources:
+  ProductionDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref DeploymentRoleName
+      Description: OIDC release operator; cannot mutate LegalDesk application IAM or data resources.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ExactProductionGitHubSubject
+            Effect: Allow
+            Principal:
+              Federated: !Ref OidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Ref GitHubSubject
+      Policies:
+        - PolicyName: LegalDeskProductionRelease
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadAndCreateOnlyThisStackChangeSet
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                Resource: !Ref PublicStackArn
+              - Sid: CreateOnlyThisStackChangeSetWithExactRole
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Ref PublicStackArn
+                Condition:
+                  StringEquals:
+                    cloudformation:RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+              - Sid: ValidateCloudFormationTemplateOnly
+                Effect: Allow
+                Action: cloudformation:ValidateTemplate
+                Resource: "*"
+              - Sid: PassOnlyTheReleaseExecutionRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+              - Sid: ImmutableLambdaArtifactPrefix
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub "${ArtifactBucketArn}/phase-14/*"
+              - Sid: ExactFrontendObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub "${FrontendBucketArn}/index.html"
+                  - !Sub "${FrontendBucketArn}/styles.css"
+                  - !Sub "${FrontendBucketArn}/app.js"
+                  - !Sub "${FrontendBucketArn}/citations.js"
+                  - !Sub "${FrontendBucketArn}/diagnostics.js"
+              - Sid: InvalidateOnlyThePublicDistribution
+                Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                  - cloudfront:GetInvalidation
+                  - cloudfront:ListInvalidations
+                Resource: !Ref CloudFrontDistributionArn
+              - Sid: VerifyOnlyTheApplicationFunction
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                Resource: !Ref ApplicationFunctionArn
+
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref CloudFormationRoleName
+      Description: CloudFormation service role for an application-code-only public edge update.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFormationFromExactStack
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskCodeAndIntegrationUpdate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadAndUpdateOnlyApplicationCode
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                Resource: !Ref ApplicationFunctionArn
+              - Sid: ReadOnlyImmutableLambdaArtifact
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "${ArtifactBucketArn}/phase-14/*"
+              - Sid: PassUnchangedApplicationRoleIfRequired
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Ref ApplicationExecutionRoleArn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+              - Sid: ReadAndPatchOnlyTheApiIntegration
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:PATCH
+                Resource: !Ref PublicApiIntegrationArn
+
+Outputs:
+  ProductionDeploymentRoleArn:
+    Value: !GetAtt ProductionDeploymentRole.Arn
+  CloudFormationExecutionRoleArn:
+    Value: !GetAtt CloudFormationExecutionRole.Arn

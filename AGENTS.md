@@ -161,6 +161,12 @@ Convención sugerida:
 
 # 9. Calidad
 
+Antes del primer despliegue CD real, consultar también la guía compartida
+`04 Knowledge/Guides/GitHub Actions - AWS OIDC and SAM CD lessons.md` y
+`04 Knowledge/AI Engineering/Operar agentes gestionados y pruebas E2E.md`.
+Verificar claims OIDC, permisos exactos, change set y rollback; no sustituir
+esa revisión por un workflow YAML que solo haya pasado localmente.
+
 Antes de declarar una fase terminada:
 - ejecutar tests relevantes;
 - ejecutar lint/type checks si existen;
