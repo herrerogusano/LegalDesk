@@ -166,6 +166,14 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: lambda.amazonaws.com
+              - Sid: ReadUnchangedApplicationRolePolicy
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:GetRolePolicy
+                Resource: !Ref ApplicationExecutionRoleArn
               - Sid: ReadAndPatchOnlyTheApiIntegration
                 Effect: Allow
                 Action:

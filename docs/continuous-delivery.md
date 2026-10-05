@@ -30,7 +30,10 @@ and CloudFormation service roles. The release role can upload only the
 immutable `phase-14/<40-hex-commit>/` Lambda prefix, update the five frontend
 keys, create/read one CloudFront invalidation, inspect this existing stack, and
 pass the exact CloudFormation role. The service role can read that immutable
-artifact, update Lambda code, and patch the one API integration. Neither role
+artifact, read the unchanged Lambda execution-role metadata/policies required
+by CloudFormation, update Lambda code, and patch the one API integration.
+Those IAM actions are read-only and scoped to the exact existing application
+role. Neither role
 can invoke Lambda, access application S3/document keys, read or write
 DynamoDB/Bedrock/Gateway/Memory, mutate application IAM policies, create or
 delete stacks, or modify business resources. `ValidateTemplate` is the only
@@ -53,6 +56,15 @@ the five frontend files with `no-cache`, waits for the six-path invalidation,
 and checks `/` (200), `/logout` (302), `/api/me` (403), and all five CDN asset
 hashes. It never invokes chat, ingestion, retrieval, Harness, Gateway,
 Bedrock, or business-data smoke operations.
+
+Retries are idempotent at the immutable code-parameter boundary. If the
+existing stack already has exactly the requested artifact bucket, key, and
+version, the command records `NO_OP`, skips change-set creation (including a
+CloudFormation no-diff/failed change set), and still verifies Lambda's code
+hash plus the frontend/CDN checks. A stable `UPDATE_ROLLBACK_COMPLETE` stack
+is inventoryable and updateable, but the poller fences prior stable
+`UPDATE_COMPLETE`/rollback statuses until it observes the requested code
+parameters after execution; in-progress or failed states remain fail-closed.
 
 On failure after mutation, the metadata-only record is marked `FAILED` and
 retains the pre-release Lambda/frontend rollback references. Rollback is a
