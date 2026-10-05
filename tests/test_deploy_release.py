@@ -80,6 +80,10 @@ class FakeS3:
         return {"Body": io.BytesIO(body)}
 
     def put_object(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("IfNoneMatch") == "*" and (kwargs["Bucket"], kwargs["Key"]) in self.objects:
+            error = RuntimeError("precondition failed")
+            error.response = {"Error": {"Code": "PreconditionFailed"}}  # type: ignore[attr-defined]
+            raise error
         body = kwargs["Body"]
         digest = kwargs["Metadata"]["legaldesk-sha256"]
         self.puts += 1
@@ -145,6 +149,31 @@ class FakeLambda:
         import base64
 
         return {"Configuration": {"CodeSha256": base64.b64encode(bytes.fromhex(self.digest)).decode("ascii")}}
+
+
+class NoHeadS3(FakeS3):
+    def head_object(self, **kwargs: Any) -> dict[str, Any]:
+        error = RuntimeError("forbidden head")
+        error.response = {"Error": {"Code": "403"}}  # type: ignore[attr-defined]
+        raise error
+
+
+class ProgressCfn(FakeCfn):
+    def describe_stacks(self, **kwargs: Any) -> dict[str, Any]:
+        response = super().describe_stacks(**kwargs)
+        if self.executed and self.stack_calls == 2:
+            response["Stacks"][0]["StackStatus"] = "UPDATE_IN_PROGRESS"
+        return response
+
+
+class DriftCfn(FakeCfn):
+    def get_template(self, **kwargs: Any) -> dict[str, Any]:
+        return {"TemplateBody": self.template.replace("IntegrationUri: !Ref ApplicationCodeKey", "IntegrationUri: !Ref ApplicationCodeVersion")}
+
+
+class ExecuteErrorCfn(FakeCfn):
+    def execute_change_set(self, **kwargs: Any) -> dict[str, Any]:
+        raise ValueError("provider failure")
 
 
 class ReleaseDeployTests(unittest.TestCase):
@@ -255,6 +284,104 @@ class ReleaseDeployTests(unittest.TestCase):
             self.assertEqual(set(payload["previousLambda"]), {"key", "version"})
             self.assertEqual(set(payload["frontendVersions"]), {"index.html", "styles.css", "app.js", "citations.js", "diagnostics.js"})
             self.assertEqual(set(payload["previousFrontendVersions"]), {"index.html", "styles.css", "app.js", "citations.js", "diagnostics.js"})
+
+    def test_stack_progress_is_polled_until_update_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            cfn = ProgressCfn(TEMPLATE)
+            app_hash = json.loads((root / "legaldesk-release-manifest.json").read_text())["artifacts"][0]["sha256"]
+            def opener(request: Any, timeout: int) -> Any:
+                path = request.full_url.rsplit("edge.example", 1)[-1]
+                status = {"/": 200, "/logout": 302, "/api/me": 403}.get(path, 200)
+                body = next(((name + "\n").encode() for name in ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js") if "/" + name == path), b"")
+                return type("Response", (), {"status": status, "read": lambda self: body})()
+
+            result = deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=cfn, s3=FakeS3(), cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
+            self.assertEqual(result.status, "PASS")
+            self.assertGreaterEqual(cfn.stack_calls, 2)
+
+    def test_template_drift_is_rejected_before_artifact_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            s3 = FakeS3()
+            with self.assertRaises(DeploymentError) as error:
+                deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=DriftCfn(TEMPLATE), s3=s3, cloudfront=FakeCloudFront(), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL)
+            self.assertEqual(str(error.exception), "deployed_template_scope_changed")
+            self.assertEqual(s3.puts, 0)
+
+    def test_cloudfront_timeout_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            app_hash = json.loads((root / "legaldesk-release-manifest.json").read_text())["artifacts"][0]["sha256"]
+            with self.assertRaises(DeploymentError) as error:
+                deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=FakeCfn(TEMPLATE), s3=FakeS3(), cloudfront=FakeCloudFront(complete=False), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, sleeper=lambda _: None)
+            self.assertEqual(str(error.exception), "cloudfront_invalidation_timeout")
+
+    def test_cdn_hash_mismatch_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            app_hash = json.loads((root / "legaldesk-release-manifest.json").read_text())["artifacts"][0]["sha256"]
+
+            def opener(request: Any, timeout: int) -> Any:
+                path = request.full_url.rsplit("edge.example", 1)[-1]
+                status = {"/": 200, "/logout": 302, "/api/me": 403}.get(path, 200)
+                return type("Response", (), {"status": status, "read": lambda self: b"wrong"})()
+
+            with self.assertRaises(DeploymentError) as error:
+                deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=FakeCfn(TEMPLATE), s3=FakeS3(), cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
+            self.assertEqual(str(error.exception), "public_asset_hash_mismatch")
+
+    def test_previous_frontend_versions_remain_in_rollback_record_after_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            s3 = FakeS3()
+            for name in ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js"):
+                body = ("old-" + name).encode()
+                s3.objects[("frontend", name)] = (body, "old-" + name, hashlib.sha256(body).hexdigest())
+            app_hash = json.loads((root / "legaldesk-release-manifest.json").read_text())["artifacts"][0]["sha256"]
+            opener = lambda request, timeout: type("Response", (), {"status": {"/": 200, "/logout": 302, "/api/me": 403}.get(request.full_url.rsplit("edge.example", 1)[-1], 200), "read": lambda self: next(((name + "\n").encode() for name in ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js") if "/" + name == request.full_url.rsplit("edge.example", 1)[-1]), b"")})()
+            result = deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=FakeCfn(TEMPLATE), s3=s3, cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, public_opener=opener, sleeper=lambda _: None)
+            self.assertEqual(result.previous_frontend_versions[0], ("index.html", "old-index.html"))
+            self.assertEqual(s3.objects[("frontend", "index.html")][1], "v2")
+
+    def test_external_provider_error_writes_failed_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            template_path = root / "template.yaml"
+            template_path.write_text(TEMPLATE, encoding="utf-8")
+            record = root / "record.json"
+            app_hash = json.loads((root / "legaldesk-release-manifest.json").read_text())["artifacts"][0]["sha256"]
+            with self.assertRaises(DeploymentError) as error:
+                deploy(ReleaseInput("b" * 40, root, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip"), cfn=ExecuteErrorCfn(TEMPLATE), s3=FakeS3(), cloudfront=FakeCloudFront(), lambda_client=FakeLambda(app_hash), template_path=template_path, change_set_name="cs", execute=True, approval=APPROVAL, record_path=record, sleeper=lambda _: None)
+            self.assertEqual(str(error.exception), "change_set_execute_failed")
+            self.assertEqual(json.loads(record.read_text())["status"], "FAILED")
+
+    def test_new_immutable_artifact_uses_atomic_put_without_head(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest(root)
+            app, _ = validate_release(root, "b" * 40, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip")
+            s3 = NoHeadS3()
+            from scripts.deploy_release import _put_immutable
+
+            version = _put_immutable(s3, "artifacts", "phase-14/" + "b" * 40 + "/legaldesk-lambda.zip", app, "b" * 40)
+            self.assertEqual(version, "v1")
 
 
 if __name__ == "__main__":

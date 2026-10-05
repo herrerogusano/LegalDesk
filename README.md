@@ -230,6 +230,14 @@ teardown procedure.
 - [Phase 14 public-beta plan](PLAN_14_PUBLIC_BETA.md)
 - [Phase 14 semantic holdout](docs/phase-14-holdout.md)
 - [Phase 14 operations runbook](docs/phase-14-operations-runbook.md)
+
+La CD se activa automáticamente solo al publicar en `prod`; el disparo manual
+exige escribir `DEPLOY_PROD`. El alcance está limitado al stack beta público
+existente, al prefijo inmutable de artefactos, a las cinco claves frontend y a
+la actualización de código Lambda/integración API permitida por el change set.
+La promoción por PR es el procedimiento previsto; la protección obligatoria de
+ramas no está disponible en el plan actual de GitHub, por lo que no se afirma
+enforcement contra un push directo.
 - [Periodic operations checklist](docs/phase-14-operations-checklist.md)
 - [Guided offline manual demo](docs/phase-13-manual-demo.md)
 - [Portfolio demo script for v1.0.0-beta.1](docs/portfolio-demo-v1.0.0-beta.1.md)

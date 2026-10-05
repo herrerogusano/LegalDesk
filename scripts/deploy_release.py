@@ -212,22 +212,25 @@ def _head(s3: S3Like, bucket: str, key: str) -> Mapping[str, Any] | None:
 
 
 def _put_immutable(s3: S3Like, bucket: str, key: str, artifact: ReleaseArtifact, commit: str) -> str | None:
-    existing = _head(s3, bucket, key)
-    if existing is not None:
-        if _object_hash(s3, bucket, key, existing) != artifact.sha256:
-            raise DeploymentError("immutable_artifact_conflict")
-        version = existing.get("VersionId")
-        return version if isinstance(version, str) else None
     try:
         response = s3.put_object(
             Bucket=bucket,
             Key=key,
             Body=artifact.path.read_bytes(),
+            IfNoneMatch="*",
             ServerSideEncryption="AES256",
             Metadata={"legaldesk-sha256": artifact.sha256, "legaldesk-commit": commit},
         )
     except Exception as exc:
-        raise DeploymentError("artifact_upload_failed") from exc
+        response_data = getattr(exc, "response", None)
+        code = response_data.get("Error", {}).get("Code") if isinstance(response_data, Mapping) else None
+        if code not in {"412", "PreconditionFailed"}:
+            raise DeploymentError("artifact_upload_failed") from exc
+        existing = _head(s3, bucket, key)
+        if existing is None or _object_hash(s3, bucket, key, existing) != artifact.sha256:
+            raise DeploymentError("immutable_artifact_conflict") from exc
+        version = existing.get("VersionId")
+        return version if isinstance(version, str) else None
     version = response.get("VersionId") if isinstance(response, Mapping) else None
     return version if isinstance(version, str) else None
 

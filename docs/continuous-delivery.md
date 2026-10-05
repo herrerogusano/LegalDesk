@@ -7,6 +7,12 @@ match the deployed template before a change set is created, and the change set
 may contain only `ApplicationFunction` code and the dependent
 `PublicApiIntegration` URI, both without replacement.
 
+The separately reviewed IAM bootstrap has been applied as stack
+`LegalDeskProductionCD`; its change set contained only the OIDC deployment role
+and the constrained CloudFormation execution role. No application, data-plane,
+frontend, or production code mutation was part of that bootstrap. The first
+real CD release remains a separate supervisor-approved operation.
+
 `.github/workflows/production-cd.yml` runs reusable offline CI and pinned
 release tooling/lint before the only job with `id-token: write`. Production
 deployments are serialized with `cancel-in-progress: false`; pushes to `prod`
