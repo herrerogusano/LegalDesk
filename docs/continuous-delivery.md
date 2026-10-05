@@ -31,7 +31,11 @@ immutable `phase-14/<40-hex-commit>/` Lambda prefix, update the five frontend
 keys, create/read one CloudFront invalidation, inspect this existing stack, and
 pass the exact CloudFormation role. The service role can read that immutable
 artifact, read the unchanged Lambda execution-role metadata/policies required
-by CloudFormation, update Lambda code, and patch the one API integration.
+by CloudFormation, read only the existing CloudFront distribution metadata
+needed to evaluate its outputs, update Lambda code, and patch the one API
+integration. The three CloudFront reads (`GetDistribution`,
+`GetDistributionConfig`, and `ListTagsForResource`) are scoped to the exact
+existing distribution ARN.
 Those IAM actions are read-only and scoped to the exact existing application
 role. Neither role
 can invoke Lambda, access application S3/document keys, read or write

@@ -159,6 +159,13 @@ Resources:
                   - s3:GetObject
                   - s3:GetObjectVersion
                 Resource: !Sub "${ArtifactBucketArn}/phase-14/*"
+              - Sid: ReadOnlyPublicDistributionMetadata
+                Effect: Allow
+                Action:
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:ListTagsForResource
+                Resource: !Ref CloudFrontDistributionArn
               - Sid: PassUnchangedApplicationRoleIfRequired
                 Effect: Allow
                 Action: iam:PassRole
