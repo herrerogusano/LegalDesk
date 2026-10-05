@@ -161,7 +161,9 @@ Convención sugerida:
 
 # 9. Calidad
 
-Antes del primer despliegue CD real, consultar también la guía compartida
+CI debe construirse desde el inicio y CD formar parte del trabajo del primer
+despliegue alojado, no quedar como mejora futura tras publicar manualmente.
+Antes de planificar ese primer despliegue, consultar también la guía compartida
 `04 Knowledge/Guides/GitHub Actions - AWS OIDC and SAM CD lessons.md` y
 `04 Knowledge/AI Engineering/Operar agentes gestionados y pruebas E2E.md`.
 Verificar claims OIDC, permisos exactos, change set y rollback; no sustituir

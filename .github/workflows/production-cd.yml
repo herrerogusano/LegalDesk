@@ -184,7 +184,7 @@ jobs:
             --artifact-bucket "$LEGALDESK_ARTIFACT_BUCKET" \
             --artifact-key "phase-14/$commit/legaldesk-lambda.zip" \
             --execution-role-arn "$AWS_CLOUDFORMATION_ROLE_ARN" \
-            --change-set-name "legaldesk-$GITHUB_RUN_ID-$GITHUB_SHA" \
+            --change-set-name "legaldesk-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_SHA" \
             --record "$RUNNER_TEMP/legaldesk-release-record.json" \
             --execute \
             --approval I_UNDERSTAND_LEGALDESK_PROD_CODE_ONLY
@@ -192,7 +192,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
         with:
-          name: legaldesk-release-${{ github.run_id }}
+          name: legaldesk-release-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/legaldesk-release/legaldesk-release-manifest.json
