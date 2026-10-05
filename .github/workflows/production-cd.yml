@@ -91,6 +91,7 @@ jobs:
           python -m pip install --disable-pip-version-check -e ".[release-tools]"
           mkdir -p "$RUNNER_TEMP/legaldesk-wheels" "$RUNNER_TEMP/legaldesk-python312-deps"
           python -m pip download --only-binary=:all: \
+            --platform manylinux_2_34_x86_64 \
             --platform manylinux_2_28_x86_64 \
             --platform manylinux_2_17_x86_64 \
             --platform manylinux2014_x86_64 \
