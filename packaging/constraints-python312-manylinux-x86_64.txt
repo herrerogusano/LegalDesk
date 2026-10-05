@@ -10,3 +10,5 @@ PyJWT[crypto]==2.14.0
 pycparser==3.0
 s3transfer==0.19.2
 urllib3==2.8.0
+python-dateutil==2.9.0.post0
+six==1.17.0

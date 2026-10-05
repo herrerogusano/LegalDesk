@@ -31,6 +31,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#matter-select").selectOption("matter-integration");
     await page.locator("#question").waitFor({ state: "visible" });
     await page.waitForFunction(() => !document.querySelector("#document-file").disabled);
+    const initialVisibility = await page.evaluate(() => {
+      const nodes = ["#upload-progress", "#disclaimer", "#review-form"].map(selector => document.querySelector(selector));
+      return nodes.map(node => ({ hidden: Boolean(node?.hidden), display: node ? getComputedStyle(node).display : "missing" }));
+    });
+    assert.deepEqual(initialVisibility, [
+      { hidden: true, display: "none" },
+      { hidden: true, display: "none" },
+      { hidden: true, display: "none" },
+    ]);
+    assert.equal(await page.locator("#matter-kicker").innerText(), "Integration Matter");
+    await page.locator("#workspace-tab-documents").click();
     assert.equal(await page.locator("#upload-button").isDisabled(), true);
     await page.locator("#document-file").setInputFiles({ name: "fictional.txt", mimeType: "text/plain", buffer: Buffer.from("The inspection period is four years.") });
     assert.match(await page.locator("#selected-file-status").innerText(), /fictional\.txt/);
@@ -46,9 +57,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.equal(await page.locator("#app-status").getAttribute("data-state"), "success");
     assert.match(await page.locator('[data-upload-stage="scan"]').innerText(), /Analizar/);
     assert.equal(await page.locator("#upload-progress").getAttribute("role"), "group");
-    assert.equal(await page.locator("#sync-button").isHidden(), true);
+    assert.equal(await page.locator("#sync-button").isHidden(), false);
+    assert.match(await page.locator("#sync-button").innerText(), /Actualizar estados/i);
+    assert.equal(await page.locator("#prepare-button").isHidden(), true);
     assert.match(await page.locator("#review-button").innerText(), /Guardar para revisión/i);
     assert.equal(await page.locator("#technical-diagnostics").getAttribute("open"), null);
+    await page.locator("#workspace-tab-consultation").click();
     await page.locator("#question").fill("What is the inspection period?");
     await page.locator("#ask-button").click();
     await page.waitForFunction(() => document.querySelector("#answer").textContent.includes("four years"));
@@ -59,15 +73,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.match(await page.locator("#inspection-meta").innerText(), /fictional\.txt · pasaje autorizado/);
     assert.doesNotMatch(await page.locator(".sources").innerText(), /matter-integration|[0-9a-f]{8}-[0-9a-f-]{27,}/i);
     assert.ok(!(await page.locator("body").innerText()).includes("s3://"));
-    await page.locator("#technical-diagnostics summary").click();
-    assert.match(await page.locator("#technical-diagnostics summary").innerText(), /Ocultar herramientas/);
-    assert.match(await page.locator("#technical-diagnostics summary").innerText(), /2 herramientas/i);
+    await page.locator("#technical-diagnostics > summary").click();
+    assert.match(await page.locator("#technical-diagnostics > summary").innerText(), /Ocultar herramientas/);
+    assert.match(await page.locator("#technical-diagnostics > summary").innerText(), /2 herramientas/i);
     assert.equal(await page.locator("#technical-diagnostics #review-button").count(), 0);
     let reviewPostCount = 0;
     page.on("request", request => {
       if (request.method() === "POST" && request.url().includes("/api/matters/matter-integration/reviews")) reviewPostCount += 1;
     });
     await page.locator("#review-button").click();
+    await page.waitForFunction(() => {
+      const panel = document.querySelector("#review-form");
+      return panel && !panel.hidden && document.activeElement === document.querySelector("#review-reason");
+    });
+    assert.equal(await page.locator("#review-reason").getAttribute("aria-invalid"), "false");
+    assert.equal(await page.locator("#review-due-at").getAttribute("aria-invalid"), "false");
+    assert.equal(await page.locator("#review-reason-error").isHidden(), true);
+    assert.equal(await page.locator("#review-due-at-error").isHidden(), true);
+    await page.locator("#review-submit-button").click();
     await page.waitForFunction(() => {
       const reason = document.querySelector("#review-reason");
       const due = document.querySelector("#review-due-at");
@@ -85,6 +108,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     assert.match(await page.locator("#review-form-status").innerText(), /Revisa los campos marcados/);
     await page.locator("#metadata-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("fictional.txt"));
+    await page.waitForFunction(() => !document.querySelector("#operator-documents")?.hidden && document.querySelectorAll("#operator-documents .operator-record").length > 0);
+    assert.match(await page.locator("#operator-documents").innerText(), /fictional\.txt/);
     await page.locator("#review-reason").selectOption("user_requested_review");
     await page.locator("#review-note").fill("Revisar el cómputo con criterio profesional.");
     const dueAtBeforeSubmit = await page.locator("#review-due-at").getAttribute("min");
@@ -98,14 +123,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       await route.continue();
     });
     const reviewResponsePromise = page.waitForResponse(response => response.url().includes("/api/matters/matter-integration/reviews") && response.request().method() === "POST");
-    await page.locator("#review-button").click();
+    await page.locator("#review-submit-button").click();
     await page.waitForFunction(() => {
-      const button = document.querySelector("#review-button");
+      const button = document.querySelector("#review-submit-button");
       return button?.textContent === "Guardando…" && button.disabled && button.getAttribute("aria-busy") === "true";
     });
     const reviewResponse = await reviewResponsePromise;
     const createdReview = await reviewResponse.json();
     assert.equal(reviewPostSeen, true);
+    await page.locator("#workspace-tab-reviews").click();
     assert.equal(typeof createdReview.reviewTaskId, "string");
     await page.waitForFunction(() => document.querySelector("#app-status").textContent.includes("Revisión guardada en estado Pendiente"));
     await page.waitForFunction(() => document.querySelector("#reviews-pending").textContent.includes("Pendiente"));
@@ -234,8 +260,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       const body = details?.querySelector(".review-item-body");
       return details?.open && body && body.getBoundingClientRect().height > 20 && !body.style.height;
     }, reviewTaskId);
+    await page.locator("#workspace-tab-consultation").click();
     await page.locator("#audit-button").click();
     await page.waitForFunction(() => document.querySelector("#operator-output").textContent.includes("grounding_validate"));
+    await page.waitForFunction(() => !document.querySelector("#operator-timeline")?.hidden && document.querySelectorAll("#operator-timeline .operator-event").length > 0);
+    assert.match(await page.locator("#operator-timeline").innerText(), /grounding_validate/);
     assert.ok((await page.locator("#history-list").innerText()).includes("four years"));
 
     // Validate responsive layout and basic operability without repeating the
@@ -265,12 +294,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
           `desktop workspace should retain outer gutters at ${viewport.width}px`,
         );
       }
-      for (const selector of ["#matter-select", "#document-file", "#question", "#ask-button", "#review-button", "#technical-diagnostics summary"]) {
+      await page.locator("#workspace-tab-consultation").click();
+      for (const selector of ["#matter-select", "#question", "#ask-button", "#review-button", "#technical-diagnostics > summary"]) {
         assert.equal(await page.locator(selector).isVisible(), true, `${selector} not visible at ${viewport.width}px`);
       }
+      await page.locator("#workspace-tab-documents").click();
+      assert.equal(await page.locator("#document-file").isVisible(), true, `#document-file not visible at ${viewport.width}px`);
+      await page.locator("#workspace-tab-consultation").click();
     }
     const artifactDir = process.env.ARTIFACT_DIR || "test-results";
     await page.setViewportSize({ width: 1365, height: 1000 });
+    await page.locator("#workspace-tab-consultation").click();
     await page.screenshot({ path: path.join(artifactDir, "phase13-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 375, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "mobile horizontal overflow");

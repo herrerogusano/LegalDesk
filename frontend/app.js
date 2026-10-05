@@ -16,9 +16,13 @@
     reviewDetailRequests: Object.create(null),
     reviewUpdates: Object.create(null),
     reviewMove: null,
+    pendingReviewFocus: "",
     hasAcceptedAnswer: false,
     busy: false,
     activeDocumentTab: "available",
+    documentStatesFresh: false,
+    documentStatesLoading: false,
+    activeWorkspacePanel: "consultation",
   };
 
   const $ = (id) => document.getElementById(id);
@@ -32,6 +36,7 @@
   });
   const UPLOAD_STAGES = Object.freeze(["authorize", "upload", "verify", "scan", "index"]);
   const INGESTION_MAX_POLLS = 20;
+  const MAX_DOCUMENTS_PER_INGESTION = 20;
   const INGESTION_POLL_DELAY_MS = 1500;
   const DOCUMENT_MAX_POLLS = 10;
   const DOCUMENT_POLL_DELAY_MS = 1000;
@@ -126,7 +131,73 @@
 
   function setOperator(value) {
     const output = $("operator-output");
-    output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    const summary = $("operator-summary");
+    const json = $("operator-json");
+    const documents = $("operator-documents");
+    const timeline = $("operator-timeline");
+    const model = window.LegalDeskDiagnostics
+      ? window.LegalDeskDiagnostics.toDiagnosticsModel(value)
+      : { summary: [], documents: [], events: [] };
+    output.textContent = JSON.stringify(model, null, 2);
+    if (json) json.hidden = false;
+    if (summary) summary.replaceChildren();
+    if (summary && !model.summary.length) {
+      summary.append(Object.assign(document.createElement("p"), { className: "microcopy", textContent: "La operación terminó sin campos resumibles." }));
+    }
+    model.summary.forEach(([label, fieldValue]) => {
+      const field = document.createElement("div");
+      field.className = "operator-field";
+      const labelNode = document.createElement("span");
+      labelNode.className = "operator-field-label";
+      labelNode.textContent = label;
+      const valueNode = document.createElement("span");
+      valueNode.className = "operator-field-value";
+      valueNode.textContent = typeof fieldValue === "string" ? fieldValue : String(fieldValue);
+      field.append(labelNode, valueNode);
+      if (summary) summary.append(field);
+    });
+    if (documents) {
+      documents.replaceChildren();
+      documents.hidden = !model.documents.length;
+      model.documents.forEach((record) => {
+        const row = document.createElement("div");
+        row.className = "operator-record";
+        const name = document.createElement("strong");
+        name.textContent = record.name;
+        const metadata = document.createElement("span");
+        metadata.textContent = [record.status, record.mediaType, Number.isFinite(record.sizeBytes) ? formatFileSize(record.sizeBytes) : ""]
+          .filter(Boolean).join(" · ");
+        row.append(name, metadata);
+        documents.append(row);
+      });
+    }
+    if (timeline) {
+      timeline.replaceChildren();
+      timeline.hidden = !model.events.length;
+      model.events.forEach((record) => {
+        const row = document.createElement("li");
+        row.className = "operator-event";
+        const operation = document.createElement("strong");
+        operation.textContent = record.operation;
+        const metadata = document.createElement("span");
+        const timestamp = Number.isFinite(record.timestampMs) ? new Date(record.timestampMs).toISOString() : "hora no disponible";
+        metadata.textContent = [timestamp, record.correlationId].filter(Boolean).join(" · ");
+        row.append(operation, metadata);
+        timeline.append(row);
+      });
+    }
+  }
+
+  function setDocumentActionMessage(message, error, tone) {
+    const node = $("document-action-status");
+    if (!node) return;
+    node.textContent = message || "";
+    node.hidden = !message;
+    node.dataset.state = message ? (error ? "error" : tone || "info") : "";
+  }
+
+  function documentActionTimestamp() {
+    return new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit" }).format(new Date());
   }
 
   function currentGeneration() { return state.generation; }
@@ -148,17 +219,28 @@
   function refreshControls() {
     const enabled = Boolean(state.me);
     const hasFile = Boolean(selectedFile());
-    const retryable = state.documents.some((item) => item && ["PENDING_UPLOAD", "UPLOADED"].includes(item.status));
+    const eligibleForPreparation = state.documents.filter((item) => item && item.status === "UPLOADED").length;
     $("matter-select").disabled = !enabled;
     $("document-file").disabled = !authorized() || state.busy;
     $("upload-button").disabled = !authorized() || state.busy || !hasFile;
     $("question").disabled = !authorized() || state.busy;
     $("ask-button").disabled = !authorized() || state.busy;
-    $("sync-button").disabled = !authorized() || state.busy || !retryable;
-    $("sync-button").hidden = !retryable;
-    $("sync-helper").hidden = !retryable;
+    $("sync-button").disabled = !authorized() || state.busy || state.documentStatesLoading;
+    $("sync-button").hidden = !authorized();
+    $("sync-helper").hidden = !authorized();
+    const prepareButton = $("prepare-button");
+    if (prepareButton) {
+      prepareButton.disabled = !authorized() || state.busy || !state.documentStatesFresh || eligibleForPreparation === 0;
+      prepareButton.hidden = !authorized() || !state.documentStatesFresh || eligibleForPreparation === 0;
+    }
+    const prepareHelper = $("prepare-helper");
+    if (prepareHelper) prepareHelper.hidden = !authorized() || !state.documentStatesFresh || eligibleForPreparation === 0;
     $("metadata-button").disabled = !authorized() || state.busy;
     $("review-button").disabled = !authorized() || state.busy || !state.hasAcceptedAnswer;
+    const reviewSubmit = $("review-submit-button");
+    if (reviewSubmit) reviewSubmit.disabled = !authorized() || state.busy || !state.hasAcceptedAnswer;
+    const reviewRequest = document.querySelector(".review-request");
+    if (reviewRequest) reviewRequest.hidden = !state.hasAcceptedAnswer;
     ["review-reason", "review-note", "review-due-at"].forEach((id) => { if ($(id)) $(id).disabled = !authorized() || state.busy || !state.hasAcceptedAnswer; });
     $("audit-button").disabled = !enabled || state.busy;
     $("login-button").hidden = enabled;
@@ -241,6 +323,25 @@
     $("empty-citations").hidden = false;
     $("citation-inspection").hidden = true;
     $("operator-output").textContent = "";
+    const operatorSummary = $("operator-summary");
+    if (operatorSummary) operatorSummary.replaceChildren(Object.assign(document.createElement("p"), { className: "microcopy", textContent: "Aún no hay una consulta técnica." }));
+    const operatorJson = $("operator-json");
+    if (operatorJson) operatorJson.hidden = true;
+    ["operator-documents", "operator-timeline"].forEach((id) => {
+      const node = $(id);
+      if (node) { node.replaceChildren(); node.hidden = true; }
+    });
+    const syncButton = $("sync-button");
+    if (syncButton) {
+      syncButton.textContent = "Actualizar estados";
+      syncButton.removeAttribute("aria-busy");
+    }
+    const prepareButton = $("prepare-button");
+    if (prepareButton) {
+      prepareButton.textContent = "Preparar para consulta (0)";
+      prepareButton.removeAttribute("aria-busy");
+    }
+    setDocumentActionMessage("");
     const fileInput = $("document-file");
     fileInput.value = "";
     renderSelectedFile();
@@ -251,12 +352,15 @@
     $("question").value = "";
     $("question-count").textContent = "0 / 1000";
     state.documents = [];
+    state.documentStatesFresh = false;
+    state.documentStatesLoading = false;
     state.activeDocumentTab = "available";
     setDocumentTab("available");
     state.reviews = [];
     state.reviewDetails = Object.create(null);
     state.reviewDetailRequests = Object.create(null);
     state.reviewUpdates = Object.create(null);
+    state.pendingReviewFocus = "";
     state.hasAcceptedAnswer = false;
     renderReviews([]);
     setReviewDueDateMinimum();
@@ -294,9 +398,12 @@
   }
 
   function documentStatusLabel(documentRecord) {
-    return documentClassification(documentRecord) === "incomplete"
-      ? "Carga incompleta"
-      : DOCUMENT_STATUS_LABELS[documentRecord && documentRecord.status] || "Estado no disponible";
+    if (!documentRecord) return "Estado no disponible";
+    if (documentRecord.status === "PENDING_UPLOAD") return "Carga incompleta · vuelve a subir";
+    if (documentRecord.status === "FAILED" && documentRecord.malwareScanStatus === "PENDING") return "Análisis interrumpido · revisa y sube de nuevo";
+    if (documentRecord.status === "FAILED") return "Rechazado por análisis · sube otra versión";
+    if (documentRecord.status === "PENDING_INGESTION") return "Procesando para consulta";
+    return DOCUMENT_STATUS_LABELS[documentRecord.status] || "Estado no disponible";
   }
 
   // Operational documents stay together except for incomplete uploads. This
@@ -347,6 +454,46 @@
       setDocumentTab(nextTab.id === "document-tab-incomplete" ? "incomplete" : "available", true);
     });
     setDocumentTab(state.activeDocumentTab);
+  }
+
+  function setWorkspacePanel(panelName, focus) {
+    const panel = ["consultation", "documents", "reviews"].includes(panelName) ? panelName : "consultation";
+    const tabs = Array.from(document.querySelectorAll("#workspace-nav [role=tab]"));
+    document.querySelectorAll("[data-panel]").forEach((node) => { node.hidden = node.dataset.panel !== panel; });
+    tabs.forEach((tab) => {
+      const selected = tab.dataset.workspacePanel === panel;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    state.activeWorkspacePanel = panel;
+    if (panel === "reviews" && state.pendingReviewFocus) {
+      const reviewTaskId = state.pendingReviewFocus;
+      window.setTimeout(() => focusNewReview(reviewTaskId), 0);
+    }
+    if (focus) {
+      const selected = tabs.find((tab) => tab.dataset.workspacePanel === panel);
+      if (selected) selected.focus();
+    }
+  }
+
+  function bindWorkspaceTabs() {
+    const tablist = $("workspace-nav");
+    const tabs = tablist ? Array.from(tablist.querySelectorAll("[role=tab]")) : [];
+    if (!tablist || !tabs.length) return;
+    tabs.forEach((tab) => tab.addEventListener("click", () => setWorkspacePanel(tab.dataset.workspacePanel, false)));
+    tablist.addEventListener("keydown", (event) => {
+      const currentIndex = tabs.indexOf(event.target);
+      if (currentIndex < 0) return;
+      let nextIndex = currentIndex;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % tabs.length;
+      else if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (currentIndex + tabs.length - 1) % tabs.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      setWorkspacePanel(tabs[nextIndex].dataset.workspacePanel, true);
+    });
+    setWorkspacePanel(state.activeWorkspacePanel);
   }
 
   function documentSummaryLabel(summary) {
@@ -420,10 +567,24 @@
     else {
       const details = [];
       if (summary.indexed) details.push(`${summary.indexed} ${summary.indexed === 1 ? "está listo" : "están listos"} para consultar`);
-      if (summary.processing) details.push(`${summary.processing} ${summary.processing === 1 ? "sigue" : "siguen"} en procesamiento`);
-      if (summary.incomplete) details.push(`${summary.incomplete} ${summary.incomplete === 1 ? "tiene una carga incompleta" : "tienen cargas incompletas"}`);
-      if (summary.failed) details.push(`${summary.failed} ${summary.failed === 1 ? "requiere" : "requieren"} atención`);
+      if (summary.processing) details.push(`${summary.processing} ${summary.processing === 1 ? "sigue" : "siguen"} en procesamiento; actualiza estados para seguir`);
+      if (summary.incomplete) details.push(`${summary.incomplete} ${summary.incomplete === 1 ? "carga incompleta" : "cargas incompletas"}; revisa y vuelve a subir`);
+      if (summary.failed) details.push(`${summary.failed} ${summary.failed === 1 ? "fallo" : "fallos"}; revisa y sube otra versión`);
       $("document-status").textContent = `${details.join(" · ")}.`;
+    }
+    const eligibleCount = state.documents.filter((item) => item && item.status === "UPLOADED").length;
+    const prepareButton = $("prepare-button");
+    const prepareHelper = $("prepare-helper");
+    if (prepareButton) {
+      prepareButton.hidden = !authorized() || !state.documentStatesFresh || eligibleCount === 0;
+      prepareButton.disabled = !authorized() || state.busy || !state.documentStatesFresh || eligibleCount === 0;
+      prepareButton.textContent = `Preparar para consulta (${Math.min(eligibleCount, MAX_DOCUMENTS_PER_INGESTION)})`;
+    }
+    if (prepareHelper) {
+      prepareHelper.hidden = !authorized() || !state.documentStatesFresh || eligibleCount === 0;
+      prepareHelper.textContent = eligibleCount > MAX_DOCUMENTS_PER_INGESTION
+        ? `Hay ${eligibleCount} documentos listos; cada acción prepara como máximo ${MAX_DOCUMENTS_PER_INGESTION}.`
+        : "Solo inicia la preparación de documentos cargados; los que ya están procesando no se reinician.";
     }
     renderDocumentList($("document-list"), groups.operational, "Aún no hay documentos operativos en este expediente.");
     renderDocumentList($("document-incomplete-list"), groups.incomplete, "No hay cargas incompletas en este expediente.");
@@ -887,7 +1048,16 @@
       if (!isCurrent(generation) || !result || !result.snapshot) throw new Error("El detalle de la revisión no está disponible.");
       state.reviewDetails[reviewTaskId] = result;
       state.reviews = state.reviews.map((task) => task.reviewTaskId === reviewTaskId ? { ...task, ...result } : task);
-      renderReviews(state.reviews);
+      const currentItem = details.closest(".review-item");
+      const updatedTask = state.reviews.find((task) => task && task.reviewTaskId === reviewTaskId);
+      if (currentItem && updatedTask) {
+        const view = reviewViewState();
+        const rendered = renderReviewItem(updatedTask);
+        const currentBody = currentItem.querySelector(".review-item-body");
+        const updatedBody = rendered.querySelector(".review-item-body");
+        if (currentBody && updatedBody) currentBody.replaceWith(updatedBody);
+        restoreReviewView(view);
+      }
       } catch (error) {
         if (error.name !== "AbortError" && isCurrent(generation) && details.isConnected) {
           const errorNode = Object.assign(document.createElement("p"), { className: "review-detail-state review-detail-error", textContent: `${error.message} Puedes cerrar y volver a abrir para reintentarlo.` });
@@ -986,6 +1156,20 @@
     if (due) due.value = "";
     setReviewDueDateMinimum();
     resetReviewValidation();
+    setReviewFormOpen(false);
+  }
+
+  function setReviewFormOpen(open, focus) {
+    const panel = $("review-form");
+    const button = $("review-button");
+    if (!panel || !button) return;
+    panel.hidden = !open;
+    button.setAttribute("aria-expanded", String(Boolean(open)));
+    if (open && focus) {
+      const reason = $("review-reason");
+      if (!reason) return;
+      try { reason.focus({ preventScroll: true }); } catch (_error) { reason.focus(); }
+    }
   }
 
   function hasValidReviewDueDate(value) {
@@ -1027,11 +1211,19 @@
 
   function focusNewReview(reviewTaskId) {
     if (typeof reviewTaskId !== "string" || !reviewTaskId) return;
+    if (state.activeWorkspacePanel !== "reviews") {
+      state.pendingReviewFocus = reviewTaskId;
+      return;
+    }
     const details = Array.from(document.querySelectorAll("#reviews-section details[data-review-id]"))
       .find((candidate) => candidate.dataset.reviewId === reviewTaskId);
     const item = details && details.closest(".review-item");
     const summary = details && details.querySelector("summary");
-    if (!item || !summary) return;
+    if (!item || !summary) {
+      state.pendingReviewFocus = reviewTaskId;
+      return;
+    }
+    state.pendingReviewFocus = "";
 
     item.classList.remove("review-item--new");
     item.classList.add("review-item--new");
@@ -1042,9 +1234,20 @@
   }
 
   async function loadDocuments(generation) {
-    const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents`, { signal: state.controller.signal });
     if (!isCurrent(generation)) return;
-    renderDocuments(result && result.documents);
+    state.documentStatesLoading = true;
+    refreshControls();
+    try {
+      const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/documents`, { signal: state.controller.signal });
+      if (!isCurrent(generation)) return;
+      state.documentStatesFresh = true;
+      renderDocuments(result && result.documents);
+    } finally {
+      if (isCurrent(generation)) {
+        state.documentStatesLoading = false;
+        refreshControls();
+      }
+    }
   }
 
   async function loadHistory(generation) {
@@ -1080,7 +1283,9 @@
       state.conversationId = result.conversationId;
       state.sessionId = result.sessionId;
       state.correlationId = result.correlationId || "";
-      $("matter-kicker").textContent = `EXPEDIENTE · ${matterId}`;
+      const selectedMatter = $("matter-select").selectedOptions && $("matter-select").selectedOptions[0];
+      const matterLabel = selectedMatter && selectedMatter.textContent.trim();
+      $("matter-kicker").textContent = matterLabel || "Expediente seleccionado";
       refreshControls();
       await loadDocuments(generation);
       await loadHistory(generation);
@@ -1147,11 +1352,13 @@
     let documentRecord = initialDocument || null;
     for (let attempt = 0; attempt < DOCUMENT_MAX_POLLS; attempt += 1) {
       if (!isCurrent(generation)) return { document: documentRecord, timedOut: false };
-      if (documentRecord && ["UPLOADED", "INDEXED", "FAILED"].includes(documentRecord.status)) {
+      if (documentRecord && ["UPLOADED", "PENDING_INGESTION", "INDEXED", "FAILED"].includes(documentRecord.status)) {
         return { document: documentRecord, timedOut: false };
       }
       if (attempt > 0) await waitForIngestionPoll(state.controller.signal, DOCUMENT_POLL_DELAY_MS);
-      const scanMessage = `Analizando documento… (${attempt + 1}/${DOCUMENT_MAX_POLLS})`;
+      const scanMessage = documentRecord?.status === "PENDING_UPLOAD"
+        ? `Carga incompleta; comprobando estado… (${attempt + 1}/${DOCUMENT_MAX_POLLS})`
+        : `Analizando documento… (${attempt + 1}/${DOCUMENT_MAX_POLLS})`;
       setUploadProgress("scan", scanMessage);
       if (attempt === 0) setMessage("Analizando documento…", false);
       const result = await api(
@@ -1165,6 +1372,9 @@
   }
 
   async function startAndPollIngestion(documentIds, generation) {
+    if (!Array.isArray(documentIds) || documentIds.length < 1 || documentIds.length > MAX_DOCUMENTS_PER_INGESTION) {
+      throw new Error(`Puedes preparar entre 1 y ${MAX_DOCUMENTS_PER_INGESTION} documentos por acción.`);
+    }
     const idempotencyKey = window.crypto && window.crypto.randomUUID
       ? window.crypto.randomUUID()
       : `ingestion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1226,7 +1436,12 @@
         await loadDocuments(generation);
         if (!isCurrent(generation)) return;
         setUploadProgress("complete", "Subida completada; el análisis continúa.");
-        setMessage("Subida completada. El documento sigue en análisis; usa «Comprobar estado» para continuar cuando esté listo.", false, "success");
+        setMessage("Subida completada; la carga sigue incompleta. Actualiza estados para comprobarla y vuelve a subirla si no progresa.", false, "success");
+        return;
+      }
+      if (analyzedDocument.status === "PENDING_INGESTION") {
+        await loadDocuments(generation);
+        if (isCurrent(generation)) setMessage("El documento ya se está preparando para consulta; actualiza estados para seguir su progreso.", false, "success");
         return;
       }
       if (analyzedDocument.status !== "UPLOADED" && analyzedDocument.status !== "INDEXED") {
@@ -1284,7 +1499,13 @@
         setMessage("Consulta completada. Puedes guardar esta respuesta para revisión.", false);
       }
       refreshControls();
-      await loadHistory(generation);
+      try {
+        await loadHistory(generation);
+      } catch (historyError) {
+        if (historyError.name !== "AbortError" && isCurrent(generation)) {
+          setMessage("La respuesta está disponible; el historial de actividad no se pudo actualizar.", true);
+        }
+      }
     } catch (error) {
       if (error.name === "AbortError" || !isCurrent(generation)) return;
       window.LegalDeskCitationPanel.renderOperationalState("error");
@@ -1326,8 +1547,8 @@
   async function requestReview() {
     if (!authorized() || state.busy) return;
     const generation = currentGeneration();
-    const reviewButton = $("review-button");
-    const reviewButtonLabel = reviewButton ? reviewButton.textContent : "Guardar para revisión";
+    const reviewButton = $("review-submit-button");
+    const reviewButtonLabel = reviewButton ? reviewButton.textContent : "Guardar revisión";
     const reasonCode = $("review-reason").value;
     const dueAt = $("review-due-at").value;
     const note = $("review-note").value.trim();
@@ -1405,6 +1626,90 @@
     } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
   }
 
+  function documentStateSnapshot(documents) {
+    return new Map((Array.isArray(documents) ? documents : []).map((item) => [
+      item && item.documentId,
+      `${item && item.status}|${item && item.malwareScanStatus}`,
+    ]));
+  }
+
+  function changedDocumentCount(before, after) {
+    const ids = new Set([...before.keys(), ...after.keys()]);
+    return [...ids].filter((id) => before.get(id) !== after.get(id)).length;
+  }
+
+  async function refreshDocumentStatuses() {
+    if (!authorized() || state.busy || state.documentStatesLoading) return;
+    const generation = currentGeneration();
+    const before = documentStateSnapshot(state.documents);
+    setBusy(true);
+    const button = $("sync-button");
+    if (button) { button.textContent = "Actualizando…"; button.setAttribute("aria-busy", "true"); }
+    setDocumentActionMessage("Actualizando estados…", false);
+    try {
+      await loadDocuments(generation);
+      if (!isCurrent(generation)) return;
+      const summary = summarizeDocuments(state.documents);
+      const changed = changedDocumentCount(before, documentStateSnapshot(state.documents));
+      const changeLabel = changed ? `${changed} ${changed === 1 ? "cambio" : "cambios"}` : "sin cambios";
+      setDocumentActionMessage(`Actualizado ${documentActionTimestamp()} · ${changeLabel} · ${documentSummaryLabel(summary)}.`, false, "success");
+    } catch (error) {
+      if (error.name !== "AbortError" && isCurrent(generation)) {
+        state.documentStatesFresh = false;
+        setDocumentActionMessage(`No se pudieron actualizar los estados: ${error.message}`, true);
+        refreshControls();
+      }
+    } finally {
+      if (isCurrent(generation)) {
+        setBusy(false);
+        if (button) { button.textContent = "Actualizar estados"; button.removeAttribute("aria-busy"); }
+      }
+    }
+  }
+
+  async function prepareDocuments() {
+    if (!authorized() || state.busy || state.documentStatesLoading || !state.documentStatesFresh) return;
+    const eligible = state.documents.filter((item) => item && item.status === "UPLOADED");
+    if (!eligible.length) {
+      setDocumentActionMessage("No hay documentos cargados listos para preparar. Los que están procesando no se reinician.", false);
+      return;
+    }
+    const documentIds = eligible.slice(0, MAX_DOCUMENTS_PER_INGESTION).map((item) => item.documentId).filter(Boolean);
+    const generation = currentGeneration();
+    setBusy(true);
+    const button = $("prepare-button");
+    if (button) { button.textContent = "Preparando…"; button.setAttribute("aria-busy", "true"); }
+    setDocumentActionMessage(`Preparando ${documentIds.length} documento${documentIds.length === 1 ? "" : "s"}…`, false);
+    try {
+      setUploadProgress("index", `Preparando para consulta… (${documentIds.length}/${eligible.length})`);
+      await startAndPollIngestion(documentIds, generation);
+      if (!isCurrent(generation)) return;
+      await loadDocuments(generation);
+      if (!isCurrent(generation)) return;
+      const remaining = state.documents.filter((item) => item && item.status === "UPLOADED").length;
+      const suffix = remaining ? ` Quedan ${remaining} para otra acción explícita.` : "";
+      setDocumentActionMessage(`Preparación completada ${documentActionTimestamp()} · ${documentIds.length} documento${documentIds.length === 1 ? "" : "s"}.${suffix}`, false, "success");
+      setUploadProgress("idle");
+    } catch (error) {
+      if (error.name !== "AbortError" && isCurrent(generation)) {
+        state.documentStatesFresh = false;
+        setUploadProgress("idle");
+        try {
+          await loadDocuments(generation);
+        } catch (_refreshError) {
+          if (isCurrent(generation)) state.documentStatesFresh = false;
+        }
+        if (!isCurrent(generation)) return;
+        setDocumentActionMessage(`No se pudo preparar la consulta: ${error.message} Actualiza estados antes de volver a intentarlo.`, true);
+      }
+    } finally {
+      if (isCurrent(generation)) {
+        setBusy(false);
+        if (button) { button.textContent = `Preparar para consulta (${Math.min(state.documents.filter((item) => item && item.status === "UPLOADED").length, MAX_DOCUMENTS_PER_INGESTION)})`; button.removeAttribute("aria-busy"); }
+      }
+    }
+  }
+
   async function logout() {
     try {
       const result = await api("/logout", { method: "POST", body: "{}" });
@@ -1423,6 +1728,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    bindWorkspaceTabs();
     bindDocumentTabs();
     bindAnimatedDetails($("technical-diagnostics"));
     document.addEventListener("click", (event) => {
@@ -1464,34 +1770,12 @@
     $("metadata-button").addEventListener("click", metadata);
     $("review-reason").addEventListener("change", () => clearReviewFieldError("review-reason", "review-reason-error"));
     $("review-due-at").addEventListener("input", () => clearReviewFieldError("review-due-at", "review-due-at-error"));
-    $("review-button").addEventListener("click", requestReview);
+    $("review-button").addEventListener("click", () => setReviewFormOpen(true, true));
+    $("review-submit-button").addEventListener("click", requestReview);
+    $("review-cancel-button").addEventListener("click", () => setReviewFormOpen(false));
     $("audit-button").addEventListener("click", audit);
-    $("sync-button").addEventListener("click", async () => {
-      if (!authorized() || state.busy || !state.documents.length) return;
-      const generation = currentGeneration();
-      setBusy(true);
-      try {
-        setMessage("Comprobando el estado de los documentos…", false);
-        await loadDocuments(generation);
-        if (!isCurrent(generation)) return;
-        const documentIds = state.documents
-          .filter((item) => item && item.status === "UPLOADED")
-          .map((item) => item.documentId)
-          .filter(Boolean);
-        if (!documentIds.length) {
-          const pending = state.documents.some((item) => item && item.status === "PENDING_UPLOAD");
-          const failed = state.documents.some((item) => item && item.status === "FAILED");
-          if (failed) setMessage("Hay documentos que requieren atención; no se han reintentado como indexación.", true);
-          else if (pending) setMessage("El análisis aún no ha terminado. Puedes volver a comprobar el estado.", false);
-          return;
-        }
-        setUploadProgress("index", "Indexando documentos listos…");
-        await startAndPollIngestion(documentIds, generation);
-        if (!isCurrent(generation)) return;
-        setMessage("Indexación completada para los documentos listos.", false, "success");
-        await loadDocuments(generation);
-      } catch (error) { if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true); } finally { if (isCurrent(generation)) setBusy(false); }
-    });
+    $("sync-button").addEventListener("click", refreshDocumentStatuses);
+    $("prepare-button").addEventListener("click", prepareDocuments);
     setReviewDueDateMinimum();
     refreshControls();
     loadMe().catch((error) => setMessage(error.message, true));

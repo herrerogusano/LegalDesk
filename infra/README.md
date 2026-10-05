@@ -60,9 +60,17 @@ Release artifacts are assembled locally by `../scripts/package_release.py`
 from the exact Python 3.12 constraints in
 `../packaging/constraints-python312-manylinux-x86_64.txt`. The packager is
 offline and emits a Lambda zip that can be supplied to both the public
-application and malware-scan templates, plus a bounded four-file frontend zip
+application and malware-scan templates, plus a bounded five-file frontend zip
 and a SHA-256 manifest. Uploading artifacts, publishing frontend files, and
 CloudFront invalidation remain separately approved release operations.
+
+The approved existing-beta CD path is documented in
+[`docs/continuous-delivery.md`](../docs/continuous-delivery.md). Its
+`cd-iam.yaml` bootstrap reuses the account GitHub OIDC provider and creates
+separate, narrowly scoped release and CloudFormation service roles. The
+production workflow compares the deployed template, uses the previous
+template/parameters, and rejects every change-set resource except the
+application Lambda code and dependent API integration URI.
 
 The Phase 14 operations candidate
 ([phase-14-operations.yaml](cloudformation/phase-14-operations.yaml)) adds
