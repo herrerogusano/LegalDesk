@@ -10,8 +10,27 @@ may contain only `ApplicationFunction` code and the dependent
 The separately reviewed IAM bootstrap has been applied as stack
 `LegalDeskProductionCD`; its change set contained only the OIDC deployment role
 and the constrained CloudFormation execution role. No application, data-plane,
-frontend, or production code mutation was part of that bootstrap. The first
-real CD release remains a separate supervisor-approved operation.
+frontend, or production code mutation was part of that bootstrap.
+
+## Verified release — 2026-10-05
+
+Promotion PR #49 triggered [production run 37310326393](https://github.com/herrerogusano/LegalDesk/actions/runs/37310326393)
+for commit `4c0b6dbb5ce51cc00a937e8fd4ac6f3b90875d03`. All quality gates
+and deployment jobs succeeded. The metadata artifact
+`legaldesk-release-37310326393-1` contains a `PASS` release record, immutable
+Lambda/frontend versions and their pre-release rollback references. The stack
+finished `UPDATE_COMPLETE`; Lambda is active with a successful update and the
+expected code SHA-256. All eight bounded HTTP checks and the five served asset
+hashes passed, after CloudFront invalidation completed.
+
+The first two runs (37306453976 and 37308886816) remain failed evidence, not
+successful releases. CloudFormation rolled back their changes because its
+resource/output read handlers needed narrowly scoped IAM-role and CloudFront
+metadata permissions. Those reads were added without application IAM writes
+or data-plane access before the successful retry. This release did not run
+provider inference or renew the application's semantic/holdout attestation.
+
+## Deployment boundary
 
 `.github/workflows/production-cd.yml` runs reusable offline CI and pinned
 release tooling/lint before the only job with `id-token: write`. Production
