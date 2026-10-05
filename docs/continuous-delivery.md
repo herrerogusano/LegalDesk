@@ -62,11 +62,19 @@ DynamoDB/Bedrock/Gateway/Memory, mutate application IAM policies, create or
 delete stacks, or modify business resources. `ValidateTemplate` is the only
 intentionally unscoped action because CloudFormation does not support a
 resource scope for that API. The bootstrap is now complete; do not repeat it or
-broaden its roles without a new inventory and supervisor review. The current
-operational gap is GitHub branch protection: the repository plan cannot enforce
-required PR checks against a direct push, so the `developer`→`prod` PR procedure
-and the workflow's exact prod/SHA guards remain procedural controls rather than
-a claim of platform enforcement.
+broaden its roles without a new inventory and supervisor review.
+
+On 2026-10-05 the owner authorized making the repository public, after a
+full Git-history secret scan and review of its synthetic fixtures. GitHub now
+enforces protection on `developer` and `prod`: pull requests, an up-to-date
+branch and the successful `verify` check from GitHub Actions are required;
+conversations must be resolved, force pushes and deletion are prohibited, and
+administrators are subject to the rules. The sole-owner workflow does not
+require an independent approving review. External contributors' workflow runs
+require approval; fork PR CI has no deployment credentials or OIDC permission.
+Public read/fork access does not grant merge or deployment authority. The exact
+prod/SHA and OIDC guards remain additional controls, not substitutes for branch
+protection. `main` remains the unused legacy branch.
 
 The local `scripts/deploy_release.py` command is dry-run by default. Production
 execution requires `--execute` plus
