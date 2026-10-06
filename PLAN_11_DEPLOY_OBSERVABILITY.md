@@ -68,7 +68,7 @@ Convertir el sistema completo en un despliegue repetible y trazable, con observa
 ## Coste y seguridad
 
 CloudWatch log retention y telemetry pueden generar coste.
-Usar retención pequeña para el ejercicio.
+Usar retención pequeña para este proyecto y sus demos.
 No activar observabilidad excesiva o duplicada.
 
 ## Outputs esperados
