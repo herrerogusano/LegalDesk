@@ -64,7 +64,7 @@ Exponer las herramientas requeridas a través de AgentCore Gateway: la Lambda de
 ## Coste y seguridad
 
 Gateway/Runtime/Lambda invocations pueden generar coste.
-MCP remoto debe usar hosting mínimo; preferir opción simple y barata compatible con el ejercicio.
+MCP remoto debe usar hosting mínimo; preferir opción simple y barata compatible con el proyecto.
 Pedir aprobación antes de crear infraestructura facturable adicional.
 
 ## Outputs esperados

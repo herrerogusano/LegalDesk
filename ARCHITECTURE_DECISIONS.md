@@ -18,7 +18,7 @@ Antes de desplegar un recurso, verificar que **esa capacidad concreta** y el mod
 **Python 3.x**.
 
 Motivos:
-- continuidad con ejercicios AWS anteriores;
+- continuidad con proyectos AWS anteriores;
 - buen soporte SDK AWS/AgentCore;
 - adecuado para agentic/RAG workflows.
 
@@ -101,7 +101,7 @@ Nunca confiar en un valor libre enviado por frontend.
 
 ## ADR-009 — Gateway
 
-AgentCore Gateway será la frontera de acceso a tools requeridas por el ejercicio.
+AgentCore Gateway será la frontera de acceso a tools requeridas por el proyecto.
 
 Objetivos:
 - exponer Lambda/API tool;

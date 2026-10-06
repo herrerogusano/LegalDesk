@@ -1,10 +1,12 @@
 # LegalDesk — Planning Pack
 
-Este paquete contiene la planificación completa del proyecto **LegalDesk: grounded legal assistant on Amazon Bedrock AgentCore**.
+Este documento conserva la planificación completa del proyecto **LegalDesk:
+grounded legal assistant on Amazon Bedrock AgentCore**.
 
-## Cómo usarlo
+## Cómo orientarse
 
-Copia todos estos `.md` a la **raíz del repositorio** antes de empezar a implementar.
+Los documentos de planificación viven en la raíz del repositorio y sirven como
+referencia para entender el alcance, las decisiones y el orden de trabajo.
 
 Orden recomendado:
 
@@ -56,4 +58,5 @@ Construir una aplicación pequeña pero con mentalidad de producción donde un u
 - demostrar aislamiento entre matters;
 - inspeccionar trazas y métricas.
 
-No es un producto jurídico real. No usar datos legales reales, confidenciales o personales durante el ejercicio.
+No es un producto jurídico real. No usar datos legales reales, confidenciales o
+personales durante el desarrollo ni las demos.
