@@ -34,7 +34,18 @@ class ReleaseToolingTests(unittest.TestCase):
         self.assertIn("prompts/idp-classifier.md", workflow)
         self.assertIn("prompts/idp-extractor.md", workflow)
         self.assertNotIn("aws sts", workflow.lower())
-        self.assertNotIn("upload-artifact", workflow.lower())
+
+    def test_offline_ci_retains_only_the_validated_release_outputs(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "offline-ci.yml").read_text(encoding="utf-8")
+        self.assertIn("uses: actions/upload-artifact@v4", workflow)
+        self.assertIn("if: ${{ success() }}", workflow)
+        self.assertIn("name: legaldesk-release-linux-python312-${{ github.sha }}", workflow)
+        self.assertIn("${{ runner.temp }}/legaldesk-release-smoke/legaldesk-lambda.zip", workflow)
+        self.assertIn("${{ runner.temp }}/legaldesk-release-smoke/legaldesk-frontend.zip", workflow)
+        self.assertIn("${{ runner.temp }}/legaldesk-release-smoke/legaldesk-release-manifest.json", workflow)
+        self.assertIn("if-no-files-found: error", workflow)
+        self.assertIn("retention-days: 3", workflow)
+        self.assertNotIn("${{ github.workspace }}", workflow.split("uses: actions/upload-artifact@v4", 1)[1])
 
 
 if __name__ == "__main__":

@@ -164,3 +164,14 @@ jobs:
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/playwright/node_modules/playwright" \
             PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" \
             node tests/phase14_frontend_behavior.cjs "$base_url"
+      - name: Retain validated Linux Python 3.12 release artifact
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: legaldesk-release-linux-python312-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/legaldesk-release-smoke/legaldesk-lambda.zip
+            ${{ runner.temp }}/legaldesk-release-smoke/legaldesk-frontend.zip
+            ${{ runner.temp }}/legaldesk-release-smoke/legaldesk-release-manifest.json
+          if-no-files-found: error
+          retention-days: 3
