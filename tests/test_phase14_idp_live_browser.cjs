@@ -9,6 +9,7 @@ const {
   quoteDigest,
   selectBoundReviewTask,
   selectBoundReviewField,
+  validateExistingMetadata,
   safeResponseWait,
   responseJson,
   pageErrorDiagnostic,
@@ -32,11 +33,20 @@ const taskWithTwoFields = { reviewTaskId: "task-4", idp: { ...expected, fields: 
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "effective_date").name, "effective_date");
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "missing_field"), null);
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "").name, "governing_law");
+const resumeExpected = { documentId: "doc-existing", sourceSha256: "c".repeat(64), documentType: "CONTRACT", matterId: "matter-synthetic" };
+const resumeMetadata = { document: { documentId: "doc-existing", matterId: "matter-synthetic" }, idp: { documentSha256: "c".repeat(64), documentType: "CONTRACT", status: "IDP_COMPLETED" } };
+assert.strictEqual(validateExistingMetadata(resumeMetadata, resumeExpected).status, "IDP_COMPLETED");
+assert.throws(() => validateExistingMetadata({ ...resumeMetadata, idp: { ...resumeMetadata.idp, documentSha256: "d".repeat(64) } }, resumeExpected), /resume_source_hash_mismatch/);
+assert.throws(() => validateExistingMetadata({ ...resumeMetadata, document: { documentId: "doc-other", matterId: "matter-synthetic" } }, resumeExpected), /resume_document_scope_mismatch/);
+assert.throws(() => validateExistingMetadata({ ...resumeMetadata, document: { documentId: "doc-existing", matterId: "matter-other" } }, resumeExpected), /resume_document_scope_mismatch/);
+assert.throws(() => validateExistingMetadata({ ...resumeMetadata, idp: { ...resumeMetadata.idp, documentType: "DEMAND" } }, resumeExpected), /resume_document_type_mismatch/);
 assert.deepStrictEqual(pageErrorDiagnostic({ name: "ReferenceError", message: "boom at https://example.invalid/assets/app.js:7" }), { name: "ReferenceError", basename: "app.js" });
 assert.deepStrictEqual(pageErrorDiagnostic({ name: "Error", message: "secret response body" }), { name: "Error", basename: "unknown" });
 const browserSource = fs.readFileSync(require.resolve("./phase14_idp_live_browser.cjs"), "utf8");
 assert(browserSource.indexOf('locator("#workspace-tab-documents").click') < browserSource.indexOf('locator("#document-file").setInputFiles'), "documents tab must be selected before upload");
 assert(browserSource.indexOf('locator("#workspace-tab-reviews").click') < browserSource.indexOf('locator(`#reviews-pending details'), "reviews tab must be selected before review task interaction");
+assert(browserSource.includes('LEGALDESK_IDP_EXISTING_DOCUMENT_ID'), "resume mode must be explicit");
+assert(browserSource.indexOf('loadMetadata(EXISTING_DOCUMENT_ID') < browserSource.indexOf('setInputFiles(FIXTURE_PATH)'), "resume metadata must precede any upload");
 
 const responseDiagnostics = {};
 safeResponseWait({ waitForResponse: () => Promise.reject(new Error("secret URL/body must not escape")) }, () => true, "upload_authorization", responseDiagnostics).then(response => {

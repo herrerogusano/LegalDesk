@@ -83,6 +83,19 @@ class Phase14IDPLiveSmokeTests(unittest.TestCase):
         with self.assertRaises(LiveIDPPreflightError):
             preflight(config(execute=True))
 
+    def test_existing_document_resume_requires_strict_id_before_any_network_work(self) -> None:
+        with self.assertRaises(LiveIDPPreflightError) as raised:
+            preflight(config(existing_document_id="../other-document"))
+        self.assertEqual(str(raised.exception), "existing_document_id_invalid")
+
+    def test_existing_document_resume_is_explicit_and_does_not_change_default_preflight(self) -> None:
+        default = preflight(config())
+        resumed = preflight(config(existing_document_id="doc-existing"))
+        self.assertEqual(default["resume"]["mode"], "upload_new_document")
+        self.assertEqual(resumed["resume"]["mode"], "existing_document")
+        self.assertTrue(resumed["resume"]["documentIdConfigured"])
+        self.assertEqual(resumed["awsCalls"], 0)
+
     def test_main_returns_failure_for_failed_live_report(self) -> None:
         with patch("phase14_idp_live_smoke.run_live", return_value={"result": "FAIL", "category": "cleanup_failed"}):
             from phase14_idp_live_smoke import main
@@ -197,6 +210,7 @@ class Phase14IDPLiveSmokeTests(unittest.TestCase):
                 report = run_live(live_config)
             self.assertEqual(report["result"], "FAIL")
             self.assertEqual(report["category"], "browser_timeout")
+            self.assertEqual(report["errorType"], "TimeoutError")
             self.assertEqual(cognito.deleted, 1)
             self.assertEqual(len(report["cleanup"]["scopes"]), 2)
 

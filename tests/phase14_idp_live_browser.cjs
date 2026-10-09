@@ -22,6 +22,7 @@ const IDP_QUESTION = process.env.LEGALDESK_IDP_QUESTION || "";
 const EXPECTED_SKIP_REASON = process.env.LEGALDESK_IDP_EXPECTED_SKIP_REASON || "";
 const REVIEW_ACTION = process.env.LEGALDESK_IDP_REVIEW_ACTION || "none";
 const REVIEW_FIELD = process.env.LEGALDESK_IDP_REVIEW_FIELD || "";
+const EXISTING_DOCUMENT_ID = process.env.LEGALDESK_IDP_EXISTING_DOCUMENT_ID || "";
 const POLL_LIMIT = 20;
 const POLL_MS = 15_000;
 const API_CALL_LIMIT = 120;
@@ -90,6 +91,25 @@ function parseMcpMetadata(raw) {
   try { return JSON.parse(text.text); } catch (_error) { throw new SmokeFailure("metadata_json"); }
 }
 
+// Resume mode accepts no caller-supplied document facts.  The document ID,
+// hash, type, and (where exposed) matter are all checked against the
+// authorized Gateway response.  A mismatch stops before any upload endpoint
+// or paid processing can be reached.
+function validateExistingMetadata(metadata, expected) {
+  if (!metadata || typeof metadata !== "object" || !metadata.document || typeof metadata.document !== "object") {
+    throw new SmokeFailure("resume_metadata_missing");
+  }
+  if (metadata.document.documentId !== expected.documentId) throw new SmokeFailure("resume_document_scope_mismatch");
+  if (typeof metadata.document.matterId === "string" && metadata.document.matterId !== expected.matterId) {
+    throw new SmokeFailure("resume_document_scope_mismatch");
+  }
+  const idp = metadata.idp;
+  if (!idp || typeof idp !== "object") throw new SmokeFailure("resume_idp_metadata_missing");
+  if (idp.documentSha256 !== expected.sourceSha256) throw new SmokeFailure("resume_source_hash_mismatch");
+  if (expected.documentType && idp.documentType !== expected.documentType) throw new SmokeFailure("resume_document_type_mismatch");
+  return idp;
+}
+
 function classifySelectedResponse(response, fieldName) {
   const idp = response && response.idp;
   const hasIDPContract = idp && idp.field === fieldName
@@ -132,6 +152,7 @@ function validateInputs() {
   if (!IDP_HOST || IDP_HOST.includes("/") || !IDP_HOST.includes(".")) throw new SmokeFailure("invalid_idp_host");
   if (!SAFE_ID.test(MATTER_ID) || !SAFE_ID.test(CROSS_MATTER_ID) || MATTER_ID === CROSS_MATTER_ID) throw new SmokeFailure("invalid_matter_selector");
   if (!SAFE_ID.test(FIXTURE_ID) || !USERNAME || !PASSWORD) throw new SmokeFailure("missing_runner_inputs");
+  if (EXISTING_DOCUMENT_ID && !SAFE_ID.test(EXISTING_DOCUMENT_ID)) throw new SmokeFailure("invalid_existing_document_id");
   if (process.env.LEGALDESK_IDP_FIELD_NAME && !SAFE_ID.test(process.env.LEGALDESK_IDP_FIELD_NAME)) throw new SmokeFailure("invalid_field_selector");
   if (REVIEW_FIELD && !SAFE_ID.test(REVIEW_FIELD)) throw new SmokeFailure("invalid_review_field_selector");
   if (!["IDP", "RAG", "NONE"].includes(EXPECTED_SOURCE) || !["none", "approve", "correct"].includes(REVIEW_ACTION)) throw new SmokeFailure("invalid_expected_contract");
@@ -314,35 +335,57 @@ async function run() {
     cleanupScopes.push({ conversationId, sessionId });
     emitCleanupProgress("conversation_ready", { conversationId, sessionId, scopes: cleanupScopes });
 
-    setPhase("upload");
-    const uploadResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST"; } catch (_error) { return false; } }, "upload_authorization", diagnostics);
-    await page.locator("#document-file").setInputFiles(FIXTURE_PATH);
-    setPhase("file_selected");
-    let uploadState;
-    try {
-      uploadState = await page.evaluate(() => {
-        const input = document.querySelector("#document-file");
-        const button = document.querySelector("#upload-button");
-        return {
-          fileCount: input && input.files ? input.files.length : null,
-          buttonDisabled: button ? Boolean(button.disabled) : null,
-        };
+    let documentId;
+    if (EXISTING_DOCUMENT_ID) {
+      // This is the only pre-processing path for an existing document.  The
+      // metadata read is authorized by the just-created session/matter
+      // context; no provided hash/type/ID is accepted as authoritative.
+      setPhase("resume_metadata");
+      const resumeMetadata = await loadMetadata(EXISTING_DOCUMENT_ID, 10);
+      const resumeIdp = validateExistingMetadata(resumeMetadata, {
+        documentId: EXISTING_DOCUMENT_ID,
+        sourceSha256,
+        documentType: expectedDocumentType,
+        matterId: MATTER_ID,
       });
-    } catch (_error) {
-      diagnostics.fileSelected = false;
-      diagnostics.uploadButtonDisabled = null;
-      throw new SmokeFailure("upload_state_unavailable");
+      documentId = EXISTING_DOCUMENT_ID;
+      diagnostics.resumeMode = "existing_document";
+      diagnostics.authoritativeMetadataRead = true;
+      emitCleanupProgress("existing_document_ready", { conversationId, sessionId, documentId, scopes: cleanupScopes });
+      // Keep this local binding explicit: it prevents future edits from
+      // accidentally treating a caller value as a fresh upload result.
+      if (!resumeIdp || resumeIdp.documentSha256 !== sourceSha256) throw new SmokeFailure("resume_source_hash_mismatch");
+    } else {
+      setPhase("upload");
+      const uploadResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST"; } catch (_error) { return false; } }, "upload_authorization", diagnostics);
+      await page.locator("#document-file").setInputFiles(FIXTURE_PATH);
+      setPhase("file_selected");
+      let uploadState;
+      try {
+        uploadState = await page.evaluate(() => {
+          const input = document.querySelector("#document-file");
+          const button = document.querySelector("#upload-button");
+          return {
+            fileCount: input && input.files ? input.files.length : null,
+            buttonDisabled: button ? Boolean(button.disabled) : null,
+          };
+        });
+      } catch (_error) {
+        diagnostics.fileSelected = false;
+        diagnostics.uploadButtonDisabled = null;
+        throw new SmokeFailure("upload_state_unavailable");
+      }
+      diagnostics.fileSelected = uploadState.fileCount === 1;
+      diagnostics.uploadButtonDisabled = uploadState.buttonDisabled;
+      if (uploadState.fileCount !== 1) throw new SmokeFailure("file_selection_failed");
+      if (uploadState.buttonDisabled !== false) throw new SmokeFailure("upload_button_disabled");
+      setPhase("upload_clicked");
+      await page.locator("#upload-button").click();
+      const authorization = await responseJson(await uploadResponse, "upload_authorization", diagnostics);
+      documentId = authorization && authorization.document && authorization.document.documentId;
+      if (!SAFE_ID.test(documentId || "")) throw new SmokeFailure("upload_metadata");
+      emitCleanupProgress("document_uploaded", { conversationId, sessionId, documentId, scopes: cleanupScopes });
     }
-    diagnostics.fileSelected = uploadState.fileCount === 1;
-    diagnostics.uploadButtonDisabled = uploadState.buttonDisabled;
-    if (uploadState.fileCount !== 1) throw new SmokeFailure("file_selection_failed");
-    if (uploadState.buttonDisabled !== false) throw new SmokeFailure("upload_button_disabled");
-    setPhase("upload_clicked");
-    await page.locator("#upload-button").click();
-    const authorization = await responseJson(await uploadResponse, "upload_authorization", diagnostics);
-    const documentId = authorization && authorization.document && authorization.document.documentId;
-    if (!SAFE_ID.test(documentId || "")) throw new SmokeFailure("upload_metadata");
-    emitCleanupProgress("document_uploaded", { conversationId, sessionId, documentId, scopes: cleanupScopes });
 
     setPhase("idp_metadata");
     let metadata = null;
@@ -502,5 +545,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
+  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, validateExistingMetadata, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
 }
