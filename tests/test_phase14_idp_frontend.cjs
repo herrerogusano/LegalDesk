@@ -128,10 +128,10 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
           const isSecond = args.documentId === "doc-2" || args.documentId === "doc-3";
           const matterId = args.documentId === "doc-3" ? "matter-2" : "matter-1";
           const older = Boolean(args.historyCursor);
-          payload = { content: [{ type: "text", text: JSON.stringify({
+          payload = { status: "SUCCESS", tool: "@legaldesk_gateway/metadata-mcp___get_document_metadata", result: {
             document: { documentId: args.documentId, matterId, name: args.documentId === "doc-3" ? "segundo.pdf" : isSecond ? "anexo.pdf" : "contrato.pdf", status: "INDEXED" },
             ...(isSecond ? {} : { idp: { status: "IDP_COMPLETED", runId: "run-1", documentSha256: "a".repeat(64), documentType: "CONTRACT", fields: [{ name: "amount", valueType: "number" }], history: older ? [{ runId: "run-0", status: "IDP_FAILED", createdAt: "2026-09-01T00:00:00Z" }] : [{ runId: "run-1", status: "IDP_COMPLETED", createdAt: "2026-10-01T00:00:00Z" }], nextCursor: older ? null : "older-1" } }),
-          }) }] };
+          }};
         } else if (url.pathname === "/api/chat") {
           if (chatFailures) { chatFailures -= 1; status = 500; payload = { error: "failed" }; }
           else if (parsed && (parsed.selectedDocumentId === "doc-2" || parsed.selectedDocumentId === "doc-3")) payload = { answer: "La respuesta canónica sigue disponible desde las fuentes autorizadas.", citations: [], evidenceStatus: "answerable", operationStatus: "ok", correlationId: "corr-fallback" };
@@ -347,7 +347,7 @@ async function runVmBehavioralFlow() {
     if (url === "/api/matters/matter-1/documents") return fakeJson({ documents: [{ documentId: "doc-1", matterId: "matter-1", name: "contrato.pdf", status: "INDEXED", fileSizeBytes: 1, uploadedAt: "2026-10-01T00:00:00Z" }] });
     if (url.startsWith("/api/conversations/")) return fakeJson({ events: [] });
     if (url.startsWith("/api/matters/matter-1/reviews")) return fakeJson({ tasks: [] });
-    if (url === "/api/mcp") return fakeJson({ content: [{ type: "text", text: JSON.stringify({ document: { documentId: "doc-1", matterId: "matter-1", name: "contrato.pdf", status: "INDEXED" }, idp: { status: "IDP_COMPLETED", fields: [{ name: "amount", valueType: "number" }], history: [{ runId: "run-1", status: "IDP_COMPLETED", createdAt: "2026-10-01T00:00:00Z" }], nextCursor: null } }) }] });
+    if (url === "/api/mcp") return fakeJson({ status: "SUCCESS", tool: "@legaldesk_gateway/metadata-mcp___get_document_metadata", correlationId: "corr-1", result: { document: { documentId: "doc-1", matterId: "matter-1", name: "contrato.pdf", status: "INDEXED" }, idp: { status: "IDP_COMPLETED", fields: [{ name: "amount", valueType: "number" }], history: [{ runId: "run-1", status: "IDP_COMPLETED", createdAt: "2026-10-01T00:00:00Z" }], nextCursor: null } } });
     if (url === "/api/chat") return fakeJson({ answer: "Importe: 1250 EUR. Origen: LITERAL.", idpMetadata: { field: "amount", value: 1250, presence: "PRESENT", origin: "LITERAL", acceptance: "REVIEW_REQUIRED", evidence: [{ page: 2, quote: "1.250 EUR", contentSha256: "a".repeat(64) }] }, operationStatus: "ok", evidenceStatus: "ambiguous", citations: [] });
     return fakeJson({}, false, 404);
   };

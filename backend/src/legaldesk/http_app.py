@@ -874,10 +874,11 @@ class LoopbackLegalDeskApp:
                 binding, tool_name=GET_DOCUMENT_METADATA,
                 arguments={"documentId": document_id, "historyLimit": 1},
             )
-            result = gateway.get("result")
-            content = result.get("content") if isinstance(result, Mapping) else None
-            text = content[0].get("text") if isinstance(content, list) and content and isinstance(content[0], Mapping) else None
-            payload = json.loads(text) if isinstance(text, str) else None
+            # _invoke_gateway_tool returns the already-decoded application
+            # envelope.  MCP content blocks are an internal Gateway wire
+            # shape and must not be reparsed here (or silently treated as a
+            # missing IDP projection).
+            payload = gateway.get("result") if isinstance(gateway.get("result"), Mapping) else None
             projection = payload.get("idp") if isinstance(payload, Mapping) else None
             fields = projection.get("fields") if isinstance(projection, Mapping) else None
             if not isinstance(fields, list):

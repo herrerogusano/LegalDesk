@@ -292,6 +292,7 @@ class HumanQueryContractTests(unittest.TestCase):
         document: Document,
         runs: InMemoryIDPRepository,
         chat_service: object,
+        gateway_invoker: object | None = None,
     ) -> tuple[object, list[object]]:
         """Build the real WSGI composition with provider seams only faked."""
 
@@ -310,6 +311,7 @@ class HumanQueryContractTests(unittest.TestCase):
             metadata_repository=self.metadata,
             mcp_server=MCPServer(self.metadata, idp_repository=runs, idp_review_service=self.review_service),
             chat_service=chat_service,
+            gateway_invoker=gateway_invoker,
             matter_catalog=(MATTER,),
         )
         app = create_http_app(composition)
@@ -904,6 +906,48 @@ class HumanQueryContractTests(unittest.TestCase):
         self.assertEqual(citation_status, 200, citation)
         self.assertEqual(citation["documentId"], DOCUMENT)
         self.assertEqual(citation["passage"], "Effective date: 31 January 2024.")
+
+    def test_http_selected_document_consumes_decoded_gateway_result_envelope(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class GatewayResult:
+            def invoke(self, binding: object, *, tool_name: str, arguments: object) -> dict[str, object]:
+                calls.append({"tool": tool_name, "arguments": arguments})
+                return {
+                    "status": "SUCCESS",
+                    "tool": "@legaldesk_gateway/metadata-mcp___get_document_metadata",
+                    "result": {
+                        "document": {"documentId": DOCUMENT, "status": "INDEXED"},
+                        "idp": {
+                            "status": "IDP_REVIEW_REQUIRED", "documentSha256": SOURCE_SHA,
+                            "documentType": "CONTRACT", "fields": [{
+                                "name": "effective_date", "value": "2024-01-31",
+                                "presence": "PRESENT", "origin": "LITERAL", "acceptance": "REVIEW_REQUIRED",
+                                "evidence": [{"page": 1, "quote": "Effective date: 31 January 2024.", "contentSha256": PAGE_SHA}],
+                            }],
+                        },
+                    },
+                    "correlationId": binding.correlation_id,
+                }
+
+        def unexpected_chat(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("decoded IDP Gateway result must avoid RAG/chat provider")
+
+        app, _ = self._http_chat_app(
+            document=replace(_document(), status=DocumentStatus.INDEXED),
+            runs=InMemoryIDPRepository(), chat_service=unexpected_chat,
+            gateway_invoker=GatewayResult(),
+        )
+        status, payload = self._http_post(app, {
+            "question": "What is the effective date?", "matterId": MATTER,
+            "conversationId": "conversation-a", "sessionId": "session-a",
+            "selectedDocumentId": DOCUMENT, "selectedFieldName": "effective_date",
+        })
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["idp"]["field"], "effective_date")
+        self.assertEqual(payload["idp"]["value"], "2024-01-31")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["tool"], "get_document_metadata")
 
     def test_http_selected_document_fallback_uses_real_answer_question_filter_and_rejects_wrong_result(self) -> None:
         document = replace(_document(), status=DocumentStatus.INDEXED)

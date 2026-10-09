@@ -16,10 +16,11 @@ const {
 } = require("./phase14_idp_live_browser.cjs");
 
 assert.deepStrictEqual(
-  parseMcpMetadata({ content: [{ type: "text", text: JSON.stringify({ idp: { status: "IDP_COMPLETED" } }) }] }),
+  parseMcpMetadata({ status: "SUCCESS", tool: "@legaldesk_gateway/metadata-mcp___get_document_metadata", result: { idp: { status: "IDP_COMPLETED" } } }),
   { idp: { status: "IDP_COMPLETED" } },
 );
 assert.throws(() => parseMcpMetadata({ result: { content: [{ type: "text", text: "{}" }] } }), /metadata_shape/);
+assert.throws(() => parseMcpMetadata({ status: "SUCCESS", tool: "@legaldesk_gateway/metadata-mcp___get_document_metadata", result: { content: [{ type: "text", text: "{}" }] } }), /metadata_shape/);
 assert.strictEqual(quoteDigest("ámbito"), crypto.createHash("sha256").update("ámbito", "utf8").digest("hex"));
 assert.strictEqual(classifySelectedResponse({ idp: { field: "effective_date", acceptance: "PROVISIONAL", presence: "PRESENT", origin: "LITERAL" } }, "effective_date"), "IDP");
 assert.strictEqual(classifySelectedResponse({ idp: { source: "IDP" }, citations: [] }, "effective_date"), "NONE");

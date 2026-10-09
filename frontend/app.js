@@ -803,11 +803,17 @@
     });
   }
 
-  function parseMcpText(result) {
-    const content = result && Array.isArray(result.content) ? result.content : [];
-    const text = content.find((item) => item && item.type === "text" && typeof item.text === "string");
-    if (!text) return null;
-    try { return JSON.parse(text.text); } catch (_error) { return null; }
+  function parseMcpText(result, expectedCorrelationId) {
+    // /api/mcp exposes the application Gateway envelope.  The provider-level
+    // MCP content blocks are decoded server-side and must not be accepted as
+    // a second, unauthenticated response shape in the browser.
+    if (!result || result.status !== "SUCCESS"
+      || result.tool !== "@legaldesk_gateway/metadata-mcp___get_document_metadata"
+      || (expectedCorrelationId && result.correlationId !== expectedCorrelationId)
+      || !result.result || typeof result.result !== "object"
+      || Array.isArray(result.result)
+      || (!result.result.document && !result.result.idp)) return null;
+    return result.result;
   }
 
   async function loadSelectedDocumentMetadata(documentId, generation, historyCursor) {
@@ -822,7 +828,7 @@
       originCorrelationId: state.correlationId,
     }), signal: state.controller.signal });
     if (!isCurrent(generation) || state.selectedDocumentId !== documentId) return;
-    const payload = parseMcpText(result);
+    const payload = parseMcpText(result, state.correlationId);
     const idp = payload && payload.idp && typeof payload.idp === "object" ? payload.idp : null;
     const document = payload && payload.document && typeof payload.document === "object" ? payload.document : null;
     if (!document && !idp) throw new Error("El estado autorizado de extracción no está disponible.");

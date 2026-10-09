@@ -85,10 +85,13 @@ function quoteDigest(quote) {
 }
 
 function parseMcpMetadata(raw) {
-  const content = raw && Array.isArray(raw.content) ? raw.content : [];
-  const text = content.find(item => item && item.type === "text" && typeof item.text === "string");
-  if (!text) throw new SmokeFailure("metadata_shape");
-  try { return JSON.parse(text.text); } catch (_error) { throw new SmokeFailure("metadata_json"); }
+  if (!raw || raw.status !== "SUCCESS"
+      || raw.tool !== "@legaldesk_gateway/metadata-mcp___get_document_metadata"
+      || !raw.result || typeof raw.result !== "object" || Array.isArray(raw.result)
+      || (!raw.result.document && !raw.result.idp)) {
+    throw new SmokeFailure("metadata_shape");
+  }
+  return raw.result;
 }
 
 // Resume mode accepts no caller-supplied document facts.  The document ID,
