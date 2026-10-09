@@ -110,7 +110,10 @@ queries and UI now have local coverage. GitHub Actions run `37950049115`
 passed 770 Python tests, browser behavior gates, strict IaC lint and the
 extracted Lambda artifact checks on Linux/Python 3.12. Real evaluation and
 AWS E2E remain in progress.
-IDP is not deployed or accepted yet.
+IDP infrastructure is deployed disabled; the machine Gateway configuration is
+updated. Real provider schema diagnostics required a compact internal wire
+adapter. Full evaluation/AWS E2E and phase acceptance remain pending; see
+`docs/idp-deployment-evidence-2026-10-09.md`.
 
 Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
 `docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.

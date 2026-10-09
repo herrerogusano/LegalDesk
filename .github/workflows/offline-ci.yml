@@ -117,6 +117,7 @@ jobs:
         run: >-
           cfn-lint
           infra/cloudformation/phase-14-idp.yaml
+          infra/cloudformation/phase-14-idp-bootstrap.yaml
           infra/cloudformation/phase-07-review-task.yaml
           infra/cloudformation/phase-08-gateway-mcp.yaml
           infra/cloudformation/phase-14-reconciliation.yaml

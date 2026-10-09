@@ -16,6 +16,7 @@ from legaldesk.idp import (  # noqa: E402
     Boto3TextractProvider,
     DocumentType,
     IDPConverseClassifier,
+    IDPConverseExtractor,
     IDPModelConfig,
     InMemoryIDPArtifactStore,
     IDPProcessingPipeline,
@@ -81,6 +82,77 @@ class _Textract:
 
 
 class AdapterTests(unittest.TestCase):
+    def test_extractor_wire_schemas_have_no_optional_fields_and_nullable_values(self):
+        def optional_parameters(node):
+            if not isinstance(node, dict):
+                return 0
+            properties = node.get("properties")
+            required = set(node.get("required", ())) if isinstance(node.get("required", ()), list) else set()
+            count = sum(1 for name in properties if name not in required) if isinstance(properties, dict) else 0
+            if isinstance(properties, dict):
+                count += sum(optional_parameters(value) for value in properties.values())
+            items = node.get("items")
+            if isinstance(items, dict):
+                count += optional_parameters(items)
+            return count
+
+        registry = IDPSchemaRegistry()
+        for document_type in registry.supported_types():
+            schema = extractor_json_schema(registry.get(document_type))
+            self.assertEqual(optional_parameters(schema), 0, document_type)
+            self.assertIn("schema_version", schema["required"])
+            field_schema = schema["properties"]["fields"]["items"]
+            self.assertEqual(set(field_schema["properties"]["field"]["enum"]), set(registry.get(document_type).fields))
+            for field_name in registry.get(document_type).fields:
+                self.assertIn(field_name, field_schema["properties"]["field"]["enum"])
+            self.assertEqual(set(field_schema["required"]), {"field", "presence", "value", "reason", "evidence"})
+            self.assertEqual(field_schema["properties"]["value"]["anyOf"][-1], {"type": "null"})
+
+            def union_count(node):
+                if not isinstance(node, dict):
+                    return 0
+                count = 1 if isinstance(node.get("anyOf"), list) else 0
+                count += sum(union_count(value) for value in node.get("properties", {}).values()) if isinstance(node.get("properties"), dict) else 0
+                count += union_count(node.get("items"))
+                return count
+
+            self.assertLessEqual(union_count(schema), 16, document_type)
+
+    def test_extractor_wire_rows_reject_duplicates_missing_fields_and_unknown_names(self):
+        class ExtractorResponse:
+            def __init__(self, text):
+                self.text = text
+
+            def converse(self, **_kwargs):
+                return {"output": {"message": {"content": [{"text": self.text}]}}}
+
+        schema = IDPSchemaRegistry().get(DocumentType.UNKNOWN)
+        rows = [{"field": name, "presence": "ABSENT", "value": None, "reason": "", "evidence": []} for name in schema.fields]
+        good = json.dumps({"schema_version": schema.version, "fields": rows})
+        adapter = IDPConverseExtractor(ExtractorResponse(good), config=IDPModelConfig("eu.anthropic.claude-sonnet-4-6"))
+        result = adapter.extract(schema=schema, page_text={1: "synthetic"}, content_sha256="a" * 64)
+        self.assertTrue(all(field.value is None for field in result.fields.values()))
+        for mutation in (
+            rows[:-1],
+            rows + [rows[0]],
+            [{**rows[0], "field": "not_registered"}] + rows[1:],
+        ):
+            response = ExtractorResponse(json.dumps({"schema_version": schema.version, "fields": mutation}))
+            with self.assertRaises(Exception):
+                IDPConverseExtractor(response, config=IDPModelConfig("eu.anthropic.claude-sonnet-4-6")).extract(schema=schema, page_text={1: "synthetic"}, content_sha256="a" * 64)
+
+    def test_extractor_wire_wrong_typed_value_becomes_unavailable_not_auto_accepted(self):
+        class ExtractorResponse:
+            def converse(self, **_kwargs):
+                rows = [{"field": name, "presence": "ABSENT", "value": None, "reason": "", "evidence": []} for name in IDPSchemaRegistry().get(DocumentType.CONTRACT).fields]
+                amount_index = next(index for index, row in enumerate(rows) if row["field"] == "amount")
+                rows[amount_index] = {"field": "amount", "presence": "PRESENT", "value": "not-a-number", "reason": "", "evidence": []}
+                return {"output": {"message": {"content": [{"text": json.dumps({"schema_version": "1.0.0", "fields": rows})}]}}}
+
+        schema = IDPSchemaRegistry().get(DocumentType.CONTRACT)
+        result = IDPConverseExtractor(ExtractorResponse(), config=IDPModelConfig("eu.anthropic.claude-sonnet-4-6")).extract(schema=schema, page_text={1: "synthetic"}, content_sha256="a" * 64)
+        self.assertEqual(result.fields["amount"].acceptance, FieldAcceptance.UNAVAILABLE)
+
     def test_durable_stage_ledger_is_scoped_and_requires_artifact(self):
         table = _Table()
         ledger = Boto3DynamoStageLedger(table, tenant_id="tenant", matter_id="matter")

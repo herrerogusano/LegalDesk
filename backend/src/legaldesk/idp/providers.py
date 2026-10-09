@@ -10,7 +10,7 @@ from typing import Any, Mapping, Protocol
 
 from ..prompts import FileSystemSystemPromptProvider, SystemPromptArtifact
 from .models import DocumentType, IDPContractError
-from .processing import ClassificationResult, ExtractionResult, IDPOutputError, parse_classifier_output, parse_extractor_output
+from .processing import ClassificationResult, ExtractionResult, IDPOutputError, parse_classifier_output, parse_extractor_output, parse_strict_json
 from .registry import IDPSchema
 
 
@@ -98,18 +98,50 @@ def classifier_json_schema() -> dict[str, object]:
 
 
 def extractor_json_schema(schema: IDPSchema) -> dict[str, object]:
-    properties: dict[str, object] = {}
-    for name, spec in schema.fields.items():
-        properties[name] = {
-            "type": "object", "additionalProperties": False, "required": ["presence"],
-            "properties": {
-                "presence": {"type": "string", "enum": ["PRESENT", "ABSENT", "NOT_APPLICABLE", "AMBIGUOUS", "UNKNOWN"]},
-                "value": _schema_value(spec.value_type),
-                "reason": {"type": "string"},
-                "evidence": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["page", "quote"], "properties": {"page": {"type": "integer"}, "quote": {"type": "string"}}}},
-            },
-        }
-    return {"type": "object", "additionalProperties": False, "required": ["fields"], "properties": {"schema_version": {"type": "string"}, "fields": {"type": "object", "additionalProperties": False, "properties": properties}}}
+    # A homogeneous array keeps the provider grammar compact.  The selected
+    # registry schema remains authoritative: ``field`` is an enum and the
+    # adapter below expands these rows into the existing field-name mapping.
+    field_entry = {
+        "type": "object", "additionalProperties": False,
+        "required": ["field", "presence", "value", "reason", "evidence"],
+        "properties": {
+            "field": {"type": "string", "enum": sorted(schema.fields)},
+            "presence": {"type": "string", "enum": ["PRESENT", "ABSENT", "NOT_APPLICABLE", "AMBIGUOUS", "UNKNOWN"]},
+            "value": {"anyOf": [{"type": "string"}, {"type": "number"}, {"type": "boolean"}, {"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
+            "reason": {"type": "string", "description": "Empty when no explanation is needed."},
+            "evidence": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["page", "quote"], "properties": {"page": {"type": "integer"}, "quote": {"type": "string"}}}},
+        },
+    }
+    return {
+        "type": "object", "additionalProperties": False, "required": ["schema_version", "fields"],
+        "properties": {"schema_version": {"type": "string"}, "fields": {"type": "array", "items": field_entry}},
+    }
+
+
+def _decode_extractor_wire_output(raw: str | bytes, *, schema: IDPSchema) -> str:
+    """Expand compact provider rows into the stable internal parser shape."""
+
+    value = parse_strict_json(raw)
+    if not isinstance(value, dict) or set(value) != {"schema_version", "fields"} or not isinstance(value.get("schema_version"), str) or not isinstance(value.get("fields"), list):
+        raise IDPOutputError("extractor wire output envelope is invalid")
+    rows = value["fields"]
+    if len(rows) != len(schema.fields):
+        raise IDPOutputError("extractor wire output field coverage is incomplete")
+    expected = set(schema.fields)
+    seen: set[str] = set()
+    expanded: dict[str, object] = {}
+    allowed = {"field", "presence", "value", "reason", "evidence"}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != allowed:
+            raise IDPOutputError("extractor wire field entry is invalid")
+        name = row.get("field")
+        if not isinstance(name, str) or name not in expected or name in seen:
+            raise IDPOutputError("extractor wire field name is invalid")
+        seen.add(name)
+        expanded[name] = {key: row[key] for key in ("presence", "value", "reason", "evidence")}
+    if seen != expected:
+        raise IDPOutputError("extractor wire field coverage is incomplete")
+    return json.dumps({"schema_version": value["schema_version"], "fields": expanded}, ensure_ascii=False, separators=(",", ":"))
 
 
 def _output_config(schema: Mapping[str, object], *, name: str) -> dict[str, object]:
@@ -211,7 +243,8 @@ class IDPConverseExtractor:
 
     def extract(self, *, schema: IDPSchema, page_text: Mapping[int, str], content_sha256: str) -> ExtractionResult:
         result = self.client.converse(**self.request(schema=schema, page_text=page_text))
-        parsed = parse_extractor_output(_text_from_response(result), schema=schema, page_text=page_text, content_sha256=content_sha256)
+        wire_output = _decode_extractor_wire_output(_text_from_response(result), schema=schema)
+        parsed = parse_extractor_output(wire_output, schema=schema, page_text=page_text, content_sha256=content_sha256)
         return ExtractionResult(parsed.document_type, parsed.schema_version, parsed.fields, _provider_metadata(result))
 
     def request_hash(self, *, schema: IDPSchema, page_text: Mapping[int, str], content_sha256: str) -> str:

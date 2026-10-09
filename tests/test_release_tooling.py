@@ -31,6 +31,7 @@ class ReleaseToolingTests(unittest.TestCase):
         self.assertIn("legaldesk.idp_lambda", workflow)
         self.assertIn("legaldesk.idp_ocr_lambda", workflow)
         self.assertIn('"pypdf": "6.20.0"', workflow)
+        self.assertIn("infra/cloudformation/phase-14-idp-bootstrap.yaml", workflow)
         self.assertIn("prompts/idp-classifier.md", workflow)
         self.assertIn("prompts/idp-extractor.md", workflow)
         self.assertNotIn("aws sts", workflow.lower())
