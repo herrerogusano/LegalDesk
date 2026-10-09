@@ -86,14 +86,32 @@ class Phase14IDPInfrastructureTests(unittest.TestCase):
             {"IDPWorkDeadLetterQueue", "IDPWorkQueue", "IDPOCRDeadLetterQueue", "IDPOCRCompletionQueue"},
         )
         self.assertEqual(self.template["Parameters"]["EnableIDPProcessing"]["Default"], "false")
+        self.assertEqual(self.template["Parameters"]["IDPMaxCallsPerRun"]["Default"], 2)
+        self.assertEqual(self.template["Parameters"]["IDPMaxCallsPerRun"]["AllowedValues"], [1, 2])
+        self.assertEqual(self.template["Parameters"]["IDPReadTimeoutSeconds"]["Default"], 15)
+        self.assertEqual(self.template["Parameters"]["IDPReadTimeoutSeconds"]["MaxValue"], 15)
+        self.assertEqual(self.template["Parameters"]["IDPModelReadTimeoutSeconds"]["Default"], 120)
+        self.assertEqual(self.template["Parameters"]["IDPModelReadTimeoutSeconds"]["MinValue"], 90)
+        self.assertEqual(self.template["Parameters"]["IDPModelReadTimeoutSeconds"]["MaxValue"], 120)
+        self.assertEqual(self.template["Parameters"]["IDPMaxOCRApiCalls"]["Default"], 4)
+        self.assertEqual(self.template["Parameters"]["IDPMaxOCRApiCalls"]["MaxValue"], 4)
+        self.assertEqual(self.template["Parameters"]["IDPGlobalDeadlineSeconds"]["Default"], 330)
+        self.assertEqual(self.template["Parameters"]["IDPClaimLeaseSeconds"]["Default"], 480)
         for name in ("IDPWorkQueue", "IDPOCRCompletionQueue"):
             props = self.resources[name]["Properties"]
-            self.assertEqual(props["VisibilityTimeout"], 720)
+            self.assertEqual(props["VisibilityTimeout"], 2160)
             self.assertEqual(props["RedrivePolicy"]["maxReceiveCount"], 3)
         for name in ("IDPWorkerFunction", "IDPOCRContinuationFunction"):
             props = self.resources[name]["Properties"]
-            self.assertEqual(props["Timeout"], 120)
+            self.assertEqual(props["Timeout"], 360)
             self.assertEqual(props["ReservedConcurrentExecutions"], {"Fn::If": ["IDPEnabled", {"Ref": "AWS::NoValue"}, 0]})
+            variables = props["Environment"]["Variables"]
+            self.assertEqual(variables["LEGALDESK_IDP_MAX_CALLS_PER_RUN"], {"Ref": "IDPMaxCallsPerRun"})
+            self.assertEqual(variables["LEGALDESK_IDP_READ_TIMEOUT_SECONDS"], {"Ref": "IDPReadTimeoutSeconds"})
+            self.assertEqual(variables["LEGALDESK_IDP_MODEL_READ_TIMEOUT_SECONDS"], {"Ref": "IDPModelReadTimeoutSeconds"})
+            self.assertEqual(variables["LEGALDESK_IDP_MAX_OCR_API_CALLS"], {"Ref": "IDPMaxOCRApiCalls"})
+            self.assertEqual(variables["LEGALDESK_IDP_GLOBAL_DEADLINE_SECONDS"], {"Ref": "IDPGlobalDeadlineSeconds"})
+            self.assertEqual(variables["LEGALDESK_IDP_CLAIM_LEASE_SECONDS"], {"Ref": "IDPClaimLeaseSeconds"})
         mappings = [resource for resource in self.resources.values() if resource["Type"] == "AWS::Lambda::EventSourceMapping"]
         self.assertEqual(len(mappings), 2)
         for mapping in mappings:
@@ -103,7 +121,13 @@ class Phase14IDPInfrastructureTests(unittest.TestCase):
             self.assertEqual(props["BatchSize"], 1)
             self.assertEqual(props["FunctionResponseTypes"], ["ReportBatchItemFailures"])
             self.assertEqual(props["ScalingConfig"]["MaximumConcurrency"], 2)
-        self.assertGreaterEqual(720, 6 * 120)
+        self.assertGreaterEqual(2160, 6 * 360)
+        # The runtime must enforce the global wall-clock deadline and lease;
+        # this static contract does not pretend provider-call sums are a hard
+        # end-to-end bound because S3/Dynamo persistence adds variable work.
+        self.assertLess(330, 360)
+        self.assertGreater(480, 360)
+        self.assertLessEqual(4 * 15 + 2 * 120, 330)
 
     def test_lambda_roles_cover_polling_and_continuation_queue_actions(self) -> None:
         worker = _statement(self.template, "IDPWorkerExecutionRole", "ConsumeAndRedeliverWorkMessages")

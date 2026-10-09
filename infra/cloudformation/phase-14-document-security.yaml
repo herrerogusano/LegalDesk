@@ -32,6 +32,34 @@ Parameters:
     Type: String
     AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
     Description: One pre-provisioned fictional/public beta tenant; no tenant wildcard is permitted.
+  EnableIDPProcessing:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Opt-in producer switch. When false, the existing malware contract and
+      IAM boundary remain unchanged and no IDP intent is created.
+  IDPWorkQueueUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|https://sqs\\.[a-z0-9-]+\\.amazonaws\\.com/[0-9]{12}/[A-Za-z0-9_.-]+$"
+    Description: Existing Phase 14 IDP work queue URL; required only when enabled.
+  IDPWorkQueueArn:
+    Type: String
+    Default: "arn:aws:sqs:eu-west-1:000000000000:disabled-idp-work"
+    AllowedPattern: "^$|arn:[^:]+:sqs:[^:]+:[0-9]{12}:[A-Za-z0-9_.-]+$"
+    Description: >-
+      Existing Phase 14 IDP work queue ARN; replace the inert validation
+      sentinel when enabling IDP processing.
+  IDPModelId:
+    Type: String
+    Default: ""
+    Description: Server-selected IDP inference profile identifier; required only when enabled.
+  IDPPromptVersion:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    Description: Server-controlled IDP prompt version; required only when enabled.
   LogRetentionDays:
     Type: Number
     Default: 30
@@ -47,6 +75,7 @@ Parameters:
 
 Conditions:
   HasMalwareReservedConcurrency: !Not [!Equals [!Ref MalwareReservedConcurrency, 0]]
+  IDPEnabled: !Equals [!Ref EnableIDPProcessing, "true"]
 
 Resources:
   MalwareProtectionPlanRole:
@@ -157,6 +186,28 @@ Resources:
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
                       - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+              - !If
+                - IDPEnabled
+                - Sid: CreateAndEnqueueIDPJob
+                  Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource: !Ref MetadataTableArn
+                  Condition:
+                    ForAllValues:StringLike:
+                      dynamodb:LeadingKeys:
+                        - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                        - "IDP#JOB#*"
+                - !Ref AWS::NoValue
+              - !If
+                - IDPEnabled
+                - Sid: EnqueueIDPJobOnly
+                  Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: !Ref IDPWorkQueueArn
+                - !Ref AWS::NoValue
               - Sid: CorroborateAndPromoteOnlyBetaObjects
                 Effect: Allow
                 Action:
@@ -225,6 +276,11 @@ Resources:
           LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
           LEGALDESK_MALWARE_ACCOUNT_ID: !Ref AWS::AccountId
           LEGALDESK_MALWARE_REGION: !Ref AWS::Region
+          LEGALDESK_IDP_ENABLED: !Ref EnableIDPProcessing
+          LEGALDESK_IDP_QUEUE_URL: !Ref IDPWorkQueueUrl
+          LEGALDESK_IDP_QUEUE_ARN: !Ref IDPWorkQueueArn
+          LEGALDESK_IDP_MODEL_ID: !Ref IDPModelId
+          LEGALDESK_IDP_PROMPT_VERSION: !Ref IDPPromptVersion
 
   MalwareScanRule:
     Type: AWS::Events::Rule

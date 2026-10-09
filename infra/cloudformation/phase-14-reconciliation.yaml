@@ -30,6 +30,40 @@ Parameters:
     Type: String
     AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
     Description: One fictional/public beta tenant; all configured scopes must match it.
+  EnableIDPProcessing:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Opt-in IDP recovery switch. When false, the existing reconciliation
+      schedule and data-plane contract remain unchanged.
+  IDPWorkQueueUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|https://sqs\\.[a-z0-9-]+\\.amazonaws\\.com/[0-9]{12}/[A-Za-z0-9_.-]+$"
+    Description: Existing Phase 14 IDP work queue URL; required only when enabled.
+  IDPWorkQueueArn:
+    Type: String
+    Default: "arn:aws:sqs:eu-west-1:000000000000:disabled-idp-work"
+    AllowedPattern: "^$|arn:[^:]+:sqs:[^:]+:[0-9]{12}:[A-Za-z0-9_.-]+$"
+    Description: >-
+      Existing Phase 14 IDP work queue ARN; replace the inert validation
+      sentinel when enabling IDP recovery.
+  IDPModelId:
+    Type: String
+    Default: ""
+    Description: Server-selected IDP inference profile identifier; required only when enabled.
+  IDPPromptVersion:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    Description: Server-controlled IDP prompt version; required only when enabled.
+  IDPRecoveryLimitPerScope:
+    Type: Number
+    Default: 25
+    MinValue: 1
+    MaxValue: 100
+    Description: Maximum clean-document/job delivery repairs per explicit matter scope.
   KnowledgeBaseId:
     Type: String
     AllowedPattern: "^[A-Za-z0-9]{1,100}$"
@@ -81,6 +115,7 @@ Parameters:
 
 Conditions:
   HasReconciliationReservedConcurrency: !Not [!Equals [!Ref ReconciliationReservedConcurrency, 0]]
+  IDPEnabled: !Equals [!Ref EnableIDPProcessing, "true"]
 
 Resources:
   ReconciliationLogGroup:
@@ -160,6 +195,38 @@ Resources:
                 Effect: Allow
                 Action: bedrock:GetIngestionJob
                 Resource: !Ref KnowledgeBaseArn
+              - !If
+                - IDPEnabled
+                - Sid: RecoverIDPDispatchForCleanDocuments
+                  Effect: Allow
+                  Action:
+                    - dynamodb:GetItem
+                    - dynamodb:Query
+                    - dynamodb:PutItem
+                    - dynamodb:UpdateItem
+                  Resource: !Ref MetadataTableArn
+                  Condition:
+                    ForAllValues:StringLike:
+                      dynamodb:LeadingKeys:
+                        - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                        - "IDP#JOB#*"
+                - !Ref AWS::NoValue
+              - !If
+                - IDPEnabled
+                - Sid: ReadCanonicalCleanDocumentsForIDPRecovery
+                  Effect: Allow
+                  Action: s3:GetObject
+                  Resource:
+                    - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                    - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+                - !Ref AWS::NoValue
+              - !If
+                - IDPEnabled
+                - Sid: EnqueueRecoveredIDPJobsOnly
+                  Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: !Ref IDPWorkQueueArn
+                - !Ref AWS::NoValue
 
   ReconciliationFunction:
     Type: AWS::Lambda::Function
@@ -194,6 +261,12 @@ Resources:
           LEGALDESK_RECONCILIATION_LIMIT_PER_SCOPE: !Ref LimitPerScope
           LEGALDESK_KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
           LEGALDESK_DATA_SOURCE_ID: !Ref DataSourceId
+          LEGALDESK_IDP_ENABLED: !Ref EnableIDPProcessing
+          LEGALDESK_IDP_QUEUE_URL: !Ref IDPWorkQueueUrl
+          LEGALDESK_IDP_QUEUE_ARN: !Ref IDPWorkQueueArn
+          LEGALDESK_IDP_MODEL_ID: !Ref IDPModelId
+          LEGALDESK_IDP_PROMPT_VERSION: !Ref IDPPromptVersion
+          LEGALDESK_IDP_RECOVERY_LIMIT_PER_SCOPE: !Ref IDPRecoveryLimitPerScope
 
   ReconciliationSchedule:
     Type: AWS::Events::Rule

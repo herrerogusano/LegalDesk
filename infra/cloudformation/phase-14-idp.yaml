@@ -79,6 +79,41 @@ Parameters:
     Default: 1.0.0
     AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
     Description: Version of the packaged server-controlled IDP prompt artifacts
+  IDPMaxCallsPerRun:
+    Type: Number
+    Default: 2
+    AllowedValues: [1, 2]
+    Description: Maximum classifier plus extractor model calls for one run
+  IDPReadTimeoutSeconds:
+    Type: Number
+    Default: 15
+    MinValue: 5
+    MaxValue: 15
+    Description: Fast SDK read bound for DynamoDB, S3 and Textract adapters
+  IDPModelReadTimeoutSeconds:
+    Type: Number
+    Default: 120
+    MinValue: 90
+    MaxValue: 120
+    Description: Bedrock model read bound; structured-output grammar compilation may take materially longer than fast data-plane reads
+  IDPMaxOCRApiCalls:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 4
+    Description: Maximum Textract GetDocumentTextDetection pages calls for one callback
+  IDPGlobalDeadlineSeconds:
+    Type: Number
+    Default: 330
+    MinValue: 60
+    MaxValue: 330
+    Description: Runtime wall-clock deadline below the Lambda timeout; enforced by the application composition
+  IDPClaimLeaseSeconds:
+    Type: Number
+    Default: 480
+    MinValue: 361
+    MaxValue: 900
+    Description: Runtime claim lease above the Lambda timeout; enforced by the application composition
   M2MSecretParameterName:
     Type: String
     Default: /legaldesk/phase14/idp/m2m-client-secret
@@ -123,7 +158,7 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       QueueName: !Sub "${AWS::StackName}-idp-work"
-      VisibilityTimeout: 720
+      VisibilityTimeout: 2160
       ReceiveMessageWaitTimeSeconds: 20
       MessageRetentionPeriod: 345600
       SqsManagedSseEnabled: true
@@ -160,7 +195,7 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       QueueName: !Sub "${AWS::StackName}-idp-ocr-completion"
-      VisibilityTimeout: 720
+      VisibilityTimeout: 2160
       ReceiveMessageWaitTimeSeconds: 20
       MessageRetentionPeriod: 345600
       SqsManagedSseEnabled: true
@@ -478,7 +513,9 @@ Resources:
       Handler: legaldesk.idp_lambda.lambda_handler
       Role: !GetAtt IDPWorkerExecutionRole.Arn
       MemorySize: 1024
-      Timeout: 120
+      # The runtime global deadline is 330 seconds; the claim lease is 480
+      # seconds and queue visibility is six times this Lambda timeout.
+      Timeout: 360
       # Disable the function when the phase gate is off.  Enabled operation
       # deliberately uses the account's unreserved pool; the event-source
       # mapping remains bounded at MaximumConcurrency=2 below.
@@ -506,6 +543,12 @@ Resources:
           LEGALDESK_IDP_BETA_TENANT_ID: !Ref BetaTenantId
           LEGALDESK_IDP_MODEL_ID: !Ref IDPInferenceProfileArn
           LEGALDESK_IDP_PROMPT_VERSION: !Ref IDPPromptVersion
+          LEGALDESK_IDP_MAX_CALLS_PER_RUN: !Ref IDPMaxCallsPerRun
+          LEGALDESK_IDP_READ_TIMEOUT_SECONDS: !Ref IDPReadTimeoutSeconds
+          LEGALDESK_IDP_MODEL_READ_TIMEOUT_SECONDS: !Ref IDPModelReadTimeoutSeconds
+          LEGALDESK_IDP_MAX_OCR_API_CALLS: !Ref IDPMaxOCRApiCalls
+          LEGALDESK_IDP_GLOBAL_DEADLINE_SECONDS: !Ref IDPGlobalDeadlineSeconds
+          LEGALDESK_IDP_CLAIM_LEASE_SECONDS: !Ref IDPClaimLeaseSeconds
           LEGALDESK_IDP_GATEWAY_ARN: !Ref ExistingGatewayArn
           LEGALDESK_IDP_COGNITO_DOMAIN: !Ref ExistingUserPoolDomain
           LEGALDESK_IDP_TOKEN_ENDPOINT: !Sub "https://${ExistingUserPoolDomain}/oauth2/token"
@@ -530,7 +573,9 @@ Resources:
       Handler: legaldesk.idp_ocr_lambda.lambda_handler
       Role: !GetAtt IDPOCRContinuationExecutionRole.Arn
       MemorySize: 512
-      Timeout: 120
+      # OCR callbacks are bounded to four fast Textract page calls and two
+      # model calls; the application global deadline remains below this cap.
+      Timeout: 360
       # See IDPWorkerFunction: no reservation is consumed when enabled.
       ReservedConcurrentExecutions: !If [IDPEnabled, !Ref AWS::NoValue, 0]
       Code:
@@ -554,6 +599,12 @@ Resources:
           LEGALDESK_IDP_BETA_TENANT_ID: !Ref BetaTenantId
           LEGALDESK_IDP_MODEL_ID: !Ref IDPInferenceProfileArn
           LEGALDESK_IDP_PROMPT_VERSION: !Ref IDPPromptVersion
+          LEGALDESK_IDP_MAX_CALLS_PER_RUN: !Ref IDPMaxCallsPerRun
+          LEGALDESK_IDP_READ_TIMEOUT_SECONDS: !Ref IDPReadTimeoutSeconds
+          LEGALDESK_IDP_MODEL_READ_TIMEOUT_SECONDS: !Ref IDPModelReadTimeoutSeconds
+          LEGALDESK_IDP_MAX_OCR_API_CALLS: !Ref IDPMaxOCRApiCalls
+          LEGALDESK_IDP_GLOBAL_DEADLINE_SECONDS: !Ref IDPGlobalDeadlineSeconds
+          LEGALDESK_IDP_CLAIM_LEASE_SECONDS: !Ref IDPClaimLeaseSeconds
           LEGALDESK_IDP_GATEWAY_ARN: !Ref ExistingGatewayArn
           LEGALDESK_IDP_COGNITO_DOMAIN: !Ref ExistingUserPoolDomain
           LEGALDESK_IDP_TOKEN_ENDPOINT: !Sub "https://${ExistingUserPoolDomain}/oauth2/token"
