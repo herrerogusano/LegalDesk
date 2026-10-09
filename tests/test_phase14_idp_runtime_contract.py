@@ -336,7 +336,20 @@ class _Bedrock:
                     fields["explicit_expiration_date"] = {"value": "2024-01-31", "presence": "PRESENT", "evidence": [{"page": 1, "quote": "This Agreement is effective 31 January 2024."}]}
             else:
                 fields = {"effective_date": {"value": "2024-02-29", "presence": "PRESENT", "evidence": [{"page": 1, "quote": quote}]}}
-            output = {"schema_version": "1.0.0", "fields": fields}
+            # Converse's provider grammar uses the compact homogeneous array;
+            # the production adapter expands it before the stable parser.  A
+            # real schema has to be covered completely, including absent
+            # fields, so this fake derives the rows from the server-provided
+            # registry envelope rather than inventing a partial mapping.
+            registry_fields = [item["name"] for item in json.loads(user)["fields"]]
+            wire_fields = []
+            for name in registry_fields:
+                value = fields.get(name)
+                if value is None:
+                    wire_fields.append({"field": name, "presence": "ABSENT", "value": None, "reason": "", "evidence": []})
+                else:
+                    wire_fields.append({"field": name, "presence": value["presence"], "value": value["value"], "reason": "", "evidence": value["evidence"]})
+            output = {"schema_version": "1.0.0", "fields": wire_fields}
             if self.on_extraction is not None:
                 self.on_extraction()
         return {"output": {"message": {"content": [{"text": json.dumps(output)}]}}, "stopReason": "end_turn", "usage": {"inputTokens": 10, "outputTokens": 10}}
