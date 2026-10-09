@@ -1,10 +1,21 @@
 # IDP extension — preflight, 2026-10-09
 
-Status: **STOP — system-principal review authorization requires approval**.
+Status: **Service-principal gate approved on 2026-10-09; implementation in progress**.
 Authoritative requirements: `PHASE_14_IDP_PLAN.md`. This extends the existing
 LegalDesk application; it does not replace `PLAN_14_PUBLIC_BETA.md` or rename
 historical release evidence. Base: developer `789af7ec58813bc8ebc88c5e3d6534a302ce81f4`.
-No IDP application code, infrastructure or model calls have been implemented.
+At preflight completion no IDP application code, infrastructure or model calls
+had been implemented. Subsequent milestone evidence is recorded separately.
+
+## Approved gate resolution — 2026-10-09
+
+After clarification that this is permanent product functionality, not a test
+identity, the owner explicitly selected option 1. Implement a dedicated Cognito
+M2M client/scope through the existing Gateway for automatic IDP review creation
+only. Preserve all human routes and forbid impersonation, direct Lambda bypass,
+general machine tool access and machine approval/correction. ADR-020 records
+the approved boundary. Token issuance and deployment must remain bounded;
+approval does not imply unlimited fan-out or an unbounded evaluation budget.
 
 ## Reuse and additions
 
@@ -14,7 +25,7 @@ No IDP application code, infrastructure or model calls have been implemented.
 | Clean promotion | `malware_scan.py:143-192` verifies clean verdict/content, copies canonical object, commits UPLOADED | Durable job/outbox at trusted clean promotion; recover a commit-to-enqueue failure |
 | Storage | `documents.py:978`, `docs/data-model.md`; composite pk/sk and bounded Query | Separate IDP run/correction items and slim document pointer; no Scan, GSI or destructive migration proposed |
 | RAG | `ingestion.py`, `retrieval.py`, `chat.py` | Keep indexing independent; selected-document structured lookup with cited RAG fallback |
-| Explicit tools | `gateway_client.py:170-269`, ADR-016 | Gateway remains mandatory; service identity is not yet authorized |
+| Explicit tools | `gateway_client.py:170-269`, ADR-016 | Gateway remains mandatory; dedicated IDP identity approved, not deployed |
 | Review | `http_app.py:975-1108`, `review_tasks.py:618-839`, ADR-017 | Add IDP snapshot kind and per-field correction records without changing existing answer-review semantics |
 | Release | `.github/workflows/production-cd.yml`, `scripts/deploy_release.py` | Existing CD is code-only; IDP infrastructure needs a separately reviewed bootstrap/diff, not broadened code-release credentials |
 

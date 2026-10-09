@@ -304,3 +304,52 @@ el modo loopback conserva fixtures locales y no representa una autorización de
 despliegue. La integración EventBridge/IAM/GuardDuty y cualquier cuarentena
 durable siguen siendo gates de infraestructura separados, sin llamadas AWS en
 esta fase.
+
+## ADR-020 — Independent IDP and purpose-specific machine review creation
+
+Approved by the owner on 2026-10-09 after the mandatory preflight STOP in
+`docs/idp-preflight.md`; authoritative scope is `PHASE_14_IDP_PLAN.md`.
+This is an extension of the existing LegalDesk application, not another project.
+
+IDP processing has its own lifecycle and immutable extraction/correction
+history linked to the existing authorized document. Registry-driven schemas
+and backend-allowlisted deterministic rules distinguish literal, derived and
+provisional values. Technical evidence checks never certify legal meaning.
+Existing upload, malware, indexing and RAG boundaries remain unchanged.
+
+Use asynchronous SQS/Lambda processing and conditional durable claims, with
+Textract SNS/SQS continuation only when page-aware digital extraction cannot
+cover the PDF. Enqueue only from verified clean promotion; durable dispatch
+recovery must handle the DynamoDB-to-SQS gap. No Step Functions, unconditional
+paid-call retry or queue-derived tenant ownership. Reuse the existing composite
+DynamoDB key space for logically distinct runs/corrections, with bounded Query
+and private immutable S3 artifacts outside RAG inclusion prefixes.
+
+Automatic review creation uses a dedicated short-lived Cognito M2M identity
+through the existing AgentCore Gateway. A dedicated machine scope/client is
+not a human identity, membership, session or permission to use general tools.
+The interceptor must authenticate the configured machine client/scope, resolve
+an expected durable run and corroborate document/tenant/matter/content scope,
+then issue a short-lived purpose-bound grant. The Review target repeats those
+checks, accepts only references to server-held IDP fields/evidence and records
+service-actor provenance and correlation. Reuse review business logic through
+an additive, versioned IDP snapshot adapter; never manufacture an accepted chat
+answer to satisfy ADR-017. Replays must not duplicate review tasks.
+
+Machine calls cannot approve, correct, reject or close reviews, select arbitrary
+matters or enter the existing human-tool branch. Human field correction remains
+JWT/matter-authorized with immutable reviewer/time/old/new/evidence/reason audit.
+Applicable human-confirmed values prevail over later unreviewed extraction.
+ADR-016's mandatory Gateway boundary and existing human grants remain intact;
+direct Review Lambda invocation or stored human JWTs are forbidden.
+
+Selected-document structured queries may return IDP fields with explicit origin
+and acceptance labels, otherwise use existing authorized RAG/citation behavior.
+RAG responses must not silently become verified IDP facts. Existing upload cap
+remains 10 MiB; a configurable 20 MB IDP engine ceiling does not widen it.
+
+Rollout is disabled-by-default until infrastructure, IAM, bounded cost envelope
+and real smoke gates are reviewed. Existing code-only CD credentials must not
+gain infrastructure/IAM mutation privileges. M2M token requests, OCR, Bedrock,
+queue/compute/storage and monitoring usage are billable classes, not free.
+This ADR records approved design, not deployment or IDP acceptance evidence.
