@@ -1,0 +1,147 @@
+{
+  "report_schema_version": "1.0-consolidated-metadata",
+  "evaluator": "scripts/evaluate_idp.py",
+  "manifest": {
+    "path": "tests/fixtures/idp/manifest.json",
+    "dataset_id": "legaldesk-phase14-idp-groundtruth-v1",
+    "fixture_count": 18
+  },
+  "generated_from": [
+    "idp-canary-contract-20261009-compact-e.json",
+    "idp-digital-corpus-20261009-f.json",
+    "idp-ocr-corpus-20261009-h.json",
+    "idp-ocr-targeted-20261009-i.json"
+  ],
+  "selection_policy": {
+    "superseded_failures": [
+      {
+        "fixture_id": "contract-02-es-scanned-leapday",
+        "retained_source": "idp-ocr-targeted-20261009-i.json",
+        "superseded_source": "idp-ocr-corpus-20261009-h.json",
+        "reason": "targeted export succeeded; do not double-count the earlier failed attempt"
+      },
+      {
+        "fixture_id": "demand-05-en-scanned",
+        "retained_source": "idp-ocr-targeted-20261009-i.json",
+        "superseded_source": "idp-ocr-corpus-20261009-h.json",
+        "reason": "targeted export succeeded; do not double-count the earlier failed attempt"
+      }
+    ],
+    "retained_failed_anchor": {
+      "fixture_id": "judgment-03-en-mixed-interpretive",
+      "source": "idp-ocr-corpus-20261009-h.json",
+      "targeted_followup_source": "idp-ocr-targeted-20261009-i.json",
+      "reason": "targeted follow-up also failed; no successful anchor was substituted"
+    },
+    "excluded_collection_metadata": {
+      "source": "idp-ocr-collection-20261009-g.json",
+      "reason": "collection metadata has no result records and is not added to execution totals"
+    }
+  },
+  "provenance": {
+    "kind": "real_model",
+    "model_id": "eu.anthropic.claude-sonnet-4-6",
+    "region": "eu-west-1",
+    "prompt_coverage": {
+      "extractor_1.0.2_records": 18,
+      "classifier_1.0.0_records": 16,
+      "classifier_1.0.1_targeted_records": 2,
+      "full_new_classifier_coverage": false
+    }
+  },
+  "counts": {
+    "fixtures": 18,
+    "explicit_result_records": 18,
+    "classified_records": 17,
+    "failed_without_classification": 1,
+    "not_executed": 0,
+    "review_required": 15,
+    "review_rate": 0.8333333333
+  },
+  "source_attribution": {
+    "idp-canary-contract-20261009-compact-e.json": 1,
+    "idp-digital-corpus-20261009-f.json": 9,
+    "idp-ocr-corpus-20261009-h.json": 6,
+    "idp-ocr-targeted-20261009-i.json": 2
+  },
+  "classification_confusion": {
+    "CONTRACT": {
+      "CONTRACT": 5
+    },
+    "DEMAND": {
+      "DEMAND": 5
+    },
+    "JUDGMENT": {
+      "JUDGMENT": 4,
+      "UNKNOWN": 1
+    },
+    "UNKNOWN": {
+      "UNKNOWN": 3
+    }
+  },
+  "observed_metrics": {
+    "input_tokens": {
+      "value": 32874,
+      "observed_records": 17,
+      "unknown_records": 1
+    },
+    "output_tokens": {
+      "value": 9721,
+      "observed_records": 17,
+      "unknown_records": 1
+    },
+    "ocr_api_calls": {
+      "value": 14,
+      "observed_records": 17,
+      "unknown_records": 1
+    },
+    "ocr_pages": {
+      "value": 9,
+      "observed_records": 17,
+      "unknown_records": 1
+    },
+    "latency_ms": {
+      "value": null,
+      "observed_records": 0,
+      "unknown_records": 18,
+      "reason": "immutable exports use latencyMs; evaluator accepts latency_ms only"
+    }
+  },
+  "review_rate": {
+    "reviewed": 15,
+    "denominator": 18,
+    "rate": 0.8333333333,
+    "interpretation": "observed review-required status, not accuracy or acceptance"
+  },
+  "field_and_evidence_errors": {
+    "case_errors": {
+      "ACCEPTANCE_MISMATCH": 17,
+      "EVIDENCE_MISSING": 3,
+      "FIELD_MISSING": 1,
+      "ORACLE_ANCHOR_MISMATCH": 14,
+      "ORIGIN_MISMATCH": 10,
+      "VALUE_DIGEST_INVALID": 9
+    },
+    "field_evidence_errors": {
+      "ACCEPTANCE_MISMATCH": 59,
+      "EVIDENCE_MISSING": 6,
+      "FIELD_MISSING": 7,
+      "ORACLE_ANCHOR_MISMATCH": 33,
+      "ORIGIN_MISMATCH": 20,
+      "VALUE_DIGEST_INVALID": 30
+    },
+    "judgment_03_anchor": "failed; no alternate weak anchor was accepted"
+  },
+  "provider_errors": {},
+  "cost": {
+    "status": "UNKNOWN",
+    "estimate": null,
+    "reason": "no explicit regional Bedrock and Textract pricing input was supplied; usage is not converted to a cost"
+  },
+  "limitations": [
+    "This is a metadata-only consolidated evaluation; raw document text, values, quotes, and prompts are excluded.",
+    "The 1.0.1 classifier prompt covers only the two targeted follow-up records; this is not full new-prompt coverage.",
+    "Classification matches and review-required statuses do not establish field accuracy, accepted anchors, or phase acceptance.",
+    "OCR totals exclude the reused earlier failed attempts and the collection-only metadata export."
+  ]
+}
