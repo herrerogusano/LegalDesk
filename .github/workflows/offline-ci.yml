@@ -131,11 +131,13 @@ jobs:
           node tests/phase13_manual_browser_helpers.test.cjs
           node tests/test_phase14_diagnostics.cjs
           node tests/test_phase14_document_view.cjs
+          node tests/test_phase14_idp_live_browser.cjs
       - name: Check frontend JavaScript syntax
         run: |
           node --check frontend/app.js
           node --check frontend/citations.js
           node --check frontend/diagnostics.js
+          node --check tests/phase14_idp_live_browser.cjs
       - name: Install local Playwright browser for behavior gate
         run: |
           npm install --prefix "$RUNNER_TEMP/playwright" --no-save --ignore-scripts playwright@1.62.1

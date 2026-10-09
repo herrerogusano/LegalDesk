@@ -278,6 +278,28 @@ The live runner is still under supervisor review, including real HTTP response
 contracts, timeout handling, cleanup and honest usage accounting. No IDP
 deployment, inference or OCR was executed by this validation.
 
+## Bounded runner checkpoint — 2026-10-09
+
+`tests/phase14_idp_live_smoke.py` defaults to a network-free preflight against
+the 18 hash-allowlisted synthetic PDFs. The optional browser child uses a
+temporary synthetic human account, not a stored user's password or the machine
+secret. It enforces a shared remaining work deadline, 120 same-origin API
+requests and bounded polling; cleanup has a separate bounded budget and removes
+authorization before collecting temporary state. Cleanup failures fail the
+report and process exit. Review actions bind the exact task/document/run/hash.
+
+Supervisor checks: 779 Python tests passed locally (one Windows symlink skip),
+17 focused runner/evaluation tests passed, Node helper contracts and syntax
+passed, and actual local Chrome launch/close preflight passed. The Python
+preflight reported zero AWS calls. New runner changes have not yet received
+their own Linux CI run; run `37950049115` covers the preceding release checkpoint.
+
+This is a partial smoke harness, not phase acceptance. Provider usage, duplicate
+clean-event replay, three-run history and scoped synthetic document/artifact
+deletion remain explicitly `NOT_EXECUTED`. Uploads and IDP artifacts/tasks must
+be tracked for operator cleanup; the runner must not delete shared records.
+Real-model evaluation and AWS deployment/E2E still remain unexecuted.
+
 ## Primary references checked
 
 - [Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html)
