@@ -145,7 +145,9 @@ class CleanIntentTests(unittest.TestCase):
 
         request = json.loads(captured["body"])
         condition = request["ConditionExpression"]
-        self.assertIn("#intent.#idempotencyKey = :idempotency", condition)
+        self.assertIn("attribute_not_exists(#intent)", condition)
+        self.assertIn("attribute_not_exists(#run)", condition)
+        self.assertNotIn("#intent.#idempotencyKey", condition)
         values = request["ExpressionAttributeValues"]
         self.assertEqual(values[":pending"], {"S": "ENQUEUE_PENDING"})
 

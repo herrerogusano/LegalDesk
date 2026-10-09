@@ -669,9 +669,14 @@ class Boto3DynamoIDPRepository:
             self.table.update_item(
                 Key=key,
                 UpdateExpression="SET #intent = :intent, #status = :pending, #hash = :hash",
-                ExpressionAttributeNames={"#intent": "idpCleanIntent", "#status": "idpStatus", "#hash": "idpIntentDocumentSha256", "#document": "documentId", "#existing_hash": "idpDocumentSha256", "#idempotencyKey": "idempotencyKey"},
-                ExpressionAttributeValues={":intent": intent, ":pending": IDPJobStatus.ENQUEUE_PENDING.value, ":hash": job.document_sha256, ":document": job.document_id, ":idempotency": job.idempotency_key},
-                ConditionExpression="#document = :document AND (attribute_not_exists(#existing_hash) OR #existing_hash = :hash) AND (attribute_not_exists(#intent) OR #intent.#idempotencyKey = :idempotency)",
+                ExpressionAttributeNames={"#intent": "idpCleanIntent", "#status": "idpStatus", "#hash": "idpIntentDocumentSha256", "#document": "documentId", "#existing_hash": "idpDocumentSha256", "#run": "idpRunId"},
+                ExpressionAttributeValues={":intent": intent, ":pending": IDPJobStatus.ENQUEUE_PENDING.value, ":hash": job.document_sha256, ":document": job.document_id},
+                # The read above handles same-intent crash recovery.  The
+                # write itself must only create a previously absent intent;
+                # permitting the same idempotency key here would let a
+                # completion racing between read and write be demoted back
+                # to ENQUEUE_PENDING.
+                ConditionExpression="#document = :document AND (attribute_not_exists(#existing_hash) OR #existing_hash = :hash) AND attribute_not_exists(#intent) AND attribute_not_exists(#run)",
             )
         except Exception as exc:
             raise IDPConcurrencyError("clean IDP intent could not be recorded") from exc
