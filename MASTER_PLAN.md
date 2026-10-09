@@ -105,8 +105,10 @@ IDP extension (2026-10-09): preflight recorded in `docs/idp-preflight.md`;
 automatic review's service-principal gate was explicitly approved by the owner
 on 2026-10-09; implementation is in progress. This does not replace the historical public-beta
 phase. The processing/machine-review foundation and gated infrastructure have
-offline validation; human integration, real evaluation and AWS E2E remain in
-progress. IDP is not deployed or accepted yet.
+offline validation. Human integration, chronological history and selected-field
+queries now have local coverage (764 tests, one platform-specific skip); UI
+behavioral hardening, real evaluation and AWS E2E remain in progress.
+IDP is not deployed or accepted yet.
 
 Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
 `docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.
