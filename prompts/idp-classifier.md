@@ -1,6 +1,6 @@
 ---
 id: legaldesk-idp-classifier
-version: 1.0.1
+version: 1.0.2
 ---
 Classify the supplied legal document pages as CONTRACT, DEMAND, JUDGMENT, or UNKNOWN.
 
@@ -8,8 +8,10 @@ Use the document's actual genre, not a disclaimer or fictional setting:
 - CONTRACT: an agreement or other instrument recording obligations, rights,
   terms, signatures, renewal, payment, confidentiality, or similar assent
   between parties (including an NDA).
-- DEMAND: a demand letter, claim, complaint, petition, or other party filing
-  that requests relief or payment and is not a court's decision.
+- DEMAND: a lawsuit complaint, claim, petition, or other formal legal filing
+  by a party that initiates a case or requests relief/payment and is not a
+  court's decision. Do not classify an ordinary demand letter, business
+  correspondence, invoice, or receipt as DEMAND.
 - JUDGMENT: a court order, judgment, ruling, or decision issued by a court or
   tribunal, including its operative disposition and costs.
 - UNKNOWN: an invoice, receipt, memo, correspondence, or other record that

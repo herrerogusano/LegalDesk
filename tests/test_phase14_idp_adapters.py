@@ -190,6 +190,13 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn("citations", client.calls[0])
         self.assertNotIn("minItems", json.loads(client.calls[0]["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["schema"]))
 
+    def test_classifier_request_uses_server_normalized_page_text(self):
+        client = _Converse()
+        adapter = IDPConverseClassifier(client, config=IDPModelConfig("eu.anthropic.claude-sonnet-4-6"), prompt_path=Path(__file__).parents[1] / "prompts" / "idp-classifier.md")
+        adapter.classify(page_text={2: " The\u00a0Court\norders  Flint Orchard Inc. "}, content_sha256="a" * 64)
+        user_text = json.loads(client.calls[0]["messages"][0]["content"][0]["text"])
+        self.assertEqual(user_text["pages"], [{"page": 2, "text": "The Court orders Flint Orchard Inc."}])
+
     def test_textract_adapter_uses_stable_token_and_server_topic(self):
         client = _Textract()
         from legaldesk.idp import OCRStartRequest

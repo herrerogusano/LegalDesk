@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from ..prompts import FileSystemSystemPromptProvider, SystemPromptArtifact
+from .acquisition import normalize_page_text
 from .models import DocumentType, IDPContractError
 from .processing import ClassificationResult, ExtractionResult, IDPOutputError, parse_classifier_output, parse_extractor_output, parse_strict_json
 from .registry import IDPSchema
@@ -153,7 +154,9 @@ def _output_config(schema: Mapping[str, object], *, name: str) -> dict[str, obje
 def _input_text(page_text: Mapping[int, str], *, max_chars: int) -> str:
     if not isinstance(page_text, Mapping) or any(isinstance(page, bool) or not isinstance(page, int) or page < 1 for page in page_text):
         raise IDPProviderError("IDP page input is invalid")
-    payload = json.dumps({"pages": [{"page": page, "text": text} for page, text in sorted(page_text.items())]}, ensure_ascii=False, separators=(",", ":"))
+    if any(not isinstance(text, str) for text in page_text.values()):
+        raise IDPProviderError("IDP page text is invalid")
+    payload = json.dumps({"pages": [{"page": page, "text": normalize_page_text(text)} for page, text in sorted(page_text.items())]}, ensure_ascii=False, separators=(",", ":"))
     if len(payload) > max_chars:
         raise IDPProviderError("IDP model input exceeds the configured bound")
     return payload
@@ -181,7 +184,7 @@ def _extractor_input_text(schema: IDPSchema, page_text: Mapping[int, str], *, ma
     ]
     payload = json.dumps(
         {"documentType": schema.document_type.value, "schemaVersion": schema.version, "fields": fields,
-         "pages": [{"page": page, "text": text} for page, text in sorted(page_text.items())]},
+         "pages": [{"page": page, "text": normalize_page_text(text)} for page, text in sorted(page_text.items())]},
         ensure_ascii=False, separators=(",", ":"),
     )
     if len(payload) > max_chars:
