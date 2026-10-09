@@ -29,6 +29,7 @@ from .models import (
     IDPFieldResult,
     IDPJob,
     IDPJobStatus,
+    IDP_TERMINAL_JOB_STATUSES,
     IDPCheckpoint,
     IDPSkipReason,
     new_id,
@@ -158,6 +159,7 @@ class DeliveryCandidatePage:
 
 class IDPRepository(Protocol):
     def create_job(self, job: IDPJob) -> IDPJob: ...
+    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str) -> IDPJob: ...
     def record_clean_intent(self, *, job: IDPJob) -> None: ...
     def list_clean_intents(self, *, tenant_id: str, matter_id: str, limit: int) -> tuple[IDPJob, ...]: ...
     def get_clean_recovery_cursor(self, *, tenant_id: str, matter_id: str) -> str | None: ...
@@ -214,6 +216,31 @@ class InMemoryIDPRepository:
                 raise IDPIdempotencyConflict("IDP job ID already exists")
             self._jobs[job.job_id] = job
             self._idempotency[idempotency_scope] = job.job_id
+            return job
+
+    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str) -> IDPJob:
+        """Atomically reserve one reprocess intent under the repository lock."""
+
+        with self._lock:
+            existing_intent = self._clean_intents.get((job.tenant_id, job.matter_id, job.document_id))
+            if existing_intent is not None and existing_intent.document_sha256 != job.document_sha256:
+                raise IDPIdempotencyConflict("clean intent hash changed")
+            if existing_intent is not None and existing_intent.idempotency_key != job.idempotency_key:
+                existing_job = self._jobs.get(existing_intent.job_id)
+                if existing_job is None:
+                    raise IDPConcurrencyError("pending reprocess intent has no job")
+                if existing_job.status not in IDP_TERMINAL_JOB_STATUSES:
+                    raise IDPConcurrencyError("reprocess generation is already active")
+                if expected_run_id != existing_job.job_id:
+                    raise IDPConcurrencyError("reprocess generation pointer is stale")
+            existing_id = self._idempotency.get((job.tenant_id, job.matter_id, job.idempotency_key))
+            if existing_id is not None:
+                return self._jobs[existing_id]
+            if job.job_id in self._jobs:
+                raise IDPIdempotencyConflict("IDP job ID already exists")
+            self._jobs[job.job_id] = job
+            self._idempotency[(job.tenant_id, job.matter_id, job.idempotency_key)] = job.job_id
+            self._clean_intents[(job.tenant_id, job.matter_id, job.document_id)] = job
             return job
 
     def record_clean_intent(self, *, job: IDPJob) -> None:
@@ -540,6 +567,67 @@ class Boto3DynamoIDPRepository:
             self.table.put_item(Item=idem, ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)")
         else:
             raise IDPContractError("atomic DynamoDB transaction client is required")
+        return job
+
+    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str) -> IDPJob:
+        """Atomically put a reprocess job and claim the document clean intent.
+
+        The document row is the existing single-table lease seam.  Its
+        conditional intent check prevents two operator processes from creating
+        different generations during the same active/ambiguous dispatch.
+        """
+
+        existing = self._get_by_locator(job.job_id) or self._query_idempotency(job)
+        if existing is not None:
+            return self._check_idempotency(existing, job)
+        if not isinstance(expected_source_key, str) or not expected_source_key.strip():
+            raise IDPContractError("reprocess source key is required")
+        job_item, locator, idem = _job_item(job), _locator_item(job), _idempotency_item(job)
+        document_key = {"pk": matter_partition_key(job.tenant_id, job.matter_id), "sk": f"DOCUMENT#{job.document_id}"}
+        intent_statuses = tuple(status.value for status in IDP_TERMINAL_JOB_STATUSES)
+        values: dict[str, object] = {
+            ":intent": job_item, ":pending": IDPJobStatus.ENQUEUE_PENDING.value,
+            ":hash": job.document_sha256, ":document": job.document_id,
+            ":source": expected_source_key, ":expected_run": expected_run_id or "",
+            ":terminal_statuses": intent_statuses,
+        }
+        condition = (
+            "#document = :document AND #canonical = :source AND "
+            "(attribute_not_exists(#hash) OR #hash = :hash) AND "
+            "(attribute_not_exists(#run) OR #run = :expected_run) AND "
+            "(attribute_not_exists(#intent) OR #intent.#status IN (:terminal_statuses) OR #intent.#job = :expected_run)"
+        )
+        # DynamoDB's IN operator requires individual placeholders, not a list.
+        names = {"#document": "documentId", "#canonical": "s3Key", "#hash": "idpDocumentSha256", "#run": "idpRunId", "#intent": "idpCleanIntent", "#status": "status", "#idpstatus": "idpStatus", "#job": "jobId"}
+        del values[":terminal_statuses"]
+        status_values: dict[str, object] = {}
+        for index, status in enumerate(intent_statuses):
+            status_values[f":terminal{index}"] = status
+        condition = condition.replace(":terminal_statuses", ", ".join(status_values))
+        values.update(status_values)
+        update = {
+            "TableName": self.table_name,
+            "Key": document_key,
+            "UpdateExpression": "SET #intent = :intent, #idpstatus = :pending, #hash = :hash",
+            "ExpressionAttributeNames": names,
+            "ExpressionAttributeValues": values,
+            "ConditionExpression": condition,
+        }
+        transact = getattr(self._transaction_client, "transact_write_items", None)
+        if not callable(transact):
+            raise IDPContractError("atomic DynamoDB transaction client is required")
+        try:
+            transact(TransactItems=[
+                {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(job_item), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
+                {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(locator), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
+                {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(idem), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
+                {"Update": {**update, "Key": _serialize_transaction_item(document_key), "ExpressionAttributeValues": _serialize_transaction_item(values)}},
+            ])
+        except Exception as exc:
+            existing = self._get_by_locator(job.job_id) or self._query_idempotency(job)
+            if existing is not None:
+                return self._check_idempotency(existing, job)
+            raise IDPConcurrencyError("reprocess reservation lost a conditional race") from exc
         return job
 
     def record_clean_intent(self, *, job: IDPJob) -> None:

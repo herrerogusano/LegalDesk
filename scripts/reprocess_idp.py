@@ -27,16 +27,18 @@ MANIFEST_PATH = (ROOT / "tests" / "fixtures" / "idp" / "manifest.json").resolve(
 MAX_BYTES = 20 * 1024 * 1024
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-TERMINAL_JOB_STATUSES = {"COMPLETED", "REVIEW_REQUIRED", "FAILED", "SKIPPED"}
 
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 
 from legaldesk.documents import Boto3DynamoDocumentMetadataRepository, Boto3S3ObjectStorage  # noqa: E402
 from legaldesk.domain.models import DocumentStatus, MalwareScanStatus  # noqa: E402
-from legaldesk.idp.models import DocumentForIDP, IDPConfig, IDPContractError, IDPJob, IDPJobStatus  # noqa: E402
+from legaldesk.idp.models import DocumentForIDP, IDPConfig, IDPJob, IDPJobStatus, IDP_TERMINAL_JOB_STATUSES  # noqa: E402
 from legaldesk.idp.persistence import Boto3DynamoIDPRepository, IDPRepository  # noqa: E402
 from legaldesk.idp_lambda import Boto3IDPSQSQueue  # noqa: E402
+from legaldesk.idp.providers import idp_prompt_identity  # noqa: E402
 from legaldesk.idp.worker import IDPQueue, build_verified_clean_job, enqueue_verified_clean_job  # noqa: E402
+
+TERMINAL_JOB_STATUSES = frozenset(status.value for status in IDP_TERMINAL_JOB_STATUSES)
 
 
 class ReprocessError(ValueError):
@@ -227,10 +229,14 @@ def request_reprocess(
                 return existing
             if existing.status.value not in TERMINAL_JOB_STATUSES:
                 raise ReprocessError("reprocess_generation_already_active")
-    record_intent = getattr(repository, "record_clean_intent", None)
-    if callable(record_intent):
-        record_intent(job=job)
-    durable = repository.create_job(job)
+    reserve = getattr(repository, "reserve_reprocess_job", None)
+    if callable(reserve):
+        durable = reserve(job=job, expected_run_id=getattr(document, "idp_run_id", None), expected_source_key=source_key)
+    else:
+        record_intent = getattr(repository, "record_clean_intent", None)
+        if callable(record_intent):
+            record_intent(job=job)
+        durable = repository.create_job(job)
     # A retry that presents the same idempotency identity returns the durable
     # winner and must not send a second message once delivery is terminal or
     # already in progress.
@@ -283,7 +289,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         storage = Boto3S3ObjectStorage(args.source_bucket, client=session.client("s3", config=sdk_config))
         queue = Boto3IDPSQSQueue(session.client("sqs", config=sdk_config), queue_url=args.queue_url)
         generation_id = str(uuid4())
-        job = request_reprocess(repository=repository, metadata=metadata, storage=storage, queue=queue, tenant_id=args.tenant_id, matter_id=args.matter_id, document_id=args.document_id, fixture=fixture, model_id=args.model_id, prompt_version=args.prompt_version, generation_factory=lambda: generation_id)
+        prompt_identity = idp_prompt_identity(args.prompt_version)
+        job = request_reprocess(repository=repository, metadata=metadata, storage=storage, queue=queue, tenant_id=args.tenant_id, matter_id=args.matter_id, document_id=args.document_id, fixture=fixture, model_id=args.model_id, prompt_version=prompt_identity, generation_factory=lambda: generation_id)
         print(json.dumps({"result": "PASS", "jobId": job.job_id, "generationId": f"reprocess:{generation_id}", "documentId": job.document_id, "documentSha256": job.document_sha256, "status": job.status.value}, sort_keys=True))
         return 0
     except ReprocessError as exc:

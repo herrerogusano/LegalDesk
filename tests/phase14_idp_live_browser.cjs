@@ -381,7 +381,9 @@ async function run() {
         await actionButton.click();
         const correction = fieldCard.locator(".idp-review-correction");
         await correction.waitFor({ state: "visible", timeout: 10_000 });
-        await correction.fill(process.env.LEGALDESK_IDP_CORRECTION_VALUE || "2024-01-31");
+        const correctionValue = process.env.LEGALDESK_IDP_CORRECTION_VALUE || "Delaware";
+        if (await correction.evaluate(element => element.tagName === "SELECT")) await correction.selectOption({ label: correctionValue }).catch(() => correction.selectOption(correctionValue));
+        else await correction.fill(correctionValue);
       }
       const decisionResponse = page.waitForResponse(response => { try { return new URL(response.url()).pathname.includes("/reviews/") && response.request().method() === "PATCH"; } catch (_error) { return false; } }, { timeout: 60_000 });
       await actionButton.click();

@@ -70,6 +70,14 @@ class IDPJobStatus(StrEnum):
     FAILED = "FAILED"
 
 
+IDP_TERMINAL_JOB_STATUSES = frozenset({
+    IDPJobStatus.SKIPPED,
+    IDPJobStatus.REVIEW_REQUIRED,
+    IDPJobStatus.COMPLETED,
+    IDPJobStatus.FAILED,
+})
+
+
 class IDPCheckpoint(StrEnum):
     CREATED = "CREATED"
     VALIDATED = "VALIDATED"

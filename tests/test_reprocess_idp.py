@@ -7,13 +7,15 @@ import sys
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from legaldesk.domain.models import DocumentStatus, MalwareScanStatus  # noqa: E402
-from legaldesk.idp.persistence import InMemoryIDPRepository  # noqa: E402
+from legaldesk.idp.models import IDPJob  # noqa: E402
+from legaldesk.idp.persistence import Boto3DynamoIDPRepository, IDPConcurrencyError, InMemoryIDPRepository  # noqa: E402
 from reprocess_idp import (  # noqa: E402
     ReprocessError,
     load_fixture,
@@ -177,6 +179,34 @@ class ReprocessOperatorTests(unittest.TestCase):
                 tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
                 fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "second-op",
             )
+
+    def test_real_boto_resource_serializes_atomic_reprocess_reservation(self) -> None:
+        import boto3
+
+        fixture, _, _, _ = _fixture_and_dependencies()
+        resource = boto3.resource("dynamodb", region_name="eu-west-1", endpoint_url="http://127.0.0.1:9", aws_access_key_id="offline", aws_secret_access_key="offline")
+        table = resource.Table("table")
+        table.get_item = Mock(return_value={})
+        table.query = Mock(return_value={"Items": []})
+        captured: dict[str, object] = {}
+
+        class AbortBeforeNetwork(Exception):
+            pass
+
+        def before_call(model, params, **kwargs):
+            captured.update(params)
+            raise AbortBeforeNetwork()
+
+        table.meta.client.meta.events.register("before-call.dynamodb.TransactWriteItems", before_call)
+        repository = Boto3DynamoIDPRepository("table", table=table)
+        job = IDPJob(job_id="reprocess-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="reprocess-idempotency", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf")
+        body = __import__("json").loads(captured["body"])
+        self.assertEqual(len(body["TransactItems"]), 4)
+        update = body["TransactItems"][3]["Update"]
+        self.assertEqual(update["Key"]["pk"], {"S": f"TENANT#{TENANT}#MATTER#{MATTER}"})
+        self.assertEqual(update["ExpressionAttributeValues"][":hash"], {"S": fixture.sha256})
 
 
 if __name__ == "__main__":
