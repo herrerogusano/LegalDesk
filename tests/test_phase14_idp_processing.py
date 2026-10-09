@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -114,6 +115,42 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual(result.fields["effective_date"].acceptance, FieldAcceptance.PROVISIONAL)
         self.assertEqual(result.fields["effective_date"].origin.value, "INTERPRETIVE")
         self.assertEqual(result.fields["amount"].acceptance, FieldAcceptance.PROVISIONAL)
+
+    def test_duration_units_canonicalize_literal_english_and_spanish_aliases(self) -> None:
+        schema = IDPSchemaRegistry().get(DocumentType.CONTRACT)
+        cases = (
+            ("month", "The initial term is one (1) calendar month.", "MONTH"),
+            ("YEARS", "The agreement remains in force for two (2) years.", "YEAR"),
+            ("meses", "La duración inicial será de doce (12) meses.", "MONTH"),
+            ("DÍAS", "La duración inicial será de diez (10) días.", "DAY"),
+        )
+        for value, quote, expected in cases:
+            with self.subTest(value=value):
+                result = parse_extractor_output(
+                    json.dumps({"fields": {"initial_duration_unit": {"presence": "PRESENT", "value": value, "evidence": [{"page": 1, "quote": quote}]}}}),
+                    schema=schema,
+                    page_text={1: quote},
+                    content_sha256="a" * 64,
+                )
+                field = result.fields["initial_duration_unit"]
+                self.assertEqual(field.value, expected)
+                self.assertEqual(field.acceptance, FieldAcceptance.AUTO_ACCEPTED)
+                self.assertEqual(field.origin.value, "LITERAL")
+
+    def test_unsupported_duration_unit_cannot_become_auto_accepted(self) -> None:
+        schema = IDPSchemaRegistry().get(DocumentType.CONTRACT)
+        quote = "The initial term is two (2) weeks."
+        result = parse_extractor_output(
+            json.dumps({"fields": {"initial_duration_unit": {"presence": "PRESENT", "value": "weeks", "evidence": [{"page": 1, "quote": quote}]}}}),
+            schema=schema,
+            page_text={1: quote},
+            content_sha256="a" * 64,
+        )
+        field = result.fields["initial_duration_unit"]
+        self.assertEqual(field.value, "weeks")
+        self.assertEqual(field.acceptance, FieldAcceptance.PROVISIONAL)
+        self.assertEqual(field.origin.value, "INTERPRETIVE")
+        self.assertFalse(field.validation["lexical_support"])
 
     def test_stage_ledger_has_distinct_atomic_paid_stages(self) -> None:
         ledger = StageCallLedger()

@@ -224,6 +224,30 @@ _MONTHS = {
 }
 
 
+# Duration units are a small, closed vocabulary owned by the registry.  The
+# provider may spell a unit in English or Spanish, but normalization must not
+# turn an unsupported unit (for example, ``weeks``) into a usable rule input.
+_DURATION_UNIT_ALIASES = {
+    "month": "MONTH", "months": "MONTH", "mes": "MONTH", "meses": "MONTH",
+    "year": "YEAR", "years": "YEAR", "año": "YEAR", "años": "YEAR", "ano": "YEAR", "anos": "YEAR",
+    "day": "DAY", "days": "DAY", "día": "DAY", "días": "DAY", "dia": "DAY", "dias": "DAY",
+}
+
+
+def _canonical_duration_unit(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _DURATION_UNIT_ALIASES.get(normalize_page_text(value).strip().casefold())
+
+
+def _duration_unit_lexical_support(value: Any, quoted: str) -> bool:
+    canonical = _canonical_duration_unit(value)
+    if canonical is None:
+        return False
+    tokens = re.findall(r"[A-Za-záéíóúñÁÉÍÓÚÑ]+", normalize_page_text(quoted))
+    return any(_canonical_duration_unit(token) == canonical for token in tokens)
+
+
 def _normalized_date(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -288,6 +312,8 @@ def _lexical_support(value: Any, value_type: str, lexical_kind: str, anchors: tu
         except (InvalidOperation, ValueError):
             return False
         return any(candidate == expected for candidate in _numeric_tokens(quoted))
+    if lexical_kind == "duration_unit" and value_type == "string":
+        return _duration_unit_lexical_support(value, quoted)
     if value_type == "number":
         return False
     if lexical_kind == "boolean":
@@ -334,6 +360,10 @@ def parse_extractor_output(
             presence = FieldPresence(item.get("presence", "UNKNOWN"))
             field_value = item.get("value")
             if presence is FieldPresence.PRESENT:
+                if spec.lexical_kind == "duration_unit":
+                    canonical_unit = _canonical_duration_unit(field_value)
+                    if canonical_unit is not None:
+                        field_value = canonical_unit
                 if spec.value_type == "date":
                     field_value = _normalized_date(field_value)
                 if not _validate_value(field_value, spec.value_type):
