@@ -103,6 +103,7 @@ class IDPLiveSmokeConfig:
     execute: bool = False
     expected_source: str = "IDP"
     field_name: str = ""
+    review_field_name: str = ""
     review_action: str = "none"
     expected_status: str = ""
 
@@ -413,6 +414,8 @@ def preflight(config: IDPLiveSmokeConfig) -> dict[str, object]:
         raise LiveIDPPreflightError("review_action_invalid")
     if field_name and not _SAFE_ID.fullmatch(field_name):
         raise LiveIDPPreflightError("field_name_invalid")
+    if config.review_field_name and not _SAFE_ID.fullmatch(config.review_field_name):
+        raise LiveIDPPreflightError("review_field_name_invalid")
     if config.execute and expected_source != "NONE" and not field_name:
         raise LiveIDPPreflightError("field_name_required_for_selected_query")
     if not _ATTEMPT_ID.fullmatch(config.attempt_id):
@@ -568,7 +571,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
         child_timeout = max(1, min(900, int(child_remaining)))
         child_deadline_epoch_ms = int(time.time() * 1000 + child_remaining * 1000)
         child_env = {key: value for key, value in os.environ.items() if not key.startswith("AWS_") and "SECRET" not in key.upper() and "TOKEN" not in key.upper()}
-        child_env.update({"LEGALDESK_P14_BASE_URL": config.base_url.rstrip("/"), "LEGALDESK_P14_IDP_HOST": config.idp_host, "LEGALDESK_P14_USERNAME": username, "LEGALDESK_P14_PASSWORD": password, "LEGALDESK_P14_MATTER_ID": config.matter_id, "LEGALDESK_P14_CROSS_MATTER_ID": config.cross_matter_id, "LEGALDESK_IDP_FIXTURE_PATH": fixture["path"], "LEGALDESK_IDP_FIXTURE_ID": fixture["id"], "LEGALDESK_IDP_EXPECTED_SOURCE": expected_source, "LEGALDESK_IDP_FIELD_NAME": field_name, "LEGALDESK_IDP_QUESTION": question, "LEGALDESK_IDP_EXPECTED_STATUS": expected_status, "LEGALDESK_IDP_EXPECTED_SKIP_REASON": str(fixture.get("skip_reason") or ""), "LEGALDESK_IDP_EXPECTED_DOCUMENT_TYPE": str(fixture["expected_type"] or ""), "LEGALDESK_IDP_REVIEW_ACTION": config.review_action, "LEGALDESK_IDP_DEADLINE_EPOCH_MS": str(child_deadline_epoch_ms)})
+        child_env.update({"LEGALDESK_P14_BASE_URL": config.base_url.rstrip("/"), "LEGALDESK_P14_IDP_HOST": config.idp_host, "LEGALDESK_P14_USERNAME": username, "LEGALDESK_P14_PASSWORD": password, "LEGALDESK_P14_MATTER_ID": config.matter_id, "LEGALDESK_P14_CROSS_MATTER_ID": config.cross_matter_id, "LEGALDESK_IDP_FIXTURE_PATH": fixture["path"], "LEGALDESK_IDP_FIXTURE_ID": fixture["id"], "LEGALDESK_IDP_EXPECTED_SOURCE": expected_source, "LEGALDESK_IDP_FIELD_NAME": field_name, "LEGALDESK_IDP_REVIEW_FIELD": config.review_field_name, "LEGALDESK_IDP_QUESTION": question, "LEGALDESK_IDP_EXPECTED_STATUS": expected_status, "LEGALDESK_IDP_EXPECTED_SKIP_REASON": str(fixture.get("skip_reason") or ""), "LEGALDESK_IDP_EXPECTED_DOCUMENT_TYPE": str(fixture["expected_type"] or ""), "LEGALDESK_IDP_REVIEW_ACTION": config.review_action, "LEGALDESK_IDP_DEADLINE_EPOCH_MS": str(child_deadline_epoch_ms)})
         try:
             child = subprocess.run(["node", str(BROWSER_RUNNER)], cwd=ROOT, env=child_env, capture_output=True, text=True, timeout=child_timeout)
             report = parse_child(child.stdout)
@@ -683,6 +686,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fixture-path", type=Path, required=True)
     parser.add_argument("--expected-source", choices=("IDP", "RAG", "NONE"), default="IDP")
     parser.add_argument("--field-name", default="")
+    parser.add_argument("--review-field-name", default="")
     parser.add_argument("--review-action", choices=("none", "approve", "correct"), default="none")
     parser.add_argument("--expected-status", choices=("", "IDP_SKIPPED", "IDP_FAILED"), default="")
     parser.add_argument("--region", default=REGION)
@@ -699,7 +703,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         table_name=args.table_name, memory_id=args.memory_id, fixture_path=args.fixture_path,
         fixture_id=args.fixture_id, region=args.region, attempt_id=args.attempt_id,
         report_path=args.report_path, execute=args.execute_approved_once,
-        expected_source=args.expected_source, field_name=args.field_name, review_action=args.review_action, expected_status=args.expected_status,
+        expected_source=args.expected_source, field_name=args.field_name, review_field_name=args.review_field_name, review_action=args.review_action, expected_status=args.expected_status,
     )
     try:
         report = run_live(config) if config.execute else preflight(config)

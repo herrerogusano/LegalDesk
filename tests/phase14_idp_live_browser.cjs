@@ -21,6 +21,7 @@ const EXPECTED_SOURCE = process.env.LEGALDESK_IDP_EXPECTED_SOURCE || "IDP";
 const IDP_QUESTION = process.env.LEGALDESK_IDP_QUESTION || "";
 const EXPECTED_SKIP_REASON = process.env.LEGALDESK_IDP_EXPECTED_SKIP_REASON || "";
 const REVIEW_ACTION = process.env.LEGALDESK_IDP_REVIEW_ACTION || "none";
+const REVIEW_FIELD = process.env.LEGALDESK_IDP_REVIEW_FIELD || "";
 const POLL_LIMIT = 20;
 const POLL_MS = 15_000;
 const API_CALL_LIMIT = 120;
@@ -104,6 +105,13 @@ function selectBoundReviewTask(tasks, expected) {
   }) || null;
 }
 
+function selectBoundReviewField(reviewTask, requestedField = REVIEW_FIELD) {
+  const fields = reviewTask && reviewTask.idp && Array.isArray(reviewTask.idp.fields) ? reviewTask.idp.fields : [];
+  const fieldName = requestedField || (fields[0] && fields[0].name) || "";
+  if (!SAFE_ID.test(fieldName)) return null;
+  return fields.find(field => field && field.name === fieldName) || null;
+}
+
 function safeHash(value) { return typeof value === "string" && SHA256.test(value) ? value : null; }
 
 function assertDeadline() {
@@ -118,6 +126,7 @@ function validateInputs() {
   if (!SAFE_ID.test(MATTER_ID) || !SAFE_ID.test(CROSS_MATTER_ID) || MATTER_ID === CROSS_MATTER_ID) throw new SmokeFailure("invalid_matter_selector");
   if (!SAFE_ID.test(FIXTURE_ID) || !USERNAME || !PASSWORD) throw new SmokeFailure("missing_runner_inputs");
   if (process.env.LEGALDESK_IDP_FIELD_NAME && !SAFE_ID.test(process.env.LEGALDESK_IDP_FIELD_NAME)) throw new SmokeFailure("invalid_field_selector");
+  if (REVIEW_FIELD && !SAFE_ID.test(REVIEW_FIELD)) throw new SmokeFailure("invalid_review_field_selector");
   if (!["IDP", "RAG", "NONE"].includes(EXPECTED_SOURCE) || !["none", "approve", "correct"].includes(REVIEW_ACTION)) throw new SmokeFailure("invalid_expected_contract");
 }
 
@@ -356,22 +365,31 @@ async function run() {
       const taskDetails = page.locator(`#reviews-pending details[data-review-id="${reviewTask.reviewTaskId}"]`);
       await taskDetails.waitFor({ state: "visible", timeout: 120_000 });
       await taskDetails.click();
-      const reviewFieldName = fieldName || reviewTask.idp.fields[0].name;
-      if (!SAFE_ID.test(reviewFieldName) || !reviewTask.idp.fields.some(field => field && field.name === reviewFieldName)) throw new SmokeFailure("review_field_not_bound");
+      const reviewField = selectBoundReviewField(reviewTask);
+      const reviewFieldName = reviewField && reviewField.name;
+      if (!reviewFieldName) throw new SmokeFailure("review_field_not_bound");
       const fieldCard = taskDetails.locator(`.idp-review-field[data-idp-field="${reviewFieldName}"]`);
       await fieldCard.waitFor({ state: "visible", timeout: 30_000 });
       const reason = fieldCard.locator(".idp-review-reason");
       await reason.fill(REVIEW_ACTION === "approve" ? "Synthetic bounded approval smoke." : "Synthetic bounded correction smoke.");
       const actionName = REVIEW_ACTION === "approve" ? "APPROVE" : "CORRECT";
       const actionButton = fieldCard.locator(`.idp-review-button[data-idp-action="${actionName}"]`);
-      if (REVIEW_ACTION === "correct") await fieldCard.locator(".idp-review-correction").fill(process.env.LEGALDESK_IDP_CORRECTION_VALUE || "2024-01-31");
+      if (REVIEW_ACTION === "correct") {
+        // The real UI reveals correction/evidence controls on the first click;
+        // it cannot be filled while hidden.  The second click submits the
+        // now-complete, server-bound correction form.
+        await actionButton.click();
+        const correction = fieldCard.locator(".idp-review-correction");
+        await correction.waitFor({ state: "visible", timeout: 10_000 });
+        await correction.fill(process.env.LEGALDESK_IDP_CORRECTION_VALUE || "2024-01-31");
+      }
       const decisionResponse = page.waitForResponse(response => { try { return new URL(response.url()).pathname.includes("/reviews/") && response.request().method() === "PATCH"; } catch (_error) { return false; } }, { timeout: 60_000 });
       await actionButton.click();
       const decision = await decisionResponse;
       if (!decision.ok()) throw new SmokeFailure("human_decision_response");
       const decisionPayload = await decision.json();
       if (!decisionPayload || decisionPayload.reviewTaskId !== reviewTask.reviewTaskId) throw new SmokeFailure("human_decision_binding_mismatch");
-      review = { status: "EXECUTED", action: REVIEW_ACTION, taskId: reviewTask.reviewTaskId, documentId, runId: idp.runId };
+      review = { status: "EXECUTED", action: REVIEW_ACTION, fieldName: reviewFieldName, taskId: reviewTask.reviewTaskId, documentId, runId: idp.runId };
     }
 
     setPhase("cross_matter");
@@ -413,5 +431,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask };
+  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField };
 }

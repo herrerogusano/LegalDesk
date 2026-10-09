@@ -7,6 +7,7 @@ const {
   parseMcpMetadata,
   quoteDigest,
   selectBoundReviewTask,
+  selectBoundReviewField,
 } = require("./phase14_idp_live_browser.cjs");
 
 assert.deepStrictEqual(
@@ -23,5 +24,9 @@ const matching = { reviewTaskId: "task-1", idp: { ...expected, fields: [{ name: 
 const wrongHash = { reviewTaskId: "task-2", idp: { ...expected, documentSha256: "b".repeat(64), fields: [{ name: "effective_date" }] } };
 assert.strictEqual(selectBoundReviewTask([wrongHash, matching], expected), matching);
 assert.strictEqual(selectBoundReviewTask([{ reviewTaskId: "task-3", source: "IDP", idpDocumentId: "doc-1" }], expected), null);
+const taskWithTwoFields = { reviewTaskId: "task-4", idp: { ...expected, fields: [{ name: "governing_law" }, { name: "effective_date" }] } };
+assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "effective_date").name, "effective_date");
+assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "missing_field"), null);
+assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "").name, "governing_law");
 
 process.stdout.write("phase14 idp browser helper contracts: ok\n");
