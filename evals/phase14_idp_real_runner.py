@@ -22,7 +22,7 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -34,6 +34,8 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 from legaldesk.idp.acquisition import acquire_pdf  # noqa: E402
 from legaldesk.idp.artifacts import InMemoryIDPArtifactStore  # noqa: E402
 from legaldesk.idp.pipeline import IDPProcessingPipeline  # noqa: E402
+from legaldesk.idp.models import FieldAcceptance, FieldOrigin, FieldPresence, IDPContractError, IDPFieldResult, IDPJobStatus  # noqa: E402
+from legaldesk.idp.rules import DerivedMetadataEngine  # noqa: E402
 from legaldesk.idp.processing import IDPOutputError, StageCallLedger  # noqa: E402
 from legaldesk.idp.providers import (  # noqa: E402
     IDPConverseClassifier,
@@ -424,11 +426,83 @@ def _field_export(field: Any) -> dict[str, object]:
     }
 
 
-def _empty_case(fixture: Mapping[str, Any], status: str, errors: list[str], *, source_hash: str | None = None, ocr: Mapping[str, object] | None = None) -> dict[str, object]:
+def _empty_case(
+    fixture: Mapping[str, Any], status: str, errors: list[str], *, source_hash: str | None = None,
+    ocr: Mapping[str, object] | None = None, document_type: str | None = None,
+    observed: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     return {
-        "fixtureId": fixture["id"], "documentType": fixture["expected_type"], "documentSha256": source_hash or fixture["sha256"],
-        "status": status, "fields": {}, "derived": None, "errors": sorted(set(errors)), "ocr": dict(ocr or {}), "observed": {},
+        "fixtureId": fixture["id"], "documentType": document_type, "documentSha256": source_hash or fixture["sha256"],
+        "status": status, "fields": {}, "derived": None, "errors": sorted(set(errors)), "ocr": dict(ocr or {}),
+        "observed": dict(observed or {}),
     }
+
+
+def _apply_runtime_derived(run: Any) -> Any:
+    """Apply the same allowlisted derived metadata step as production runtime."""
+
+    fields = dict(run.fields)
+    effective = fields.get("effective_date")
+    duration = fields.get("initial_duration_value")
+    unit = fields.get("initial_duration_unit")
+    if all(item is not None and item.presence is FieldPresence.PRESENT for item in (effective, duration, unit)):
+        try:
+            rule_id = "ADD_CALENDAR_MONTHS_V1" if str(unit.value).strip().lower() in {"month", "months", "mes", "meses"} else "ADD_CALENDAR_YEARS_V1"
+            derived = DerivedMetadataEngine().derive(rule_id, effective_date=effective.value, duration_value=duration.value, duration_unit=unit.value)
+            if derived.field not in fields:
+                explicit = fields.get("explicit_expiration_date")
+                conflict = explicit is not None and explicit.presence is FieldPresence.PRESENT and explicit.value != derived.value
+                fields[derived.field] = IDPFieldResult(
+                    field=derived.field, value=derived.value, presence=FieldPresence.PRESENT,
+                    origin=FieldOrigin.DERIVED,
+                    acceptance=FieldAcceptance.REVIEW_REQUIRED if conflict else FieldAcceptance.PROVISIONAL,
+                    reason=derived.reason,
+                    provenance={
+                        "ruleId": derived.rule_id, "ruleVersion": derived.rule_version,
+                        "inputs": derived.inputs, "parameters": dict(derived.parameters or {}),
+                        "inputEvidence": {
+                            name: [{"page": anchor.page, "quote": anchor.quote, "contentSha256": anchor.content_sha256, "start": anchor.start, "end": anchor.end} for anchor in fields[name].evidence]
+                            for name in derived.inputs if name in fields
+                        },
+                        "conflict": conflict,
+                        "conflictWith": "explicit_expiration_date" if conflict else None,
+                    },
+                )
+        except IDPContractError:
+            # Invalid rule inputs are not evidence for a guessed value.
+            pass
+    if fields != dict(run.fields):
+        run = replace(run, fields=fields)
+    if any(field.acceptance is FieldAcceptance.REVIEW_REQUIRED for field in fields.values()) and run.status is IDPJobStatus.COMPLETED:
+        run = replace(run, status=IDPJobStatus.REVIEW_REQUIRED)
+    return run
+
+
+def _derived_export(run: Any) -> dict[str, object] | None:
+    derived_fields = []
+    for name, field in run.fields.items():
+        if field.origin is not FieldOrigin.DERIVED:
+            continue
+        provenance = dict(field.provenance)
+        derived_fields.append({
+            "field": name, "valueDigest": _digest(field.value), "origin": field.origin.value,
+            "acceptance": field.acceptance.value, "ruleId": provenance.get("ruleId"),
+            "ruleVersion": provenance.get("ruleVersion"), "inputs": list(provenance.get("inputs", ())),
+            "conflict": bool(provenance.get("conflict", False)),
+        })
+    return derived_fields[0] if len(derived_fields) == 1 else ({"fields": derived_fields} if derived_fields else None)
+
+
+def _report_status(run: Any) -> str:
+    """Map internal/public review enum spellings to the report contract."""
+
+    if run.status in {IDPJobStatus.REVIEW_REQUIRED, "REVIEW_REQUIRED", "IDP_REVIEW_REQUIRED"} or any(
+        field.acceptance is FieldAcceptance.REVIEW_REQUIRED for field in run.fields.values()
+    ):
+        return "REVIEW_REQUIRED"
+    if run.status in {IDPJobStatus.COMPLETED, "COMPLETED"}:
+        return "COMPLETED"
+    return str(getattr(run.status, "value", run.status))
 
 
 def _inspect(config: RunnerConfig, fixtures: Mapping[str, Mapping[str, Any]], selected: tuple[Mapping[str, Any], ...]) -> list[dict[str, object]]:
@@ -439,11 +513,11 @@ def _inspect(config: RunnerConfig, fixtures: Mapping[str, Mapping[str, Any]], se
             ocr_required = list(document.ocr_required_pages)
             ocr = {"requiredPages": ocr_required}
             if ocr_required and config.ocr_artifact_dir is None:
-                cases.append(_empty_case(fixture, "NOT_EXECUTED", ["OCR_ARTIFACT_REQUIRED"], ocr=ocr))
+                cases.append(_empty_case(fixture, "NOT_EXECUTED", ["OCR_ARTIFACT_REQUIRED"], ocr=ocr, document_type=None))
             else:
-                cases.append(_empty_case(fixture, "NOT_EXECUTED", [], ocr=ocr))
+                cases.append(_empty_case(fixture, "NOT_EXECUTED", [], ocr=ocr, document_type=None))
         except Exception as exc:
-            cases.append(_empty_case(fixture, "FAILED", [_safe_error(exc)]))
+            cases.append(_empty_case(fixture, "FAILED", [_safe_error(exc)], document_type=None))
     return cases
 
 
@@ -496,8 +570,9 @@ def run(
             raise RealEvaluationError("ocr_artifact_manifest_invalid")
         ocr_manifest = raw_ocr_manifest
     for index, fixture in enumerate(selected):
+        fixture_started = time.monotonic()
         if time.monotonic() >= budget.deadline:
-            results.append(_empty_case(fixture, "NOT_EXECUTED", ["WALL_DEADLINE_EXCEEDED_BEFORE_FIXTURE"]))
+            results.append(_empty_case(fixture, "NOT_EXECUTED", ["WALL_DEADLINE_EXCEEDED_BEFORE_FIXTURE"], observed={"latencyMs": 0}))
             continue
         try:
             input_before, output_before = budget.input_tokens, budget.output_tokens
@@ -506,7 +581,7 @@ def run(
             ocr_meta: dict[str, object] = {"requiredPages": list(document.ocr_required_pages)}
             if document.ocr_required_pages:
                 if config.ocr_artifact_dir is None or config.ocr_artifact_manifest is None:
-                    results.append(_empty_case(fixture, "NOT_EXECUTED", ["OCR_ARTIFACT_REQUIRED"], ocr=ocr_meta))
+                    results.append(_empty_case(fixture, "NOT_EXECUTED", ["OCR_ARTIFACT_REQUIRED"], ocr=ocr_meta, observed={"latencyMs": int((time.monotonic() - fixture_started) * 1000)}))
                     continue
                 ocr_pages, proof = _load_ocr_artifact(fixture, document=document, artifact_dir=config.ocr_artifact_dir, artifact_manifest=ocr_manifest, limits=budget.limits)
                 pages.update(ocr_pages)
@@ -525,19 +600,20 @@ def run(
             )
             if result.run is None:
                 raise RealEvaluationError("pipeline_run_missing")
-            fields = {name: _field_export(field) for name, field in result.run.fields.items()}
-            status = "REVIEW_REQUIRED" if any(value["acceptance"] == "REVIEW_REQUIRED" for value in fields.values()) else "COMPLETED"
+            runtime_run = _apply_runtime_derived(result.run)
+            fields = {name: _field_export(field) for name, field in runtime_run.fields.items()}
+            status = _report_status(runtime_run)
             results.append({
-                "fixtureId": fixture["id"], "documentType": result.run.document_type.value,
-                "documentSha256": result.run.document_sha256, "status": status, "fields": fields,
-                "derived": None, "ocr": ocr_meta,
-                "observed": {"tokens": {"input": budget.input_tokens - input_before, "output": budget.output_tokens - output_before}, "ocr": {"pages": ocr_meta.get("pages", 0), "api_calls": ocr_meta.get("apiCalls", 0)}},
+                "fixtureId": fixture["id"], "documentType": runtime_run.document_type.value,
+                "documentSha256": runtime_run.document_sha256, "status": status, "fields": fields,
+                "derived": _derived_export(runtime_run), "ocr": ocr_meta,
+                "observed": {"latencyMs": int((time.monotonic() - fixture_started) * 1000), "tokens": {"input": budget.input_tokens - input_before, "output": budget.output_tokens - output_before}, "ocr": {"pages": ocr_meta.get("pages", 0), "api_calls": ocr_meta.get("apiCalls", 0)}},
             })
         except Exception as exc:
             errors = [_safe_error(exc)]
             if budget.usage_unknown:
                 errors.append("PAID_OUTCOME_UNKNOWN")
-            failed = _empty_case(fixture, "FAILED", errors)
+            failed = _empty_case(fixture, "FAILED", errors, document_type=None, observed={"latencyMs": int((time.monotonic() - fixture_started) * 1000)})
             failed["diagnostic"] = {
                 "stage": budget.failure_stage or budget.current_stage or "UNKNOWN",
                 "code": _safe_error(exc), "type": _safe_error_type(exc),
@@ -545,7 +621,7 @@ def run(
             results.append(failed)
             if budget.halted:
                 for remaining in selected[index + 1:]:
-                    results.append(_empty_case(remaining, "NOT_EXECUTED", ["PAID_OUTCOME_UNKNOWN" if budget.usage_unknown else "PAID_BUDGET_STOPPED"]))
+                    results.append(_empty_case(remaining, "NOT_EXECUTED", ["PAID_OUTCOME_UNKNOWN" if budget.usage_unknown else "PAID_BUDGET_STOPPED"], document_type=None, observed={"latencyMs": 0}))
                 break
     if budget.usage_unknown:
         run_status = "UNKNOWN"

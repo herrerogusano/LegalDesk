@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,11 +24,15 @@ from phase14_idp_real_runner import (  # noqa: E402
     _digest,
     _fixture_bytes,
     _load_ocr_artifact,
+    _apply_runtime_derived,
+    _derived_export,
+    _report_status,
     load_manifest,
     run,
 )
 from legaldesk.idp.providers import IDPConverseClassifier, IDPConverseExtractor, IDPModelConfig  # noqa: E402
 from legaldesk.idp.registry import IDPSchemaRegistry  # noqa: E402
+from legaldesk.idp.models import DocumentType, FieldAcceptance, FieldPresence, IDPExtractionRun, IDPFieldResult, IDPJobStatus  # noqa: E402
 
 
 class _NeverCalled:
@@ -81,6 +86,28 @@ class _ExtractorParamValidationProvider:
 
 
 class Phase14IDPRealRunnerTests(unittest.TestCase):
+    def test_export_applies_production_derived_metadata_and_marks_conflict_for_review(self) -> None:
+        fields = {
+            "effective_date": IDPFieldResult(field="effective_date", value="2024-01-31", presence=FieldPresence.PRESENT),
+            "initial_duration_value": IDPFieldResult(field="initial_duration_value", value=1, presence=FieldPresence.PRESENT),
+            "initial_duration_unit": IDPFieldResult(field="initial_duration_unit", value="month", presence=FieldPresence.PRESENT),
+            "explicit_expiration_date": IDPFieldResult(field="explicit_expiration_date", value="2024-03-01", presence=FieldPresence.PRESENT),
+        }
+        run = IDPExtractionRun(
+            run_id="derived-test", tenant_id="tenant", matter_id="matter", document_id="doc",
+            document_sha256="a" * 64, document_type=DocumentType.CONTRACT, schema_version="1.0.0",
+            model_id="model", prompt_version="prompt", status=IDPJobStatus.COMPLETED, fields=fields,
+            created_at=datetime.now(timezone.utc),
+        )
+        projected = _apply_runtime_derived(run)
+        self.assertEqual(projected.fields["estimated_anniversary_date"].value, "2024-02-29")
+        self.assertEqual(projected.fields["estimated_anniversary_date"].acceptance, FieldAcceptance.REVIEW_REQUIRED)
+        exported = _derived_export(projected)
+        self.assertEqual(exported["field"], "estimated_anniversary_date")
+        self.assertEqual(exported["conflict"], True)
+        self.assertNotIn("2024-02-29", json.dumps(exported))
+        self.assertEqual(_report_status(projected), "REVIEW_REQUIRED")
+
     def test_default_preflight_is_18_fixture_metadata_only_and_never_imports_boto3(self) -> None:
         config = RunnerConfig()
         with patch.dict(sys.modules, {"boto3": None}):
@@ -179,6 +206,7 @@ class Phase14IDPRealRunnerTests(unittest.TestCase):
         self.assertEqual(report["provenance"]["status"], "UNKNOWN")
         diagnostic = report["results"][0]["diagnostic"]
         self.assertEqual(diagnostic, {"stage": "EXTRACTOR", "code": "PROVIDER_REQUEST_INVALID", "type": "SDK_PARAMETER_VALIDATION"})
+        self.assertIsNone(report["results"][0]["documentType"], "failed classification must not copy expected fixture type")
         self.assertNotIn("synthetic provider detail", json.dumps(report))
         self.assertIsNone(report["usage"]["inputTokens"])
 
