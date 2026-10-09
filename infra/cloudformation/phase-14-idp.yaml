@@ -1,0 +1,642 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  LegalDesk Phase 14 IDP infrastructure proposal. Reuses the existing source,
+  metadata, artifact, Cognito and AgentCore Gateway resources; creates only
+  bounded asynchronous IDP queues, Lambda execution roles/functions and the
+  Textract completion channel. Processing is disabled until explicitly enabled.
+
+Parameters:
+  EnableIDPProcessing:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Safety gate. Queue event-source mappings and reserved Lambda concurrency
+      remain disabled until this is explicitly set to true.
+  MetadataTableName:
+    Type: String
+    MinLength: 3
+    MaxLength: 255
+  MetadataTableArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:dynamodb:[^:]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$"
+  SourceBucketName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  SourceBucketArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  ArtifactBucketName:
+    Type: String
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: Existing versioned bucket containing immutable Lambda packages
+  IDPWorkerCodeKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  IDPWorkerCodeVersion:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  IDPOCRCodeKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  IDPOCRCodeVersion:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  BetaTenantId:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    Description: One pre-provisioned fictional/public beta tenant only
+  ExistingUserPoolId:
+    Type: String
+    AllowedPattern: "^[a-z0-9-]+_[A-Za-z0-9]+$"
+    Description: Existing Cognito pool; this stack never creates a pool
+  ExistingUserPoolDomain:
+    Type: String
+    AllowedPattern: "^[A-Za-z0-9.-]+$"
+    Description: Existing Cognito domain used by the operator-managed M2M token bootstrap
+  ExistingGatewayArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:bedrock-agentcore:[^:]+:[0-9]{12}:gateway/.+$"
+    Description: Existing AgentCore Gateway; this stack does not modify it
+  IDPResourceServerIdentifier:
+    Type: String
+    Default: legaldesk-idp
+    AllowedValues: [legaldesk-idp]
+  IDPReviewScopeName:
+    Type: String
+    Default: review-create
+    AllowedValues: [review-create]
+  IDPMachineClientName:
+    Type: String
+    Default: LegalDeskPhase14IDPMachine
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9 _-]{0,127}$"
+  IDPPromptVersion:
+    Type: String
+    Default: 1.0.0
+    AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    Description: Version of the packaged server-controlled IDP prompt artifacts
+  M2MSecretParameterName:
+    Type: String
+    Default: /legaldesk/phase14/idp/m2m-client-secret
+    AllowedPattern: "^/[A-Za-z0-9_.+=,@-]+(/[A-Za-z0-9_.+=,@-]+)*$"
+    Description: Existing/operator-bootstrapped SSM Standard SecureString name
+  M2MSecretParameterArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:ssm:[^:]+:[0-9]{12}:parameter/[A-Za-z0-9_.+=,@/-]+$"
+    Description: Exact ARN of M2MSecretParameterName; no secret value is templated or output
+  IDPInferenceProfileArn:
+    Type: String
+    AllowedPattern: "^arn:aws:bedrock:eu-west-1:[0-9]{12}:inference-profile/eu\\.anthropic\\.claude-sonnet-4-6$"
+    Description: Existing EU Sonnet 4.6 inference profile ARN
+  IDPFoundationModelArn:
+    Type: String
+    AllowedPattern: "^arn:aws:bedrock:eu-west-1::foundation-model/anthropic\\.claude-sonnet-4-6$"
+    Description: Exact eu-west-1 destination foundation-model ARN for the profile
+
+Conditions:
+  IDPEnabled: !Equals [!Ref EnableIDPProcessing, "true"]
+
+Resources:
+  IDPWorkDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-idp-work-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+
+  IDPWorkQueue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-idp-work"
+      VisibilityTimeout: 720
+      ReceiveMessageWaitTimeSeconds: 20
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IDPWorkDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  IDPOCRDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-idp-ocr-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+
+  IDPOCRCompletionQueue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-idp-ocr-completion"
+      VisibilityTimeout: 720
+      ReceiveMessageWaitTimeSeconds: 20
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IDPOCRDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  TextractCompletionTopic:
+    Type: AWS::SNS::Topic
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TopicName: !Sub "AmazonTextract-${AWS::StackName}"
+      DisplayName: !Sub "AmazonTextract-${AWS::StackName}"
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+
+  TextractCompletionQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref IDPOCRCompletionQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowOnlyThisTextractTopic
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt IDPOCRCompletionQueue.Arn
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !Ref TextractCompletionTopic
+
+  TextractCompletionSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref TextractCompletionTopic
+      Protocol: sqs
+      Endpoint: !GetAtt IDPOCRCompletionQueue.Arn
+      RawMessageDelivery: false
+
+  TextractCompletionTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref TextractCompletionTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowRegionalTextractCompletionPublish
+            Effect: Allow
+            Principal:
+              Service: textract.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref TextractCompletionTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:textract:eu-west-1:${AWS::AccountId}:*"
+
+  TextractNotificationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Exact SNS publish role passed to Textract async text detection
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: textract.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:textract:eu-west-1:${AWS::AccountId}:*"
+      Policies:
+        - PolicyName: PublishOnlyThisTextractCompletionTopic
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: PublishOnlyThisTextractCompletionTopic
+                Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref TextractCompletionTopic
+
+  IDPWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-idp-worker"
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+
+  IDPOCRContinuationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-idp-ocr-continuation"
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+
+  IDPWorkerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        Least-privilege IDP worker role. It can process only the fictional beta
+        tenant, immutable IDP artifacts, and the approved Sonnet profile. It
+        cannot grant human Gateway permissions or invoke Lambda/MCP directly.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+      Policies:
+        - PolicyName: LegalDeskIDPWorkerDataPlane
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteScopedLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${IDPWorkerLogGroup.Arn}:*"
+              - Sid: ConsumeAndRedeliverWorkMessages
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:SendMessage
+                Resource: !GetAtt IDPWorkQueue.Arn
+              - Sid: ReadWriteIDPStateOnly
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !Ref MetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                      - "IDP#JOB#*"
+                      - "IDP#OCRJOB#*"
+                      - "IDP#INVOCATION#*"
+              - Sid: ReadCanonicalBetaDocuments
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+              - Sid: StoreOnlyIDPArtifactsOutsideRAG
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "${SourceBucketArn}/idp-artifacts/tenant=${BetaTenantId}/matter=*/document=*/run=*/*"
+              - Sid: InvokeApprovedEuropeanSonnetProfile
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Ref IDPInferenceProfileArn
+                  - !Ref IDPFoundationModelArn
+                  - arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-north-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-2::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-sonnet-4-6
+              - Sid: StartTextractOnlyInIreland
+                Effect: Allow
+                Action:
+                  - textract:StartDocumentTextDetection
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: eu-west-1
+              - Sid: PassOnlyTextractNotificationRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt TextractNotificationRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: textract.amazonaws.com
+              - Sid: ReadOperatorBootstrappedM2MSecretParameter
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Ref M2MSecretParameterArn
+
+  IDPOCRContinuationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        Least-privilege OCR continuation role for validated Textract callbacks;
+        it has no human authorization, Gateway grant-write, or direct Lambda/MCP access.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+      Policies:
+        - PolicyName: LegalDeskIDPOCRContinuationDataPlane
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteScopedLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${IDPOCRContinuationLogGroup.Arn}:*"
+              - Sid: ConsumeOCRAndContinueWork
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt IDPOCRCompletionQueue.Arn
+              - Sid: EnqueueBoundedWorkContinuation
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt IDPWorkQueue.Arn
+              - Sid: ReadWriteIDPOCRStateOnly
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !Ref MetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                      - "IDP#JOB#*"
+                      - "IDP#OCRJOB#*"
+                      - "IDP#INVOCATION#*"
+              - Sid: ReadCanonicalBetaDocuments
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+              - Sid: StoreOnlyIDPArtifactsOutsideRAG
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "${SourceBucketArn}/idp-artifacts/tenant=${BetaTenantId}/matter=*/document=*/run=*/*"
+              - Sid: ReadTextractResultsOnlyInIreland
+                Effect: Allow
+                Action: textract:GetDocumentTextDetection
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: eu-west-1
+              - Sid: InvokeApprovedEuropeanSonnetProfile
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Ref IDPInferenceProfileArn
+                  - !Ref IDPFoundationModelArn
+                  - arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-north-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-1::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-south-2::foundation-model/anthropic.claude-sonnet-4-6
+                  - arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-sonnet-4-6
+              - Sid: ReadOperatorBootstrappedM2MSecretParameter
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Ref M2MSecretParameterArn
+
+  IDPWorkerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: IDPWorkerLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-idp-worker"
+      Description: Bounded IDP worker; disabled until the explicit phase gate is enabled
+      Runtime: python3.12
+      Handler: legaldesk.idp_lambda.lambda_handler
+      Role: !GetAtt IDPWorkerExecutionRole.Arn
+      MemorySize: 1024
+      Timeout: 120
+      # Disable the function when the phase gate is off.  Enabled operation
+      # deliberately uses the account's unreserved pool; the event-source
+      # mapping remains bounded at MaximumConcurrency=2 below.
+      ReservedConcurrentExecutions: !If [IDPEnabled, !Ref AWS::NoValue, 0]
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref IDPWorkerCodeKey
+        S3ObjectVersion: !Ref IDPWorkerCodeVersion
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          LEGALDESK_IDP_ENABLED: !Ref EnableIDPProcessing
+          LEGALDESK_IDP_QUEUE_URL: !Ref IDPWorkQueue
+          LEGALDESK_IDP_QUEUE_ARN: !GetAtt IDPWorkQueue.Arn
+          LEGALDESK_IDP_OCR_QUEUE_URL: !Ref IDPOCRCompletionQueue
+          LEGALDESK_IDP_OCR_QUEUE_ARN: !GetAtt IDPOCRCompletionQueue.Arn
+          LEGALDESK_IDP_OCR_SNS_TOPIC_ARN: !Ref TextractCompletionTopic
+          LEGALDESK_IDP_OCR_ROLE_ARN: !GetAtt TextractNotificationRole.Arn
+          LEGALDESK_IDP_OCR_SQS_SOURCE_ARN: !GetAtt IDPOCRCompletionQueue.Arn
+          LEGALDESK_METADATA_TABLE_NAME: !Ref MetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
+          LEGALDESK_IDP_ARTIFACT_BUCKET: !Ref SourceBucketName
+          LEGALDESK_IDP_ARTIFACT_PREFIX: idp-artifacts/
+          LEGALDESK_IDP_BETA_TENANT_ID: !Ref BetaTenantId
+          LEGALDESK_IDP_MODEL_ID: !Ref IDPInferenceProfileArn
+          LEGALDESK_IDP_PROMPT_VERSION: !Ref IDPPromptVersion
+          LEGALDESK_IDP_GATEWAY_ARN: !Ref ExistingGatewayArn
+          LEGALDESK_IDP_COGNITO_DOMAIN: !Ref ExistingUserPoolDomain
+          LEGALDESK_IDP_TOKEN_ENDPOINT: !Sub "https://${ExistingUserPoolDomain}/oauth2/token"
+          LEGALDESK_IDP_M2M_CLIENT_ID: !Ref IDPMachineClient
+          LEGALDESK_IDP_M2M_SECRET_PARAMETER_NAME: !Ref M2MSecretParameterName
+          LEGALDESK_IDP_REVIEW_SCOPE: !Sub "${IDPResourceServerIdentifier}/${IDPReviewScopeName}"
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+
+  IDPOCRContinuationFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: IDPOCRContinuationLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-idp-ocr-continuation"
+      Description: Validates Textract completion callbacks and continues bounded IDP processing
+      Runtime: python3.12
+      Handler: legaldesk.idp_ocr_lambda.lambda_handler
+      Role: !GetAtt IDPOCRContinuationExecutionRole.Arn
+      MemorySize: 512
+      Timeout: 120
+      # See IDPWorkerFunction: no reservation is consumed when enabled.
+      ReservedConcurrentExecutions: !If [IDPEnabled, !Ref AWS::NoValue, 0]
+      Code:
+        S3Bucket: !Ref ArtifactBucketName
+        S3Key: !Ref IDPOCRCodeKey
+        S3ObjectVersion: !Ref IDPOCRCodeVersion
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          LEGALDESK_IDP_ENABLED: !Ref EnableIDPProcessing
+          LEGALDESK_IDP_OCR_QUEUE_URL: !Ref IDPOCRCompletionQueue
+          LEGALDESK_IDP_OCR_QUEUE_ARN: !GetAtt IDPOCRCompletionQueue.Arn
+          LEGALDESK_IDP_OCR_SNS_TOPIC_ARN: !Ref TextractCompletionTopic
+          LEGALDESK_IDP_OCR_ROLE_ARN: !GetAtt TextractNotificationRole.Arn
+          LEGALDESK_IDP_OCR_SQS_SOURCE_ARN: !GetAtt IDPOCRCompletionQueue.Arn
+          LEGALDESK_METADATA_TABLE_NAME: !Ref MetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
+          LEGALDESK_IDP_ARTIFACT_BUCKET: !Ref SourceBucketName
+          LEGALDESK_IDP_ARTIFACT_PREFIX: idp-artifacts/
+          LEGALDESK_IDP_BETA_TENANT_ID: !Ref BetaTenantId
+          LEGALDESK_IDP_MODEL_ID: !Ref IDPInferenceProfileArn
+          LEGALDESK_IDP_PROMPT_VERSION: !Ref IDPPromptVersion
+          LEGALDESK_IDP_GATEWAY_ARN: !Ref ExistingGatewayArn
+          LEGALDESK_IDP_COGNITO_DOMAIN: !Ref ExistingUserPoolDomain
+          LEGALDESK_IDP_TOKEN_ENDPOINT: !Sub "https://${ExistingUserPoolDomain}/oauth2/token"
+          LEGALDESK_IDP_M2M_CLIENT_ID: !Ref IDPMachineClient
+          LEGALDESK_IDP_M2M_SECRET_PARAMETER_NAME: !Ref M2MSecretParameterName
+          LEGALDESK_IDP_REVIEW_SCOPE: !Sub "${IDPResourceServerIdentifier}/${IDPReviewScopeName}"
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "14"
+        - Key: Component
+          Value: IDP
+
+  IDPWorkEventSourceMapping:
+    Condition: IDPEnabled
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt IDPWorkQueue.Arn
+      FunctionName: !Ref IDPWorkerFunction
+      Enabled: true
+      BatchSize: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      ScalingConfig:
+        MaximumConcurrency: 2
+
+  IDPOCRCompletionEventSourceMapping:
+    Condition: IDPEnabled
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt IDPOCRCompletionQueue.Arn
+      FunctionName: !Ref IDPOCRContinuationFunction
+      Enabled: true
+      BatchSize: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      ScalingConfig:
+        MaximumConcurrency: 2
+
+  IDPResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: !Ref IDPResourceServerIdentifier
+      Name: LegalDesk IDP machine review resource
+      UserPoolId: !Ref ExistingUserPoolId
+      Scopes:
+        - ScopeName: !Ref IDPReviewScopeName
+          ScopeDescription: Create an IDP review request only; never approve or correct
+
+  IDPMachineClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: IDPResourceServer
+    Properties:
+      ClientName: !Ref IDPMachineClientName
+      GenerateSecret: true
+      UserPoolId: !Ref ExistingUserPoolId
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - !Sub "${IDPResourceServerIdentifier}/${IDPReviewScopeName}"
+      AccessTokenValidity: 5
+      TokenValidityUnits:
+        AccessToken: minutes
+      PreventUserExistenceErrors: ENABLED
+
+Outputs:
+  IDPWorkerFunctionArn:
+    Value: !GetAtt IDPWorkerFunction.Arn
+  IDPOCRContinuationFunctionArn:
+    Value: !GetAtt IDPOCRContinuationFunction.Arn
+  IDPWorkQueueArn:
+    Value: !GetAtt IDPWorkQueue.Arn
+  IDPWorkDeadLetterQueueArn:
+    Value: !GetAtt IDPWorkDeadLetterQueue.Arn
+  IDPOCRCompletionQueueArn:
+    Value: !GetAtt IDPOCRCompletionQueue.Arn
+  IDPOCRDeadLetterQueueArn:
+    Value: !GetAtt IDPOCRDeadLetterQueue.Arn
+  TextractCompletionTopicArn:
+    Value: !Ref TextractCompletionTopic
+  IDPMachineClientId:
+    Value: !Ref IDPMachineClient
+  IDPReviewScope:
+    Value: !Sub "${IDPResourceServerIdentifier}/${IDPReviewScopeName}"
