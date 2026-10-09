@@ -25,6 +25,38 @@ Parameters:
     Description: Immutable S3 object version for the review-task Lambda artifact
     MinLength: 1
     MaxLength: 1024
+  IDPM2MClientId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9]+$"
+    Description: Optional dedicated IDP client; empty preserves the human-only target.
+  IDPReviewScope:
+    Type: String
+    Default: legaldesk-idp/review-create
+    AllowedValues: [legaldesk-idp/review-create]
+  IDPReviewTenantId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+  IDPReviewMatterIds:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}(,[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127})?$"
+  IDPSourceBucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+
+Conditions:
+  HasSecondIDPMatter: !Not
+    - !Equals
+      - !Ref IDPReviewMatterIds
+      - !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+  HasIDPReviewTarget: !And
+    - !Not [!Equals [!Ref IDPM2MClientId, ""]]
+    - !Not [!Equals [!Ref IDPReviewTenantId, ""]]
+    - !Not [!Equals [!Ref IDPReviewMatterIds, ""]]
+    - !Not [!Equals [!Ref IDPSourceBucketName, ""]]
 
 Resources:
   ReviewTaskLogGroup:
@@ -67,6 +99,39 @@ Resources:
                   - dynamodb:Query
                   - dynamodb:UpdateItem
                 Resource: !Ref ReviewTaskTableArn
+              - !If
+                - HasIDPReviewTarget
+                - Sid: ReadCanonicalIDPDocuments
+                  Effect: Allow
+                  Action: s3:GetObject
+                  Resource:
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                - !Ref AWS::NoValue
               - Sid: WriteScopedExecutionLogs
                 Effect: Allow
                 Action:
@@ -95,6 +160,12 @@ Resources:
           AWS_MAX_ATTEMPTS: "1"
           AWS_RETRY_MODE: standard
           REVIEW_TASK_TABLE_NAME: !Ref ReviewTaskTableName
+          IDP_TABLE_NAME: !Ref ReviewTaskTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref IDPSourceBucketName
+          LEGALDESK_IDP_M2M_CLIENT_ID: !Ref IDPM2MClientId
+          LEGALDESK_IDP_REVIEW_SCOPE: !Ref IDPReviewScope
+          LEGALDESK_IDP_REVIEW_TENANT_ID: !Ref IDPReviewTenantId
+          LEGALDESK_IDP_REVIEW_MATTER_IDS: !Ref IDPReviewMatterIds
           REVIEW_TASK_SCHEMA_VERSION: "2"
       Tags:
         - Key: Project

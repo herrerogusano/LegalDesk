@@ -196,6 +196,28 @@ functionality. Chronological history/effective-run resolution, including recover
 across more than two reruns of one document, needs the next integration review.
 This checkpoint does not satisfy real model quality or deployed E2E acceptance.
 
+## M2M infrastructure review checkpoint — 2026-10-09
+
+The optional Gateway client/scope and existing Review target now have matching
+machine-creation configuration. New canonical source reads are restricted to
+the configured tenant and one or two matters, and only `original.pdf`/`original.txt`.
+The bucket ARN is derived from its configured name. Incomplete configuration
+does not add a machine client to the Gateway authorizer; runtime checks also deny.
+Worker invocation writes and exact SSM secret reads are separately opt-in, and
+do not grant human capabilities or direct target invocation.
+
+The previous cfn-lint 1.39.1 catalog did not recognize valid AgentCore resource
+types/actions. Release tooling is now pinned to 1.57.2. Supervisor strict lint
+passed for the Review, Gateway, IDP, reconciliation, public-edge and CD-IAM
+templates in `eu-west-1`, without resource/action waivers. Focused independent
+checks passed: four M2M IaC tests, one tooling-consistency test, and four release
+packaging tests (one Windows symlink-capability skip). Packaging checks include
+both IDP entry points and byte-identical versioned prompt artifacts.
+
+These are local validation results, not a CloudFormation change set or deployed
+authorization proof. No IDP AWS resources were deployed and no paid model/OCR
+calls were made. Human integration/history/query and real evaluation remain open.
+
 ## Primary references checked
 
 - [Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html)

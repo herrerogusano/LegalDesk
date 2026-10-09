@@ -14,7 +14,7 @@ legaldesk = "legaldesk.__main__:main"
 
 [project.optional-dependencies]
 aws = ["boto3>=1.42,<2"]
-release-tools = ["PyYAML==6.0.3", "cfn-lint==1.39.1"]
+release-tools = ["PyYAML==6.0.3", "cfn-lint==1.57.2"]
 
 [tool.setuptools]
 package-dir = {"" = "backend/src"}

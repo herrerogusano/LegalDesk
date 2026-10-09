@@ -13,6 +13,13 @@ Parameters:
     Description: >-
       Safety gate. Queue event-source mappings and reserved Lambda concurrency
       remain disabled until this is explicitly set to true.
+  EnableIDPReviewDispatch:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Separate opt-in for the additive IDP review dispatch path. It remains
+      disabled even when bounded IDP processing is enabled.
   MetadataTableName:
     Type: String
     MinLength: 3
@@ -62,6 +69,11 @@ Parameters:
     Type: String
     AllowedPattern: "^arn:[^:]+:bedrock-agentcore:[^:]+:[0-9]{12}:gateway/.+$"
     Description: Existing AgentCore Gateway; this stack does not modify it
+  ExistingGatewayUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^https://.+$"
+    Description: Existing AgentCore Gateway HTTPS endpoint used only when review dispatch is enabled
   IDPResourceServerIdentifier:
     Type: String
     Default: legaldesk-idp
@@ -134,6 +146,9 @@ Parameters:
 
 Conditions:
   IDPEnabled: !Equals [!Ref EnableIDPProcessing, "true"]
+  IDPReviewEnabled: !And
+    - !Equals [!Ref EnableIDPProcessing, "true"]
+    - !Equals [!Ref EnableIDPReviewDispatch, "true"]
 
 Resources:
   IDPWorkDeadLetterQueue:
@@ -377,7 +392,6 @@ Resources:
                       - !Sub "TENANT#${BetaTenantId}#MATTER#*"
                       - "IDP#JOB#*"
                       - "IDP#OCRJOB#*"
-                      - "IDP#INVOCATION#*"
               - Sid: ReadCanonicalBetaDocuments
                 Effect: Allow
                 Action: s3:GetObject
@@ -414,10 +428,24 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: textract.amazonaws.com
-              - Sid: ReadOperatorBootstrappedM2MSecretParameter
-                Effect: Allow
-                Action: ssm:GetParameter
-                Resource: !Ref M2MSecretParameterArn
+              - !If
+                - IDPReviewEnabled
+                - Sid: ReadOperatorBootstrappedM2MSecretParameter
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Ref M2MSecretParameterArn
+                - !Ref AWS::NoValue
+              - !If
+                - IDPReviewEnabled
+                - Sid: PersistIDPReviewInvocationsOnly
+                  Effect: Allow
+                  Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+                  Resource: !Ref MetadataTableArn
+                  Condition:
+                    ForAllValues:StringLike:
+                      dynamodb:LeadingKeys:
+                        - GATEWAY#IDP-INVOCATION#*
+                - !Ref AWS::NoValue
 
   IDPOCRContinuationExecutionRole:
     Type: AWS::IAM::Role
@@ -469,7 +497,6 @@ Resources:
                       - !Sub "TENANT#${BetaTenantId}#MATTER#*"
                       - "IDP#JOB#*"
                       - "IDP#OCRJOB#*"
-                      - "IDP#INVOCATION#*"
               - Sid: ReadCanonicalBetaDocuments
                 Effect: Allow
                 Action: s3:GetObject
@@ -498,10 +525,24 @@ Resources:
                   - arn:aws:bedrock:eu-south-1::foundation-model/anthropic.claude-sonnet-4-6
                   - arn:aws:bedrock:eu-south-2::foundation-model/anthropic.claude-sonnet-4-6
                   - arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-sonnet-4-6
-              - Sid: ReadOperatorBootstrappedM2MSecretParameter
-                Effect: Allow
-                Action: ssm:GetParameter
-                Resource: !Ref M2MSecretParameterArn
+              - !If
+                - IDPReviewEnabled
+                - Sid: ReadOperatorBootstrappedM2MSecretParameter
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Ref M2MSecretParameterArn
+                - !Ref AWS::NoValue
+              - !If
+                - IDPReviewEnabled
+                - Sid: PersistIDPReviewInvocationsOnly
+                  Effect: Allow
+                  Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+                  Resource: !Ref MetadataTableArn
+                  Condition:
+                    ForAllValues:StringLike:
+                      dynamodb:LeadingKeys:
+                        - GATEWAY#IDP-INVOCATION#*
+                - !Ref AWS::NoValue
 
   IDPWorkerFunction:
     Type: AWS::Lambda::Function
@@ -550,6 +591,8 @@ Resources:
           LEGALDESK_IDP_GLOBAL_DEADLINE_SECONDS: !Ref IDPGlobalDeadlineSeconds
           LEGALDESK_IDP_CLAIM_LEASE_SECONDS: !Ref IDPClaimLeaseSeconds
           LEGALDESK_IDP_GATEWAY_ARN: !Ref ExistingGatewayArn
+          LEGALDESK_IDP_GATEWAY_URL: !Ref ExistingGatewayUrl
+          LEGALDESK_IDP_REVIEW_ENABLED: !Ref EnableIDPReviewDispatch
           LEGALDESK_IDP_COGNITO_DOMAIN: !Ref ExistingUserPoolDomain
           LEGALDESK_IDP_TOKEN_ENDPOINT: !Sub "https://${ExistingUserPoolDomain}/oauth2/token"
           LEGALDESK_IDP_M2M_CLIENT_ID: !Ref IDPMachineClient
@@ -606,6 +649,8 @@ Resources:
           LEGALDESK_IDP_GLOBAL_DEADLINE_SECONDS: !Ref IDPGlobalDeadlineSeconds
           LEGALDESK_IDP_CLAIM_LEASE_SECONDS: !Ref IDPClaimLeaseSeconds
           LEGALDESK_IDP_GATEWAY_ARN: !Ref ExistingGatewayArn
+          LEGALDESK_IDP_GATEWAY_URL: !Ref ExistingGatewayUrl
+          LEGALDESK_IDP_REVIEW_ENABLED: !Ref EnableIDPReviewDispatch
           LEGALDESK_IDP_COGNITO_DOMAIN: !Ref ExistingUserPoolDomain
           LEGALDESK_IDP_TOKEN_ENDPOINT: !Sub "https://${ExistingUserPoolDomain}/oauth2/token"
           LEGALDESK_IDP_M2M_CLIENT_ID: !Ref IDPMachineClient

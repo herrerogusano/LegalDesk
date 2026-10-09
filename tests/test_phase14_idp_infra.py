@@ -38,7 +38,7 @@ def _intrinsic(name: str):
 
 _CloudFormationLoader.add_constructor("!Ref", _ref)
 _CloudFormationLoader.add_constructor("!GetAtt", _get_att)
-for _tag, _name in (("!Sub", "Fn::Sub"), ("!If", "Fn::If"), ("!Equals", "Fn::Equals")):
+for _tag, _name in (("!Sub", "Fn::Sub"), ("!If", "Fn::If"), ("!Equals", "Fn::Equals"), ("!And", "Fn::And")):
     _CloudFormationLoader.add_constructor(_tag, _intrinsic(_name))
 
 
@@ -49,7 +49,21 @@ def _actions(statement: dict[str, Any]) -> set[str]:
 
 def _statements(template: dict[str, Any], resource_name: str) -> list[dict[str, Any]]:
     policies = template["Resources"][resource_name]["Properties"].get("Policies", [])
-    return [statement for policy in policies for statement in policy["PolicyDocument"]["Statement"]]
+    statements: list[dict[str, Any]] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, dict) and "Fn::If" in value:
+            branches = value["Fn::If"]
+            if isinstance(branches, list) and len(branches) == 3:
+                add(branches[1])
+            return
+        if isinstance(value, dict):
+            statements.append(value)
+
+    for policy in policies:
+        for statement in policy["PolicyDocument"]["Statement"]:
+            add(statement)
+    return statements
 
 
 def _statement(template: dict[str, Any], resource_name: str, sid: str) -> dict[str, Any]:
@@ -175,7 +189,7 @@ class Phase14IDPInfrastructureTests(unittest.TestCase):
         self.assertEqual(passrole["Condition"]["StringEquals"]["iam:PassedToService"], "textract.amazonaws.com")
 
     def test_data_plane_policy_uses_actual_idp_keys_and_canonical_objects(self) -> None:
-        expected_leading = {"TENANT#${BetaTenantId}#MATTER#*", "IDP#JOB#*", "IDP#OCRJOB#*", "IDP#INVOCATION#*"}
+        expected_leading = {"TENANT#${BetaTenantId}#MATTER#*", "IDP#JOB#*", "IDP#OCRJOB#*"}
         for role_name, sid in (("IDPWorkerExecutionRole", "ReadWriteIDPStateOnly"), ("IDPOCRContinuationExecutionRole", "ReadWriteIDPOCRStateOnly")):
             state = _statement(self.template, role_name, sid)
             keys = {

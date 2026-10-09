@@ -37,6 +37,11 @@ Parameters:
     Description: >-
       Opt-in IDP recovery switch. When false, the existing reconciliation
       schedule and data-plane contract remain unchanged.
+  EnableIDPReviewDispatch:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Separate opt-in for bounded IDP review recovery dispatch.
   IDPWorkQueueUrl:
     Type: String
     Default: ""
@@ -58,6 +63,30 @@ Parameters:
     Default: ""
     AllowedPattern: "^$|[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
     Description: Server-controlled IDP prompt version; required only when enabled.
+  IDPGatewayUrl:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^https://.+$"
+  IDPM2MClientId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9]+$"
+  IDPReviewScope:
+    Type: String
+    Default: legaldesk-idp/review-create
+    AllowedValues: [legaldesk-idp/review-create]
+  ExistingUserPoolDomain:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9.-]+$"
+  M2MSecretParameterName:
+    Type: String
+    Default: /legaldesk/phase14/idp/m2m-client-secret
+    AllowedPattern: "^/[A-Za-z0-9_.+=,@-]+(/[A-Za-z0-9_.+=,@-]+)*$"
+  M2MSecretParameterArn:
+    Type: String
+    Default: arn:aws:ssm:eu-west-1:000000000000:parameter/legaldesk/phase14/idp/m2m-client-secret
+    AllowedPattern: "^arn:[^:]+:ssm:[^:]+:[0-9]{12}:parameter/[A-Za-z0-9_.+=,@/-]+$"
   IDPRecoveryLimitPerScope:
     Type: Number
     Default: 25
@@ -116,6 +145,9 @@ Parameters:
 Conditions:
   HasReconciliationReservedConcurrency: !Not [!Equals [!Ref ReconciliationReservedConcurrency, 0]]
   IDPEnabled: !Equals [!Ref EnableIDPProcessing, "true"]
+  IDPReviewEnabled: !And
+    - !Equals [!Ref EnableIDPProcessing, "true"]
+    - !Equals [!Ref EnableIDPReviewDispatch, "true"]
 
 Resources:
   ReconciliationLogGroup:
@@ -227,6 +259,24 @@ Resources:
                   Action: sqs:SendMessage
                   Resource: !Ref IDPWorkQueueArn
                 - !Ref AWS::NoValue
+              - !If
+                - IDPReviewEnabled
+                - Sid: PersistIDPReviewInvocationsOnly
+                  Effect: Allow
+                  Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+                  Resource: !Ref MetadataTableArn
+                  Condition:
+                    ForAllValues:StringLike:
+                      dynamodb:LeadingKeys:
+                        - GATEWAY#IDP-INVOCATION#*
+                - !Ref AWS::NoValue
+              - !If
+                - IDPReviewEnabled
+                - Sid: ReadOperatorBootstrappedM2MSecretParameter
+                  Effect: Allow
+                  Action: ssm:GetParameter
+                  Resource: !Ref M2MSecretParameterArn
+                - !Ref AWS::NoValue
 
   ReconciliationFunction:
     Type: AWS::Lambda::Function
@@ -267,6 +317,12 @@ Resources:
           LEGALDESK_IDP_MODEL_ID: !Ref IDPModelId
           LEGALDESK_IDP_PROMPT_VERSION: !Ref IDPPromptVersion
           LEGALDESK_IDP_RECOVERY_LIMIT_PER_SCOPE: !Ref IDPRecoveryLimitPerScope
+          LEGALDESK_IDP_REVIEW_ENABLED: !Ref EnableIDPReviewDispatch
+          LEGALDESK_IDP_GATEWAY_URL: !Ref IDPGatewayUrl
+          LEGALDESK_IDP_TOKEN_ENDPOINT: !Sub "https://${ExistingUserPoolDomain}/oauth2/token"
+          LEGALDESK_IDP_M2M_CLIENT_ID: !Ref IDPM2MClientId
+          LEGALDESK_IDP_M2M_SECRET_PARAMETER_NAME: !Ref M2MSecretParameterName
+          LEGALDESK_IDP_REVIEW_SCOPE: !Ref IDPReviewScope
 
   ReconciliationSchedule:
     Type: AWS::Events::Rule

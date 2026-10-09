@@ -21,7 +21,7 @@ def _intrinsic(loader: _CloudFormationLoader, tag: str, node: yaml.Node):
     return {name: value}
 
 
-for _name in ("Ref", "GetAtt", "Sub", "If", "Equals", "Not"):
+for _name in ("Ref", "GetAtt", "Sub", "If", "Equals", "Not", "And"):
     _CloudFormationLoader.add_constructor(f"!{_name}", lambda loader, node, name=_name: _intrinsic(loader, name, node))
 
 
@@ -135,9 +135,12 @@ class Phase14ProducerRecoveryIaCTests(unittest.TestCase):
             "RecoverIDPDispatchForCleanDocuments",
             "ReadCanonicalCleanDocumentsForIDPRecovery",
             "EnqueueRecoveredIDPJobsOnly",
+            "PersistIDPReviewInvocationsOnly",
+            "ReadOperatorBootstrappedM2MSecretParameter",
         })
-        for branch in by_sid.values():
-            self.assertEqual(branch[0], "IDPEnabled")
+        for sid, branch in by_sid.items():
+            expected_condition = "IDPReviewEnabled" if sid in {"PersistIDPReviewInvocationsOnly", "ReadOperatorBootstrappedM2MSecretParameter"} else "IDPEnabled"
+            self.assertEqual(branch[0], expected_condition)
             self.assertEqual(branch[2], {"Ref": "AWS::NoValue"})
 
         dynamo = by_sid["RecoverIDPDispatchForCleanDocuments"][1]
@@ -158,6 +161,12 @@ class Phase14ProducerRecoveryIaCTests(unittest.TestCase):
         queue = by_sid["EnqueueRecoveredIDPJobsOnly"][1]
         self.assertEqual(queue["Action"], "sqs:SendMessage")
         self.assertEqual(queue["Resource"], {"Ref": "IDPWorkQueueArn"})
+        invocation = by_sid["PersistIDPReviewInvocationsOnly"][1]
+        self.assertEqual(set(invocation["Action"]), {"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"})
+        self.assertEqual(invocation["Condition"]["ForAllValues:StringLike"]["dynamodb:LeadingKeys"], ["GATEWAY#IDP-INVOCATION#*"])
+        secret = by_sid["ReadOperatorBootstrappedM2MSecretParameter"][1]
+        self.assertEqual(secret["Action"], "ssm:GetParameter")
+        self.assertEqual(secret["Resource"], {"Ref": "M2MSecretParameterArn"})
 
         variables = _resources(self.reconciliation)["ReconciliationFunction"]["Properties"]["Environment"]["Variables"]
         self.assertEqual(variables["LEGALDESK_IDP_ENABLED"], {"Ref": "EnableIDPProcessing"})
