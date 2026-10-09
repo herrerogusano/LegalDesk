@@ -50,6 +50,10 @@ MAX_REVIEW_SNAPSHOT_BYTES = 48_000
 MAX_REVIEW_CITATIONS = 32
 MAX_REVIEW_PASSAGE_LENGTH = 16_000
 MAX_REVIEW_TASKS = 100
+# GatewayTargetSchemaDefinition cannot express the IDP correction value's
+# scalar-or-array union.  The transport adapter carries it as a bounded JSON
+# string; the target decodes it before the existing raw-input validator runs.
+MAX_IDP_PROPOSED_VALUE_JSON_BYTES = 16 * 1024
 _OPAQUE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _OPAQUE_SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:|@-]{0,255}$")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -630,6 +634,67 @@ def parse_update_review_task_input(payload: Mapping[str, object]) -> tuple[str, 
     if not isinstance(resolution_note, str) or len(resolution_note) > MAX_RESOLUTION_NOTE_LENGTH:
         raise ReviewTaskValidationError("resolutionNote is invalid")
     return review_task_id, status, resolution_note
+
+
+def _reject_duplicate_json_key(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("non-finite JSON number")
+    return parsed
+
+
+def _decode_gateway_idp_decision_transport(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Decode only the Gateway wire adapter, then reuse raw validation.
+
+    The Gateway target receives ``proposedValueJson`` because its deployed
+    schema supports primitive properties only.  HTTP/local callers continue
+    to use ``proposedValue`` and never pass through this adapter.
+    """
+
+    decision = payload.get("idpDecision")
+    if decision is None:
+        return dict(payload)
+    if not isinstance(decision, Mapping):
+        return dict(payload)
+    if "proposedValueJson" not in decision:
+        return dict(payload)
+    if "proposedValue" in decision:
+        raise ReviewTaskValidationError("IDP decision transport is invalid")
+    if decision.get("action") != "CORRECT":
+        raise ReviewTaskValidationError("IDP decision transport is invalid")
+    encoded = decision.get("proposedValueJson")
+    if not isinstance(encoded, str) or len(encoded.encode("utf-8")) > MAX_IDP_PROPOSED_VALUE_JSON_BYTES:
+        raise ReviewTaskValidationError("IDP decision transport is invalid")
+    try:
+        proposed_value = json.loads(
+            encoded,
+            object_pairs_hook=_reject_duplicate_json_key,
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_json_float,
+        )
+    except (TypeError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ReviewTaskValidationError("IDP decision transport is invalid") from exc
+    decoded_decision = dict(decision)
+    decoded_decision.pop("proposedValueJson")
+    decoded_decision["proposedValue"] = proposed_value
+    decoded = dict(payload)
+    decoded["idpDecision"] = decoded_decision
+    return decoded
 
 
 def _parse_idp_decision_input(payload: Mapping[str, object]) -> tuple[str, str, Mapping[str, object] | None, tuple[Any, ...], str] | None:
@@ -1217,6 +1282,11 @@ class ReviewTaskLambdaHandler:
             if operation == GET_REVIEW_TASK_TOOL_NAME:
                 return get_review_task(context, payload, repository=self.repository, telemetry_sink=self.telemetry_sink, idp_repository=self.idp_repository, idp_review_service=self.idp_review_service)
             if operation == UPDATE_REVIEW_TASK_TOOL_NAME:
+                # AgentCore's Gateway schema carries the IDP correction union
+                # as one bounded JSON string.  Decode that wire-only shape
+                # before entering the existing server-owned validator; local
+                # and HTTP callers continue to provide ``proposedValue``.
+                payload = _decode_gateway_idp_decision_transport(payload)
                 return update_review_task(context, payload, repository=self.repository, telemetry_sink=self.telemetry_sink, idp_repository=self.idp_repository, idp_review_service=self.idp_review_service)
             return {"error": "invalid_request"}
         except AuthorizationDenied:

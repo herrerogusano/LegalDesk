@@ -493,6 +493,44 @@ Resources:
                         Type: string
                       _legaldeskGrantId:
                         Type: string
+                      idpDecision:
+                        Type: object
+                        Description: "Optional human IDP field decision; the target derives actor, origin, presence, acceptance and audit metadata."
+                        Required:
+                          - fieldName
+                          - action
+                          - reason
+                          - evidence
+                        Properties:
+                          fieldName:
+                            Type: string
+                          action:
+                            Type: string
+                            Description: "One of APPROVE, CORRECT, or REJECT; the target validates the bounded action set."
+                          reason:
+                            Type: string
+                          proposedValueJson:
+                            Type: string
+                            Description: "Internal Gateway transport for the raw replacement value on CORRECT; the target strictly parses and validates it."
+                          evidence:
+                            Type: array
+                            Items:
+                              Type: object
+                              Required:
+                                - page
+                                - quote
+                                - contentSha256
+                              Properties:
+                                page:
+                                  Type: integer
+                                quote:
+                                  Type: string
+                                contentSha256:
+                                  Type: string
+                                start:
+                                  Type: integer
+                                end:
+                                  Type: integer
 
   MetadataMcpGatewayTarget:
     Type: AWS::BedrockAgentCore::GatewayTarget

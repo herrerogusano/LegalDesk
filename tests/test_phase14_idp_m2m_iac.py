@@ -108,6 +108,40 @@ class Phase14IDPM2MIaCTests(unittest.TestCase):
         self.assertTrue(any(_sub_text(item).endswith("/matters/${MatterId}/documents/*/original.pdf") for item in resources))
         self.assertFalse(any("/matters/*/documents/" in _sub_text(item) for item in resources))
 
+    def test_gateway_update_review_schema_exposes_idp_decision_contract(self) -> None:
+        targets = self.gateway["Resources"]["ReviewTaskGatewayTarget"]["Properties"]["TargetConfiguration"]["Mcp"]["Lambda"]["ToolSchema"]["InlinePayload"]
+        update = next(item for item in targets if item.get("Name") == "update_review_task")
+        schema = update["InputSchema"]["Properties"]["idpDecision"]
+        self.assertEqual(schema["Type"], "object")
+        self.assertEqual(schema["Required"], ["fieldName", "action", "reason", "evidence"])
+        self.assertEqual(schema["Properties"]["action"]["Type"], "string")
+        self.assertIn("APPROVE", schema["Properties"]["action"]["Description"])
+        self.assertIn("proposedValueJson", schema["Properties"])
+        self.assertEqual(schema["Properties"]["proposedValueJson"]["Type"], "string")
+        evidence = schema["Properties"]["evidence"]
+        self.assertEqual(evidence["Type"], "array")
+        self.assertEqual(evidence["Items"]["Required"], ["page", "quote", "contentSha256"])
+        self.assertEqual(set(evidence["Items"]["Properties"]), {"page", "quote", "contentSha256", "start", "end"})
+        self.assertNotIn("origin", schema["Properties"])
+        self.assertNotIn("presence", schema["Properties"])
+        self.assertNotIn("acceptance", schema["Properties"])
+
+        allowed_types = {"string", "number", "object", "array", "boolean", "integer"}
+        allowed_schema_keys = {"Type", "Properties", "Required", "Items", "Description"}
+
+        def validate(node: Any, path: str) -> None:
+            self.assertIsInstance(node, dict, path)
+            self.assertTrue(set(node).issubset(allowed_schema_keys), path)
+            self.assertIn(node.get("Type"), allowed_types, path)
+            self.assertNotIn("AllowedValues", node, path)
+            if node["Type"] == "object":
+                for name, child in node.get("Properties", {}).items():
+                    validate(child, f"{path}.{name}")
+            elif node["Type"] == "array":
+                validate(node["Items"], f"{path}[]")
+
+        validate(schema, "update_review_task.idpDecision")
+
     def test_review_target_hash_read_is_opt_in_and_canonical_only(self) -> None:
         params = self.review["Parameters"]
         self.assertEqual(params["IDPM2MClientId"]["Default"], "")

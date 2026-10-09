@@ -72,6 +72,10 @@ Human field decisions extend the existing `update_review_task` action with
 `idpDecision` containing field, approve/correct/reject action, required reason,
 evidence and, for corrections only, the raw proposed value. Actor, content
 identity, origin, acceptance and resulting audit entry remain server-owned.
+Gateway's CloudFormation tool schema cannot express a scalar-or-array union.
+Only the internal Gateway transport encodes the raw replacement as the bounded
+strict JSON string `proposedValueJson`; the target decodes it before reusing
+the same field validator. The browser/HTTP contract remains `proposedValue`.
 Persist normalized page text as an immutable run-scoped artifact so a new
 human evidence anchor can be checked without repeating OCR. Validate the
 artifact scope/digest and the current canonical source bytes before exposing
