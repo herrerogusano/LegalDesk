@@ -42,6 +42,13 @@ function safeErrorType(error) {
   return new Set(["Error", "TimeoutError", "TypeError", "ReferenceError", "RangeError", "AssertionError", "SmokeFailure"]).has(value) ? value : "UnknownError";
 }
 
+function pageErrorDiagnostic(error) {
+  const name = safeErrorType(error);
+  const message = error && typeof error.message === "string" ? error.message : "";
+  const match = message.match(/(?:^|[\\/])([A-Za-z0-9_.-]+\.js)(?::\d+)?(?:$|[^A-Za-z0-9_.-])/i);
+  return { name, basename: match ? match[1] : "unknown" };
+}
+
 function setPhase(value) { phase = value; step = value; process.stdout.write(`${JSON.stringify({ smoke: "phase14-idp-browser-progress", phase: value })}\n`); }
 
 function emitCleanupProgress(value, ids = {}) {
@@ -198,6 +205,9 @@ async function run() {
   const requestCounts = {};
   let apiCallCount = 0;
   let apiRouteFailure = null;
+  page.on("pageerror", error => {
+    diagnostics.pageError = pageErrorDiagnostic(error);
+  });
   const count = name => { requestCounts[name] = (requestCounts[name] || 0) + 1; return requestCounts[name]; };
 
   await page.route("**/api/**", async route => {
@@ -292,6 +302,8 @@ async function run() {
     await page.locator("#matter-select").waitFor({ state: "visible", timeout: 30_000 });
     const conversationResponsePromise = safeResponseWait(page, response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST"; } catch (_error) { return false; } }, "conversation_create", diagnostics);
     await page.locator("#matter-select").selectOption(MATTER_ID);
+    await page.locator("#workspace-tab-documents").click();
+    await page.locator("#documents").waitFor({ state: "visible", timeout: 30_000 });
     await page.waitForFunction(() => !document.querySelector("#document-file").disabled, null, { timeout: 30_000 });
     const conversationResponse = await conversationResponsePromise;
     const conversation = await responseJson(conversationResponse, "conversation_create", diagnostics);
@@ -305,6 +317,27 @@ async function run() {
     setPhase("upload");
     const uploadResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST"; } catch (_error) { return false; } }, "upload_authorization", diagnostics);
     await page.locator("#document-file").setInputFiles(FIXTURE_PATH);
+    setPhase("file_selected");
+    let uploadState;
+    try {
+      uploadState = await page.evaluate(() => {
+        const input = document.querySelector("#document-file");
+        const button = document.querySelector("#upload-button");
+        return {
+          fileCount: input && input.files ? input.files.length : null,
+          buttonDisabled: button ? Boolean(button.disabled) : null,
+        };
+      });
+    } catch (_error) {
+      diagnostics.fileSelected = false;
+      diagnostics.uploadButtonDisabled = null;
+      throw new SmokeFailure("upload_state_unavailable");
+    }
+    diagnostics.fileSelected = uploadState.fileCount === 1;
+    diagnostics.uploadButtonDisabled = uploadState.buttonDisabled;
+    if (uploadState.fileCount !== 1) throw new SmokeFailure("file_selection_failed");
+    if (uploadState.buttonDisabled !== false) throw new SmokeFailure("upload_button_disabled");
+    setPhase("upload_clicked");
     await page.locator("#upload-button").click();
     const authorization = await responseJson(await uploadResponse, "upload_authorization", diagnostics);
     const documentId = authorization && authorization.document && authorization.document.documentId;
@@ -396,6 +429,8 @@ async function run() {
       if (!conversationId || !sessionId) throw new SmokeFailure("review_conversation_scope_missing");
       cleanupScopes.push({ conversationId, sessionId });
       emitCleanupProgress("review_conversation_ready", { conversationId, sessionId, documentId, scopes: cleanupScopes });
+      await page.locator("#workspace-tab-reviews").click();
+      await page.locator("#reviews-section").waitFor({ state: "visible", timeout: 30_000 });
       const taskDetails = page.locator(`#reviews-pending details[data-review-id="${reviewTask.reviewTaskId}"]`);
       await taskDetails.waitFor({ state: "visible", timeout: 120_000 });
       await taskDetails.click();
@@ -467,5 +502,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, safeResponseWait, responseJson, assertResponseOk };
+  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
 }

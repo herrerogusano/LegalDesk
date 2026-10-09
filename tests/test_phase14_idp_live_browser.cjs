@@ -2,6 +2,7 @@
 
 const assert = require("assert");
 const crypto = require("crypto");
+const fs = require("fs");
 const {
   classifySelectedResponse,
   parseMcpMetadata,
@@ -10,6 +11,7 @@ const {
   selectBoundReviewField,
   safeResponseWait,
   responseJson,
+  pageErrorDiagnostic,
 } = require("./phase14_idp_live_browser.cjs");
 
 assert.deepStrictEqual(
@@ -30,6 +32,11 @@ const taskWithTwoFields = { reviewTaskId: "task-4", idp: { ...expected, fields: 
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "effective_date").name, "effective_date");
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "missing_field"), null);
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "").name, "governing_law");
+assert.deepStrictEqual(pageErrorDiagnostic({ name: "ReferenceError", message: "boom at https://example.invalid/assets/app.js:7" }), { name: "ReferenceError", basename: "app.js" });
+assert.deepStrictEqual(pageErrorDiagnostic({ name: "Error", message: "secret response body" }), { name: "Error", basename: "unknown" });
+const browserSource = fs.readFileSync(require.resolve("./phase14_idp_live_browser.cjs"), "utf8");
+assert(browserSource.indexOf('locator("#workspace-tab-documents").click') < browserSource.indexOf('locator("#document-file").setInputFiles'), "documents tab must be selected before upload");
+assert(browserSource.indexOf('locator("#workspace-tab-reviews").click') < browserSource.indexOf('locator(`#reviews-pending details'), "reviews tab must be selected before review task interaction");
 
 const responseDiagnostics = {};
 safeResponseWait({ waitForResponse: () => Promise.reject(new Error("secret URL/body must not escape")) }, () => true, "upload_authorization", responseDiagnostics).then(response => {

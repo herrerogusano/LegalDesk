@@ -528,6 +528,10 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
     def safe_error_type(exc: BaseException) -> str:
         return type(exc).__name__ if type(exc).__name__ in {"Error", "TimeoutError", "TypeError", "ReferenceError", "RangeError", "AssertionError", "SmokeFailure"} else "UnknownError"
 
+    def safe_report_error_type(value: object, fallback: BaseException) -> str:
+        allowed = {"Error", "TimeoutError", "TypeError", "ReferenceError", "RangeError", "AssertionError", "SmokeFailure", "UnknownError"}
+        return value if isinstance(value, str) and value in allowed else safe_error_type(fallback)
+
     def safe_child_stderr_class(stderr: object) -> str:
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", errors="replace")
@@ -619,7 +623,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
         if child_timed_out or child.returncode != 0:
             raise LiveIDPPreflightError("browser_runner_failed")
     except Exception as exc:
-        report = {**report, "result": "FAIL", "category": report.get("category", "live_smoke_failed"), "errorType": safe_error_type(exc)}
+        report = {**report, "result": "FAIL", "category": report.get("category", "live_smoke_failed"), "errorType": safe_report_error_type(report.get("errorType"), exc)}
     finally:
         # Never let an exhausted work deadline prevent bounded cleanup of the
         # synthetic user and its scoped state. Cleanup has its own small,
