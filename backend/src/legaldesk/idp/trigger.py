@@ -7,7 +7,7 @@ import hashlib
 import re
 import time
 
-from .models import DocumentForIDP, IDPConfig, IDPContractError, IDPJob, IDPJobStatus
+from .models import DocumentForIDP, IDPConfig, IDPConcurrencyError, IDPJob, IDPJobStatus
 from .persistence import IDPRepository
 from .worker import IDPQueue, build_verified_clean_job, enqueue_verified_clean_job, redeliver_ambiguous_job
 
@@ -36,7 +36,13 @@ class VerifiedCleanIDPTrigger:
         job = build_verified_clean_job(document=document, model_id=self.model_id, prompt_version=self.prompt_version, max_attempts=self.config.max_attempts)
         record_intent = getattr(self.repository, "record_clean_intent", None)
         if callable(record_intent):
-            record_intent(job=job)
+            try:
+                record_intent(job=job)
+            except IDPConcurrencyError:
+                # A concurrent/terminal generation is already authoritative;
+                # recovery owns any missing delivery and the clean event must
+                # not demote its public status or create a second generation.
+                return None
         job = self.repository.create_job(job)
         # A repeated clean event must not reopen an in-progress/terminal job
         # or issue a second dispatch.  The scheduled reconciler owns bounded

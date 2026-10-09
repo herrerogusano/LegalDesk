@@ -249,6 +249,15 @@ class InMemoryIDPRepository:
             existing = self._clean_intents.get(key)
             if existing is not None and existing.document_sha256 != job.document_sha256:
                 raise IDPIdempotencyConflict("clean intent hash changed")
+            if existing is not None:
+                if existing.idempotency_key != job.idempotency_key:
+                    raise IDPConcurrencyError("clean intent belongs to another generation")
+                # Re-registering the same intent is the crash-recovery path;
+                # never rewrite its status or demote a terminal projection.
+                return
+            existing_by_key = self._idempotency.get((job.tenant_id, job.matter_id, job.idempotency_key))
+            if existing_by_key is not None:
+                return
             self._clean_intents[key] = job
 
     def list_clean_intents(self, *, tenant_id: str, matter_id: str, limit: int) -> tuple[IDPJob, ...]:
@@ -633,13 +642,36 @@ class Boto3DynamoIDPRepository:
     def record_clean_intent(self, *, job: IDPJob) -> None:
         key = {"pk": matter_partition_key(job.tenant_id, job.matter_id), "sk": f"DOCUMENT#{job.document_id}"}
         intent = _job_item(job)
+        existing_job = self._query_idempotency(job)
+        if existing_job is not None:
+            # Existing job state is authoritative.  This includes terminal
+            # runs whose clean-intent row is being rediscovered by recovery.
+            return
+        try:
+            current = self.table.get_item(Key=key, ConsistentRead=True).get("Item")
+        except Exception as exc:
+            raise IDPConcurrencyError("clean IDP intent could not be read") from exc
+        if not isinstance(current, Mapping) or current.get("documentId") != job.document_id or current.get("s3Key") is None:
+            raise IDPConcurrencyError("clean IDP document is unavailable")
+        current_hash = current.get("idpDocumentSha256")
+        if current_hash is not None and current_hash != job.document_sha256:
+            raise IDPIdempotencyConflict("clean intent hash changed")
+        current_intent = current.get("idpCleanIntent")
+        if isinstance(current_intent, Mapping):
+            if current_intent.get("idempotencyKey") != job.idempotency_key:
+                raise IDPConcurrencyError("clean intent belongs to another generation")
+            # Same intent, but the job locator was not visible to the read:
+            # retain the durable row and let create_job reconcile it.
+            return
+        if current.get("idpRunId") and current.get("idpStatus") in {"IDP_COMPLETED", "IDP_REVIEW_REQUIRED", "IDP_FAILED", "IDP_SKIPPED"}:
+            raise IDPConcurrencyError("current IDP generation is terminal")
         try:
             self.table.update_item(
                 Key=key,
                 UpdateExpression="SET #intent = :intent, #status = :pending, #hash = :hash",
-                ExpressionAttributeNames={"#intent": "idpCleanIntent", "#status": "idpStatus", "#hash": "idpIntentDocumentSha256", "#document": "documentId"},
-                ExpressionAttributeValues={":intent": intent, ":pending": IDPJobStatus.ENQUEUE_PENDING.value, ":hash": job.document_sha256, ":document": job.document_id},
-                ConditionExpression="#document = :document AND (attribute_not_exists(#hash) OR #hash = :hash)",
+                ExpressionAttributeNames={"#intent": "idpCleanIntent", "#status": "idpStatus", "#hash": "idpIntentDocumentSha256", "#document": "documentId", "#existing_hash": "idpDocumentSha256", "#idempotencyKey": "idempotencyKey"},
+                ExpressionAttributeValues={":intent": intent, ":pending": IDPJobStatus.ENQUEUE_PENDING.value, ":hash": job.document_sha256, ":document": job.document_id, ":idempotency": job.idempotency_key},
+                ConditionExpression="#document = :document AND (attribute_not_exists(#existing_hash) OR #existing_hash = :hash) AND (attribute_not_exists(#intent) OR #intent.#idempotencyKey = :idempotency)",
             )
         except Exception as exc:
             raise IDPConcurrencyError("clean IDP intent could not be recorded") from exc
