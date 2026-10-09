@@ -32,6 +32,35 @@ Required enabled-mode configuration:
   Missing scope configuration denies machine access rather than using a
   human identity or a test-only authorization exception.
 
+Artifact bucket handoff (local deployment proposal, not deployed):
+
+- IDP processing uses the existing source bucket for immutable normalized page
+  artifacts. `phase-14-idp.yaml` sets
+  `LEGALDESK_IDP_ARTIFACT_BUCKET` from its existing `SourceBucketName`; it
+  does not create a bucket.
+- The Phase 07 Review, Phase 08 MCP, and public-edge templates expose the
+  additive `IDPArtifactBucketName` parameter with an empty default. Leave it
+  empty when IDP is disabled. When enabling the artifact-read paths, the
+  operator must pass the exact already-owned source/artifact bucket name (the
+  same bucket used by `LEGALDESK_SOURCE_BUCKET`), after checking the reviewed
+  change set.
+- Runtime configuration treats an empty `LEGALDESK_IDP_ARTIFACT_BUCKET` as
+  unset and falls back to `LEGALDESK_SOURCE_BUCKET`; an empty value must never
+  become an S3 bucket name. No new bucket, KMS key, or fixed-charge component
+  is part of this handoff.
+- Approved read scopes are canonical
+  `tenants/<tenant>/matters/<matter>/documents/*/original.pdf` and `.txt`,
+  plus normalized IDP pages under
+  `idp-artifacts/tenant=<tenant>/matter=<matter>/document=*/run=*/pages-*`.
+  MCP/Review/public-edge readers do not read raw classifier or extractor
+  outputs and do not receive object-list, write, or delete permissions.
+
+Before any operator rollout, verify the exact bucket value, tenant/matter
+allowlist, existing-table references, and Gateway schema change in a reviewed
+change set. The parameter defaults preserve the current code-only and deployed
+contracts when IDP remains disabled; this document is an adapter/IAM handoff,
+not a production-readiness claim.
+
 The server-controlled prompt artifacts are `prompts/idp-classifier.md` and
 `prompts/idp-extractor.md`; packaged Lambda code resolves them from the
 package prompt directory. Artifacts use the immutable prefix

@@ -355,6 +355,36 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-footer { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding-top: 14px; color: #85837c; font-size: 9px; letter-spacing: .12em; }
 .footer-separator { color: var(--oxblood); padding: 0 5px; }
 
+.idp-panel { min-width: 0; margin-top: 24px; border: 1px solid var(--line); border-left: 3px solid var(--navy); background: rgb(250 248 242 / 78%); padding: 18px; }
+.idp-panel h3 { margin: 6px 0 0; color: var(--navy); font: 500 24px/1.1 var(--display); }
+.idp-panel .document-count { margin: 0; }
+.idp-field-controls { display: flex; align-items: end; gap: 12px; margin-top: 16px; }
+.idp-field-controls .control-group { flex: 1 1 260px; min-width: 0; }
+.idp-field-controls select { display: block; width: 100%; height: 44px; min-height: 44px; max-height: 48px; box-sizing: border-box; }
+.idp-field-controls .button { flex: 0 0 auto; }
+.idp-result { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 16px; }
+.idp-result h4 { margin: 0 0 8px; color: var(--navy); font: 500 20px/1.2 var(--display); }
+.idp-result-value { margin: 0; overflow-wrap: anywhere; color: var(--ink); font: 500 17px/1.45 var(--body); white-space: pre-wrap; }
+.idp-result-meta { margin: 12px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.idp-evidence-list, .idp-history-list { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.idp-evidence-list li, .idp-history-list li { overflow-wrap: anywhere; }
+.idp-history { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.idp-panel [data-state="error"] { color: var(--oxblood); }
+.idp-panel [data-state="success"], .idp-panel [data-state="ready"] { color: var(--green); }
+.idp-panel [data-state="processing"], .idp-panel [data-state="skipped"], .idp-panel [data-state="unavailable"] { color: var(--muted); }
+.idp-review-card { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.idp-review-field { margin-top: 14px; border: 1px solid var(--line); background: var(--paper-raised); padding: 14px; }
+.idp-review-field h4 { margin: 0 0 6px; color: var(--navy); font: 500 18px/1.2 var(--display); }
+.idp-review-value { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.idp-review-meta { margin: 8px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.idp-review-actions { display: grid; grid-template-columns: repeat(3, auto); gap: 8px; align-items: end; margin-top: 12px; }
+.idp-review-actions .idp-review-reason, .idp-review-actions .idp-review-correction { grid-column: 1 / -1; width: 100%; }
+.idp-review-evidence-edit { display: grid; grid-column: 1 / -1; gap: 6px; }
+.idp-review-evidence-edit select, .idp-review-evidence-edit input, .idp-review-evidence-edit textarea { width: 100%; }
+.idp-review-actions .idp-review-reason { min-height: 66px; }
+.idp-review-actions .idp-review-correction { min-height: 44px; }
+.idp-review-actions .button { min-width: 0; }
+
 @media (max-width: 760px) {
   .masthead { grid-template-columns: 1fr auto; gap: 12px; min-height: 0; height: auto; padding: 13px 18px 10px; }
   .masthead-context { grid-column: 1 / -1; grid-row: 2; padding: 0 0 10px; }
@@ -372,6 +402,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .review-request .button { justify-self: start; }
   .operator-summary { grid-template-columns: 1fr 1fr; }
   .operator-record { grid-template-columns: 1fr; gap: 2px; }
+  .idp-field-controls { align-items: stretch; flex-direction: column; }
+  .idp-field-controls .control-group { flex: 0 0 auto; width: 100%; }
+  .idp-field-controls .button { width: 100%; }
+  .idp-review-actions { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {
@@ -403,6 +437,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .panel-actions .text-button { flex: 1 1 100%; }
   .citation-list { grid-template-columns: 1fr; }
   .operator-summary { grid-template-columns: 1fr; }
+  .idp-panel { padding: 14px; }
+  .idp-review-actions .button { width: 100%; }
   .page-footer { flex-direction: column; font-size: 8px; }
 }
 

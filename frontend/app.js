@@ -23,6 +23,18 @@
     documentStatesFresh: false,
     documentStatesLoading: false,
     activeWorkspacePanel: "consultation",
+    selectedDocumentId: "",
+    selectedDocument: null,
+    idpFieldName: "",
+    idpFieldResult: null,
+    idpFieldError: "",
+    idpFieldLoading: false,
+    idpMetadataLoading: false,
+    idpHistoryCursor: null,
+    idpHistoryNextCursor: null,
+    idpHistory: null,
+    idpHistoryLoading: false,
+    idpReviewDecisionBusy: Object.create(null),
   };
 
   const $ = (id) => document.getElementById(id);
@@ -48,6 +60,31 @@
     material_legal_judgment: "Requiere juicio jurídico material",
     safety_escalation: "Escalado de seguridad",
   });
+  const IDP_STATUS_LABELS = Object.freeze({
+    PENDING_IDP: "Pendiente de extracción",
+    PROCESSING_IDP: "Extracción en curso",
+    IDP_SKIPPED: "Extracción omitida",
+    IDP_REVIEW_REQUIRED: "Requiere revisión",
+    IDP_COMPLETED: "Extracción disponible",
+    IDP_FAILED: "Extracción fallida",
+  });
+  const IDP_FIELD_CATALOG = Object.freeze([
+    ["parties", "Partes", "array[string]"], ["effective_date", "Fecha de entrada en vigor", "date"],
+    ["explicit_expiration_date", "Fecha de vencimiento", "date"], ["initial_duration_value", "Duración inicial", "number"],
+    ["initial_duration_unit", "Unidad de duración inicial", "string"], ["automatic_renewal", "Renovación automática", "boolean"],
+    ["renewal_period_value", "Duración de renovación", "number"], ["renewal_period_unit", "Unidad de renovación", "string"],
+    ["termination_notice_value", "Preaviso de terminación", "number"], ["termination_notice_unit", "Unidad de preaviso", "string"],
+    ["amount", "Importe", "number"], ["currency", "Moneda", "string"], ["jurisdiction", "Jurisdicción", "string"],
+    ["governing_law", "Ley aplicable", "string"], ["subtype", "Subtipo documental", "string"],
+    ["claimants", "Demandantes", "array[string]"], ["defendants", "Demandados", "array[string]"], ["court", "Tribunal", "string"],
+    ["case_number", "Número de procedimiento", "string"], ["filing_date", "Fecha de presentación", "date"],
+    ["claims", "Pretensiones", "array[string]"], ["claimed_amount", "Importe reclamado", "number"],
+    ["decision_date", "Fecha de resolución", "date"], ["operative_ruling", "Parte dispositiva", "string"],
+    ["costs_statement", "Pronunciamiento sobre costas", "string"], ["appeal_information", "Información sobre recursos", "string"],
+    ["document_type", "Tipo documental", "string"], ["general_document_evidence", "Evidencia documental general", "string"],
+  ].map(([name, label, valueType]) => Object.freeze({ name, label, valueType })));
+  const IDP_FIELD_BY_NAME = new Map(IDP_FIELD_CATALOG.map((field) => [field.name, field]));
+  const IDP_ACTIONS = Object.freeze({ APPROVE: "Aprobar", CORRECT: "Corregir", REJECT: "Rechazar" });
   const detailsMotion = new WeakMap();
 
   function reducedMotionPreferred() {
@@ -352,6 +389,18 @@
     $("question").value = "";
     $("question-count").textContent = "0 / 1000";
     state.documents = [];
+    state.selectedDocumentId = "";
+    state.selectedDocument = null;
+    state.idpFieldName = "";
+    state.idpFieldResult = null;
+    state.idpFieldError = "";
+    state.idpFieldLoading = false;
+    state.idpMetadataLoading = false;
+    state.idpHistoryCursor = null;
+    state.idpHistoryNextCursor = null;
+    state.idpHistory = null;
+    state.idpHistoryLoading = false;
+    state.idpReviewDecisionBusy = Object.create(null);
     state.documentStatesFresh = false;
     state.documentStatesLoading = false;
     state.activeDocumentTab = "available";
@@ -366,6 +415,7 @@
     setReviewDueDateMinimum();
     resetReviewValidation();
     setQueryLoadingState(false);
+    renderIdpPanel();
   }
 
   function summarizeDocuments(documents) {
@@ -522,6 +572,341 @@
     };
   }
 
+  function idpFieldDefinition(name) {
+    return IDP_FIELD_BY_NAME.get(name) || { name, label: name || "Campo", valueType: "string" };
+  }
+
+  function idpStatusLabel(status) {
+    return IDP_STATUS_LABELS[status] || "Estado de extracción no disponible";
+  }
+
+  function idpPresenceLabel(value) {
+    return ({ PRESENT: "Presente", ABSENT: "Ausente", UNKNOWN: "No determinado" }[String(value || "").toUpperCase()] || "No indicado");
+  }
+
+  function idpOriginLabel(value) {
+    return ({ LITERAL: "Literal", DERIVED: "Derivado", INTERPRETIVE: "Interpretativo", HUMAN_CORRECTED: "Corregido por una persona", UNKNOWN: "No determinado" }[String(value || "").toUpperCase()] || "No indicado por el servidor");
+  }
+
+  function idpAcceptanceLabel(value) {
+    return ({ ACCEPTED: "Aceptado", REVIEW_REQUIRED: "Requiere revisión", REJECTED: "Rechazado", UNKNOWN: "No determinado" }[String(value || "").toUpperCase()] || "No indicado por el servidor");
+  }
+
+  function idpFieldCatalogForDocument(documentRecord) {
+    const fields = documentRecord && Array.isArray(documentRecord.idpFields) ? documentRecord.idpFields : null;
+    if (!fields) return IDP_FIELD_CATALOG;
+    return fields.map((name) => IDP_FIELD_BY_NAME.get(name)).filter(Boolean);
+  }
+
+  function selectedIdpAnswer(response, fieldName) {
+    if (!response || response.operationStatus !== "ok" || typeof response.answer !== "string") return null;
+    const metadata = response.idpMetadata || response.idp;
+    if (metadata && metadata.field === fieldName && Object.prototype.hasOwnProperty.call(metadata, "value")) return { ...metadata, answer: response.answer, fallback: false };
+    // A selected query may legitimately fall through to the canonical RAG
+    // answer when IDP is skipped, failed, or unavailable. Keep it readable
+    // and clearly label it as a non-IDP result; never synthesize IDP fields.
+    return { field: fieldName, value: response.answer, answer: response.answer, fallback: true, evidence: [] };
+  }
+
+  function safeIdpEvidence(evidence) {
+    return (Array.isArray(evidence) ? evidence : []).slice(0, 16).filter((entry) => entry && typeof entry === "object").map((entry) => {
+      const safe = {};
+      ["page", "quote", "contentSha256", "start", "end"].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(entry, key)) safe[key] = entry[key];
+      });
+      return safe;
+    });
+  }
+
+  function parseIdpCorrection(value, valueType) {
+    if (valueType === "array[string]") return String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    if (valueType === "number") {
+      const raw = String(value || "").trim();
+      if (!raw) return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    if (valueType === "boolean") return value === "true";
+    return String(value || "").trim();
+  }
+
+  function idpDecisionPayload(field, action, reason, proposedValue, evidenceOverride) {
+    const payload = { fieldName: field.name, action, reason: String(reason || "").trim(), evidence: evidenceOverride || safeIdpEvidence(field.result && field.result.evidence) };
+    if (action === "CORRECT") payload.proposedValue = proposedValue;
+    return payload;
+  }
+
+  function selectedDocumentRecord(documentId) {
+    return state.documents.find((item) => item && item.documentId === documentId) || null;
+  }
+
+  function renderIdpState(message, tone) {
+    const node = $("idp-state");
+    if (!node) return;
+    node.textContent = message || "";
+    node.dataset.state = tone || "";
+    node.hidden = !message;
+  }
+
+  function renderIdpEvidence(container, evidence, citations) {
+    const list = document.createElement("ul");
+    list.className = "idp-evidence-list";
+    const entries = Array.isArray(evidence) ? evidence : [];
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      const item = document.createElement("li");
+      const page = entry.page != null ? `Página ${entry.page}` : "Página no indicada";
+      item.textContent = `${page}${entry.quote ? ` · ${entry.quote}` : " · Cita no disponible"}`;
+      list.append(item);
+    });
+    (Array.isArray(citations) ? citations : []).forEach((citation) => {
+      if (!citation || typeof citation !== "object" || entries.length) return;
+      const item = document.createElement("li");
+      item.textContent = citation.pageNumber != null ? `Página ${citation.pageNumber} · pasaje autorizado` : "Pasaje autorizado";
+      list.append(item);
+    });
+    if (!list.children.length) {
+      const empty = document.createElement("li");
+      empty.textContent = "No hay evidencia textual disponible para mostrar en este resultado.";
+      list.append(empty);
+    }
+    container.append(list);
+  }
+
+  function renderSelectedIdpResult() {
+    const resultNode = $("idp-result");
+    if (!resultNode) return;
+    resultNode.replaceChildren();
+    const result = state.idpFieldResult;
+    if (!result) { resultNode.hidden = true; return; }
+    resultNode.hidden = false;
+    const definition = idpFieldDefinition(result.fieldName);
+    const heading = document.createElement("h4");
+    heading.textContent = result.fallback ? `${definition.label} · respuesta documental` : definition.label;
+    const value = document.createElement("p");
+    value.className = "idp-result-value";
+    value.textContent = typeof result.value === "string" ? result.value : JSON.stringify(result.value);
+    const metadata = document.createElement("p");
+    metadata.className = "idp-result-meta";
+    metadata.textContent = `Presencia: ${idpPresenceLabel(result.presence)} · Origen: ${idpOriginLabel(result.origin)} · Aceptación: ${idpAcceptanceLabel(result.acceptance)}`;
+    const evidenceHeading = document.createElement("p");
+    evidenceHeading.className = "field-label";
+    evidenceHeading.textContent = "EVIDENCIA AUTORIZADA";
+    const evidence = document.createElement("div");
+    renderIdpEvidence(evidence, result.evidence, result.citations);
+    resultNode.append(heading, value, metadata, evidenceHeading, evidence);
+  }
+
+  function renderIdpHistory(history) {
+    const node = $("idp-history");
+    if (!node) return;
+    node.replaceChildren();
+    const heading = document.createElement("p");
+    heading.className = "field-label";
+    heading.textContent = "HISTORIAL DEL RESULTADO";
+    node.append(heading);
+    if (history && history.loading) {
+      const loading = document.createElement("p"); loading.className = "microcopy"; loading.textContent = "Cargando versiones anteriores…"; node.append(loading); return;
+    }
+    const records = history && Array.isArray(history.items) ? history.items : [];
+    if (!records.length) {
+      const empty = document.createElement("p");
+      empty.className = "microcopy";
+      empty.textContent = history ? "No hay versiones anteriores disponibles." : "El historial independiente aparecerá cuando el servidor lo exponga.";
+      node.append(empty);
+      return;
+    }
+    const list = document.createElement("ol");
+    list.className = "idp-history-list";
+    records.slice(0, 25).forEach((entry) => {
+      const item = document.createElement("li");
+      item.textContent = `${entry && entry.createdAt ? formatReviewDate(entry.createdAt) : "Fecha no disponible"} · ${entry && entry.acceptance ? idpAcceptanceLabel(entry.acceptance) : "Resultado"}`;
+      list.append(item);
+    });
+    node.append(list);
+    if (history && history.nextCursor) {
+      const more = document.createElement("button");
+      more.type = "button"; more.className = "text-button"; more.textContent = "Cargar versiones anteriores";
+      more.disabled = Boolean(state.idpHistoryLoading); more.addEventListener("click", loadNextIdpHistoryPage);
+      node.append(more);
+    }
+  }
+
+  function renderIdpPanel() {
+    const panel = $("idp-panel");
+    if (!panel) return;
+    const record = state.selectedDocument;
+    panel.hidden = !record;
+    if (!record) {
+      // Matter changes clear the selected document before the next authorized
+      // load; clear the previous result/history so it cannot bleed into the
+      // new matter while its documents are loading.
+      renderSelectedIdpResult();
+      renderIdpHistory(null);
+      return;
+    }
+    const status = typeof record.idpStatus === "string" ? record.idpStatus : "";
+    const statusNode = $("idp-status");
+    if (statusNode) statusNode.textContent = status ? idpStatusLabel(status) : "Estado no disponible";
+    const select = $("idp-field-select");
+    const controlsNode = $("idp-field-controls");
+    const available = Boolean(record);
+    if (state.idpMetadataLoading) renderIdpState("Cargando el estado autorizado de extracción…", "loading");
+    else if (state.idpFieldError) renderIdpState(state.idpFieldError, "error");
+    else if (!status) renderIdpState("El servidor aún no expone el estado de extracción de este documento.", "unavailable");
+    else if (status === "IDP_FAILED") renderIdpState(record.idpReason || "La extracción falló. No se muestran datos inventados.", "error");
+    else if (status === "IDP_SKIPPED") renderIdpState(record.idpReason || "La extracción se omitió para este documento.", "skipped");
+    else if (["PENDING_IDP", "PROCESSING_IDP"].includes(status)) renderIdpState("La extracción todavía está en curso. Vuelve a consultar el estado más tarde.", "processing");
+    else if (!["IDP_COMPLETED", "IDP_REVIEW_REQUIRED"].includes(status)) renderIdpState("Los datos IDP no están disponibles; puedes consultar el campo por la vía documental autorizada.", "unavailable");
+    else renderIdpState("Selecciona un campo para consultar el resultado autorizado.", "ready");
+    if (controlsNode) controlsNode.hidden = !available || state.idpMetadataLoading;
+    if (select && available) {
+      const current = state.idpFieldName;
+      const fields = idpFieldCatalogForDocument(record);
+      select.replaceChildren();
+      fields.forEach((field) => {
+        const option = document.createElement("option");
+        option.value = field.name;
+        option.textContent = field.label;
+        select.append(option);
+      });
+      state.idpFieldName = current && fields.some((field) => field.name === current) ? current : (fields[0] && fields[0].name) || "";
+      if (state.idpFieldName) select.value = state.idpFieldName;
+      select.disabled = state.idpFieldLoading || !state.idpFieldName;
+      const queryButton = $("idp-field-query");
+      if (queryButton) queryButton.disabled = state.idpFieldLoading || !state.idpFieldName;
+    }
+    renderSelectedIdpResult();
+    renderIdpHistory(state.idpHistory || (state.idpFieldResult && state.idpFieldResult.history));
+  }
+
+  function selectDocument(documentId) {
+    const record = selectedDocumentRecord(documentId);
+    if (!record) return;
+    state.selectedDocumentId = documentId;
+    state.selectedDocument = record;
+    state.idpFieldName = "";
+    state.idpFieldResult = null;
+    state.idpFieldError = "";
+    state.idpMetadataLoading = true;
+    state.idpHistoryCursor = null;
+    state.idpHistoryNextCursor = null;
+    state.idpHistory = null;
+    renderIdpPanel();
+    const generation = currentGeneration();
+    loadSelectedDocumentMetadata(documentId, generation).catch((error) => {
+      if (error.name !== "AbortError" && isCurrent(generation) && state.selectedDocumentId === documentId) {
+        state.idpMetadataLoading = false;
+        renderIdpPanel();
+        renderIdpState(error.message, "error");
+      }
+    });
+  }
+
+  function parseMcpText(result) {
+    const content = result && Array.isArray(result.content) ? result.content : [];
+    const text = content.find((item) => item && item.type === "text" && typeof item.text === "string");
+    if (!text) return null;
+    try { return JSON.parse(text.text); } catch (_error) { return null; }
+  }
+
+  async function loadSelectedDocumentMetadata(documentId, generation, historyCursor) {
+    if (!authorized() || !documentId || !isCurrent(generation)) return;
+    const requestId = `idp-metadata-${Date.now()}`;
+    const argumentsValue = { documentId, historyLimit: 10 };
+    if (historyCursor) argumentsValue.historyCursor = historyCursor;
+    const result = await api("/api/mcp", { method: "POST", body: JSON.stringify({
+      jsonrpc: "2.0", id: requestId, method: "tools/call",
+      params: { name: "get_document_metadata", arguments: argumentsValue },
+      matterId: state.matterId, conversationId: state.conversationId, sessionId: state.sessionId,
+      originCorrelationId: state.correlationId,
+    }), signal: state.controller.signal });
+    if (!isCurrent(generation) || state.selectedDocumentId !== documentId) return;
+    const payload = parseMcpText(result);
+    const idp = payload && payload.idp && typeof payload.idp === "object" ? payload.idp : null;
+    const document = payload && payload.document && typeof payload.document === "object" ? payload.document : null;
+    if (!document && !idp) throw new Error("El estado autorizado de extracción no está disponible.");
+    state.selectedDocument = {
+      ...(selectedDocumentRecord(documentId) || {}), ...(document || {}),
+      idpStatus: idp && idp.status,
+      idpReason: idp && idp.reason,
+      idpRunId: idp && idp.runId,
+      idpDocumentSha256: idp && idp.documentSha256,
+      idpDocumentType: idp && idp.documentType,
+      idpFields: idp && Array.isArray(idp.fields) ? idp.fields.map((field) => field && field.name).filter(Boolean) : undefined,
+    };
+    state.idpMetadataLoading = false;
+    if (idp && idp.history) {
+      const previousItems = historyCursor && state.idpHistory && Array.isArray(state.idpHistory.items) ? state.idpHistory.items : [];
+      state.idpHistory = { items: [...previousItems, ...idp.history], nextCursor: idp.nextCursor || null };
+      state.idpHistoryNextCursor = idp.nextCursor || null;
+      state.idpHistoryCursor = historyCursor || null;
+    }
+    state.idpFieldResult = state.idpFieldResult && state.idpFieldResult.documentId === documentId ? state.idpFieldResult : null;
+    renderIdpPanel();
+  }
+
+  async function loadNextIdpHistoryPage() {
+    if (!state.idpHistoryNextCursor || state.idpHistoryLoading || !state.selectedDocumentId || !authorized()) return;
+    const generation = currentGeneration();
+    const cursor = state.idpHistoryNextCursor;
+    state.idpHistoryLoading = true;
+    renderIdpHistory({ items: [], loading: true });
+    try {
+      await loadSelectedDocumentMetadata(state.selectedDocumentId, generation, cursor);
+    } catch (error) {
+      if (error.name !== "AbortError" && isCurrent(generation)) renderIdpState(error.message, "error");
+    } finally {
+      if (isCurrent(generation)) { state.idpHistoryLoading = false; renderIdpPanel(); }
+    }
+  }
+
+  async function loadSelectedIdpField() {
+    const record = state.selectedDocument;
+    const fieldName = state.idpFieldName || $("idp-field-select") && $("idp-field-select").value;
+    if (!authorized() || !record || !fieldName || state.busy || state.idpFieldLoading) return;
+    const status = record.idpStatus;
+    const generation = currentGeneration();
+    const documentId = record.documentId;
+    state.idpFieldName = fieldName;
+    state.idpFieldLoading = true;
+    const button = $("idp-field-query");
+    if (button) { button.disabled = true; button.textContent = "Consultando…"; button.setAttribute("aria-busy", "true"); }
+    renderIdpState("Consultando el resultado autorizado…", "loading");
+    try {
+      const response = await api("/api/chat", { method: "POST", body: JSON.stringify({
+        matterId: state.matterId, conversationId: state.conversationId, sessionId: state.sessionId,
+        question: `¿Qué dato se extrajo para ${idpFieldDefinition(fieldName).label}?`,
+        selectedDocumentId: documentId, selectedFieldName: fieldName,
+      }), signal: state.controller.signal });
+      if (!isCurrent(generation) || state.selectedDocumentId !== documentId || state.idpFieldName !== fieldName) return;
+      const parsed = selectedIdpAnswer(response, fieldName);
+      if (!parsed) {
+        state.idpFieldResult = null;
+        state.idpFieldError = "El servidor no devolvió un resultado de extracción para este campo.";
+        renderIdpState(state.idpFieldError, "unavailable");
+        return;
+      }
+      state.idpFieldError = "";
+      state.idpFieldResult = { ...parsed, fieldName, documentId, citations: response.citations, history: response.idpHistory };
+      if (window.LegalDeskCitationPanel && window.LegalDeskCitationPanel.renderChatResponse) window.LegalDeskCitationPanel.renderChatResponse(response);
+      renderSelectedIdpResult();
+      renderIdpHistory(state.idpHistory || state.idpFieldResult.history);
+      renderIdpState("Resultado cargado; revisa sus páginas y evidencia antes de usarlo.", "success");
+    } catch (error) {
+      if (error.name !== "AbortError" && isCurrent(generation)) {
+        state.idpFieldError = error.message;
+        renderIdpState(state.idpFieldError, "error");
+      }
+    } finally {
+      if (isCurrent(generation)) {
+        state.idpFieldLoading = false;
+        if (button) { button.disabled = false; button.textContent = "Ver dato"; button.removeAttribute("aria-busy"); }
+        renderIdpPanel();
+      }
+    }
+  }
+
   function renderDocumentList(list, records, emptyText) {
     if (!list) return;
     list.replaceChildren();
@@ -542,7 +927,18 @@
       metadata.className = "document-meta";
       metadata.textContent = view.metadata;
       item.dataset.status = documentRecord.status || "unknown";
-      item.append(name, status, metadata);
+      item.dataset.documentId = documentRecord.documentId || "";
+      const viewAction = document.createElement("span");
+      viewAction.className = "document-view-action";
+      viewAction.textContent = "Ver datos extraídos";
+      item.tabIndex = 0;
+      item.setAttribute("role", "button");
+      item.setAttribute("aria-label", `${view.name}. ${view.statusLabel}. Ver datos extraídos.`);
+      item.addEventListener("click", () => selectDocument(documentRecord.documentId));
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectDocument(documentRecord.documentId); }
+      });
+      item.append(name, status, metadata, viewAction);
       list.append(item);
     });
   }
@@ -588,6 +984,14 @@
     }
     renderDocumentList($("document-list"), groups.operational, "Aún no hay documentos operativos en este expediente.");
     renderDocumentList($("document-incomplete-list"), groups.incomplete, "No hay cargas incompletas en este expediente.");
+    if (state.selectedDocumentId) {
+      state.selectedDocument = selectedDocumentRecord(state.selectedDocumentId);
+      if (!state.selectedDocument) {
+        state.selectedDocumentId = "";
+        state.idpFieldResult = null;
+      }
+    }
+    renderIdpPanel();
     refreshControls();
   }
 
@@ -600,6 +1004,16 @@
     partitionDocuments,
     renderDocuments,
     summarizeDocuments,
+  });
+
+  window.LegalDeskIDPView = Object.freeze({
+    idpAcceptanceLabel,
+    idpOriginLabel,
+    idpPresenceLabel,
+    idpStatusLabel,
+    idpDecisionPayload,
+    parseIdpCorrection,
+    selectedIdpAnswer,
   });
 
   function renderHistory(events) {
@@ -785,7 +1199,8 @@
       animateReviewDetails(details, true, { naturalHeight, startHeight: 0 });
     }
     const reviewId = details.dataset.reviewId;
-    if (reviewId && !state.reviewDetails[reviewId]) loadReviewDetail(reviewId, details);
+    const hasInlineIdp = Boolean(details.querySelector(".idp-review-card"));
+    if (reviewId && !state.reviewDetails[reviewId] && !hasInlineIdp) loadReviewDetail(reviewId, details);
   }
 
   function animateDetailsClose(details) {
@@ -842,7 +1257,8 @@
       if (details.dataset.motionCommit) return;
       animateReviewDetails(details, true);
       const reviewId = details.dataset.reviewId;
-      if (reviewId && !state.reviewDetails[reviewId]) loadReviewDetail(reviewId, details);
+      const hasInlineIdp = Boolean(details.querySelector(".idp-review-card"));
+      if (reviewId && !state.reviewDetails[reviewId] && !hasInlineIdp) loadReviewDetail(reviewId, details);
     });
   }
 
@@ -931,6 +1347,204 @@
     document.querySelectorAll(".review-item--motion-clone").forEach((clone) => clone.remove());
   }
 
+  function idpFieldValueText(value) {
+    if (value === null || value === undefined) return "Sin valor";
+    return typeof value === "string" ? value : JSON.stringify(value);
+  }
+
+  function idpCorrectionControl(field, reviewTaskId, definitionOverride) {
+    const definition = definitionOverride || { ...idpFieldDefinition(field.name), valueType: field.valueType || idpFieldDefinition(field.name).valueType };
+    const label = document.createElement("label");
+    label.className = "field-label";
+    label.textContent = "VALOR CORREGIDO (solo para Corregir)";
+    let input;
+    const id = `idp-correction-${reviewTaskId}-${field.name}`;
+    if (definition.valueType === "boolean") {
+      input = document.createElement("select");
+      ["true", "false"].forEach((value) => {
+        const option = document.createElement("option"); option.value = value; option.textContent = value === "true" ? "Sí" : "No"; input.append(option);
+      });
+    } else if (definition.valueType === "date") {
+      input = document.createElement("input"); input.type = "date";
+    } else if (definition.valueType === "number") {
+      input = document.createElement("input"); input.type = "number"; input.step = "any";
+    } else if (definition.valueType === "array[string]") {
+      input = document.createElement("textarea"); input.rows = 2; input.placeholder = "Un valor por línea";
+    } else {
+      input = document.createElement("textarea"); input.rows = 2;
+    }
+    input.id = id; input.required = true; input.className = "idp-review-correction"; input.dataset.idpCorrection = field.name;
+    label.htmlFor = id;
+    return { label, input };
+  }
+
+  function idpEvidenceControl(field) {
+    const anchors = safeIdpEvidence(field.result && field.result.evidence);
+    const wrap = document.createElement("div");
+    wrap.className = "idp-review-evidence-edit";
+    const select = document.createElement("select");
+    select.className = "idp-review-evidence-select";
+    select.dataset.idpEvidence = field.name;
+    const selectId = `idp-evidence-anchor-${field.name}`;
+    select.id = selectId;
+    anchors.forEach((anchor, index) => {
+      const option = document.createElement("option"); option.value = String(index); option.textContent = `Anclaje ${index + 1} · página ${anchor.page}`; select.append(option);
+    });
+    const selectLabel = document.createElement("label"); selectLabel.className = "review-helper"; selectLabel.htmlFor = selectId; selectLabel.textContent = "Anclaje autorizado";
+    const pageId = `idp-evidence-page-${field.name}`;
+    const quoteId = `idp-evidence-quote-${field.name}`;
+    const page = document.createElement("input"); page.id = pageId; page.type = "number"; page.min = "1"; page.required = true; page.className = "idp-review-evidence-page"; page.dataset.idpEvidencePage = field.name;
+    const quote = document.createElement("textarea"); quote.id = quoteId; quote.rows = 2; quote.maxLength = 2000; quote.required = true; quote.className = "idp-review-evidence-quote"; quote.dataset.idpEvidenceQuote = field.name;
+    const pageLabel = document.createElement("label"); pageLabel.className = "review-helper"; pageLabel.htmlFor = pageId; pageLabel.textContent = "Página del pasaje";
+    const quoteLabel = document.createElement("label"); quoteLabel.className = "review-helper"; quoteLabel.htmlFor = quoteId; quoteLabel.textContent = "Pasaje de respaldo (el hash lo conserva el servidor)";
+    const sync = () => { const anchor = anchors[Number(select.value) || 0]; if (anchor) { page.value = anchor.page; quote.value = anchor.quote; } };
+    select.addEventListener("change", sync); sync();
+    wrap.append(selectLabel, select, pageLabel, page, quoteLabel, quote);
+    return { wrap, select, page, quote, anchors };
+  }
+
+  function idpFieldDecided(field) {
+    return Boolean(field && field.applicableDecisions && field.applicableDecisions.some((decision) => IDP_ACTIONS[decision.action]));
+  }
+
+  function renderIdpReview(bodyContent, task, idp) {
+    const card = document.createElement("div");
+    card.className = "idp-review-card";
+    const intro = document.createElement("p");
+    intro.className = "review-helper";
+    intro.textContent = "Revisión por campo. La decisión del servidor conserva el origen, la aceptación y los anclajes; no se pueden editar desde el navegador.";
+    card.append(intro);
+    const fields = Array.isArray(idp.fields) ? idp.fields : [];
+    fields.forEach((field) => {
+      if (!field || typeof field.name !== "string") return;
+      const definition = { ...idpFieldDefinition(field.name), valueType: field.valueType || idpFieldDefinition(field.name).valueType };
+      const fieldCard = document.createElement("section");
+      fieldCard.className = "idp-review-field";
+      fieldCard.dataset.idpField = field.name;
+      const heading = document.createElement("h4"); heading.textContent = definition.label;
+      const value = document.createElement("p"); value.className = "idp-review-value"; value.textContent = idpFieldValueText(field.result && field.result.value);
+      const result = field.result || {};
+      const meta = document.createElement("p"); meta.className = "idp-review-meta";
+      meta.textContent = `Presencia: ${idpPresenceLabel(result.presence)} · Origen: ${idpOriginLabel(result.origin)} · Aceptación: ${idpAcceptanceLabel(result.acceptance)}`;
+      const evidence = document.createElement("div");
+      renderIdpEvidence(evidence, result.evidence, []);
+      fieldCard.append(heading, value, meta, evidence);
+      const decided = idpFieldDecided(field);
+      if (task.status !== "closed") {
+        const actions = document.createElement("div"); actions.className = "idp-review-actions";
+        const reasonId = `idp-review-reason-${task.reviewTaskId}-${field.name}`;
+        const reasonLabel = document.createElement("label"); reasonLabel.className = "field-label"; reasonLabel.htmlFor = reasonId; reasonLabel.textContent = "MOTIVO OBLIGATORIO";
+        const reason = document.createElement("textarea"); reason.id = reasonId; reason.rows = 2; reason.maxLength = 2000; reason.required = true; reason.className = "idp-review-reason"; reason.dataset.idpReason = field.name; reason.placeholder = "Explica esta decisión sin copiar el documento.";
+        const validationError = document.createElement("p");
+        validationError.className = "field-error idp-review-error";
+        validationError.dataset.idpError = field.name;
+        validationError.setAttribute("role", "alert");
+        validationError.hidden = true;
+        reason.setAttribute("aria-describedby", validationError.id || `idp-review-error-${task.reviewTaskId}-${field.name}`);
+        validationError.id = reason.getAttribute("aria-describedby");
+        const correction = idpCorrectionControl(field, task.reviewTaskId, definition);
+        const evidenceEdit = idpEvidenceControl(field);
+        correction.label.hidden = true; correction.input.hidden = true;
+        const correctionWrap = document.createElement("div"); correctionWrap.append(correction.label, correction.input);
+        const buttons = Object.entries(IDP_ACTIONS).map(([action, label]) => {
+          const button = document.createElement("button"); button.type = "button"; button.className = "button idp-review-button"; button.dataset.idpAction = action; button.dataset.reviewId = task.reviewTaskId; button.dataset.idpField = field.name; button.textContent = label; button.disabled = Boolean(state.idpReviewDecisionBusy[`${task.reviewTaskId}:${field.name}`]) || decided;
+          return button;
+        });
+        const showValidationError = (message, target) => {
+          validationError.textContent = message;
+          validationError.hidden = false;
+          reason.setAttribute("aria-invalid", "true");
+          try { target.focus({ preventScroll: true }); } catch (_error) { target.focus(); }
+        };
+        const clearValidationError = () => {
+          validationError.textContent = "";
+          validationError.hidden = true;
+          reason.setAttribute("aria-invalid", "false");
+        };
+        reason.addEventListener("input", clearValidationError);
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const action = button.dataset.idpAction;
+            const isCorrection = action === "CORRECT";
+            correction.label.hidden = !isCorrection; correction.input.hidden = !isCorrection;
+            if (!String(reason.value || "").trim()) {
+              showValidationError("Añade un motivo para esta decisión.", reason);
+              return;
+            }
+            clearValidationError();
+            if (!isCorrection) {
+              submitIdpDecision(task, field, action, reason.value, null, buttons, reason, correction.input, null);
+              return;
+            }
+            const proposed = parseIdpCorrection(correction.input.value, definition.valueType);
+            if ((definition.valueType === "number" && proposed === null) || (definition.valueType !== "number" && proposed === "")) {
+              showValidationError("Indica un valor corregido válido.", correction.input);
+              return;
+            }
+            const page = Number(evidenceEdit.page.value);
+            const quote = evidenceEdit.quote.value.trim();
+            if (!Number.isInteger(page) || page < 1) {
+              showValidationError("Indica una página válida para el nuevo pasaje.", evidenceEdit.page);
+              return;
+            }
+            if (!quote) {
+              showValidationError("Indica la cita del nuevo pasaje.", evidenceEdit.quote);
+              return;
+            }
+            const anchor = evidenceEdit.anchors[Number(evidenceEdit.select.value) || 0];
+            const editedEvidence = anchor ? [{ ...anchor, page, quote }] : [];
+            if (!editedEvidence.length) {
+              showValidationError("Selecciona un anclaje autorizado.", evidenceEdit.select);
+              return;
+            }
+            submitIdpDecision(task, field, "CORRECT", reason.value, proposed, buttons, reason, correction.input, editedEvidence);
+          });
+        });
+        actions.append(reasonLabel, reason, validationError, correctionWrap, evidenceEdit.wrap, ...buttons);
+        fieldCard.append(actions);
+      }
+      card.append(fieldCard);
+    });
+    if (!fields.length) {
+      const empty = document.createElement("p"); empty.className = "review-detail-state"; empty.textContent = "El servidor no devolvió campos revisables para esta tarea."; card.append(empty);
+    }
+    bodyContent.append(card);
+  }
+
+  async function submitIdpDecision(task, field, action, reasonValue, proposedValue, buttons, reason, correction, evidenceOverride) {
+    const key = `${task.reviewTaskId}:${field.name}`;
+    if (!authorized() || state.idpReviewDecisionBusy[key] || !String(reasonValue || "").trim()) {
+      if (!String(reasonValue || "").trim()) setMessage("Añade un motivo antes de guardar la decisión.", true);
+      return;
+    }
+    const generation = currentGeneration();
+    state.idpReviewDecisionBusy[key] = true;
+    buttons.forEach((button) => { button.disabled = true; button.setAttribute("aria-busy", "true"); });
+    try {
+      const allFields = task.idp && Array.isArray(task.idp.fields) ? task.idp.fields : [];
+      const decided = new Set(allFields.filter(idpFieldDecided).map((item) => item.name));
+      decided.add(field.name);
+      const status = allFields.length && decided.size >= allFields.length ? "closed" : "in_review";
+      const idpDecision = idpDecisionPayload(field, action, reasonValue, proposedValue, evidenceOverride);
+      await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews/${encodeURIComponent(task.reviewTaskId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, status, resolutionNote: String(reasonValue).trim(), originCorrelationId: state.correlationId, idpDecision }),
+        signal: state.controller.signal,
+      });
+      if (!isCurrent(generation)) return;
+      delete state.reviewDetails[task.reviewTaskId];
+      delete state.reviewUpdates[task.reviewTaskId];
+      reason.value = ""; correction.value = "";
+      setMessage(status === "closed" ? "Todos los campos han quedado resueltos por separado." : "Decisión de campo guardada; quedan campos por revisar.", false, "success");
+      await loadReviews(generation);
+    } catch (error) {
+      if (error.name !== "AbortError" && isCurrent(generation)) setMessage(error.message, true);
+    } finally {
+      delete state.idpReviewDecisionBusy[key];
+      if (isCurrent(generation)) renderReviews(state.reviews);
+    }
+  }
+
   function renderReviewItem(task) {
     const item = document.createElement("li");
     item.className = "review-item";
@@ -955,7 +1569,14 @@
     const bodyContent = document.createElement("div");
     bodyContent.className = "review-item-body-content";
     const snapshot = task && task.snapshot && typeof task.snapshot === "object" ? task.snapshot : null;
-    if (!snapshot) {
+    const idp = task && task.idp && typeof task.idp === "object" ? task.idp : null;
+    if (idp) {
+      const idpHeading = document.createElement("p");
+      idpHeading.className = "review-label";
+      idpHeading.textContent = `Revisión IDP · ${idp.documentType || "documento"}`;
+      bodyContent.append(idpHeading);
+      renderIdpReview(bodyContent, task, idp);
+    } else if (!snapshot) {
       const stateMessage = document.createElement("p");
       stateMessage.className = "review-detail-state";
       stateMessage.setAttribute("role", "status");
@@ -985,12 +1606,12 @@
       citationWrap.append(citationList);
       bodyContent.append(citationWrap);
     }
-    if (snapshot) {
+    if (snapshot && !idp) {
       appendReviewField(bodyContent, "Nota de solicitud", task.note);
       if (task.status === "closed") appendReviewField(bodyContent, "Nota de resolución", task.resolutionNote);
     }
 
-    if (task.status !== "closed" && typeof task.reviewTaskId === "string") {
+    if (!idp && task.status !== "closed" && typeof task.reviewTaskId === "string") {
       const updating = Boolean(state.reviewUpdates[task.reviewTaskId]);
       const actions = document.createElement("div");
       actions.className = "review-actions";
@@ -1045,7 +1666,7 @@
       try {
       const query = `conversationId=${encodeURIComponent(state.conversationId)}&sessionId=${encodeURIComponent(state.sessionId)}`;
       const result = await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews/${encodeURIComponent(reviewTaskId)}?${query}`, { signal: state.controller.signal });
-      if (!isCurrent(generation) || !result || !result.snapshot) throw new Error("El detalle de la revisión no está disponible.");
+      if (!isCurrent(generation) || !result || (!result.snapshot && !result.idp)) throw new Error("El detalle de la revisión no está disponible.");
       state.reviewDetails[reviewTaskId] = result;
       state.reviews = state.reviews.map((task) => task.reviewTaskId === reviewTaskId ? { ...task, ...result } : task);
       const currentItem = details.closest(".review-item");
@@ -1751,6 +2372,14 @@
       setUploadProgress("idle");
       refreshControls();
     });
+    $("idp-field-select").addEventListener("change", (event) => {
+      state.idpFieldName = event.target.value;
+      state.idpFieldResult = null;
+      const queryButton = $("idp-field-query");
+      if (queryButton) queryButton.disabled = !state.idpFieldName || state.idpFieldLoading;
+      renderSelectedIdpResult();
+    });
+    $("idp-field-query").addEventListener("click", loadSelectedIdpField);
     $("upload-button").addEventListener("click", uploadDocument);
     $("chat-form").addEventListener("submit", askQuestion);
     $("question").addEventListener("input", () => { $("question-count").textContent = `${$("question").value.length} / 1000`; });

@@ -56,6 +56,12 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/playwright" --no-save --ignore-scripts playwright@1.62.1
           PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Run Phase 14 IDP frontend behavior gate
+        shell: bash
+        run: |
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/playwright/node_modules/playwright" \
+            PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" \
+            node tests/test_phase14_idp_frontend.cjs
       - name: Run offline frontend behavior gate
         shell: bash
         run: |
