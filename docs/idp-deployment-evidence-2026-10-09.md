@@ -47,9 +47,11 @@ The first `LegalDeskPhase14PublicEdge` update rolled back safely to
 `UPDATE_ROLLBACK_COMPLETE`: CloudFormation needed
 `logs:DescribeLogGroups` to resolve the existing `LogsLogGroupArn` dependency,
 but the temporary role did not yet have that regional metadata permission.
-No log content or write permission was involved. A corrected Public Edge
-change set remains pending. These are control-plane statuses, not evidence
-that processing or machine review is enabled.
+No log content or write permission was involved. The corrected Public Edge
+update then reached `UPDATE_COMPLETE`; the temporary role remains bound and
+still requires restoration to the original code-only role. These are
+control-plane statuses, not evidence that processing or machine review is
+enabled.
 
 The exact Cognito client was validated before the secret transfer. The helper
 passed and wrote Standard `SecureString` parameter version 1 without logging
@@ -66,8 +68,8 @@ metadata, and the exact existing API integration GET/PATCH dependency required
 for URI re-evaluation. The first Public Edge update using that role rolled back
 safely because CloudFormation also required regional `logs:DescribeLogGroups`
 metadata access to resolve `LogsLogGroupArn`; no log content or write access
-was granted. The corrected Public Edge update remains pending, and the reviewed
-integration URI has no intended semantic change. The role must be
+was granted. The corrected Public Edge update reached `UPDATE_COMPLETE`, and
+the reviewed integration URI has no intended semantic change. The role must be
 removed only after the stack is demonstrably rebound to the original code-only
 role. No account-wide IAM grant is authorized or needed.
 
@@ -89,28 +91,50 @@ as real-model acceptance, or as zero cost.
   rejected as unsupported for this mode, so no static-cache refresh is claimed.
 - Public Edge dependency-read correction was reviewed and executed using
   change set `idp-public-edge-dependencies-c136024`; the stack reached
-  `UPDATE_COMPLETE`. Its service-role binding still requires restoration.
+  `UPDATE_COMPLETE`. Its temporary service-role binding still requires
+  restoration to the original code-only role.
 - Four immutable contract reports (`a`, `diagnostic-b`, `schema-fixed-c`,
   `nullable-d`) preserve failed/unknown attempts rather than overwriting them.
   The diagnostic identifies extractor provider validation. Isolated synthetic
   schema checks revealed 61 optional parameters exceeding the provider limit
   of 24, followed by a grammar-too-large error after the first simplification.
+- The corrected compact-prompt canary is preserved at
+  `evals/results/idp-canary-contract-20261009-compact-e.json`: prompt `1.0.2`,
+  `COMPLETE`, two provider calls, 2,272 input tokens, 789 output tokens, and
+  field-level `REVIEW_REQUIRED`. This is provider completion evidence, not
+  phase acceptance.
+- The immutable digital corpus report
+  `evals/results/idp-digital-corpus-20261009-f.json` covers nine documents and
+  18 provider calls (16,519 input and 4,817 output tokens) with expected
+  document classes. Its historical `COMPLETED` status for review fields is an
+  export-enum erratum; the report is preserved and those fields are interpreted
+  under the corrected review-required contract.
 - The compact internal array schema is decoded into the unchanged persisted
   mapping, with duplicate/name/coverage and existing typed/evidence validation.
   Extractor prompt is now `1.0.2`. An isolated synthetic schema check succeeded
   with `end_turn`, 1,517 input and 516 output tokens; raw response was not saved.
   This proves provider grammar acceptance, not extraction accuracy or AWS E2E.
-- Supervisor full offline suite completed: 806 tests, one host symlink skip.
-  A fresh Linux release/CI is required for the provider and prompt correction.
+  The observed provider boundary is consistent with AWS Bedrock's documented
+  structured-output schema validation and first-time grammar compilation; see
+  [AWS structured outputs](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html)
+  and [Anthropic Claude on Amazon Bedrock](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock).
+- CI run `37955864825` failed stale-runtime fake contract tests and remains
+  retained as diagnostic evidence. Corrected CI run `37956195348` passed.
+- The OCR collector is still running against eight synthetic PDFs as whole
+  PDFs (11 pages, bounded at 22 pages); this is not production Textract
+  continuation evidence. New worker duplicate-proof telemetry is pending the
+  next CI release.
 
 ## Validation still outstanding
 
 Machine Gateway acceptance, processing enablement, real-model/OCR acceptance,
-real AWS E2E, and cleanup verification remain open. Failed canaries are
-not accepted evidence. No Textract
-processing has been executed at this checkpoint. Storage/deployment/control-
-plane activity is not asserted free. A successful offline gate or
-`CREATE_COMPLETE`/`UPDATE_COMPLETE` status is not phase acceptance.
+real AWS E2E, and cleanup verification remain open. Failed canaries and
+review-required canaries are not phase acceptance. The OCR collector is not
+production continuation proof, and worker duplicate telemetry is pending. No
+production Textract continuation has been accepted at this checkpoint.
+Storage/deployment/control-plane activity is not asserted free. A successful
+offline gate or `CREATE_COMPLETE`/`UPDATE_COMPLETE` status is not phase
+acceptance.
 
 ## Rollback references captured
 

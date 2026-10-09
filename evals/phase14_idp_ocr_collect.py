@@ -178,9 +178,8 @@ def _lines(response: Mapping[str, Any]) -> dict[int, str]:
 def _client_config() -> Any:
     try:
         from botocore.config import Config
-        # Botocore's ``max_attempts`` excludes the initial request: exactly
-        # one SDK retry, while application-level Start/Get operations are
-        # never retried or resumed after an ambiguous outcome.
+        # Include the initial request in the limit: no SDK/provider retry.
+        # Local journal replacement retries never repeat an S3/Textract call.
         return Config(retries={"mode": "standard", "total_max_attempts": 1}, connect_timeout=10, read_timeout=90)
     except ImportError as exc:
         raise OCRCollectionError("aws_sdk_unavailable") from exc

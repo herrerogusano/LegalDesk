@@ -111,9 +111,13 @@ passed 770 Python tests, browser behavior gates, strict IaC lint and the
 extracted Lambda artifact checks on Linux/Python 3.12. Real evaluation and
 AWS E2E remain in progress.
 IDP infrastructure is deployed disabled; the machine Gateway configuration is
-updated. Real provider schema diagnostics required a compact internal wire
-adapter. Full evaluation/AWS E2E and phase acceptance remain pending; see
-`docs/idp-deployment-evidence-2026-10-09.md`.
+updated and Public Edge is `UPDATE_COMPLETE` after the log-group dependency
+fix. The temporary bootstrap role remains bound pending restoration to the
+code-only production role. Real provider schema diagnostics required a compact
+internal wire adapter. The immutable compact canary and nine-document corpus
+reports are recorded, while OCR collection and worker duplicate telemetry
+remain in progress. Full evaluation/AWS E2E and phase acceptance remain
+pending; see `docs/idp-deployment-evidence-2026-10-09.md`.
 
 Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
 `docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.

@@ -8,6 +8,7 @@ later processing blocks.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 from hashlib import sha256
 from typing import Any, Mapping, Protocol
@@ -29,7 +30,7 @@ from .persistence import AuthoritativeJobLocator, IDPRepository
 
 
 class IDPQueue(Protocol):
-    def publish(self, *, job_id: str) -> None: ...
+    def publish(self, *, job_id: str) -> str: ...
 
 
 class IDPDocumentLookup(Protocol):
@@ -190,12 +191,35 @@ class IDPWorker:
                 body = json.loads(record.get("body", ""))
                 if not isinstance(body, Mapping):
                     raise IDPContractError("SQS body is invalid")
-                self.process_message(body)
+                processed_job = self.process_message(body)
+                # This is deliberately emitted only after the authoritative
+                # repository path returns.  It contains enough bounded
+                # metadata for duplicate-delivery observation, never payload,
+                # document text, tenant/matter, or model output.
+                self._emit_consumed(message_id=message_id, job=processed_job)
             except IDPSourceArnError:
                 raise
             except Exception:
                 failures.append({"itemIdentifier": message_id})
         return {"batchItemFailures": failures}
+
+    @staticmethod
+    def _emit_consumed(*, message_id: str, job: IDPJob) -> None:
+        print(
+            json.dumps(
+                {
+                    "event": "idp_worker_consumed",
+                    "jobId": job.job_id,
+                    "messageId": message_id,
+                    "outcome": "acknowledged",
+                    "status": job.status.value,
+                    "timestamp": int(time.time() * 1000),
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            flush=True,
+        )
 
     def process_message(self, payload: Mapping[str, object]) -> IDPJob:
         job, document = self.locator.locate(payload)

@@ -24,10 +24,14 @@ class Boto3IDPSQSQueue:
             raise IDPLambdaConfigurationError("IDP queue configuration is invalid")
         self.client, self.queue_url = client, queue_url
 
-    def publish(self, *, job_id: str) -> None:
+    def publish(self, *, job_id: str) -> str:
         if not isinstance(job_id, str) or not job_id.strip():
             raise IDPLambdaConfigurationError("IDP job id is invalid")
-        self.client.send_message(QueueUrl=self.queue_url, MessageBody=json.dumps({"jobId": job_id}, separators=(",", ":")))
+        response = self.client.send_message(QueueUrl=self.queue_url, MessageBody=json.dumps({"jobId": job_id}, separators=(",", ":")))
+        message_id = response.get("MessageId") if isinstance(response, Mapping) else None
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise IDPLambdaConfigurationError("IDP queue did not return MessageId")
+        return message_id
 
 
 def _enabled() -> bool:

@@ -95,8 +95,36 @@ CloudFormation needed `logs:DescribeLogGroups` to resolve the existing
 `LogsLogGroupArn` dependency, and the role did not yet have that regional
 metadata permission. No log content or write permission was added. Document
 Security and Reconciliation are `UPDATE_COMPLETE`, Review Task and Gateway
-are `UPDATE_COMPLETE`, and the corrected Public Edge update remains pending.
-These statuses do not authorize enablement.
+are `UPDATE_COMPLETE`, and the corrected Public Edge update reached
+`UPDATE_COMPLETE`. The temporary role is still bound; restoration to the
+code-only production role remains pending. These statuses do not authorize
+enablement.
+
+### Evaluation and collector checkpoint (2026-10-09)
+
+The compact extractor prompt `1.0.2` completed the immutable contract canary
+in `evals/results/idp-canary-contract-20261009-compact-e.json`: two provider
+calls, 2,272 input tokens, 789 output tokens, and `REVIEW_REQUIRED`. The
+immutable digital corpus report `idp-digital-corpus-20261009-f.json` contains
+nine documents, 18 calls, 16,519 input tokens, and 4,817 output tokens with
+the expected document classes. Its historical `COMPLETED` label for review
+fields is an export-enum erratum; preserve the immutable report and interpret
+those fields using the corrected review-required contract.
+
+The OCR collector is still running against eight synthetic PDFs (11 whole-PDF
+pages, bounded at 22 pages); this is not production Textract continuation
+evidence. New worker duplicate-proof telemetry is also pending the next CI
+release. The failed CI run `37955864825` remains retained as stale-runtime
+evidence; corrected CI `37956195348` passed.
+
+The provider grammar issue was a request-schema validation boundary: the first
+extractor schema exposed 61 optional parameters where the observed provider
+accepted at most 24, and the first simplification then exceeded the grammar
+size limit. The compact wire adapter addresses that transport shape only; it
+does not establish extraction accuracy or phase acceptance. See the [AWS
+Bedrock structured-output documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html)
+and [Anthropic's Claude on Amazon Bedrock documentation](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock)
+for the provider-level structured-output contract.
 
 After the first stack is created, re-read its queue URL/ARN, client ID, and
 function ARNs. A second, still-disabled configuration update may replace the
