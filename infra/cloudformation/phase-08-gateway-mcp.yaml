@@ -72,6 +72,10 @@ Parameters:
     Type: String
     Default: ""
     AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  IDPArtifactBucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
 
 Conditions:
   HasAdditionalGatewayClient: !Not [!Equals [!Ref GatewayJwtAdditionalClientId, ""]]
@@ -84,6 +88,12 @@ Conditions:
     - !Not [!Equals [!Ref IDPReviewTenantId, ""]]
     - !Not [!Equals [!Ref IDPReviewMatterIds, ""]]
     - !Not [!Equals [!Ref IDPSourceBucketName, ""]]
+
+  HasIDPMetadataStorage: !And
+    - !Not [!Equals [!Ref IDPReviewTenantId, ""]]
+    - !Not [!Equals [!Ref IDPReviewMatterIds, ""]]
+    - !Not [!Equals [!Ref IDPSourceBucketName, ""]]
+    - !Not [!Equals [!Ref IDPArtifactBucketName, ""]]
 
 Resources:
   MetadataMcpLogGroup:
@@ -115,6 +125,51 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:Query
                 Resource: !Ref ExistingMetadataTableArn
+              - !If
+                - HasIDPMetadataStorage
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource:
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !Sub
+                      - "${BucketArn}/idp-artifacts/tenant=${TenantId}/matter=${MatterId}/document=*/run=*/pages-*"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPArtifactBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/idp-artifacts/tenant=${TenantId}/matter=${MatterId}/document=*/run=*/pages-*"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPArtifactBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -239,6 +294,9 @@ Resources:
           AWS_MAX_ATTEMPTS: "1"
           AWS_RETRY_MODE: standard
           DOCUMENT_METADATA_TABLE_NAME: !Ref ExistingMetadataTableName
+          IDP_TABLE_NAME: !Ref ExistingMetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref IDPSourceBucketName
+          LEGALDESK_IDP_ARTIFACT_BUCKET: !Ref IDPArtifactBucketName
           MCP_SCHEMA_VERSION: "1"
 
   MetadataMcpFunctionUrl:

@@ -38,6 +38,10 @@ Parameters:
   SourceBucketArn:
     Type: String
     AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  IDPArtifactBucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
   BetaTenantId:
     Type: String
     AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
@@ -187,6 +191,7 @@ Parameters:
 
 Conditions:
   HasCustomViewerDomain: !Not [!Equals [!Ref ViewerDomainName, ""]]
+  HasIDPArtifactBucket: !Not [!Equals [!Ref IDPArtifactBucketName, ""]]
 
 Resources:
   FrontendBucket:
@@ -352,6 +357,13 @@ Resources:
                   - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt.metadata.json"
                   - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
                   - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+              - !If
+                - HasIDPArtifactBucket
+                - Sid: ReadIDPArtifactsForBetaTenant
+                  Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${IDPArtifactBucketName}/idp-artifacts/tenant=${BetaTenantId}/matter=*/document=*/run=*/pages-*"
+                - !Ref AWS::NoValue
               - Sid: BedrockKnowledgeBaseDataPlane
                 Effect: Allow
                 Action: [bedrock:Retrieve, bedrock:StartIngestionJob, bedrock:GetIngestionJob]
@@ -400,6 +412,7 @@ Resources:
           AWS_RETRY_MODE: standard
           LEGALDESK_METADATA_TABLE_NAME: !Ref MetadataTableName
           LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
+          LEGALDESK_IDP_ARTIFACT_BUCKET: !Ref IDPArtifactBucketName
           LEGALDESK_KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
           LEGALDESK_DATA_SOURCE_ID: !Ref DataSourceId
           LEGALDESK_GUARDRAIL_ID: !Ref GuardrailIdentifier

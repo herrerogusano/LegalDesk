@@ -114,8 +114,16 @@ class Phase14IDPM2MIaCTests(unittest.TestCase):
         self.assertNotIn("IDPSourceBucketArn", params)
         statement = next(item for item in _statements(self.review, "ReviewTaskExecutionRole") if item.get("Sid") == "ReadCanonicalIDPDocuments")
         self.assertEqual(statement["Action"], "s3:GetObject")
-        sub_values = [_sub_text(value) for value in statement["Resource"] if _sub_text(value)]
-        self.assertTrue(all("/tenants/${TenantId}/matters/${MatterId}/documents/*/original." in value for value in sub_values))
+        sub_values = []
+        for value in statement["Resource"]:
+            if isinstance(value, dict) and "Fn::If" in value:
+                value = value["Fn::If"][1]
+            rendered = _sub_text(value)
+            if rendered:
+                sub_values.append(rendered)
+        self.assertTrue(any("/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf" in value for value in sub_values))
+        self.assertTrue(any("/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt" in value for value in sub_values))
+        self.assertTrue(any("/idp-artifacts/tenant=${TenantId}/matter=${MatterId}/document=*/run=*/pages-*" in value for value in sub_values))
         self.assertFalse(any("/matters/*/documents/" in value for value in sub_values))
         self.assertNotIn("s3:DeleteObject", str(statement))
         env = self.review["Resources"]["ReviewTaskFunction"]["Properties"]["Environment"]["Variables"]
