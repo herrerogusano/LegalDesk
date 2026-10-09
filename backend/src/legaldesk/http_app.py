@@ -40,6 +40,7 @@ from .identity import (
     create_cognito_logout_url,
     create_pkce_authorization_request,
 )
+from .chat import ChatRequest
 from .ingestion import IngestionConflictError, KnowledgeBaseSyncResult, run_knowledge_base_sync
 from .mcp_server import GET_DOCUMENT_METADATA, LIST_MATTER_DOCUMENTS, MCPServer
 from .memory import ConversationBindingStore, MemoryScope, derive_memory_scope_for_identity
@@ -71,6 +72,9 @@ from .state import (
     IngestionOperationRecord,
     SessionRecord,
 )
+from .idp.models import EvidenceAnchor, FieldAcceptance, IDPContractError
+from .idp.registry import IDPSchemaRegistry
+from .idp.review import IDPQueryResult, IDPReviewError, query_selected_document
 
 
 MAX_HTTP_BODY = 1_048_576
@@ -634,7 +638,7 @@ class LoopbackLegalDeskApp:
             if len(parts) == 6 and parts[4] == "reviews" and method in {"PATCH", "POST"}:
                 return self._review_update(environ, identity, matter_id, parts[5], session)
         if path == PurePosixPath("/api/chat") and method == "POST":
-            return self._chat(environ, identity)
+            return self._chat(environ, identity, session)
         if len(parts) == 4 and parts[1:3] == ("api", "conversations") and parts[3] and method == "GET":
             return self._history(environ, identity, parts[3])
         if path == PurePosixPath("/api/citations") and method == "GET":
@@ -657,10 +661,13 @@ class LoopbackLegalDeskApp:
             if tool_name == LIST_MATTER_DOCUMENTS and arguments:
                 raise ValueError("list tool accepts no arguments")
             if tool_name == GET_DOCUMENT_METADATA and (
-                set(arguments) != {"documentId"}
+                not {"documentId"}.issubset(set(arguments))
+                or set(arguments) - {"documentId", "historyLimit", "historyCursor"}
                 or not isinstance(arguments.get("documentId"), str)
                 or not arguments["documentId"]
                 or len(arguments["documentId"]) > 128
+                or ("historyLimit" in arguments and (isinstance(arguments.get("historyLimit"), bool) or not isinstance(arguments.get("historyLimit"), int) or not 1 <= arguments["historyLimit"] <= 20))
+                or ("historyCursor" in arguments and (not isinstance(arguments.get("historyCursor"), str) or not arguments["historyCursor"] or len(arguments["historyCursor"]) > 4096))
             ):
                 raise ValueError("document selector is invalid")
             context = self._context(identity, matter_id)
@@ -759,37 +766,268 @@ class LoopbackLegalDeskApp:
         authorization = self.composition.document_pipeline.initiate_upload(identity, matter_id, request, correlation_id=context.correlation_id)
         return HTTPStatus.CREATED, {"document": self._document(authorization.document), "presignedUrl": authorization.presigned_url, "uploadUrl": authorization.presigned_url, "method": authorization.method, "headers": dict(authorization.headers)}, []
 
-    def _chat(self, environ: Mapping[str, Any], identity: VerifiedIdentity):
+    def _selected_idp_response(
+        self,
+        *,
+        identity: VerifiedIdentity,
+        context: Any,
+        conversation_id: str,
+        document: Document,
+        field_name: str,
+        value: Mapping[str, object],
+    ) -> tuple[HTTPStatus, Mapping[str, object], list[tuple[str, str]]]:
+        """Render an authorized IDP field through the existing answer envelope."""
+
+        acceptance = value.get("acceptance")
+        evidence = tuple(value.get("evidence", ()))
+        citations: list[dict[str, object]] = []
+        for index, anchor in enumerate(evidence[:8], start=1):
+            page = getattr(anchor, "page", None)
+            quote = getattr(anchor, "quote", None)
+            if isinstance(page, bool) or not isinstance(page, int) or page < 1 or not isinstance(quote, str) or not quote.strip():
+                continue
+            citation_id = f"idp-{document.document_id}-{field_name}-{index}"
+            handle = CitationHandle(
+                handle=secrets.token_urlsafe(24),
+                subject=identity.subject,
+                tenant_id=context.tenant_id,
+                matter_id=context.matter_id,
+                conversation_id=conversation_id,
+                document_id=document.document_id,
+                passage=quote[:8_000],
+                expires_at=time.time() + 300,
+                is_idp=True,
+            )
+            self.state_store.put_citation(
+                handle,
+                citation_key=(identity.subject, conversation_id, context.correlation_id, citation_id),
+            )
+            citations.append({
+                "citationId": citation_id,
+                "documentId": document.document_id,
+                "documentName": document.name,
+                "pageNumber": page,
+            })
+        provisional = acceptance not in {FieldAcceptance.AUTO_ACCEPTED.value, FieldAcceptance.HUMAN_CONFIRMED.value}
+        field_label = field_name.replace("_", " ").strip().capitalize()
+        raw_value = value.get("value")
+        if raw_value is None:
+            rendered_value = "sin valor disponible"
+        elif isinstance(raw_value, (dict, list, tuple)):
+            rendered_value = json.dumps(raw_value, ensure_ascii=False, separators=(",", ":"), default=str)
+        else:
+            rendered_value = str(raw_value)
+        origin = str(value.get("origin") or "UNKNOWN")
+        if acceptance == FieldAcceptance.HUMAN_CONFIRMED.value:
+            caveat = "confirmado por una persona autorizada"
+        elif provisional:
+            caveat = "provisional; requiere revisión humana antes de tratarlo como definitivo"
+        else:
+            caveat = "aceptado automáticamente con evidencia literal"
+        answer_text = f"{field_label}: {rendered_value}. Origen: {origin}. {caveat}."
+        if isinstance(value.get("reason"), str) and value.get("reason"):
+            answer_text += f" Motivo: {value['reason']}"
+        return HTTPStatus.OK, {
+            # Keep the established answer field human-readable.  Structured
+            # IDP data is additive so clients can render labels without
+            # forcing the conversational answer to become a JSON blob.
+            "answer": answer_text,
+            "idp": {
+                "field": field_name,
+                "value": raw_value,
+                "presence": value.get("presence"),
+                "origin": origin,
+                "acceptance": acceptance,
+                "provisional": provisional,
+                "evidence": [{"page": getattr(anchor, "page", None), "quote": getattr(anchor, "quote", "")[:2_000]} for anchor in evidence[:8]],
+            },
+            "citations": citations,
+            "evidenceStatus": "ambiguous" if provisional else "answerable",
+            "disclaimerRequired": True,
+            "operationStatus": "ok",
+            "correlationId": context.correlation_id,
+        }, []
+
+    def _selected_idp_via_metadata_gateway(
+        self, *, identity: VerifiedIdentity, session: SessionRecord,
+        context: Any, conversation_id: str, session_id: str, matter_id: str,
+        document_id: str, field_name: str,
+    ) -> IDPQueryResult | None:
+        """Read the authorized IDP projection through the existing Gateway."""
+        if self.composition.gateway_invoker is None:
+            return None
+        try:
+            binding = bind_harness_invocation(
+                bearer_token=session.access_token,
+                gateway_url=self.composition.gateway_url,
+                identity_verifier=self.composition.identity_verifier,
+                requested_matter_id=matter_id,
+                conversation_id=conversation_id,
+                session_selector=session_id,
+                authorization_store=self.composition.authorization_store,
+                conversation_store=self.composition.conversation_store,
+                invocation_repository=self.composition.gateway_grant_repository,
+                correlation_id=context.correlation_id,
+                application_action="metadata",
+            )
+            gateway = self._invoke_gateway_tool(
+                binding, tool_name=GET_DOCUMENT_METADATA,
+                arguments={"documentId": document_id, "historyLimit": 1},
+            )
+            result = gateway.get("result")
+            content = result.get("content") if isinstance(result, Mapping) else None
+            text = content[0].get("text") if isinstance(content, list) and content and isinstance(content[0], Mapping) else None
+            payload = json.loads(text) if isinstance(text, str) else None
+            projection = payload.get("idp") if isinstance(payload, Mapping) else None
+            fields = projection.get("fields") if isinstance(projection, Mapping) else None
+            if not isinstance(fields, list):
+                return IDPQueryResult(status="INSUFFICIENT_EVIDENCE", source="NONE", field=field_name)
+            for raw in fields:
+                if not isinstance(raw, Mapping) or raw.get("name") != field_name:
+                    continue
+                evidence: list[EvidenceAnchor] = []
+                for anchor in raw.get("evidence", ()) if isinstance(raw.get("evidence"), list) else ():
+                    if not isinstance(anchor, Mapping):
+                        continue
+                    try:
+                        evidence.append(EvidenceAnchor(page=anchor["page"], quote=anchor["quote"], content_sha256=anchor["contentSha256"], start=anchor.get("start"), end=anchor.get("end")))
+                    except Exception:
+                        continue
+                value = dict(raw)
+                value["evidence"] = tuple(evidence)
+                acceptance = value.get("acceptance")
+                if acceptance not in {FieldAcceptance.UNAVAILABLE.value, "REJECTED", None}:
+                    return IDPQueryResult(status="AVAILABLE", source="IDP", field=field_name, value=value)
+            return IDPQueryResult(status="INSUFFICIENT_EVIDENCE", source="NONE", field=field_name)
+        except Exception:
+            # Gateway failures must not become a direct MCP fallback in the
+            # deployed composition; the caller proceeds to the existing
+            # selected-document RAG path.
+            return None
+
+    def _chat(self, environ: Mapping[str, Any], identity: VerifiedIdentity, session: SessionRecord):
         data = self._body(environ)
         question, matter_id, conversation_id, session_id = data.get("question"), data.get("matterId"), data.get("conversationId"), data.get("sessionId")
+        allowed_chat_fields = {"question", "matterId", "conversationId", "sessionId", "selectedDocumentId", "selectedFieldName"}
+        if set(data) - allowed_chat_fields:
+            raise ValueError("chat request has unsupported fields")
+        selected_document_id = data.get("selectedDocumentId")
+        selected_field_name = data.get("selectedFieldName")
+        if (selected_document_id is None) != (selected_field_name is None):
+            raise ValueError("selected document and field must be supplied together")
         if not all(isinstance(value, str) for value in (question, matter_id, conversation_id, session_id)) or not question.strip() or len(question) > MAX_QUESTION:
             raise ValueError("question or scope is invalid")
+        if selected_document_id is not None:
+            if not isinstance(selected_document_id, str) or not selected_document_id.strip() or len(selected_document_id) > 128:
+                raise ValueError("selected document is invalid")
+            if not isinstance(selected_field_name, str) or not selected_field_name.strip() or len(selected_field_name) > 128:
+                raise ValueError("selected field is invalid")
+            try:
+                supported_fields = {
+                    name
+                    for document_type in IDPSchemaRegistry().supported_types()
+                    for name in IDPSchemaRegistry().get(document_type).fields
+                }
+            except Exception as exc:
+                raise ValueError("selected field configuration is invalid") from exc
+            if selected_field_name not in supported_fields:
+                raise ValueError("selected field is not allowlisted")
         context = self._context(identity, matter_id)
         if not self.composition.conversation_store.is_bound(context=context, conversation_id=conversation_id, session_selector=session_id):
             raise AuthorizationDenied("conversation access denied")
         self.state_store.set_conversation_correlation(conversation_id, context.correlation_id)
         if self.composition.chat_service is None:
             raise RuntimeError("chat service is not configured")
+        selected_document = None
+        if selected_document_id is not None:
+            selected_document = self.composition.metadata_repository.get_for_scope(
+                tenant_id=context.tenant_id,
+                matter_id=context.matter_id,
+                document_id=selected_document_id,
+            )
+            if selected_document is None:
+                raise AuthorizationDenied("selected document access denied")
+            # IDP is an independent lifecycle. A completed/provisional IDP
+            # answer is usable even while RAG ingestion remains pending.
+            idp_result = self._selected_idp_via_metadata_gateway(
+                identity=identity, session=session, context=context,
+                conversation_id=conversation_id, session_id=session_id,
+                matter_id=matter_id, document_id=selected_document_id,
+                field_name=selected_field_name,
+            )
+            if idp_result is None and self.composition.gateway_invoker is None:
+                # Provider-neutral local compositions have no Gateway. This
+                # seam is not used by the deployed AWS composition; keeping
+                # it allows deterministic offline tests without bypassing
+                # the production Gateway boundary.
+                idp_repository = getattr(self.composition.mcp_server, "idp_repository", None)
+                idp_review_service = getattr(self.composition.mcp_server, "idp_review_service", None)
+                if idp_repository is not None and idp_review_service is not None:
+                    try:
+                        idp_result = query_selected_document(
+                            context=context, document_id=selected_document_id,
+                            field_name=selected_field_name, repository=idp_repository,
+                            review_service=idp_review_service, document=selected_document,
+                        )
+                    except IDPReviewError:
+                        idp_result = None
+            if idp_result is not None:
+                if idp_result is not None and idp_result.source == "IDP" and idp_result.value is not None:
+                    idp_status, idp_payload, idp_extra = self._selected_idp_response(
+                        identity=identity,
+                        context=context,
+                        conversation_id=conversation_id,
+                        document=selected_document,
+                        field_name=selected_field_name,
+                        value=idp_result.value,
+                    )
+                    return self._finalize_chat_response(
+                        identity=identity, context=context, matter_id=matter_id,
+                        conversation_id=conversation_id, session_id=session_id,
+                        question=question, payload=idp_payload,
+                        status=idp_status, extra=idp_extra,
+                    )
         documents = self.composition.document_pipeline.list_documents(identity, matter_id, correlation_id=context.correlation_id)
-        has_indexed_document = any(document.status is DocumentStatus.INDEXED for document in documents)
-        has_processing_document = any(
-            document.status in {
-                DocumentStatus.PENDING_UPLOAD,
-                DocumentStatus.UPLOADED,
-                DocumentStatus.PENDING_INGESTION,
-            }
-            for document in documents
+        selected_documents = (
+            tuple(document for document in documents if document.document_id == selected_document_id)
+            if selected_document_id is not None
+            else tuple(documents)
         )
+        has_indexed_document = any(document.status is DocumentStatus.INDEXED for document in selected_documents)
+        has_processing_document = any(document.status in {DocumentStatus.PENDING_UPLOAD, DocumentStatus.UPLOADED, DocumentStatus.PENDING_INGESTION} for document in selected_documents)
         if has_processing_document and not has_indexed_document:
             return HTTPStatus.OK, {"answer": "Los documentos seleccionados todavía se están procesando.", "citations": [], "evidenceStatus": None, "operationStatus": "documents_processing", "correlationId": context.correlation_id}, []
         self.composition.quota.reserve(context.tenant_id, CHATS)
+        chat_kwargs: dict[str, object] = {
+            "matter_id": matter_id,
+            "conversation_id": conversation_id,
+            "session_id": session_id,
+            "question": question,
+            "correlation_id": context.correlation_id,
+        }
+        if selected_document_id is not None:
+            chat_kwargs.update({"selected_document_id": selected_document_id, "selected_field_name": selected_field_name})
         if self.composition.chat_accepts_evidence_sink:
-            response = self.composition.chat_service(identity, matter_id=matter_id, conversation_id=conversation_id, session_id=session_id, question=question, correlation_id=context.correlation_id, authorized_evidence_sink=self._store_authorized_evidence)
+            response = self.composition.chat_service(identity, **chat_kwargs, authorized_evidence_sink=self._store_authorized_evidence)
         else:
-            response = self.composition.chat_service(identity, matter_id=matter_id, conversation_id=conversation_id, session_id=session_id, question=question, correlation_id=context.correlation_id)
+            response = self.composition.chat_service(identity, **chat_kwargs)
         payload = response.to_dict() if hasattr(response, "to_dict") else response
         if not isinstance(payload, Mapping):
             raise RuntimeError("chat response is invalid")
+        return self._finalize_chat_response(
+            identity=identity, context=context, matter_id=matter_id,
+            conversation_id=conversation_id, session_id=session_id,
+            question=question, payload=payload,
+            status=HTTPStatus.OK, extra=[],
+        )
+
+    def _finalize_chat_response(
+        self, *, identity: VerifiedIdentity, context: Any, matter_id: str,
+        conversation_id: str, session_id: str, question: str,
+        payload: Mapping[str, object], status: HTTPStatus,
+        extra: list[tuple[str, str]],
+    ) -> tuple[HTTPStatus, Mapping[str, object], list[tuple[str, str]]]:
+        """Apply the common citation/history/audit path to every answer source."""
         safe = dict(payload)
         citations = safe.get("citations")
         if isinstance(citations, list):
@@ -825,7 +1063,7 @@ class LoopbackLegalDeskApp:
                 answer = safe.get("answer")
                 if isinstance(answer, str) and answer.strip():
                     self._remember_history_event(identity.subject, conversation_id, session_id, self.composition.memory.append_event(scope, role="ASSISTANT", text=answer))
-        return HTTPStatus.OK, safe, []
+        return status, safe, extra
 
     def _remember_review_candidate(
         self,
@@ -1094,13 +1332,15 @@ class LoopbackLegalDeskApp:
 
     def _review_update(self, environ: Mapping[str, Any], identity: VerifiedIdentity, matter_id: str, review_task_id: str, session: SessionRecord):
         data = dict(self._body(environ))
-        allowed = {"conversationId", "sessionId", "status", "resolutionNote", "originCorrelationId"}
+        allowed = {"conversationId", "sessionId", "status", "resolutionNote", "originCorrelationId", "idpDecision"}
         if set(data) - allowed or not isinstance(data.get("status"), str):
             raise ValueError("review update is invalid")
         context, binding = self._review_binding(identity, matter_id, session, data.pop("conversationId", None), data.pop("sessionId", None), data.pop("originCorrelationId", None))
         arguments = {"reviewTaskId": review_task_id, "status": data["status"]}
         if "resolutionNote" in data:
             arguments["resolutionNote"] = data["resolutionNote"]
+        if "idpDecision" in data:
+            arguments["idpDecision"] = data["idpDecision"]
         result = self._invoke_gateway_tool(binding, tool_name="update_review_task", arguments=arguments)
         payload = self._review_payload(result, context)
         self._audit(identity, matter_id, context.correlation_id, "review_updated")
@@ -1230,7 +1470,7 @@ class LoopbackLegalDeskApp:
             raise AuthorizationDenied("citation access denied")
         if record.document_id is not None:
             document = self.composition.metadata_repository.get_for_scope(tenant_id=context.tenant_id, matter_id=context.matter_id, document_id=record.document_id)
-            if document is None or document.status is not DocumentStatus.INDEXED:
+            if document is None or (document.status is not DocumentStatus.INDEXED and not record.is_idp):
                 raise AuthorizationDenied("citation access denied")
         return HTTPStatus.OK, {"handle": record.handle, "matterId": record.matter_id, "conversationId": record.conversation_id, "documentId": record.document_id, "passage": record.passage}, []
 

@@ -322,6 +322,9 @@ class IDPExtractionRun:
     # optional for old durable runs; new production runs populate it after
     # the final authoritative re-read.
     source_key: str | None = None
+    # Server-written immutable page-text artifact used to revalidate human
+    # evidence without trusting model/run anchor strings alone.
+    page_text_artifact_key: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("run_id", "tenant_id", "matter_id", "document_id", "schema_version", "model_id", "prompt_version"):
@@ -334,6 +337,8 @@ class IDPExtractionRun:
         _aware_datetime(self.created_at, "created_at")
         if self.source_key is not None:
             _nonempty(self.source_key, "source_key")
+        if self.page_text_artifact_key is not None:
+            _nonempty(self.page_text_artifact_key, "page_text_artifact_key")
         object.__setattr__(self, "fields", MappingProxyType(dict(self.fields)))
 
 

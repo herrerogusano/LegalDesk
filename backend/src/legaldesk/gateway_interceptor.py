@@ -725,6 +725,18 @@ def _configured_machine_client(authorization: object, *, machine_client_id: str)
     return (claims.get("client_id") or claims.get("clientId")) == machine_client_id
 
 
+def _idp_scoped_client_claims(authorization: object) -> bool:
+    """Classify an IDP-scoped client before any human fallback."""
+    try:
+        claims = _decode_verified_claims(authorization)
+    except AuthorizationDenied:
+        return False
+    client = claims.get("client_id") or claims.get("clientId")
+    raw_scope = claims.get("scope", "")
+    scopes = frozenset(raw_scope.split()) if isinstance(raw_scope, str) else frozenset(raw_scope) if isinstance(raw_scope, (list, tuple, set)) else frozenset()
+    return isinstance(client, str) and bool(client.strip()) and bool(scopes & {IDP_REVIEW_SCOPE, "legaldesk-idp/review-create"})
+
+
 def _idp_deployment_scope_allows(*, tenant_id: str, matter_id: str) -> bool:
     """Require the deployment-owned beta shard before machine delegation."""
     configured_tenant = os.environ.get("LEGALDESK_IDP_REVIEW_TENANT_ID", "").strip()
@@ -1482,6 +1494,12 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         # human AuthorizationStore/VerifiedIdentity.
         machine_client_id = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID") or os.environ.get("LEGALDESK_IDP_MACHINE_CLIENT_ID")
         machine_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE") or os.environ.get("LEGALDESK_IDP_MACHINE_SCOPE", IDP_REVIEW_SCOPE)
+        # An IDP-scoped client is never eligible for the human branch.  This
+        # remains fail-closed even when deployment configuration is missing or
+        # the presented client/scope/token_use does not match it.
+        if _idp_scoped_client_claims(authorization) and (not machine_client_id or not _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope)):
+            audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
+            return _safe_error(event, authorization_code="ACCESS_DENIED")
         if machine_client_id and _configured_machine_client(authorization, machine_client_id=machine_client_id) and not _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope):
             audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
             return _safe_error(event, authorization_code="ACCESS_DENIED")

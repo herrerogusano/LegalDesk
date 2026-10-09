@@ -91,6 +91,17 @@ class Document:
     malware_scan_status: MalwareScanStatus = MalwareScanStatus.PENDING
     malware_scan_etag: str | None = None
     malware_scan_version_id: str | None = None
+    # Additive IDP projection.  These values are a server-owned pointer to
+    # the current IDP generation; they are not part of the canonical/RAG
+    # lifecycle and remain absent for documents without an IDP run.
+    idp_status: str | None = None
+    idp_reason: str | None = None
+    idp_attempt: int | None = None
+    idp_job_id: str | None = None
+    idp_run_id: str | None = None
+    idp_document_sha256: str | None = None
+    idp_generation_at: str | None = None
+    idp_source_key: str | None = None
 
     @property
     def ingestion_status(self) -> DocumentStatus:

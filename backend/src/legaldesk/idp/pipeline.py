@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Mapping
 
@@ -66,7 +66,10 @@ class IDPProcessingPipeline:
         self._ensure_deadline(deadline_at, deadline_reserve_seconds)
         extracted = self._extract(tenant_id, matter_id, document_id, run_id, schema, pages, content_sha256, model_id=model_id, prompt_version=prompt_version, deadline_at=deadline_at, deadline_reserve_seconds=deadline_reserve_seconds)
         run = IDPExtractionRun(run_id=run_id, tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, document_sha256=content_sha256, document_type=schema.document_type, schema_version=schema.version, model_id=model_id, prompt_version=prompt_version, status=IDPJobStatus.COMPLETED, fields=extracted.fields)
-        result_payload = json.dumps({"runId": run_id, "documentType": schema.document_type.value, "schemaVersion": schema.version, "fields": {name: {"presence": field.presence.value, "origin": field.origin.value, "acceptance": field.acceptance.value, "value": field.value, "reason": field.reason, "validation": dict(field.validation), "provenance": dict(field.provenance), "evidence": [{"page": anchor.page, "quote": anchor.quote, "contentSha256": anchor.content_sha256, "start": anchor.start, "end": anchor.end} for anchor in field.evidence]} for name, field in extracted.fields.items()}}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        page_payload = json.dumps({"tenantId": tenant_id, "matterId": matter_id, "documentId": document_id, "runId": run_id, "documentSha256": content_sha256, "pages": {str(number): text for number, text in pages.items()}}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        page_key = _stage_artifact(store=self.artifact_store, tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, run_id=run_id, kind="pages", payload=page_payload)
+        run = replace(run, page_text_artifact_key=page_key)
+        result_payload = json.dumps({"runId": run_id, "documentSha256": content_sha256, "documentType": schema.document_type.value, "schemaVersion": schema.version, "pageTextArtifactKey": page_key, "fields": {name: {"presence": field.presence.value, "origin": field.origin.value, "acceptance": field.acceptance.value, "value": field.value, "reason": field.reason, "validation": dict(field.validation), "provenance": dict(field.provenance), "evidence": [{"page": anchor.page, "quote": anchor.quote, "contentSha256": anchor.content_sha256, "start": anchor.start, "end": anchor.end} for anchor in field.evidence]} for name, field in extracted.fields.items()}}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         _stage_artifact(store=self.artifact_store, tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, run_id=run_id, kind="run", payload=result_payload)
         return IDPPipelineResult(IDPJobStatus.COMPLETED, classifier, run, document)
 

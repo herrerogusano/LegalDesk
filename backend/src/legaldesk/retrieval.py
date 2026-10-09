@@ -85,6 +85,24 @@ def build_matter_filter(context: RequestContext) -> dict[str, Any]:
     }
 
 
+def build_selected_document_filter(
+    context: RequestContext, selected_document_id: str
+) -> dict[str, Any]:
+    """Constrain retrieval to one server-authorized document as well as matter."""
+
+    context = require_authorized_context(context)
+    if not isinstance(selected_document_id, str) or not selected_document_id.strip():
+        raise ValueError("selected_document_id is invalid")
+    selected_document_id = selected_document_id.strip()
+    matter_filter = build_matter_filter(context)
+    return {
+        "andAll": [
+            *matter_filter["andAll"],
+            {"equals": {"key": "documentId", "value": selected_document_id}},
+        ]
+    }
+
+
 def _metadata_string(metadata: Mapping[str, Any], key: str) -> str | None:
     value = metadata.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -103,7 +121,10 @@ def _optional_positive_int(value: Any) -> int | None:
 
 
 def _normalize_results(
-    response: Mapping[str, Any], context: RequestContext
+    response: Mapping[str, Any],
+    context: RequestContext,
+    *,
+    selected_document_id: str | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     context = require_authorized_context(context)
     raw_results = response.get("retrievalResults")
@@ -136,6 +157,11 @@ def _normalize_results(
         text = content.get("text")
         if document_id is None or not isinstance(text, str) or not text.strip():
             raise ValueError("retrieval result lacks citation fields")
+        if selected_document_id is not None and document_id != selected_document_id:
+            # The provider response is untrusted even when a server-side
+            # filter was supplied.  Do not expose a passage from another
+            # document if the index returns stale or forged metadata.
+            raise ValueError("retrieval result is outside selected document")
         total_source_characters += len(text)
         if total_source_characters > MAX_RETRIEVAL_SOURCE_CHARACTERS:
             raise ValueError("retrieval sources exceed the grounding limit")
@@ -249,6 +275,7 @@ def _retrieve_with_context(
     telemetry_sink: TelemetrySink | None = None,
     metadata_repository: DocumentMetadataRepository | None = None,
     object_storage: ObjectHeadStorage | None = None,
+    selected_document_id: str | None = None,
 ) -> tuple[RetrievedPassage, ...]:
     """Retrieve only with the RequestContext just authorized by the server."""
 
@@ -259,6 +286,11 @@ def _retrieve_with_context(
         raise ValueError("knowledge_base_id is not configured")
     if object_storage is not None and metadata_repository is None:
         raise ValueError("object_storage requires metadata_repository")
+    if selected_document_id is not None and (
+        not isinstance(selected_document_id, str) or not selected_document_id.strip()
+    ):
+        raise ValueError("selected_document_id is invalid")
+    selected_document_id = selected_document_id.strip() if selected_document_id is not None else None
 
     started_at = time.perf_counter()
     emit_telemetry(
@@ -275,7 +307,11 @@ def _retrieve_with_context(
             retrievalConfiguration={
                 "vectorSearchConfiguration": {
                     "numberOfResults": DEFAULT_NUMBER_OF_RESULTS,
-                    "filter": build_matter_filter(context),
+                    "filter": (
+                        build_selected_document_filter(context, selected_document_id)
+                        if selected_document_id is not None
+                        else build_matter_filter(context)
+                    ),
                 }
             },
         )
@@ -320,7 +356,9 @@ def _retrieve_with_context(
         )
         raise ValueError("retrieval response is malformed")
     try:
-        results = _normalize_results(response, context)
+        results = _normalize_results(
+            response, context, selected_document_id=selected_document_id
+        )
         if metadata_repository is not None:
             for passage in results:
                 document = metadata_repository.get_for_scope(

@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
 import math
+import base64
+import binascii
 from decimal import Decimal
 from threading import RLock
 from typing import Any, Mapping, Protocol, Sequence
@@ -76,6 +78,41 @@ def run_sort_key(document_id: str, run_id: str) -> str:
     return f"IDP#RUN#{document_id}#{run_id}"
 
 
+def history_sort_key(document_id: str, created_at: datetime, run_id: str) -> str:
+    """Chronological marker key; run_id only breaks equal-timestamp ties."""
+
+    timestamp = created_at.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return f"IDP#HISTORY#{document_id}#{timestamp}#{run_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class RunHistoryPage:
+    runs: tuple[IDPExtractionRun, ...]
+    next_cursor: str | None = None
+
+
+def _history_cursor(*, tenant_id: str, matter_id: str, document_id: str, key: Mapping[str, Any]) -> str:
+    payload = {"v": 1, "scope": [tenant_id, matter_id, document_id], "key": dict(key)}
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+
+def _decode_history_cursor(*, tenant_id: str, matter_id: str, document_id: str, cursor: str) -> dict[str, Any]:
+    if not isinstance(cursor, str) or not 1 <= len(cursor) <= 4096:
+        raise IDPContractError("history cursor is invalid")
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise IDPContractError("history cursor is invalid") from exc
+    if not isinstance(payload, Mapping) or payload.get("v") != 1 or payload.get("scope") != [tenant_id, matter_id, document_id] or not isinstance(payload.get("key"), Mapping):
+        raise IDPContractError("history cursor scope is invalid")
+    key = dict(payload["key"])
+    if set(key) != {"pk", "sk"} or not all(isinstance(value, str) and value for value in key.values()) or not key["sk"].startswith(f"IDP#HISTORY#{document_id}#"):
+        raise IDPContractError("history cursor key is invalid")
+    return key
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -128,6 +165,7 @@ class IDPRepository(Protocol):
     def get_review_recovery_cursor(self, *, tenant_id: str, matter_id: str) -> str | None: ...
     def set_review_recovery_cursor(self, *, tenant_id: str, matter_id: str, cursor: str | None) -> None: ...
     def get_job(self, job_id: str) -> IDPJob | None: ...
+    def list_review_jobs(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int = 20) -> tuple[IDPJob, ...]: ...
     def claim_job(self, *, job_id: str, worker_id: str, lease_seconds: int, now: datetime | None = None, allow_waiting_for_ocr: bool = False) -> IDPClaim: ...
     def checkpoint_job(self, *, claim: IDPClaim, checkpoint: IDPCheckpoint, status: IDPJobStatus | None = None, skip_reason: IDPSkipReason | None = None, now: datetime | None = None) -> IDPJob: ...
     def mark_delivery(self, *, job_id: str, status: IDPJobStatus) -> IDPJob: ...
@@ -138,6 +176,7 @@ class IDPRepository(Protocol):
     def fail_exhausted(self, *, job_id: str) -> IDPJob: ...
     def get_run(self, *, tenant_id: str, matter_id: str, document_id: str, run_id: str) -> IDPExtractionRun | None: ...
     def list_runs(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int) -> tuple[IDPExtractionRun, ...]: ...
+    def list_run_history(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int, cursor: str | None = None) -> RunHistoryPage: ...
     def list_delivery_candidates(self, *, tenant_id: str, matter_id: str, limit: int, cursor: Mapping[str, Any] | str | None = None) -> DeliveryCandidatePage: ...
 
 
@@ -209,6 +248,17 @@ class InMemoryIDPRepository:
     def get_job(self, job_id: str) -> IDPJob | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def list_review_jobs(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int = 20) -> tuple[IDPJob, ...]:
+        _validate_limit(limit)
+        with self._lock:
+            values = [
+                job for job in self._jobs.values()
+                if job.tenant_id == tenant_id and job.matter_id == matter_id
+                and job.document_id == document_id and job.status is IDPJobStatus.REVIEW_REQUIRED
+            ]
+            values.sort(key=lambda item: (item.created_at, item.job_id), reverse=True)
+            return tuple(values[:limit])
 
     def claim_job(self, *, job_id: str, worker_id: str, lease_seconds: int, now: datetime | None = None, allow_waiting_for_ocr: bool = False) -> IDPClaim:
         if not isinstance(worker_id, str) or not worker_id.strip() or isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 900:
@@ -318,6 +368,25 @@ class InMemoryIDPRepository:
         with self._lock:
             values = [run for (tenant, matter, _), run in self._runs.items() if tenant == tenant_id and matter == matter_id and run.document_id == document_id]
             return tuple(sorted(values, key=lambda item: item.created_at, reverse=True)[:limit])
+
+    def list_run_history(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int, cursor: str | None = None) -> RunHistoryPage:
+        _validate_limit(limit)
+        with self._lock:
+            values = sorted(
+                (run for (tenant, matter, _), run in self._runs.items() if tenant == tenant_id and matter == matter_id and run.document_id == document_id),
+                key=lambda item: (item.created_at, item.run_id), reverse=True,
+            )
+            if cursor is not None:
+                key = _decode_history_cursor(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, cursor=cursor)["sk"]
+                marker = key.rsplit("#", 1)[-1]
+                timestamp = key.split("#", 3)[3].rsplit("#", 1)[0]
+                values = [item for item in values if (item.created_at.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"), item.run_id) < (timestamp, marker)]
+            page = tuple(values[:limit])
+            next_cursor = None
+            if len(values) > len(page) and page:
+                last = page[-1]
+                next_cursor = _history_cursor(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, key={"pk": matter_partition_key(tenant_id, matter_id), "sk": history_sort_key(document_id, last.created_at, last.run_id)})
+            return RunHistoryPage(page, next_cursor)
 
     def list_delivery_candidates(self, *, tenant_id: str, matter_id: str, limit: int, cursor: Mapping[str, Any] | str | None = None) -> DeliveryCandidatePage:
         _validate_limit(limit)
@@ -655,7 +724,7 @@ class Boto3DynamoIDPRepository:
             }
             for name, result in run.fields.items()
         }
-        item = {"entityType": "IDPExtractionRun", "pk": key["pk"], "sk": key["sk"], "runId": run.run_id, "tenantId": run.tenant_id, "matterId": run.matter_id, "documentId": run.document_id, "documentSha256": run.document_sha256, "documentType": run.document_type.value, "schemaVersion": run.schema_version, "modelId": run.model_id, "promptVersion": run.prompt_version, "status": run.status.value, "fields": fields, "createdAt": run.created_at.isoformat(), "sourceKey": run.source_key}
+        item = {"entityType": "IDPExtractionRun", "pk": key["pk"], "sk": key["sk"], "runId": run.run_id, "tenantId": run.tenant_id, "matterId": run.matter_id, "documentId": run.document_id, "documentSha256": run.document_sha256, "documentType": run.document_type.value, "schemaVersion": run.schema_version, "modelId": run.model_id, "promptVersion": run.prompt_version, "status": run.status.value, "fields": fields, "createdAt": run.created_at.isoformat(), "sourceKey": run.source_key, "pageTextArtifactKey": run.page_text_artifact_key}
         item = {key: value for key, value in item.items() if value is not None}
         if len(json.dumps(item, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")) > MAX_IDP_RUN_ITEM_BYTES:
             raise IDPContractError("IDP run projection exceeds the bounded DynamoDB item budget; immutable S3 artifact remains authoritative")
@@ -665,6 +734,18 @@ class Boto3DynamoIDPRepository:
             response = self.table.get_item(Key=key, ConsistentRead=True)
             if response.get("Item") != item:
                 raise IDPConcurrencyError("IDP run is immutable") from None
+        marker = {
+            "entityType": "IDPExtractionHistoryMarker", "pk": key["pk"],
+            "sk": history_sort_key(run.document_id, run.created_at, run.run_id),
+            "documentId": run.document_id, "runId": run.run_id,
+            "createdAt": run.created_at.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        }
+        try:
+            self.table.put_item(Item=marker, ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)")
+        except Exception:
+            existing_marker = self.table.get_item(Key={"pk": marker["pk"], "sk": marker["sk"]}, ConsistentRead=True).get("Item")
+            if existing_marker != marker:
+                raise IDPConcurrencyError("IDP history marker is immutable") from None
         return run
 
     def project_document_status(self, *, run: IDPExtractionRun) -> None:
@@ -767,10 +848,28 @@ class Boto3DynamoIDPRepository:
         return _run_from_item(item) if item else None
 
     def list_runs(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int) -> tuple[IDPExtractionRun, ...]:
+        return self.list_run_history(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, limit=limit).runs
+
+    def list_run_history(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int, cursor: str | None = None) -> RunHistoryPage:
         _validate_limit(limit)
         from boto3.dynamodb.conditions import Key
-        response = self.table.query(KeyConditionExpression=Key("pk").eq(matter_partition_key(tenant_id, matter_id)) & Key("sk").begins_with(f"IDP#RUN#{document_id}#"), ConsistentRead=True, Limit=limit)
-        return tuple(_run_from_item(item) for item in response.get("Items", ()))
+        kwargs: dict[str, Any] = {
+            "KeyConditionExpression": Key("pk").eq(matter_partition_key(tenant_id, matter_id)) & Key("sk").begins_with(f"IDP#HISTORY#{document_id}#"),
+            "ConsistentRead": True, "Limit": limit, "ScanIndexForward": False,
+        }
+        if cursor is not None:
+            kwargs["ExclusiveStartKey"] = _decode_history_cursor(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, cursor=cursor)
+        response = self.table.query(**kwargs)
+        runs: list[IDPExtractionRun] = []
+        for marker in response.get("Items", ()):
+            if not isinstance(marker, Mapping) or marker.get("documentId") != document_id or not isinstance(marker.get("runId"), str):
+                raise IDPContractError("IDP history marker is malformed")
+            run = self.get_run(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, run_id=marker["runId"])
+            if run is not None:
+                runs.append(run)
+        last = response.get("LastEvaluatedKey")
+        next_cursor = _history_cursor(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id, key=last) if isinstance(last, Mapping) else None
+        return RunHistoryPage(tuple(runs), next_cursor)
 
     def list_delivery_candidates(self, *, tenant_id: str, matter_id: str, limit: int, cursor: Mapping[str, Any] | str | None = None) -> DeliveryCandidatePage:
         _validate_limit(limit)
@@ -796,6 +895,34 @@ class Boto3DynamoIDPRepository:
             if not next_cursor:
                 break
         return DeliveryCandidatePage(tuple(jobs[:limit]), next_cursor)
+
+    def list_review_jobs(self, *, tenant_id: str, matter_id: str, document_id: str, limit: int = 20) -> tuple[IDPJob, ...]:
+        _validate_limit(limit)
+        from boto3.dynamodb.conditions import Attr, Key
+        jobs: list[IDPJob] = []
+        cursor: Mapping[str, Any] | None = None
+        for _ in range(20):
+            kwargs: dict[str, Any] = {
+                "KeyConditionExpression": Key("pk").eq(matter_partition_key(tenant_id, matter_id)) & Key("sk").begins_with("IDP#JOB#"),
+                "FilterExpression": Attr("documentId").eq(document_id) & Attr("status").eq(IDPJobStatus.REVIEW_REQUIRED.value),
+                "ConsistentRead": True,
+                "Limit": max(1, limit - len(jobs)),
+            }
+            if cursor:
+                kwargs["ExclusiveStartKey"] = cursor
+            response = self.table.query(**kwargs)
+            for item in response.get("Items", ()):
+                if isinstance(item, Mapping):
+                    jobs.append(_job_from_item(item))
+                    if len(jobs) >= limit:
+                        return tuple(jobs)
+            last = response.get("LastEvaluatedKey")
+            if not isinstance(last, Mapping):
+                break
+            if cursor is not None and dict(last) == dict(cursor):
+                raise IDPContractError("review job pagination did not advance")
+            cursor = dict(last)
+        return tuple(jobs)
 
 
 class Boto3DynamoStageLedger:
@@ -912,7 +1039,7 @@ def _run_from_item(item: Mapping[str, Any]) -> IDPExtractionRun:
             validation=dict(raw.get("validation", {})), schema_version=str(raw.get("schemaVersion", item["schemaVersion"])),
             reason=raw.get("reason") if isinstance(raw.get("reason"), str) else None, provenance=dict(raw.get("provenance", {})) if isinstance(raw.get("provenance", {}), Mapping) else {},
         )
-    return IDPExtractionRun(run_id=str(item["runId"]), tenant_id=str(item["tenantId"]), matter_id=str(item["matterId"]), document_id=str(item["documentId"]), document_sha256=str(item["documentSha256"]), document_type=DocumentType(item["documentType"]), schema_version=str(item["schemaVersion"]), model_id=str(item.get("modelId", "")), prompt_version=str(item.get("promptVersion", "")), status=IDPJobStatus(item["status"]), fields=fields, created_at=datetime.fromisoformat(str(item["createdAt"])), source_key=item.get("sourceKey") if isinstance(item.get("sourceKey"), str) else None)
+    return IDPExtractionRun(run_id=str(item["runId"]), tenant_id=str(item["tenantId"]), matter_id=str(item["matterId"]), document_id=str(item["documentId"]), document_sha256=str(item["documentSha256"]), document_type=DocumentType(item["documentType"]), schema_version=str(item["schemaVersion"]), model_id=str(item.get("modelId", "")), prompt_version=str(item.get("promptVersion", "")), status=IDPJobStatus(item["status"]), fields=fields, created_at=datetime.fromisoformat(str(item["createdAt"])), source_key=item.get("sourceKey") if isinstance(item.get("sourceKey"), str) else None, page_text_artifact_key=item.get("pageTextArtifactKey") if isinstance(item.get("pageTextArtifactKey"), str) else None)
 
 
 class AuthoritativeJobLocator:

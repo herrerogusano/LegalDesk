@@ -216,10 +216,12 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
             gateway = IDPMachineGatewayClient(gateway_url=review_url, token_provider=token_provider, timeout_seconds=15.0)
             invocation_repository = Boto3DynamoGatewayGrantRepository(config.table_name, table=table)
 
-            def recover_review_dispatch(*, tenant_id: str, matter_id: str, limit: int) -> tuple[object, ...]:
+            def recover_review_dispatch(*, tenant_id: str, matter_id: str, limit: int, _page: tuple[tuple[object, ...], str | None] | None = None) -> tuple[object, ...]:
                 recovered: list[object] = []
                 cursor = idp_repository.get_review_recovery_cursor(tenant_id=tenant_id, matter_id=matter_id)
-                if callable(getattr(metadata, "list_for_scope_page", None)):
+                if _page is not None:
+                    documents, next_cursor = _page
+                elif callable(getattr(metadata, "list_for_scope_page", None)):
                     documents, next_cursor = metadata.list_for_scope_page(tenant_id=tenant_id, matter_id=matter_id, limit=min(limit, 100), cursor=cursor)
                 else:
                     documents, next_cursor = metadata.list_for_scope(tenant_id=tenant_id, matter_id=matter_id, limit=min(limit, 100)), None
@@ -227,11 +229,44 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
                     for document in documents:
                         if len(recovered) >= limit:
                             break
-                        runs = idp_repository.list_runs(tenant_id=tenant_id, matter_id=matter_id, document_id=document.document_id, limit=2)
+                        # Review recovery must inspect the chronological
+                        # history page, not an arbitrary UUID-key prefix
+                        # limited to the first two runs.  The repository
+                        # marker cursor keeps this bounded and recoverable;
+                        # pending runs in the same document are therefore not
+                        # starved behind newer terminal rows.
+                        # Dispatch work remains capped by ``limit``; history
+                        # inspection has its own small bounded page so a
+                        # pending older run cannot be hidden behind several
+                        # already-SENT generations of the same document.
+                        runs = idp_repository.list_run_history(
+                            tenant_id=tenant_id, matter_id=matter_id,
+                            document_id=document.document_id, limit=20,
+                        ).runs
                         for run in runs:
                             if run.status is not IDPJobStatus.REVIEW_REQUIRED or len(recovered) >= limit:
                                 continue
                             job = idp_repository.get_job(run.run_id)
+                            # A run ID normally equals the producer job ID,
+                            # but the durable contracts do not require that
+                            # identity.  Resolve the review job by the same
+                            # scoped document/hash when a restart finds a
+                            # separately named job; this remains a bounded
+                            # partition query, never a table scan.
+                            if job is None:
+                                list_jobs = getattr(idp_repository, "list_review_jobs", None)
+                                candidates = list_jobs(
+                                    tenant_id=tenant_id,
+                                    matter_id=matter_id,
+                                    document_id=document.document_id,
+                                    limit=20,
+                                ) if callable(list_jobs) else ()
+                                matching = tuple(
+                                    candidate for candidate in candidates
+                                    if candidate.document_sha256 == run.document_sha256
+                                    and candidate.created_at == run.created_at
+                                )
+                                job = matching[0] if len(matching) == 1 else None
                             if job is None or job.review_delivery_state == "SENT":
                                 continue
                             try:

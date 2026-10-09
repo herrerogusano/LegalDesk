@@ -7,6 +7,7 @@ from .persistence import (
     Boto3DynamoIDPRepository,
     Boto3DynamoStageLedger,
     DeliveryCandidatePage,
+    RunHistoryPage,
     IDPIdempotencyConflict,
     IDPRepository,
     InMemoryIDPRepository,
@@ -16,6 +17,7 @@ from .persistence import (
     job_sort_key,
     matter_partition_key,
     run_sort_key,
+    history_sort_key,
     stage_sort_key,
 )
 from .artifacts import Boto3S3IDPArtifactStore, IDPArtifactError, IDPArtifactStore, InMemoryIDPArtifactStore, idp_artifact_key

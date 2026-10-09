@@ -52,6 +52,14 @@ class VerifiedCleanIDPTrigger:
         remaining = limit
         candidates = self.repository.list_delivery_candidates(tenant_id=tenant_id, matter_id=matter_id, limit=limit)
         recovered: list[IDPJob] = []
+        shared_metadata_page: tuple[tuple[Any, ...], str | None] | None = None
+        if metadata_repository is not None and object_storage is not None and callable(self.review_recovery):
+            page_reader = getattr(metadata_repository, "list_for_scope_page", None)
+            if callable(page_reader):
+                cursor_reader = getattr(self.repository, "get_clean_recovery_cursor", None)
+                cursor = cursor_reader(tenant_id=tenant_id, matter_id=matter_id) if callable(cursor_reader) else None
+                page, next_cursor = page_reader(tenant_id=tenant_id, matter_id=matter_id, limit=limit, cursor=cursor)
+                shared_metadata_page = (tuple(page), next_cursor)
         for job in candidates.jobs:
             if remaining <= 0 or time.monotonic() >= deadline:
                 break
@@ -70,17 +78,20 @@ class VerifiedCleanIDPTrigger:
                     recovered.append(enqueue_verified_clean_job(repository=self.repository, queue=self.queue, job=job) if job.status is IDPJobStatus.ENQUEUE_PENDING else redeliver_ambiguous_job(repository=self.repository, queue=self.queue, job_id=job.job_id))
                     remaining -= 1
         if metadata_repository is not None and object_storage is not None and remaining > 0 and time.monotonic() < deadline:
-            recovered.extend(self.recover_clean_documents(metadata_repository=metadata_repository, object_storage=object_storage, tenant_id=tenant_id, matter_id=matter_id, limit=remaining))
+            recovered.extend(self.recover_clean_documents(metadata_repository=metadata_repository, object_storage=object_storage, tenant_id=tenant_id, matter_id=matter_id, limit=remaining, _page=shared_metadata_page))
         if callable(self.review_recovery):
             # Review dispatch recovery is a separate bounded, server-scoped
             # pass.  It only reuses durable run artifacts; it never re-enters
             # classifier/extractor stages.
-            review_results = self.review_recovery(tenant_id=tenant_id, matter_id=matter_id, limit=max(1, remaining))
+            review_kwargs: dict[str, Any] = {"tenant_id": tenant_id, "matter_id": matter_id, "limit": max(1, remaining)}
+            if shared_metadata_page is not None:
+                review_kwargs["_page"] = shared_metadata_page
+            review_results = self.review_recovery(**review_kwargs)
             if isinstance(review_results, (tuple, list)):
                 recovered.extend(item for item in review_results if isinstance(item, IDPJob))
         return tuple(recovered)
 
-    def recover_clean_documents(self, *, metadata_repository: Any, object_storage: Any, tenant_id: str, matter_id: str, limit: int = 25) -> tuple[IDPJob, ...]:
+    def recover_clean_documents(self, *, metadata_repository: Any, object_storage: Any, tenant_id: str, matter_id: str, limit: int = 25, _page: tuple[tuple[Any, ...], str | None] | None = None) -> tuple[IDPJob, ...]:
         """Recover a clean document whose job intent was lost before write.
 
         Discovery is one explicit metadata partition query.  S3 metadata/body
@@ -94,7 +105,9 @@ class VerifiedCleanIDPTrigger:
         set_cursor = getattr(self.repository, "set_clean_recovery_cursor", None)
         cursor = get_cursor(tenant_id=tenant_id, matter_id=matter_id) if callable(get_cursor) else None
         page_reader = getattr(metadata_repository, "list_for_scope_page", None)
-        if callable(page_reader):
+        if _page is not None:
+            documents, next_cursor = _page
+        elif callable(page_reader):
             documents, next_cursor = page_reader(tenant_id=tenant_id, matter_id=matter_id, limit=limit, cursor=cursor)
         else:
             documents, next_cursor = metadata_repository.list_for_scope(tenant_id=tenant_id, matter_id=matter_id, limit=limit), None

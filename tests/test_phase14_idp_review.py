@@ -54,7 +54,7 @@ def _event(token, *, field_names=None):
 class ReviewTests(unittest.TestCase):
     def _run(self):
         field = IDPFieldResult(field="costs_statement", value="reserved", presence=FieldPresence.PRESENT, origin=FieldOrigin.LITERAL, acceptance=FieldAcceptance.REVIEW_REQUIRED, evidence=(EvidenceAnchor(page=1, quote="costs reserved", content_sha256=HASH),))
-        return IDPExtractionRun(run_id="run-a", tenant_id="tenant-a", matter_id="matter-a", document_id="doc-a", document_sha256=HASH, document_type=DocumentType.CONTRACT, schema_version="1.0.0", model_id="model", prompt_version="prompt", status=IDPJobStatus.REVIEW_REQUIRED, fields={field.field: field}, created_at=datetime.now(timezone.utc))
+        return IDPExtractionRun(run_id="run-a", tenant_id="tenant-a", matter_id="matter-a", document_id="doc-a", document_sha256=HASH, document_type=DocumentType.JUDGMENT, schema_version="1.0.0", model_id="model", prompt_version="prompt", status=IDPJobStatus.REVIEW_REQUIRED, fields={field.field: field}, created_at=datetime.now(timezone.utc))
 
     def test_machine_gateway_grant_is_scoped_and_purpose_bound(self):
         grants = InMemoryGatewayGrantRepository()

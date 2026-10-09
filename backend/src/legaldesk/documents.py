@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import PurePath
 from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import quote
@@ -1028,6 +1029,14 @@ class Boto3DynamoDocumentMetadataRepository:
             "malwareScanVersionId": document.malware_scan_version_id,
             "fileSizeBytes": document.file_size_bytes,
             "uploadedAt": document.uploaded_at.isoformat(),
+            "idpStatus": document.idp_status,
+            "idpReason": document.idp_reason,
+            "idpAttempt": document.idp_attempt,
+            "idpJobId": document.idp_job_id,
+            "idpRunId": document.idp_run_id,
+            "idpDocumentSha256": document.idp_document_sha256,
+            "idpGenerationAt": document.idp_generation_at,
+            "idpSourceKey": document.idp_source_key,
         }
 
     def save(self, document: Document) -> None:
@@ -1244,4 +1253,12 @@ def _document_from_item(item: Mapping[str, Any]) -> Document:
         malware_scan_version_id=item.get("malwareScanVersionId") if isinstance(item.get("malwareScanVersionId"), str) else None,
         file_size_bytes=int(item.get("fileSizeBytes", 0)),
         uploaded_at=datetime.fromisoformat(str(item["uploadedAt"])),
+        idp_status=item.get("idpStatus") if isinstance(item.get("idpStatus"), str) else None,
+        idp_reason=item.get("idpReason") if isinstance(item.get("idpReason"), str) else None,
+        idp_attempt=int(item["idpAttempt"]) if isinstance(item.get("idpAttempt"), (int, Decimal)) and not isinstance(item.get("idpAttempt"), bool) else None,
+        idp_job_id=item.get("idpJobId") if isinstance(item.get("idpJobId"), str) else None,
+        idp_run_id=item.get("idpRunId") if isinstance(item.get("idpRunId"), str) else None,
+        idp_document_sha256=item.get("idpDocumentSha256") if isinstance(item.get("idpDocumentSha256"), str) else None,
+        idp_generation_at=item.get("idpGenerationAt") if isinstance(item.get("idpGenerationAt"), str) else None,
+        idp_source_key=item.get("idpSourceKey") if isinstance(item.get("idpSourceKey"), str) else None,
     )

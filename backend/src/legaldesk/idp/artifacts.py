@@ -51,7 +51,8 @@ class InMemoryIDPArtifactStore:
 
     def read_verified(self, *, key: str, max_bytes: int = MAX_ARTIFACT_BYTES) -> bytes:
         item = self.objects.get(key)
-        if item is None or len(item[0]) > max_bytes or hashlib.sha256(item[0]).hexdigest() != item[2]:
+        bound_hash = key.rsplit("-", 1)[-1] if isinstance(key, str) else ""
+        if item is None or not _SHA.fullmatch(bound_hash) or item[2] != bound_hash or len(item[0]) > max_bytes or hashlib.sha256(item[0]).hexdigest() != item[2]:
             raise IDPArtifactError("artifact is unavailable or failed verification")
         return item[0]
 
@@ -104,6 +105,9 @@ class Boto3S3IDPArtifactStore:
             raise IDPArtifactError("artifact key is outside the IDP scope")
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 1 <= max_bytes <= MAX_ARTIFACT_BYTES:
             raise IDPArtifactError("artifact read bound is invalid")
+        bound_hash = key.rsplit("-", 1)[-1]
+        if _SHA.fullmatch(bound_hash) is None:
+            raise IDPArtifactError("artifact key hash is invalid")
         try:
             response = self.client.get_object(Bucket=self.bucket_name, Key=key, Range=f"bytes=0-{max_bytes - 1}")
             body = response.get("Body") if isinstance(response, dict) else None
@@ -112,7 +116,7 @@ class Boto3S3IDPArtifactStore:
             content = body.read(max_bytes)
             metadata = response.get("Metadata", {})
             expected = metadata.get("legaldesk-sha256") if isinstance(metadata, dict) else None
-            if not isinstance(content, bytes) or len(content) > max_bytes or not isinstance(expected, str) or hashlib.sha256(content).hexdigest() != expected:
+            if not isinstance(content, bytes) or len(content) > max_bytes or expected != bound_hash or not isinstance(expected, str) or hashlib.sha256(content).hexdigest() != expected:
                 raise IDPArtifactError("artifact failed hash verification")
             return content
         except IDPArtifactError:

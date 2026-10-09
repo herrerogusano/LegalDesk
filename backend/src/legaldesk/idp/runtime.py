@@ -115,8 +115,23 @@ class Boto3IDPDocumentReader:
         return DocumentForIDP(tenant_id=document.tenant_id, matter_id=document.matter_id, document_id=document.document_id, media_type=document.media_type, file_size_bytes=document.file_size_bytes, malware_scan_clean=clean, content_sha256=None, source_key=document.s3_key)
 
     def read(self, *, job: IDPJob, document: DocumentForIDP) -> tuple[DocumentForIDP, bytes]:
-        current = self(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id)
-        if current is None or current.tenant_id != job.tenant_id or current.matter_id != job.matter_id or current.document_id != job.document_id or current.source_key != document.source_key or not current.malware_scan_clean:
+        return self._read_current(
+            tenant_id=job.tenant_id, matter_id=job.matter_id,
+            document_id=job.document_id, expected_source_key=document.source_key,
+            expected_sha256=job.document_sha256,
+        )
+
+    def verify_run_source(self, run: Any) -> None:
+        """Re-read the current clean canonical bytes before human exposure."""
+        self._read_current(
+            tenant_id=run.tenant_id, matter_id=run.matter_id,
+            document_id=run.document_id, expected_source_key=run.source_key,
+            expected_sha256=run.document_sha256,
+        )
+
+    def _read_current(self, *, tenant_id: str, matter_id: str, document_id: str, expected_source_key: str | None, expected_sha256: str) -> tuple[DocumentForIDP, bytes]:
+        current = self(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id)
+        if current is None or current.tenant_id != tenant_id or current.matter_id != matter_id or current.document_id != document_id or current.source_key != expected_source_key or not current.malware_scan_clean:
             raise IDPContractError("authoritative clean document scope changed")
         if current.source_key is None:
             raise IDPContractError("canonical source key is missing")
@@ -134,7 +149,7 @@ class Boto3IDPDocumentReader:
         declared = metadata.get("legaldesk-sha256") if isinstance(metadata, Mapping) else None
         if declared is not None and declared != digest:
             raise IDPContractError("canonical source metadata hash mismatch")
-        if digest != job.document_sha256:
+        if digest != expected_sha256:
             raise IDPContractError("canonical source hash changed")
         return replace(current, content_sha256=digest), body
 

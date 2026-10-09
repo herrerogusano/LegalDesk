@@ -35,6 +35,10 @@ from .mcp_server import MCPServer
 from .memory import AgentCoreMemoryClient, Boto3DynamoConversationBindingStore
 from .prompts import FileSystemSystemPromptProvider
 from .review_tasks import Boto3DynamoReviewTaskRepository
+from .idp.persistence import Boto3DynamoIDPRepository
+from .idp.artifacts import Boto3S3IDPArtifactStore
+from .idp.runtime import Boto3IDPDocumentReader
+from .idp.review import Boto3DynamoIDPDecisionRepository, IDPReviewService
 from .observability import DEFAULT_TELEMETRY_SINK
 from .smoke_budget import BudgetedSdkClient, SmokeBudget
 from .state import DynamoDBEphemeralStateStore
@@ -368,6 +372,22 @@ def build_aws_composition(
     conversation_store = Boto3DynamoConversationBindingStore(resource_config.metadata_table_name, table=table)
     grant_repository = Boto3DynamoGatewayGrantRepository(resource_config.metadata_table_name, table=table)
     review_repository = Boto3DynamoReviewTaskRepository(resource_config.metadata_table_name, table=table)
+    idp_repository = Boto3DynamoIDPRepository(resource_config.metadata_table_name, table=table)
+    # IDP review evidence is revalidated against immutable page-text objects;
+    # these live under the IDP-only prefix in the configured source bucket (or
+    # a dedicated bucket when explicitly configured), never in RAG tenants/.
+    idp_artifact_store = Boto3S3IDPArtifactStore(
+        os.environ.get("LEGALDESK_IDP_ARTIFACT_BUCKET") or resource_config.source_bucket_name,
+        client=s3,
+    )
+    idp_review_service = IDPReviewService(
+        Boto3DynamoIDPDecisionRepository(resource_config.metadata_table_name, table=table),
+        artifact_store=idp_artifact_store,
+        source_reader=Boto3IDPDocumentReader(
+            metadata, s3, bucket_name=resource_config.source_bucket_name,
+            max_bytes=20 * 1024 * 1024,
+        ),
+    )
     prompt_provider = FileSystemSystemPromptProvider(resource_config.prompt_path) if resource_config.prompt_path else FileSystemSystemPromptProvider()
     prompt = prompt_provider.load()
     guardrail_config = GuardrailConfig(resource_config.guardrail_identifier, resource_config.guardrail_version)
@@ -430,7 +450,7 @@ def build_aws_composition(
         document_pipeline=pipeline,
         object_storage=storage,
         metadata_repository=metadata,
-        mcp_server=MCPServer(metadata),
+        mcp_server=MCPServer(metadata, idp_repository=idp_repository, idp_review_service=idp_review_service),
         review_repository=review_repository,
         gateway_grant_repository=grant_repository,
         memory=memory,
@@ -456,10 +476,10 @@ def build_aws_composition(
     )
     from .chat import ChatRequest, answer_question
 
-    def chat_service(identity: Any, *, matter_id: str, conversation_id: str, session_id: str, question: str, correlation_id: str, authorized_evidence_sink: Any = None) -> Any:
+    def chat_service(identity: Any, *, matter_id: str, conversation_id: str, session_id: str, question: str, correlation_id: str, authorized_evidence_sink: Any = None, selected_document_id: str | None = None, selected_field_name: str | None = None) -> Any:
         return answer_question(
             identity,
-            ChatRequest(conversation_id, session_id, matter_id, question),
+            ChatRequest(conversation_id, session_id, matter_id, question, selected_document_id, selected_field_name),
             authorization_store=auth_store,
             retrieval_client=knowledge_base,
             knowledge_base_id=resource_config.knowledge_base_id,

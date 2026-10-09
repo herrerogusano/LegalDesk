@@ -52,6 +52,33 @@ compatible field/schema meaning; never carry a correction blindly onto changed
 content. Preserve both histories and surface conflicts. Order model runs by a
 durable run/generation timestamp rather than which worker finishes last.
 
+## Additive application contracts (local integration under review)
+
+Explicit document metadata continues to use backend → Gateway → MCP, with
+optional `historyLimit` (1–20) and an opaque `historyCursor`. The current
+document/run projection is independent of the history page. History is a
+bounded authorized `Query`, not a table scan or a replacement for the current
+generation pointer.
+
+The existing `/api/chat` request accepts the optional pair
+`selectedDocumentId` and `selectedFieldName`; neither may be supplied alone.
+The field is registry-allowlisted and the selected document is reauthorized.
+Usable IDP fields retain the readable `answer`, existing evidence status and
+citations, with additive structured IDP metadata. Missing, skipped, failed or
+unusable IDP must fall back to RAG filtered to that exact authorized document;
+the fallback is never written back as an accepted IDP field.
+
+Human field decisions extend the existing `update_review_task` action with
+`idpDecision` containing field, approve/correct/reject action, required reason,
+evidence and, for corrections only, the raw proposed value. Actor, content
+identity, origin, acceptance and resulting audit entry remain server-owned.
+Persist normalized page text as an immutable run-scoped artifact so a new
+human evidence anchor can be checked without repeating OCR. Validate the
+artifact scope/digest and the current canonical source bytes before exposing
+or applying results; historical evidence does not establish current validity.
+
+This section describes the integration being validated, not deployed proof.
+
 ## Required evidence before enabling
 
 - Machine creation traverses Gateway; human chat-review regression still passes.

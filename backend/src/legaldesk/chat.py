@@ -111,6 +111,8 @@ class ChatRequest:
     session_id: str
     matter_id: str
     question: str
+    selected_document_id: str | None = None
+    selected_field_name: str | None = None
 
     def __post_init__(self) -> None:
         _valid_selector(self.conversation_id, field_name="conversationId")
@@ -122,6 +124,11 @@ class ChatRequest:
             or len(self.question) > MAX_QUERY_LENGTH
         ):
             raise ValueError("question is empty or outside the allowed length")
+        if (self.selected_document_id is None) != (self.selected_field_name is None):
+            raise ValueError("selected document and field must be supplied together")
+        if self.selected_document_id is not None:
+            _valid_selector(self.selected_document_id, field_name="selectedDocumentId")
+            _valid_selector(self.selected_field_name, field_name="selectedFieldName")
 
 
 def parse_chat_request(payload: Mapping[str, object]) -> ChatRequest:
@@ -130,13 +137,20 @@ def parse_chat_request(payload: Mapping[str, object]) -> ChatRequest:
     if not isinstance(payload, Mapping):
         raise ValueError("chat request must be an object")
     expected = {"conversationId", "sessionId", "matterId", "question"}
-    if set(payload) != expected:
+    optional = {"selectedDocumentId", "selectedFieldName"}
+    if set(payload) - expected - optional or not expected.issubset(payload):
         raise ValueError("chat request has missing or unsupported fields")
+    selected_document_id = payload.get("selectedDocumentId")
+    selected_field_name = payload.get("selectedFieldName")
+    if (selected_document_id is None) != (selected_field_name is None):
+        raise ValueError("selected document and field must be supplied together")
     return ChatRequest(
         conversation_id=payload["conversationId"],  # type: ignore[arg-type]
         session_id=payload["sessionId"],  # type: ignore[arg-type]
         matter_id=payload["matterId"],  # type: ignore[arg-type]
         question=payload["question"],  # type: ignore[arg-type]
+        selected_document_id=selected_document_id,  # type: ignore[arg-type]
+        selected_field_name=selected_field_name,  # type: ignore[arg-type]
     )
 
 
@@ -519,6 +533,7 @@ def answer_question(
             telemetry_sink=telemetry_sink,
             metadata_repository=metadata_repository,
             object_storage=object_storage,
+            selected_document_id=request.selected_document_id,
         )
     except Exception:
         emit_telemetry(
