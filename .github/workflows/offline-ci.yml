@@ -29,6 +29,90 @@ jobs:
           node-version: "24.x"
       - name: Install local packages
         run: python -m pip install --disable-pip-version-check -e ".[aws,release-tools]" -e agent
+      - name: Build and smoke-test the pinned Lambda artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          dependency_root="$RUNNER_TEMP/legaldesk-python312-deps"
+          release_dir="$RUNNER_TEMP/legaldesk-release-smoke"
+          mkdir -p "$dependency_root"
+          python -m pip install --disable-pip-version-check --target "$dependency_root" --no-deps \
+            -r packaging/constraints-python312-manylinux-x86_64.txt
+          python -B scripts/package_release.py \
+            --dependency-root "$dependency_root" \
+            --output-dir "$release_dir"
+          artifact_root="$RUNNER_TEMP/legaldesk-lambda-root"
+          mkdir -p "$artifact_root"
+          python - "$release_dir/legaldesk-lambda.zip" "$artifact_root" <<'PY'
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              archive.extractall(sys.argv[2])
+          PY
+          (
+            cd "$RUNNER_TEMP"
+            ARTIFACT_ROOT="$artifact_root" PYTHONPATH="$artifact_root" python -S - <<'PY'
+          import importlib
+          import importlib.metadata
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+
+          artifact_root = Path(os.environ["ARTIFACT_ROOT"]).resolve()
+          def assert_from_artifact(module_name):
+              module = importlib.import_module(module_name)
+              origin = Path(module.__file__).resolve()
+              if artifact_root not in origin.parents:
+                  raise SystemExit(f"{module_name} loaded outside artifact: {origin}")
+              return module
+
+          expected = {
+              "boto3": "1.43.97", "botocore": "1.43.97", "cffi": "2.1.1",
+              "cryptography": "50.0.1", "jmespath": "1.1.0", "PyJWT": "2.14.0",
+              "pycparser": "3.0", "pypdf": "6.20.0", "s3transfer": "0.19.2",
+              "urllib3": "2.8.0", "python-dateutil": "2.9.0.post0", "six": "1.17.0",
+          }
+          actual = {name: importlib.metadata.version(name) for name in expected}
+          if actual != expected:
+              raise SystemExit(f"target dependency mismatch: {actual}")
+          for module in (
+              "legaldesk.malware_scan_lambda", "legaldesk.idp_lambda",
+              "legaldesk.idp_ocr_lambda", "legaldesk.reconciliation_lambda",
+          ):
+              assert_from_artifact(module)
+          for module in (
+              "boto3", "botocore", "cffi", "cryptography", "jwt", "pypdf",
+              "jmespath", "s3transfer", "urllib3", "dateutil", "six", "pycparser",
+          ):
+              assert_from_artifact(module)
+          from legaldesk.idp.providers import default_idp_prompt_path, idp_prompt_identity
+
+          for kind in ("classifier", "extractor"):
+              prompt_path = default_idp_prompt_path(kind).resolve()
+              if artifact_root not in prompt_path.parents:
+                  raise SystemExit(f"{kind} prompt loaded outside artifact: {prompt_path}")
+              if not prompt_path.read_text(encoding="utf-8").strip():
+                  raise SystemExit(f"{kind} prompt is empty")
+          if not idp_prompt_identity("artifact-smoke"):
+              raise SystemExit("IDP prompt identity is empty")
+          release_dir = Path(os.environ["RUNNER_TEMP"]) / "legaldesk-release-smoke"
+          manifest = json.loads((release_dir / "legaldesk-release-manifest.json").read_text())
+          application = next(item for item in manifest["artifacts"] if item["name"] == "application")
+          names = set()
+          with zipfile.ZipFile(release_dir / application["path"]) as archive:
+              names = set(archive.namelist())
+          required = {
+              "legaldesk/malware_scan_lambda.py", "legaldesk/idp_lambda.py",
+              "legaldesk/idp_ocr_lambda.py", "legaldesk/reconciliation_lambda.py",
+              "prompts/idp-classifier.md", "prompts/idp-extractor.md",
+          }
+          missing = required - names
+          if missing:
+              raise SystemExit(f"target artifact missing entries: {sorted(missing)}")
+          PY
+          )
       - name: Strict-lint Phase 14 CloudFormation templates
         run: >-
           cfn-lint

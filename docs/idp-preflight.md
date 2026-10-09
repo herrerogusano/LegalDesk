@@ -231,6 +231,37 @@ templates. Supervisor additionally checked the document-security template
 without waivers and ran five release-packaging tests (one host symlink skip)
 plus the tooling-consistency test. This does not deploy or activate IDP.
 
+## Human/query and UI checkpoint — 2026-10-09
+
+This supersedes the earlier unconnected-helper limitation, not the pending AWS
+acceptance. Checkpoints `878eaac`, `7d0c531`, `54bffeb` and `653e57e` implement:
+
+- Chronological bounded history, authoritative current-generation projection,
+  current canonical-byte proof and immutable normalized page artifacts.
+- Human field decisions and task transition atomically in the existing table;
+  latest compatible human decisions take precedence over unreviewed reruns.
+- Explicit selected-field metadata through Gateway, IDP-first cited answers,
+  exact-document RAG fallback and shared citation/history/audit finalization.
+- Additive document/history/review UI, accessible correction forms, edited
+  evidence anchors, stale-response/matter reset and readable non-IDP fallback.
+- Typed corrections adapted internally to `proposedValueJson` because the actual
+  CloudFormation Gateway schema requires a single primitive `Type`. The HTTP
+  contract and server-side field validation remain unchanged. Recursive schema
+  tests supplement the linter; unsupported `AllowedValues` and
+  `AdditionalProperties` are not sent as CloudFormation schema fields.
+
+Supervisor validation: full Python suite 764 tests, OK with one Windows symlink
+skip before the final transport-only follow-up; the follow-up's Gateway/IaC
+focused suite passed 9 tests. Chrome/Playwright IDP DOM flow, document view,
+diagnostics and both browser-helper regressions passed. Mobile and desktop
+screenshots were visually reviewed. Strict cfn-lint 1.57.2 passed seven relevant
+templates, with the final Gateway schema rechecked separately.
+
+Read-only AWS inventory reconfirmed existing stacks in completed states and
+no deployed IDP stack. No IDP resource creation, inference, OCR, model-quality
+evaluation or deployed E2E is implied. The Linux artifact gate and bounded live
+runner are the next validation work; see `docs/idp-live-validation-plan.md`.
+
 ## Primary references checked
 
 - [Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html)

@@ -19,6 +19,23 @@ class ReleaseToolingTests(unittest.TestCase):
         docs = (ROOT / "docs" / "continuous-delivery.md").read_text(encoding="utf-8")
         self.assertIn("cfn-lint==1.57.2", docs)
 
+    def test_offline_ci_builds_and_smoke_tests_the_pinned_idp_artifact_without_aws(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "offline-ci.yml").read_text(encoding="utf-8")
+        self.assertIn("packaging/constraints-python312-manylinux-x86_64.txt", workflow)
+        self.assertIn("scripts/package_release.py", workflow)
+        self.assertIn("legaldesk-python312-deps", workflow)
+        self.assertIn("legaldesk-lambda-root", workflow)
+        self.assertIn("archive.extractall", workflow)
+        self.assertIn("python -S", workflow)
+        self.assertIn("assert_from_artifact", workflow)
+        self.assertIn("legaldesk.idp_lambda", workflow)
+        self.assertIn("legaldesk.idp_ocr_lambda", workflow)
+        self.assertIn('"pypdf": "6.20.0"', workflow)
+        self.assertIn("prompts/idp-classifier.md", workflow)
+        self.assertIn("prompts/idp-extractor.md", workflow)
+        self.assertNotIn("aws sts", workflow.lower())
+        self.assertNotIn("upload-artifact", workflow.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
