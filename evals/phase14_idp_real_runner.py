@@ -36,7 +36,7 @@ from legaldesk.idp.artifacts import InMemoryIDPArtifactStore  # noqa: E402
 from legaldesk.idp.pipeline import IDPProcessingPipeline  # noqa: E402
 from legaldesk.idp.models import FieldAcceptance, FieldOrigin, FieldPresence, IDPContractError, IDPFieldResult, IDPJobStatus  # noqa: E402
 from legaldesk.idp.rules import DerivedMetadataEngine  # noqa: E402
-from legaldesk.idp.processing import IDPOutputError, StageCallLedger  # noqa: E402
+from legaldesk.idp.processing import EvidenceValidationError, IDPOutputError, StageCallLedger  # noqa: E402
 from legaldesk.idp.providers import (  # noqa: E402
     IDPConverseClassifier,
     IDPConverseExtractor,
@@ -120,6 +120,10 @@ def _canonical_bytes(value: object) -> bytes:
 
 
 def _safe_error(exc: BaseException) -> str:
+    if isinstance(exc, EvidenceValidationError):
+        return "EVIDENCE_ANCHOR_INVALID"
+    if isinstance(exc, IDPOutputError):
+        return "MODEL_OUTPUT_INVALID"
     name = type(exc).__name__
     return {
         "IDPOutputError": "MODEL_OUTPUT_INVALID",
@@ -137,6 +141,10 @@ def _safe_error(exc: BaseException) -> str:
 
 
 def _safe_error_type(exc: BaseException) -> str:
+    if isinstance(exc, EvidenceValidationError):
+        return "EVIDENCE_ANCHOR"
+    if isinstance(exc, IDPOutputError):
+        return "IDP_OUTPUT"
     return {
         "IDPOutputError": "IDP_OUTPUT",
         "IDPContractError": "IDP_CONTRACT",

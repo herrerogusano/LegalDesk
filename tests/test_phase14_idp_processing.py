@@ -31,6 +31,7 @@ from legaldesk.idp import (  # noqa: E402
     parse_strict_json,
 )
 from legaldesk.prompts import FileSystemSystemPromptProvider  # noqa: E402
+from legaldesk.idp.providers import idp_prompt_identity  # noqa: E402
 
 
 class _FakeOCR:
@@ -160,6 +161,14 @@ class ProcessingTests(unittest.TestCase):
         extractor = FileSystemSystemPromptProvider(root / "idp-extractor.md").load()
         self.assertEqual(classifier.prompt_id, "legaldesk-idp-classifier")
         self.assertEqual(extractor.prompt_id, "legaldesk-idp-extractor")
+        self.assertEqual(classifier.version, "1.0.1")
+        self.assertIn("CONTRACT", classifier.content)
+        self.assertIn("DEMAND", classifier.content)
+        self.assertIn("JUDGMENT", classifier.content)
+        self.assertIn("preserve accents, dates, punctuation", classifier.content)
+        self.assertIn("fictional disclaimer does not change", classifier.content)
+        identity = idp_prompt_identity()
+        self.assertIn("legaldesk-idp-classifier:1.0.1:", identity)
 
 
 if __name__ == "__main__":

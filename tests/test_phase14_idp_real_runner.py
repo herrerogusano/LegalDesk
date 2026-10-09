@@ -27,12 +27,15 @@ from phase14_idp_real_runner import (  # noqa: E402
     _apply_runtime_derived,
     _derived_export,
     _report_status,
+    _safe_error,
+    _safe_error_type,
     load_manifest,
     run,
 )
 from legaldesk.idp.providers import IDPConverseClassifier, IDPConverseExtractor, IDPModelConfig  # noqa: E402
 from legaldesk.idp.registry import IDPSchemaRegistry  # noqa: E402
 from legaldesk.idp.models import DocumentType, FieldAcceptance, FieldPresence, IDPExtractionRun, IDPFieldResult, IDPJobStatus  # noqa: E402
+from legaldesk.idp.processing import EvidenceValidationError  # noqa: E402
 
 
 class _NeverCalled:
@@ -86,6 +89,11 @@ class _ExtractorParamValidationProvider:
 
 
 class Phase14IDPRealRunnerTests(unittest.TestCase):
+    def test_evidence_validation_failure_has_closed_diagnostic_code(self) -> None:
+        error = EvidenceValidationError("synthetic quote mismatch")
+        self.assertEqual(_safe_error(error), "EVIDENCE_ANCHOR_INVALID")
+        self.assertEqual(_safe_error_type(error), "EVIDENCE_ANCHOR")
+
     def test_export_applies_production_derived_metadata_and_marks_conflict_for_review(self) -> None:
         fields = {
             "effective_date": IDPFieldResult(field="effective_date", value="2024-01-31", presence=FieldPresence.PRESENT),
