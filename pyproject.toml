@@ -7,7 +7,7 @@ name = "legaldesk"
 version = "0.1.0"
 description = "Tenant-safe legal document assistant with grounded RAG and verifiable citations on AWS Bedrock AgentCore"
 requires-python = ">=3.11"
-dependencies = ["PyJWT[crypto]>=2.10,<3"]
+dependencies = ["PyJWT[crypto]>=2.10,<3", "pypdf>=6.20,<7"]
 
 [project.scripts]
 legaldesk = "legaldesk.__main__:main"

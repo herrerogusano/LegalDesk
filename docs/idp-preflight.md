@@ -110,8 +110,35 @@ STOP gate before implementation.
 5. Versioned IDP prompts, synthetic dataset, local/security/regression tests,
    frozen real-model evaluation and bounded AWS E2E with measured usage.
 
-Preflight validation: source inspection and AWS configuration reads only;
-no IDP tests or acceptance evidence yet. The requested phase is **not complete**.
+Preflight validation used source inspection and AWS configuration reads only.
+The requested phase is **not complete**.
+
+## Local implementation checkpoint — 2026-10-09
+
+Provider-neutral foundations now exist under `backend/src/legaldesk/idp/`:
+versioned schemas, separate job/run state, scoped DynamoDB repository, delivery
+recovery seams, conditional claims, page-aware PDF acquisition, asynchronous OCR
+contracts, strict output/evidence validation and provisional calendar rules.
+IDP prompts are separate versioned artifacts and explicitly included in the
+release package. The existing public upload limit is unchanged.
+
+The evaluation corpus contains 15 synthetic supported documents and three
+additional UNKNOWN/adversarial/negative documents, including English/Spanish,
+scanned and mixed-page examples. Expectations were authored separately from
+the extractor; the supervisor reviewed selected values, anchors and rendered
+pages. This is not legal-expert or human ground-truth certification.
+
+| Validation | Actual result | Evidence boundary |
+| --- | --- | --- |
+| IDP foundation, processing, dataset and independent adversarial suites | 49 passed | Local deterministic/fake-provider tests, including an offline real-SDK serialization capture |
+| Corpus presentation | 22 rendered pages inspected | Readability only; no OCR quality claim |
+| AWS IDP inference/OCR/deployment | Not executed | No real-model or AWS E2E acceptance evidence |
+
+Remaining: production S3/clean-promotion delivery integration, durable stage/OCR
+adapters, bounded Bedrock/Textract calls, SQS/Lambda/DLQ infrastructure, approved
+M2M Gateway review path, human corrections, query integration and real evaluation.
+The current modules are not yet an activated production IDP feature. In
+particular, local queue/OCR interfaces do not prove durable cloud execution.
 
 ## Primary references checked
 
