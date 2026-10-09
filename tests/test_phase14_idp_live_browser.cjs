@@ -8,6 +8,7 @@ const {
   quoteDigest,
   selectBoundReviewTask,
   selectBoundReviewField,
+  safeResponseWait,
 } = require("./phase14_idp_live_browser.cjs");
 
 assert.deepStrictEqual(
@@ -29,4 +30,12 @@ assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "effective_date").n
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "missing_field"), null);
 assert.strictEqual(selectBoundReviewField(taskWithTwoFields, "").name, "governing_law");
 
-process.stdout.write("phase14 idp browser helper contracts: ok\n");
+const responseDiagnostics = {};
+safeResponseWait({ waitForResponse: () => Promise.reject(new Error("secret URL/body must not escape")) }, () => true, "upload_authorization", responseDiagnostics).then(response => {
+  assert.strictEqual(response, null);
+  assert.deepStrictEqual(responseDiagnostics, { responseWait: "upload_authorization" });
+  process.stdout.write("phase14 idp browser helper contracts: ok\n");
+}).catch(error => {
+  process.stderr.write(`${error.name}: browser helper contract failed\n`);
+  process.exitCode = 1;
+});

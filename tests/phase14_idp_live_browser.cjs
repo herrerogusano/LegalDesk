@@ -138,8 +138,22 @@ async function preflight() {
 }
 
 async function responseJson(response, category) {
-  if (!response.ok()) throw new SmokeFailure(category);
+  if (!response || !response.ok()) throw new SmokeFailure(response ? category : `${category}_missing`);
   try { return await response.json(); } catch (_error) { throw new SmokeFailure(category); }
+}
+
+function safeResponseWait(page, predicate, label, diagnostics) {
+  let pending;
+  try {
+    pending = page.waitForResponse(predicate, { timeout: 60_000 });
+  } catch (_error) {
+    diagnostics.responseWait = label;
+    return Promise.resolve(null);
+  }
+  return pending.catch(() => {
+    diagnostics.responseWait = label;
+    return null;
+  });
 }
 
 async function run() {
@@ -256,7 +270,7 @@ async function run() {
     csrf = me.body.csrfToken;
     setPhase("matter_selection");
     await page.locator("#matter-select").waitFor({ state: "visible", timeout: 30_000 });
-    const conversationResponsePromise = page.waitForResponse(response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, { timeout: 60_000 });
+    const conversationResponsePromise = safeResponseWait(page, response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, "conversation_create", diagnostics);
     await page.locator("#matter-select").selectOption(MATTER_ID);
     await page.waitForFunction(() => !document.querySelector("#document-file").disabled, null, { timeout: 30_000 });
     const conversationResponse = await conversationResponsePromise;
@@ -269,7 +283,7 @@ async function run() {
     emitCleanupProgress("conversation_ready", { conversationId, sessionId, scopes: cleanupScopes });
 
     setPhase("upload");
-    const uploadResponse = page.waitForResponse(response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } });
+    const uploadResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, "upload_authorization", diagnostics);
     await page.locator("#document-file").setInputFiles(FIXTURE_PATH);
     await page.locator("#upload-button").click();
     const authorization = await responseJson(await uploadResponse, "upload_authorization");
@@ -351,7 +365,7 @@ async function run() {
       setPhase("human_review");
       // Reuse the normal authenticated review list/detail UI. The machine
       // client creates the task; this browser session is the human actor.
-      const reloadConversationPromise = page.waitForResponse(response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, { timeout: 60_000 });
+      const reloadConversationPromise = safeResponseWait(page, response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, "conversation_reload", diagnostics);
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
       await page.locator("#matter-select").waitFor({ state: "visible", timeout: 30_000 });
       await page.locator("#matter-select").selectOption(MATTER_ID);
@@ -385,7 +399,7 @@ async function run() {
         if (await correction.evaluate(element => element.tagName === "SELECT")) await correction.selectOption({ label: correctionValue }).catch(() => correction.selectOption(correctionValue));
         else await correction.fill(correctionValue);
       }
-      const decisionResponse = page.waitForResponse(response => { try { return new URL(response.url()).pathname.includes("/reviews/") && response.request().method() === "PATCH"; } catch (_error) { return false; } }, { timeout: 60_000 });
+      const decisionResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.includes("/reviews/") && response.request().method() === "PATCH"; } catch (_error) { return false; } }, "human_decision", diagnostics);
       await actionButton.click();
       const decision = await decisionResponse;
       if (!decision.ok()) throw new SmokeFailure("human_decision_response");
@@ -433,5 +447,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField };
+  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, safeResponseWait };
 }
