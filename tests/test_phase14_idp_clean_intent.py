@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,7 +13,7 @@ from unittest.mock import Mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 
-from legaldesk.idp.models import IDPConfig, IDPConcurrencyError, IDPJob, IDPJobStatus  # noqa: E402
+from legaldesk.idp.models import DocumentType, IDPConfig, IDPConcurrencyError, IDPExtractionRun, IDPJob, IDPJobStatus  # noqa: E402
 from legaldesk.idp.persistence import Boto3DynamoIDPRepository, InMemoryIDPRepository  # noqa: E402
 from legaldesk.idp.trigger import VerifiedCleanIDPTrigger  # noqa: E402
 from legaldesk.idp.worker import build_verified_clean_job  # noqa: E402
@@ -36,6 +37,16 @@ def _job(*, job_id: str = "job-initial", idem: str = "idem-initial", status: IDP
         model_id="model",
         prompt_version="prompt",
         status=status,
+    )
+
+
+def _run() -> IDPExtractionRun:
+    return IDPExtractionRun(
+        run_id="run-null-fence", tenant_id=TENANT, matter_id=MATTER,
+        document_id=DOCUMENT, document_sha256=HASH, document_type=DocumentType.CONTRACT,
+        schema_version="1.0.0", model_id="model", prompt_version="prompt",
+        status=IDPJobStatus.COMPLETED, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_key="tenants/t/document.pdf",
     )
 
 
@@ -150,6 +161,80 @@ class CleanIntentTests(unittest.TestCase):
         self.assertNotIn("#intent.#idempotencyKey", condition)
         values = request["ExpressionAttributeValues"]
         self.assertEqual(values[":pending"], {"S": "ENQUEUE_PENDING"})
+
+    def test_boto_initial_write_accepts_legacy_null_hash_and_run_without_dropping_cas(self) -> None:
+        import boto3
+
+        resource = boto3.resource("dynamodb", region_name="eu-west-1", endpoint_url="http://127.0.0.1:9", aws_access_key_id="offline", aws_secret_access_key="offline")
+        table = resource.Table("table")
+        table.get_item = Mock(side_effect=[{}, {"Item": {
+            "documentId": DOCUMENT, "s3Key": "tenants/t/document.pdf",
+            "idpDocumentSha256": None, "idpRunId": None,
+        }}])
+        captured: dict[str, object] = {}
+
+        class AbortBeforeNetwork(Exception):
+            pass
+
+        def before_call(model, params, **kwargs):
+            captured.update(params)
+            raise AbortBeforeNetwork()
+
+        table.meta.client.meta.events.register("before-call.dynamodb.UpdateItem", before_call)
+        repository = Boto3DynamoIDPRepository("table", table=table)
+        with self.assertRaises(IDPConcurrencyError):
+            repository.record_clean_intent(job=_job())
+        request = json.loads(captured["body"])
+        self.assertIn("attribute_type(#existing_hash, :null)", request["ConditionExpression"])
+        self.assertIn("attribute_type(#run, :null)", request["ConditionExpression"])
+        self.assertEqual(request["ExpressionAttributeValues"][":null"], {"S": "NULL"})
+
+    def test_boto_projection_accepts_legacy_null_generation_with_real_resource_shape(self) -> None:
+        import boto3
+
+        resource = boto3.resource("dynamodb", region_name="eu-west-1", endpoint_url="http://127.0.0.1:9", aws_access_key_id="offline", aws_secret_access_key="offline")
+        table = resource.Table("table")
+        captured: dict[str, object] = {}
+
+        class AbortBeforeNetwork(Exception):
+            pass
+
+        def before_call(model, params, **kwargs):
+            captured.update(params)
+            raise AbortBeforeNetwork()
+
+        table.meta.client.meta.events.register("before-call.dynamodb.UpdateItem", before_call)
+        repository = Boto3DynamoIDPRepository("table", table=table)
+        with self.assertRaises(IDPConcurrencyError):
+            repository.project_document_status(run=_run())
+        request = json.loads(captured["body"])
+        self.assertIn("attribute_type(#generation, :null)", request["ConditionExpression"])
+        self.assertEqual(request["ExpressionAttributeValues"][":null"], {"S": "NULL"})
+
+    def test_boto_reprocess_reservation_fences_legacy_null_hash_and_run(self) -> None:
+        import boto3
+
+        resource = boto3.resource("dynamodb", region_name="eu-west-1", endpoint_url="http://127.0.0.1:9", aws_access_key_id="offline", aws_secret_access_key="offline")
+        table = resource.Table("table")
+        table.get_item = Mock(return_value={})
+        captured: dict[str, object] = {}
+
+        class AbortBeforeNetwork(Exception):
+            pass
+
+        def before_call(model, params, **kwargs):
+            captured.update(params)
+            raise AbortBeforeNetwork()
+
+        table.meta.client.meta.events.register("before-call.dynamodb.TransactWriteItems", before_call)
+        repository = Boto3DynamoIDPRepository("table", table=table)
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=_job(job_id="operator-job", idem="operator-generation"), expected_run_id=None, expected_source_key="tenants/t/document.pdf")
+        request = json.loads(captured["body"])
+        update = request["TransactItems"][3]["Update"]
+        self.assertIn("attribute_type(#hash, :null)", update["ConditionExpression"])
+        self.assertIn("attribute_type(#run, :null)", update["ConditionExpression"])
+        self.assertEqual(update["ExpressionAttributeValues"][":null"], {"S": "NULL"})
 
     def test_trigger_does_not_create_or_publish_when_old_clean_event_loses_race(self) -> None:
         class Repository:

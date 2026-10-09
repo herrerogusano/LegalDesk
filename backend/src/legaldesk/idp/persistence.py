@@ -598,13 +598,13 @@ class Boto3DynamoIDPRepository:
             ":intent": job_item, ":pending": IDPJobStatus.ENQUEUE_PENDING.value,
             ":hash": job.document_sha256, ":document": job.document_id,
             ":source": expected_source_key, ":expected_run": expected_run_id or "",
-            ":terminal_statuses": intent_statuses,
+            ":terminal_statuses": intent_statuses, ":null": "NULL",
         }
         condition = (
             "#document = :document AND #canonical = :source AND "
-            "(attribute_not_exists(#hash) OR #hash = :hash) AND "
-            "(attribute_not_exists(#run) OR #run = :expected_run) AND "
-            "(attribute_not_exists(#intent) OR #intent.#status IN (:terminal_statuses) OR #intent.#job = :expected_run)"
+            "(attribute_not_exists(#hash) OR attribute_type(#hash, :null) OR #hash = :hash) AND "
+            "(attribute_not_exists(#run) OR attribute_type(#run, :null) OR #run = :expected_run) AND "
+            "(attribute_not_exists(#intent) OR attribute_type(#intent, :null) OR #intent.#status IN (:terminal_statuses) OR #intent.#job = :expected_run)"
         )
         # DynamoDB's IN operator requires individual placeholders, not a list.
         names = {"#document": "documentId", "#canonical": "s3Key", "#hash": "idpDocumentSha256", "#run": "idpRunId", "#intent": "idpCleanIntent", "#status": "status", "#idpstatus": "idpStatus", "#job": "jobId"}
@@ -670,13 +670,13 @@ class Boto3DynamoIDPRepository:
                 Key=key,
                 UpdateExpression="SET #intent = :intent, #status = :pending, #hash = :hash",
                 ExpressionAttributeNames={"#intent": "idpCleanIntent", "#status": "idpStatus", "#hash": "idpIntentDocumentSha256", "#document": "documentId", "#existing_hash": "idpDocumentSha256", "#run": "idpRunId"},
-                ExpressionAttributeValues={":intent": intent, ":pending": IDPJobStatus.ENQUEUE_PENDING.value, ":hash": job.document_sha256, ":document": job.document_id},
+                ExpressionAttributeValues={":intent": intent, ":pending": IDPJobStatus.ENQUEUE_PENDING.value, ":hash": job.document_sha256, ":document": job.document_id, ":null": "NULL"},
                 # The read above handles same-intent crash recovery.  The
                 # write itself must only create a previously absent intent;
                 # permitting the same idempotency key here would let a
                 # completion racing between read and write be demoted back
                 # to ENQUEUE_PENDING.
-                ConditionExpression="#document = :document AND (attribute_not_exists(#existing_hash) OR #existing_hash = :hash) AND attribute_not_exists(#intent) AND attribute_not_exists(#run)",
+                ConditionExpression="#document = :document AND (attribute_not_exists(#existing_hash) OR attribute_type(#existing_hash, :null) OR #existing_hash = :hash) AND (attribute_not_exists(#intent) OR attribute_type(#intent, :null)) AND (attribute_not_exists(#run) OR attribute_type(#run, :null))",
             )
         except Exception as exc:
             raise IDPConcurrencyError("clean IDP intent could not be recorded") from exc
@@ -880,11 +880,11 @@ class Boto3DynamoIDPRepository:
                 Key=key,
                 UpdateExpression="SET #status = :status, #run = :run, #hash = :hash, #generation = :generation, #source = :source",
                 ExpressionAttributeNames={"#status": "idpStatus", "#run": "idpRunId", "#hash": "idpDocumentSha256", "#generation": "idpGenerationAt", "#source": "idpSourceKey", "#document": "documentId", "#canonical": "s3Key"},
-                ExpressionAttributeValues={":status": public_idp_status(run.status), ":run": run.run_id, ":hash": run.document_sha256, ":generation": run.created_at.isoformat(), ":source": run.source_key or "", ":document": run.document_id},
+                ExpressionAttributeValues={":status": public_idp_status(run.status), ":run": run.run_id, ":hash": run.document_sha256, ":generation": run.created_at.isoformat(), ":source": run.source_key or "", ":document": run.document_id, ":null": "NULL"},
                 # The pointer may advance for a newer generation/content hash,
                 # but only while the metadata row still names this exact
                 # canonical object.  Queue/job fields never authorize it.
-                ConditionExpression="#document = :document AND #canonical = :source AND (attribute_not_exists(#generation) OR #generation <= :generation)",
+                ConditionExpression="#document = :document AND #canonical = :source AND (attribute_not_exists(#generation) OR attribute_type(#generation, :null) OR #generation <= :generation)",
             )
         except Exception as exc:
             raise IDPConcurrencyError("IDP document projection is stale or unavailable") from exc
@@ -906,12 +906,13 @@ class Boto3DynamoIDPRepository:
             ":job": job.job_id,
             ":generation": job.created_at.isoformat(),
             ":document": job.document_id,
+            ":null": "NULL",
         }
-        condition = "#document = :document AND (attribute_not_exists(#generation) OR #generation <= :generation)"
+        condition = "#document = :document AND (attribute_not_exists(#generation) OR attribute_type(#generation, :null) OR #generation <= :generation)"
         if source_key:
             names["#canonical"] = "s3Key"
             values[":source"] = source_key
-            condition = "#document = :document AND #canonical = :source AND (attribute_not_exists(#generation) OR #generation <= :generation)"
+            condition = "#document = :document AND #canonical = :source AND (attribute_not_exists(#generation) OR attribute_type(#generation, :null) OR #generation <= :generation)"
         try:
             self.table.update_item(
                 Key=key,

@@ -101,6 +101,11 @@ class _ExpressionTable:
         match = re.fullmatch(r"attribute_exists\(([^)]+)\)", text)
         if match:
             return names.get(match.group(1).strip(), match.group(1).strip()) in current
+        match = re.fullmatch(r"attribute_type\(([^,]+),\s*([^)]+)\)", text)
+        if match:
+            key = names.get(match.group(1).strip(), match.group(1).strip())
+            expected = cls._value(match.group(2), names, values, current)
+            return key in current and expected == "NULL" and current[key] is None
         match = re.fullmatch(r"(.+?)\s+NOT IN\s*\(([^)]*)\)", text)
         if match:
             left = cls._value(match.group(1), names, values, current)

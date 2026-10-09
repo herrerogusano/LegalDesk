@@ -1009,7 +1009,7 @@ class Boto3DynamoDocumentMetadataRepository:
 
     @staticmethod
     def _item(document: Document) -> dict[str, Any]:
-        return {
+        item = {
             "pk": document_partition_key(document.tenant_id, document.matter_id),
             "sk": document_sort_key(document.document_id),
             "entityType": "Document",
@@ -1038,6 +1038,11 @@ class Boto3DynamoDocumentMetadataRepository:
             "idpGenerationAt": document.idp_generation_at,
             "idpSourceKey": document.idp_source_key,
         }
+        # New document rows omit optional IDP projection fields rather than
+        # storing DynamoDB NULL values.  Readers still accept legacy NULLs;
+        # this keeps conditional projection/recovery expressions compatible
+        # with both old and newly-created rows.
+        return {key: value for key, value in item.items() if not (key.startswith("idp") and value is None)}
 
     def save(self, document: Document) -> None:
         self.table.put_item(Item=self._item(document))
