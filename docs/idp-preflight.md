@@ -140,6 +140,42 @@ M2M Gateway review path, human corrections, query integration and real evaluatio
 The current modules are not yet an activated production IDP feature. In
 particular, local queue/OCR interfaces do not prove durable cloud execution.
 
+## Static infrastructure review checkpoint — 2026-10-09
+
+`infra/cloudformation/phase-14-idp.yaml` defines the isolated asynchronous
+resources and purpose-specific Cognito machine client, with processing disabled
+by default. The supervisor independently ran the eight parsed infrastructure
+contract tests and offline cfn-lint successfully. A read-only
+`GetInferenceProfile` confirmed the existing EU Sonnet profile is ACTIVE and its
+six exact foundation-model destinations match the proposed IAM list.
+
+This is not deployment evidence. Producer/reconciliation integration, real
+handler composition, the Gateway machine-review adapter, human correction,
+query/UI integration and live evaluation remain in progress. Component tests
+initially missed production composition defects in source-hash lookup,
+checkpoint transitions and OCR continuation; independent runtime-path tests
+are being added before acceptance. No IDP resource or paid inference/OCR call
+has been activated by this checkpoint.
+
+## Production-composition review checkpoint — 2026-10-09
+
+The local production composition now connects clean promotion, durable dispatch,
+the existing bounded reconciler, canonical S3 reads, the Bedrock adapters, async
+Textract continuation and immutable extraction persistence. Independent tests
+exercise the real handlers/processor against fake transports rather than a
+processor stub that simply returns success.
+
+Supervisor verification: 14 runtime-contract tests, eight generation/recovery
+tests, and the broader `test_phase14_idp*.py` discovery (99 tests) passed locally.
+These counts overlap and must not be added together. Coverage includes changed
+or deleted source content after extraction, corrupt PDFs, duplicate review-required
+jobs, prompt drift, crash-after-save recovery and cross-method generation fences.
+
+This remains offline evidence. Timeout/lease coordination and the approved M2M
+Gateway integration are under review; human correction, structured query/UI,
+real model evaluation and deployed AWS E2E are not yet accepted. No IDP deployment
+or paid inference/OCR has occurred at this checkpoint.
+
 ## Primary references checked
 
 - [Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html)
