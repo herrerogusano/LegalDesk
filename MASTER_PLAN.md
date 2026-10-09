@@ -25,6 +25,7 @@ Cada fase agrega una capacidad y deja tests que protegen lo aprendido.
 | 12 | `PLAN_12_EVALUATION_DEMO.md` | 20+ evals, README, demo, final audit | 11 |
 | 13 | `PLAN_13_INTEGRATION_RELEASE.md` | integración E2E local y preparación de release | 00–12 |
 | 14 | `PLAN_14_PUBLIC_BETA.md` | arquitectura y gates para beta pública autenticada | 13 |
+| 14-IDP extension | `PHASE_14_IDP_PLAN.md` | independent intelligent document processing; preflight STOP pending service-principal approval | existing public beta |
 
 ## Milestones
 
@@ -99,6 +100,11 @@ Aislamiento en capas:
 No confiar en el LLM para ninguna decisión de acceso.
 
 ## Estado
+
+IDP extension (2026-10-09): preflight recorded in `docs/idp-preflight.md`;
+automatic review requires explicit service-principal authorization before
+implementation. This does not reopen or replace the historical public-beta
+phase. IDP is not implemented or accepted yet.
 
 Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
 `docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.
