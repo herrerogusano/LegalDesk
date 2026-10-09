@@ -217,7 +217,7 @@ For the six-case smoke it is at most:
 
 Textract is page-priced. The verified public Price List snapshot for
 `eu-west-1` (published 2026-09-11) identifies SKU
-`HV3WZRSJSH5TPZZ`, `EU-AsyncTextPagesProcessed`, at **$0.0015/page** for the
+`HV3WZRSJSH5TPZZ6`, `EU-AsyncTextPagesProcessed`, at **$0.0015/page** for the
 first million pages. The source is the regional Price List endpoint
 [`AmazonTextract/current/eu-west-1/index.json`](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonTextract/current/eu-west-1/index.json);
 recheck it immediately before execution. Thus the conservative whole-corpus
