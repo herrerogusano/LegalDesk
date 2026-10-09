@@ -10,7 +10,9 @@
     "idp-canary-contract-20261009-compact-e.json",
     "idp-digital-corpus-20261009-f.json",
     "idp-ocr-corpus-20261009-h.json",
-    "idp-ocr-targeted-20261009-i.json"
+    "idp-ocr-targeted-20261009-i.json",
+    "idp-ocr-targeted-20261009-j.json",
+    "idp-ocr-collection-20261009-g.json"
   ],
   "selection_policy": {
     "superseded_failures": [
@@ -27,15 +29,20 @@
         "reason": "targeted export succeeded; do not double-count the earlier failed attempt"
       }
     ],
-    "retained_failed_anchor": {
+    "superseded_failed_anchor": {
       "fixture_id": "judgment-03-en-mixed-interpretive",
-      "source": "idp-ocr-corpus-20261009-h.json",
-      "targeted_followup_source": "idp-ocr-targeted-20261009-i.json",
-      "reason": "targeted follow-up also failed; no successful anchor was substituted"
+      "retained_source": "idp-ocr-targeted-20261009-j.json",
+      "superseded_sources": [
+        "idp-ocr-corpus-20261009-h.json",
+        "idp-ocr-targeted-20261009-i.json"
+      ],
+      "reason": "canonical-normalization follow-up completed with REVIEW_REQUIRED"
     },
-    "excluded_collection_metadata": {
+    "ocr_collection_cost_source": {
       "source": "idp-ocr-collection-20261009-g.json",
-      "reason": "collection metadata has no result records and is not added to execution totals"
+      "get_calls": 16,
+      "pdf_pages": 11,
+      "reason": "count the actual collector once; H/I/J reuse these artifacts and are not additional Textract charges"
     }
   },
   "provenance": {
@@ -44,25 +51,27 @@
     "region": "eu-west-1",
     "prompt_coverage": {
       "extractor_1.0.2_records": 18,
-      "classifier_1.0.0_records": 16,
+      "classifier_1.0.0_records": 15,
       "classifier_1.0.1_targeted_records": 2,
+      "classifier_1.0.2_targeted_records": 1,
       "full_new_classifier_coverage": false
     }
   },
   "counts": {
     "fixtures": 18,
     "explicit_result_records": 18,
-    "classified_records": 17,
-    "failed_without_classification": 1,
+    "classified_records": 18,
+    "failed_without_classification": 0,
     "not_executed": 0,
-    "review_required": 15,
-    "review_rate": 0.8333333333
+    "review_required": 16,
+    "review_rate": 0.8888888889
   },
   "source_attribution": {
     "idp-canary-contract-20261009-compact-e.json": 1,
     "idp-digital-corpus-20261009-f.json": 9,
-    "idp-ocr-corpus-20261009-h.json": 6,
-    "idp-ocr-targeted-20261009-i.json": 2
+    "idp-ocr-corpus-20261009-h.json": 5,
+    "idp-ocr-targeted-20261009-i.json": 2,
+    "idp-ocr-targeted-20261009-j.json": 1
   },
   "classification_confusion": {
     "CONTRACT": {
@@ -72,8 +81,7 @@
       "DEMAND": 5
     },
     "JUDGMENT": {
-      "JUDGMENT": 4,
-      "UNKNOWN": 1
+      "JUDGMENT": 5
     },
     "UNKNOWN": {
       "UNKNOWN": 3
@@ -81,36 +89,36 @@
   },
   "observed_metrics": {
     "input_tokens": {
-      "value": 32874,
-      "observed_records": 17,
-      "unknown_records": 1
+      "value": 35014,
+      "observed_records": 18,
+      "unknown_records": 0
     },
     "output_tokens": {
-      "value": 9721,
-      "observed_records": 17,
-      "unknown_records": 1
+      "value": 10202,
+      "observed_records": 18,
+      "unknown_records": 0
     },
     "ocr_api_calls": {
-      "value": 14,
-      "observed_records": 17,
-      "unknown_records": 1
+      "value": 16,
+      "observed_records": 18,
+      "unknown_records": 0
     },
     "ocr_pages": {
-      "value": 9,
-      "observed_records": 17,
-      "unknown_records": 1
+      "value": 11,
+      "observed_records": 18,
+      "unknown_records": 0
     },
     "latency_ms": {
-      "value": null,
-      "observed_records": 0,
-      "unknown_records": 18,
-      "reason": "immutable exports use latencyMs; evaluator accepts latency_ms only"
+      "value": 111438,
+      "observed_records": 17,
+      "unknown_records": 1,
+      "reason": "in-memory metadata adapter mapped latencyMs to evaluator field latency_ms; raw exports were not rewritten"
     }
   },
   "review_rate": {
-    "reviewed": 15,
+    "reviewed": 16,
     "denominator": 18,
-    "rate": 0.8333333333,
+    "rate": 0.8888888889,
     "interpretation": "observed review-required status, not accuracy or acceptance"
   },
   "field_and_evidence_errors": {
@@ -118,30 +126,60 @@
       "ACCEPTANCE_MISMATCH": 17,
       "EVIDENCE_MISSING": 3,
       "FIELD_MISSING": 1,
-      "ORACLE_ANCHOR_MISMATCH": 14,
-      "ORIGIN_MISMATCH": 10,
-      "VALUE_DIGEST_INVALID": 9
+      "ORACLE_ANCHOR_MISMATCH": 15,
+      "ORIGIN_MISMATCH": 11,
+      "VALUE_DIGEST_INVALID": 10
     },
     "field_evidence_errors": {
       "ACCEPTANCE_MISMATCH": 59,
       "EVIDENCE_MISSING": 6,
       "FIELD_MISSING": 7,
-      "ORACLE_ANCHOR_MISMATCH": 33,
-      "ORIGIN_MISMATCH": 20,
-      "VALUE_DIGEST_INVALID": 30
+      "ORACLE_ANCHOR_MISMATCH": 35,
+      "ORIGIN_MISMATCH": 21,
+      "VALUE_DIGEST_INVALID": 31
     },
-    "judgment_03_anchor": "failed; no alternate weak anchor was accepted"
+    "judgment_03_anchor": "canonical-normalization follow-up is REVIEW_REQUIRED; earlier failed anchors remain preserved"
   },
   "provider_errors": {},
   "cost": {
-    "status": "UNKNOWN",
-    "estimate": null,
-    "reason": "no explicit regional Bedrock and Textract pricing input was supplied; usage is not converted to a cost"
+    "status": "ESTIMATED_OBSERVED_USAGE",
+    "estimate_usd": 0.3226476,
+    "assumptions": {
+      "bedrock_input_per_million_tokens_usd": 3.3,
+      "bedrock_output_per_million_tokens_usd": 16.5,
+      "textract_per_page_usd": 0.0015,
+      "region": "eu-west-1",
+      "currency": "USD",
+      "sources": [
+        "docs/idp-live-validation-plan.md",
+        "https://aws.amazon.com/bedrock/pricing/",
+        "https://aws.amazon.com/textract/pricing/"
+      ]
+    },
+    "all_source_usage_counted_once": {
+      "bedrock_calls": 41,
+      "input_tokens": 38552,
+      "output_tokens": 10844,
+      "textract_get_calls": 16,
+      "textract_pages": 11
+    },
+    "unknown_failed_attempts": {
+      "prior_contract_canary_a_bedrock_calls": 2,
+      "h_failed_records": 2,
+      "i_failed_records": 1,
+      "note": "failed-record token allocation is unknown; the estimate uses only supplied observed token totals and is not a billing statement"
+    },
+    "effective_fixture_usage": {
+      "bedrock_calls": 36,
+      "input_tokens": 35014,
+      "output_tokens": 10202,
+      "textract_pages": 11
+    }
   },
   "limitations": [
     "This is a metadata-only consolidated evaluation; raw document text, values, quotes, and prompts are excluded.",
-    "The 1.0.1 classifier prompt covers only the two targeted follow-up records; this is not full new-prompt coverage.",
+    "The 1.0.1 and 1.0.2 classifier prompts cover only three targeted follow-up records; this is not full new-prompt coverage.",
     "Classification matches and review-required statuses do not establish field accuracy, accepted anchors, or phase acceptance.",
-    "OCR totals exclude the reused earlier failed attempts and the collection-only metadata export."
+    "Effective fixture totals exclude superseded failed attempts; cost totals separately count all source Bedrock calls and count the OCR collector artifacts once."
   ]
 }

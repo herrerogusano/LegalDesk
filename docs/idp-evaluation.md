@@ -124,43 +124,54 @@ existing `evaluate_idp` machinery from these immutable exports:
 
 - `idp-canary-contract-20261009-compact-e.json`: 1 record;
 - `idp-digital-corpus-20261009-f.json`: 9 records;
-- `idp-ocr-corpus-20261009-h.json`: 6 retained records; and
+- `idp-ocr-corpus-20261009-h.json`: 5 retained records; and
 - `idp-ocr-targeted-20261009-i.json`: 2 targeted records that supersede only
-  the corresponding failed H attempts.
+  the corresponding failed H attempts; and
+- `idp-ocr-targeted-20261009-j.json`: 1 targeted record that supersedes the
+  failed H/I judgment anchor attempt.
 
-The consolidated set has 18/18 explicit result records and 17/18 records with
-a classification. The remaining record is `judgment-03-en-mixed-interpretive`,
-which failed its anchor; its targeted follow-up also failed, so no weak or
-alternate anchor was accepted. The classification confusion is:
+The consolidated set has 18/18 explicit result records and 18/18 records with
+a classification. `judgment-03-en-mixed-interpretive` now has a
+`REVIEW_REQUIRED` result from the canonical-normalization follow-up; the
+earlier failed H/I reports remain immutable and are not overwritten. The
+classification confusion is:
 
 ```text
 expected CONTRACT: 5 CONTRACT
 expected DEMAND:   5 DEMAND
-expected JUDGMENT: 4 JUDGMENT, 1 UNKNOWN
+expected JUDGMENT: 5 JUDGMENT
 expected UNKNOWN:  3 UNKNOWN
 ```
 
-Fifteen of 18 records carried a review-required status (83.33%). This is an
+Sixteen of 18 records carried a review-required status (88.89%). This is an
 observed workflow status, not accuracy, acceptance, or a release gate. The
-evaluator reported 32,874 input tokens, 9,721 output tokens, 14 OCR API calls,
-and 9 OCR pages over records with usable metadata; one failed record had
-unknown usage. Latency remains `UNKNOWN` because the immutable exports use
-`latencyMs` while the evaluator's accepted metadata field is `latency_ms`.
-No explicit regional pricing file was supplied, so the cost estimate remains
-`UNKNOWN`; no rate or zero-cost result is invented.
+evaluator reported 35,014 input tokens, 10,202 output tokens, 16 OCR API calls,
+and 11 OCR pages for the effective 18-record set. An in-memory metadata adapter
+mapped `latencyMs` to the evaluator's `latency_ms` field without rewriting raw
+exports: 111,438 ms across 17 records, one unknown.
+
+For cost accounting, all source usage is counted once rather than only the
+effective 18 records: 41 Bedrock calls, 38,552 input tokens, 10,844 output
+tokens, and the OCR collector's 16 Get calls over 11 pages. Using the
+owner-reviewed `eu-west-1` assumptions of $3.30 per million input tokens,
+$16.50 per million output tokens, and $0.0015 per Textract page gives an
+explicit observed-usage estimate of **$0.3226476 USD before tax**. This is an
+estimate, not a bill. Prior failed canary A adds two calls with unknown token
+usage; failed H/I record-level allocations are also unknown and are not
+silently priced.
 
 The same evaluator found these metadata-level errors (not silently converted
 into accuracy claims): case-level `ACCEPTANCE_MISMATCH` 17,
-`EVIDENCE_MISSING` 3, `FIELD_MISSING` 1, `ORACLE_ANCHOR_MISMATCH` 14,
-`ORIGIN_MISMATCH` 10, and `VALUE_DIGEST_INVALID` 9. Field/evidence-level
-counts were respectively 59, 6, 7, 33, 20, and 30. These counters include
+`EVIDENCE_MISSING` 3, `FIELD_MISSING` 0, `ORACLE_ANCHOR_MISMATCH` 15,
+`ORIGIN_MISMATCH` 11, and `VALUE_DIGEST_INVALID` 10. Field/evidence-level
+counts were respectively 59, 6, 0, 35, 21, and 31. These counters include
 known contract/export mismatches and require review; they do not authorize
 accepting weak anchors.
 
-The extractor `1.0.2` is present across all 18 records, but the newer
-classifier prompt `1.0.1` covers only the two targeted follow-ups. This is not
-full new-prompt coverage. The historical `COMPLETED` label on review fields in
+The extractor `1.0.2` is present across all 18 records, but classifier `1.0.1`
+and `1.0.2` cover only three targeted follow-ups. This is not full new-prompt
+coverage. The historical `COMPLETED` label on review fields in
 the digital corpus is preserved as an export-enum erratum and is interpreted
 under the corrected review-required contract. The earlier failed exports and
-the collection-only OCR metadata remain immutable and are not discarded or
-double-counted.
+the collection-only OCR metadata remain immutable; the OCR collector is counted
+once for cost and is not double-counted through H/I/J replay metadata.

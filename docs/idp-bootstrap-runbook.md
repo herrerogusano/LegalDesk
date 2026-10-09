@@ -96,9 +96,9 @@ CloudFormation needed `logs:DescribeLogGroups` to resolve the existing
 metadata permission. No log content or write permission was added. Document
 Security and Reconciliation are `UPDATE_COMPLETE`, Review Task and Gateway
 are `UPDATE_COMPLETE`, and the corrected Public Edge update reached
-`UPDATE_COMPLETE`. The temporary role is still bound; restoration to the
-code-only production role remains pending. These statuses do not authorize
-enablement.
+`UPDATE_COMPLETE`. The original code-only production role is restored and
+confirmed; temporary bootstrap-stack deletion remains pending. These statuses
+do not authorize enablement.
 
 ### Evaluation and collector checkpoint (2026-10-09)
 
@@ -111,11 +111,13 @@ the expected document classes. Its historical `COMPLETED` label for review
 fields is an export-enum erratum; preserve the immutable report and interpret
 those fields using the corrected review-required contract.
 
-The OCR collector is still running against eight synthetic PDFs (11 whole-PDF
+The OCR collector artifact is complete for eight synthetic PDFs (11 whole-PDF
 pages, bounded at 22 pages); this is not production Textract continuation
-evidence. New worker duplicate-proof telemetry is also pending the next CI
-release. The failed CI run `37955864825` remains retained as stale-runtime
-evidence; corrected CI `37956195348` passed.
+evidence. Targeted canonical-normalization report J completes the earlier
+judgment anchor as `REVIEW_REQUIRED`; prior H/I failures remain immutable. New
+worker duplicate-proof telemetry is pending the next CI release. The failed CI
+run `37955864825` remains retained as stale-runtime evidence; corrected CI
+`37956195348` passed.
 
 The provider grammar issue was a request-schema validation boundary: the first
 extractor schema exposed 61 optional parameters where the observed provider

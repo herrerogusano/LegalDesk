@@ -69,9 +69,9 @@ for URI re-evaluation. The first Public Edge update using that role rolled back
 safely because CloudFormation also required regional `logs:DescribeLogGroups`
 metadata access to resolve `LogsLogGroupArn`; no log content or write access
 was granted. The corrected Public Edge update reached `UPDATE_COMPLETE`, and
-the reviewed integration URI has no intended semantic change. The role must be
-removed only after the stack is demonstrably rebound to the original code-only
-role. No account-wide IAM grant is authorized or needed.
+the reviewed integration URI has no intended semantic change. The original
+code-only role is restored and confirmed; temporary bootstrap-stack deletion is
+pending. No account-wide IAM grant is authorized or needed.
 
 ## Canary result (not acceptance)
 
@@ -91,8 +91,16 @@ as real-model acceptance, or as zero cost.
   rejected as unsupported for this mode, so no static-cache refresh is claimed.
 - Public Edge dependency-read correction was reviewed and executed using
   change set `idp-public-edge-dependencies-c136024`; the stack reached
-  `UPDATE_COMPLETE`. Its temporary service-role binding still requires
-  restoration to the original code-only role.
+  `UPDATE_COMPLETE`. The subsequent public release `3ff` passed with
+  application artifact SHA-256
+  `082fbcb138d72e49277037563ca9fd8bac49621b376faa1085cb470e8907ff97`, S3
+  version `q_ollMcijNsUTFgqvP0C3vodz3lz6aGi`, and CloudFront invalidation
+  `ICCU9E21DILODJ6423ZAQE2VO8`. The synthetic public check returned HTTP 200
+  for the public path and HTTP 403 for the protected path; this is not an AWS
+  E2E acceptance run. The original
+  `LegalDeskProductionCloudFormation` service role was restored and the stack
+  returned `UPDATE_COMPLETE`; deletion of the temporary bootstrap stack is
+  still pending.
 - Four immutable contract reports (`a`, `diagnostic-b`, `schema-fixed-c`,
   `nullable-d`) preserve failed/unknown attempts rather than overwriting them.
   The diagnostic identifies extractor provider validation. Isolated synthetic
@@ -109,6 +117,10 @@ as real-model acceptance, or as zero cost.
   document classes. Its historical `COMPLETED` status for review fields is an
   export-enum erratum; the report is preserved and those fields are interpreted
   under the corrected review-required contract.
+- The targeted canonical-normalization report
+  `evals/results/idp-ocr-targeted-20261009-j.json` completed
+  `judgment-03-en-mixed-interpretive` with `REVIEW_REQUIRED` after the earlier
+  H/I anchor failures. All IDP consumers remain disabled.
 - The compact internal array schema is decoded into the unchanged persisted
   mapping, with duplicate/name/coverage and existing typed/evidence validation.
   Extractor prompt is now `1.0.2`. An isolated synthetic schema check succeeded
@@ -120,18 +132,19 @@ as real-model acceptance, or as zero cost.
   and [Anthropic Claude on Amazon Bedrock](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock).
 - CI run `37955864825` failed stale-runtime fake contract tests and remains
   retained as diagnostic evidence. Corrected CI run `37956195348` passed.
-- The OCR collector is still running against eight synthetic PDFs as whole
-  PDFs (11 pages, bounded at 22 pages); this is not production Textract
-  continuation evidence. New worker duplicate-proof telemetry is pending the
-  next CI release.
+- The OCR collector artifact `idp-ocr-collection-20261009-g.json` is complete
+  for eight synthetic PDFs as whole PDFs (11 pages, bounded at 22 pages); this
+  is not production Textract continuation evidence. New worker duplicate-proof
+  telemetry is pending the next CI release.
 
 ## Validation still outstanding
 
 Machine Gateway acceptance, processing enablement, real-model/OCR acceptance,
-real AWS E2E, and cleanup verification remain open. Failed canaries and
-review-required canaries are not phase acceptance. The OCR collector is not
-production continuation proof, and worker duplicate telemetry is pending. No
-production Textract continuation has been accepted at this checkpoint.
+real AWS E2E, temporary-stack cleanup, and worker duplicate telemetry remain
+open. Failed canaries and review-required canaries are not phase acceptance.
+The OCR collector is not production continuation proof, and IDP consumers
+remain disabled. No production Textract continuation has been accepted at this
+checkpoint.
 Storage/deployment/control-plane activity is not asserted free. A successful
 offline gate or `CREATE_COMPLETE`/`UPDATE_COMPLETE` status is not phase
 acceptance.
@@ -141,10 +154,11 @@ acceptance.
 - The immutable application artifact remains available at S3 version
   `mtJDZAPcKPRR_jR63azLQaz9Zz9TXSEv` with SHA-256
   `0757bfffd2d35028f548e4a232a71b1918de618689c2894f498a65fd86da02d2`.
-- The existing Public Edge service-role rollback target is
-  `arn:aws:iam::344774635844:role/LegalDeskProductionCloudFormation`; restore
-  it through a reviewed successful stack update and confirm the original
-  `RoleARN` before deleting the temporary bootstrap role.
+- The existing Public Edge service role
+  `arn:aws:iam::344774635844:role/LegalDeskProductionCloudFormation` was
+  restored through a reviewed successful stack update and confirmed by the
+  original `RoleARN`; delete the temporary bootstrap stack only after its
+  cleanup is separately confirmed.
 - For the new IDP stack and disabled existing-stack updates, use the reviewed
   CloudFormation change-set/template history and the pre-update immutable code
   versions captured by the operator; no unrecorded rollback identifier is
