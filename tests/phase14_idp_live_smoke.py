@@ -26,8 +26,10 @@ from typing import Any, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = (ROOT / "tests" / "fixtures" / "idp").resolve()
 PDF_ROOT = (FIXTURE_ROOT / "pdfs").resolve()
+SMOKE_ROOT = (FIXTURE_ROOT / "smoke").resolve()
 BROWSER_RUNNER = ROOT / "tests" / "phase14_idp_live_browser.cjs"
 MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
+SMOKE_MANIFEST_PATH = SMOKE_ROOT / "smoke-manifest.json"
 REGION = "eu-west-1"
 RUNNER_VERSION = "1.0.0"
 MAX_MODEL_CALLS = 8
@@ -102,6 +104,7 @@ class IDPLiveSmokeConfig:
     expected_source: str = "IDP"
     field_name: str = ""
     review_action: str = "none"
+    expected_status: str = ""
 
 
 def _safe_id(value: object, label: str) -> str:
@@ -149,16 +152,73 @@ def _load_manifest() -> dict[str, dict[str, Any]]:
     return result
 
 
+def _load_smoke_manifest() -> dict[str, dict[str, Any]]:
+    """Load the separate, tiny non-PDF smoke allowlist.
+
+    The ground-truth PDF manifest remains intentionally unchanged at 18
+    entries. This manifest is only for the unsupported-media regression smoke
+    and cannot add files to the evaluation corpus.
+    """
+
+    try:
+        payload = json.loads(SMOKE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LiveIDPPreflightError("smoke_fixture_manifest_unavailable") from exc
+    fixtures = payload.get("fixtures") if isinstance(payload, Mapping) else None
+    if not isinstance(fixtures, list) or len(fixtures) != 1:
+        raise LiveIDPPreflightError("smoke_fixture_manifest_invalid")
+    result: dict[str, dict[str, Any]] = {}
+    for fixture in fixtures:
+        fixture_id = fixture.get("id") if isinstance(fixture, Mapping) else None
+        filename = fixture.get("filename") if isinstance(fixture, Mapping) else None
+        digest = fixture.get("sha256") if isinstance(fixture, Mapping) else None
+        page_count = fixture.get("page_count") if isinstance(fixture, Mapping) else None
+        size_bytes = fixture.get("size_bytes") if isinstance(fixture, Mapping) else None
+        if (
+            not isinstance(fixture, Mapping)
+            or not isinstance(fixture_id, str) or not _SAFE_ID.fullmatch(fixture_id)
+            or not isinstance(filename, str) or Path(filename).name != filename or not filename.lower().endswith(".txt")
+            or not isinstance(digest, str) or not _SHA256.fullmatch(digest.lower())
+            or type(page_count) is not int or page_count != 0
+            or type(size_bytes) is not int or not 1 <= size_bytes <= 20 * 1024 * 1024
+            or fixture_id in result
+            or fixture.get("expected_status") not in {"IDP_SKIPPED", "IDP_FAILED"}
+            or fixture.get("expected_source") not in {"RAG", "NONE"}
+            or not isinstance(fixture.get("field_name"), str) or not _SAFE_ID.fullmatch(fixture["field_name"])
+            or not isinstance(fixture.get("question"), str) or not fixture["question"].strip()
+            or fixture.get("skip_reason") != "UNSUPPORTED_MEDIA_TYPE"
+        ):
+            raise LiveIDPPreflightError("smoke_fixture_manifest_invalid")
+        result[fixture_id] = {
+            "id": fixture_id,
+            "filename": filename,
+            "sha256": digest.lower(),
+            "page_count": page_count,
+            "size_bytes": size_bytes,
+            "expected_type": fixture.get("expected_type"),
+            "expected_status": fixture["expected_status"],
+            "expected_source": fixture["expected_source"],
+            "field_name": fixture["field_name"],
+            "question": fixture["question"],
+            "skip_reason": fixture["skip_reason"],
+        }
+    return result
+
+
 def _fixture_record(config: IDPLiveSmokeConfig) -> dict[str, Any]:
     fixtures = _load_manifest()
     fixture = fixtures.get(config.fixture_id)
+    fixture_root = PDF_ROOT
+    if fixture is None:
+        fixture = _load_smoke_manifest().get(config.fixture_id)
+        fixture_root = SMOKE_ROOT
     if fixture is None:
         raise LiveIDPPreflightError("fixture_id_not_allowlisted")
     if config.fixture_path.is_symlink():
         raise LiveIDPPreflightError("fixture_path_invalid")
     path = config.fixture_path.resolve()
     try:
-        path.relative_to(PDF_ROOT)
+        path.relative_to(fixture_root)
     except ValueError as exc:
         raise LiveIDPPreflightError("fixture_path_out_of_scope") from exc
     if path.is_symlink() or path.name != fixture["filename"] or not path.is_file():
@@ -169,6 +229,8 @@ def _fixture_record(config: IDPLiveSmokeConfig) -> dict[str, Any]:
         raise LiveIDPPreflightError("fixture_hash_mismatch")
     if len(body) > 20 * 1024 * 1024:
         raise LiveIDPPreflightError("fixture_size_exceeds_idp_limit")
+    if "size_bytes" in fixture and len(body) != fixture["size_bytes"]:
+        raise LiveIDPPreflightError("fixture_size_mismatch")
     return {**fixture, "path": str(path), "size_bytes": len(body)}
 
 
@@ -340,13 +402,18 @@ def preflight(config: IDPLiveSmokeConfig) -> dict[str, object]:
         raise LiveIDPPreflightError("fixture_corpus_ocr_budget_exceeded")
     if config.region != REGION:
         raise LiveIDPPreflightError("region_restricted")
-    if config.expected_source not in {"IDP", "RAG", "NONE"}:
+    expected_source = fixture.get("expected_source") or config.expected_source
+    expected_status = config.expected_status or str(fixture.get("expected_status") or "")
+    field_name = config.field_name or str(fixture.get("field_name") or "")
+    if expected_source not in {"IDP", "RAG", "NONE"}:
         raise LiveIDPPreflightError("expected_source_invalid")
+    if expected_status not in {"", "IDP_SKIPPED", "IDP_FAILED"}:
+        raise LiveIDPPreflightError("expected_status_invalid")
     if config.review_action not in {"none", "approve", "correct"}:
         raise LiveIDPPreflightError("review_action_invalid")
-    if config.field_name and not _SAFE_ID.fullmatch(config.field_name):
+    if field_name and not _SAFE_ID.fullmatch(field_name):
         raise LiveIDPPreflightError("field_name_invalid")
-    if config.execute and config.expected_source != "NONE" and not config.field_name:
+    if config.execute and expected_source != "NONE" and not field_name:
         raise LiveIDPPreflightError("field_name_required_for_selected_query")
     if not _ATTEMPT_ID.fullmatch(config.attempt_id):
         raise LiveIDPPreflightError("attempt_id_invalid")
@@ -385,7 +452,7 @@ def preflight(config: IDPLiveSmokeConfig) -> dict[str, object]:
         "mode": "preflight",
         "awsCalls": 0,
         "region": config.region,
-        "fixture": {key: fixture[key] for key in ("id", "filename", "sha256", "page_count", "size_bytes", "expected_type")},
+        "fixture": {key: fixture[key] for key in ("id", "filename", "sha256", "page_count", "size_bytes", "expected_type", "expected_status", "expected_source", "field_name", "question", "skip_reason") if key in fixture},
         "limits": asdict(IDPLiveSmokeLimits()),
         "fixtureCorpus": {"count": len(manifest), "wholePdfOcrPages": corpus_ocr_pages, "maxWholePdfOcrPages": MAX_OCR_PAGES},
         "deploymentInputsConfigured": configured,
@@ -394,6 +461,8 @@ def preflight(config: IDPLiveSmokeConfig) -> dict[str, object]:
         "idempotencyReplay": {"status": "NOT_EXECUTED", "reason": "duplicate clean-event trigger is not a public runner capability"},
         "provenance": {"fixtureSha256": fixture["sha256"], "syntheticOnly": True},
         "cases": evaluation_cases,
+        "expectedStatus": expected_status or None,
+        "expectedSource": expected_source,
     }
 
 
@@ -423,6 +492,10 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
     except FileExistsError as exc:
         raise LiveIDPPreflightError("report_must_be_create_only") from exc
     fixture = _fixture_record(config)
+    expected_source = fixture.get("expected_source") or config.expected_source
+    expected_status = config.expected_status or str(fixture.get("expected_status") or "")
+    field_name = config.field_name or str(fixture.get("field_name") or "")
+    question = str(fixture.get("question") or "")
     try:
         import boto3
         from botocore.config import Config
@@ -495,7 +568,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
         child_timeout = max(1, min(900, int(child_remaining)))
         child_deadline_epoch_ms = int(time.time() * 1000 + child_remaining * 1000)
         child_env = {key: value for key, value in os.environ.items() if not key.startswith("AWS_") and "SECRET" not in key.upper() and "TOKEN" not in key.upper()}
-        child_env.update({"LEGALDESK_P14_BASE_URL": config.base_url.rstrip("/"), "LEGALDESK_P14_IDP_HOST": config.idp_host, "LEGALDESK_P14_USERNAME": username, "LEGALDESK_P14_PASSWORD": password, "LEGALDESK_P14_MATTER_ID": config.matter_id, "LEGALDESK_P14_CROSS_MATTER_ID": config.cross_matter_id, "LEGALDESK_IDP_FIXTURE_PATH": fixture["path"], "LEGALDESK_IDP_FIXTURE_ID": fixture["id"], "LEGALDESK_IDP_EXPECTED_SOURCE": config.expected_source, "LEGALDESK_IDP_FIELD_NAME": config.field_name, "LEGALDESK_IDP_EXPECTED_DOCUMENT_TYPE": str(fixture["expected_type"] or ""), "LEGALDESK_IDP_REVIEW_ACTION": config.review_action, "LEGALDESK_IDP_DEADLINE_EPOCH_MS": str(child_deadline_epoch_ms)})
+        child_env.update({"LEGALDESK_P14_BASE_URL": config.base_url.rstrip("/"), "LEGALDESK_P14_IDP_HOST": config.idp_host, "LEGALDESK_P14_USERNAME": username, "LEGALDESK_P14_PASSWORD": password, "LEGALDESK_P14_MATTER_ID": config.matter_id, "LEGALDESK_P14_CROSS_MATTER_ID": config.cross_matter_id, "LEGALDESK_IDP_FIXTURE_PATH": fixture["path"], "LEGALDESK_IDP_FIXTURE_ID": fixture["id"], "LEGALDESK_IDP_EXPECTED_SOURCE": expected_source, "LEGALDESK_IDP_FIELD_NAME": field_name, "LEGALDESK_IDP_QUESTION": question, "LEGALDESK_IDP_EXPECTED_STATUS": expected_status, "LEGALDESK_IDP_EXPECTED_SKIP_REASON": str(fixture.get("skip_reason") or ""), "LEGALDESK_IDP_EXPECTED_DOCUMENT_TYPE": str(fixture["expected_type"] or ""), "LEGALDESK_IDP_REVIEW_ACTION": config.review_action, "LEGALDESK_IDP_DEADLINE_EPOCH_MS": str(child_deadline_epoch_ms)})
         try:
             child = subprocess.run(["node", str(BROWSER_RUNNER)], cwd=ROOT, env=child_env, capture_output=True, text=True, timeout=child_timeout)
             report = parse_child(child.stdout)
@@ -611,6 +684,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-source", choices=("IDP", "RAG", "NONE"), default="IDP")
     parser.add_argument("--field-name", default="")
     parser.add_argument("--review-action", choices=("none", "approve", "correct"), default="none")
+    parser.add_argument("--expected-status", choices=("", "IDP_SKIPPED", "IDP_FAILED"), default="")
     parser.add_argument("--region", default=REGION)
     parser.add_argument("--attempt-id", default="local-preflight")
     parser.add_argument("--report-path", type=Path)
@@ -625,7 +699,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         table_name=args.table_name, memory_id=args.memory_id, fixture_path=args.fixture_path,
         fixture_id=args.fixture_id, region=args.region, attempt_id=args.attempt_id,
         report_path=args.report_path, execute=args.execute_approved_once,
-        expected_source=args.expected_source, field_name=args.field_name, review_action=args.review_action,
+        expected_source=args.expected_source, field_name=args.field_name, review_action=args.review_action, expected_status=args.expected_status,
     )
     try:
         report = run_live(config) if config.execute else preflight(config)

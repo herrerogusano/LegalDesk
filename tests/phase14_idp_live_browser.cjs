@@ -18,6 +18,8 @@ const CROSS_MATTER_ID = process.env.LEGALDESK_P14_CROSS_MATTER_ID || "";
 const FIXTURE_PATH = process.env.LEGALDESK_IDP_FIXTURE_PATH || "";
 const FIXTURE_ID = process.env.LEGALDESK_IDP_FIXTURE_ID || "";
 const EXPECTED_SOURCE = process.env.LEGALDESK_IDP_EXPECTED_SOURCE || "IDP";
+const IDP_QUESTION = process.env.LEGALDESK_IDP_QUESTION || "";
+const EXPECTED_SKIP_REASON = process.env.LEGALDESK_IDP_EXPECTED_SKIP_REASON || "";
 const REVIEW_ACTION = process.env.LEGALDESK_IDP_REVIEW_ACTION || "none";
 const POLL_LIMIT = 20;
 const POLL_MS = 15_000;
@@ -284,25 +286,31 @@ async function run() {
       assertDeadline();
       await new Promise(resolve => setTimeout(resolve, POLL_MS));
     }
-    if (!terminal || !metadata || !metadata.idp) throw new SmokeFailure("idp_poll_exhausted");
+    if (!terminal || !metadata || !metadata.idp || typeof metadata.idp.status !== "string") throw new SmokeFailure("idp_poll_exhausted");
     const idp = metadata.idp;
     if (expectedStatus && idp.status !== expectedStatus) throw new SmokeFailure("idp_status_mismatch");
     if (!expectedStatus && !["IDP_COMPLETED", "IDP_REVIEW_REQUIRED"].includes(idp.status)) throw new SmokeFailure("idp_unexpected_terminal_status");
     const expectedTerminalFailure = expectedStatus && ["IDP_FAILED", "IDP_SKIPPED"].includes(idp.status);
+    const observedReason = idp.reason || idp.idpReason || idp.skipReason || "";
+    if (expectedStatus === "IDP_SKIPPED" && EXPECTED_SKIP_REASON && observedReason && observedReason !== EXPECTED_SKIP_REASON) throw new SmokeFailure("idp_skip_reason_mismatch");
     if (!expectedTerminalFailure && (!Array.isArray(idp.fields) || idp.fields.length === 0)) throw new SmokeFailure("idp_fields_missing");
     if (expectedDocumentType && idp.documentType !== expectedDocumentType) throw new SmokeFailure("idp_type_mismatch");
-    if (idp.documentSha256 !== sourceSha256) throw new SmokeFailure("source_hash_mismatch");
+    // A preflight-skip projection may intentionally have no IDP run/hash/type;
+    // if the server does expose a hash, it must still match the uploaded bytes.
+    if (typeof idp.documentSha256 === "string" && idp.documentSha256 !== sourceSha256) throw new SmokeFailure("source_hash_mismatch");
 
     // A second authorized metadata read is observable through the public
     // surface. It proves stable replay of the projection, but deliberately
     // does not claim duplicate clean-event/paid-stage idempotency.
     const replayMetadata = await loadMetadata(documentId);
     const replayIdp = replayMetadata && replayMetadata.idp;
-    const publicReadReplay = replayIdp && idp && typeof idp.runId === "string" && idp.runId
-      && typeof replayIdp.runId === "string"
-      && replayIdp.runId === idp.runId
-      && replayIdp.documentSha256 === idp.documentSha256
-      && replayIdp.status === idp.status
+    const replayRunStable = expectedTerminalFailure
+      ? (!idp.runId || replayIdp.runId === idp.runId)
+      : (typeof idp.runId === "string" && idp.runId && typeof replayIdp.runId === "string" && replayIdp.runId === idp.runId);
+    const replayHashStable = expectedTerminalFailure
+      ? (!idp.documentSha256 || replayIdp.documentSha256 === idp.documentSha256)
+      : replayIdp.documentSha256 === idp.documentSha256;
+    const publicReadReplay = replayIdp && idp && replayRunStable && replayHashStable && replayIdp.status === idp.status
       ? { status: "EXECUTED", kind: "authorized_metadata_read", runId: idp.runId || null }
       : { status: "FAIL", kind: "authorized_metadata_read" };
     if (publicReadReplay.status !== "EXECUTED") throw new SmokeFailure("metadata_replay_changed_projection");
@@ -318,7 +326,7 @@ async function run() {
     setPhase("selected_field");
     let selected = { source: "NONE", citationCount: 0, evidenceStatus: null };
     if (fieldName) {
-      const response = await apiJson("/api/chat", { method: "POST", body: JSON.stringify({ matterId: MATTER_ID, conversationId, sessionId, question: `IDP field ${fieldName}`, selectedDocumentId: documentId, selectedFieldName: fieldName }) });
+      const response = await apiJson("/api/chat", { method: "POST", body: JSON.stringify({ matterId: MATTER_ID, conversationId, sessionId, question: IDP_QUESTION || `IDP field ${fieldName}`, selectedDocumentId: documentId, selectedFieldName: fieldName }) });
       selected = {
         source: classifySelectedResponse(response, fieldName),
         citationCount: Array.isArray(response && response.citations) ? response.citations.length : 0,
@@ -382,7 +390,8 @@ async function run() {
       result: coreProof ? "PASS" : "FAIL",
       proofComplete: false,
       smoke: "phase14-idp-browser", fixtureId: FIXTURE_ID, documentId,
-      documentSha256: sourceSha256, idpStatus: idp.status, selected, review, crossMatterStatus: denied,
+      runId: typeof idp.runId === "string" ? idp.runId : null,
+      documentSha256: sourceSha256, idpStatus: idp.status, idpReason: observedReason || null, selected, review, crossMatterStatus: denied,
       polls: { iterations: polls, max: POLL_LIMIT, intervalSeconds: POLL_MS / 1000 },
       history,
       idempotencyReplay: { status: "NOT_EXECUTED", reason: "duplicate clean-event trigger unavailable to public runner", observedPublicReadReplay: publicReadReplay },

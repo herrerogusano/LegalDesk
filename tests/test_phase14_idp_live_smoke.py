@@ -24,6 +24,7 @@ from phase14_idp_live_smoke import (  # noqa: E402
 
 
 FIXTURE = ROOT / "tests" / "fixtures" / "idp" / "pdfs" / "contract-01-en-digital-monthend.pdf"
+SMOKE_FIXTURE = ROOT / "tests" / "fixtures" / "idp" / "smoke" / "fictional-notice-30-days.txt"
 
 
 def config(**overrides: object) -> IDPLiveSmokeConfig:
@@ -57,6 +58,26 @@ class Phase14IDPLiveSmokeTests(unittest.TestCase):
     def test_preflight_rejects_fixture_outside_allowlisted_corpus(self) -> None:
         with self.assertRaises(LiveIDPPreflightError):
             preflight(config(fixture_path=ROOT / "README.md"))
+
+    def test_txt_smoke_is_allowlisted_skip_without_changing_pdf_corpus(self) -> None:
+        report = preflight(config(fixture_id="smoke-fictional-notice-30-days", fixture_path=SMOKE_FIXTURE))
+        self.assertEqual(report["awsCalls"], 0)
+        self.assertEqual(report["expectedStatus"], "IDP_SKIPPED")
+        self.assertEqual(report["expectedSource"], "RAG")
+        self.assertEqual(report["fixture"]["skip_reason"], "UNSUPPORTED_MEDIA_TYPE")
+        self.assertEqual(report["fixtureCorpus"]["count"], 18)
+        self.assertEqual(len(report["cases"]), 18)
+
+    def test_txt_smoke_rejects_hash_tampering(self) -> None:
+        with patch.object(Path, "read_bytes", return_value=b"tampered synthetic notice"):
+            with self.assertRaises(LiveIDPPreflightError) as raised:
+                preflight(config(fixture_id="smoke-fictional-notice-30-days", fixture_path=SMOKE_FIXTURE))
+        self.assertEqual(str(raised.exception), "fixture_hash_mismatch")
+
+    def test_txt_smoke_rejects_path_outside_its_allowlist(self) -> None:
+        with self.assertRaises(LiveIDPPreflightError) as raised:
+            preflight(config(fixture_id="smoke-fictional-notice-30-days", fixture_path=FIXTURE))
+        self.assertEqual(str(raised.exception), "fixture_path_out_of_scope")
 
     def test_execute_preflight_requires_deployment_inputs(self) -> None:
         with self.assertRaises(LiveIDPPreflightError):
