@@ -262,6 +262,22 @@ no deployed IDP stack. No IDP resource creation, inference, OCR, model-quality
 evaluation or deployed E2E is implied. The Linux artifact gate and bounded live
 runner are the next validation work; see `docs/idp-live-validation-plan.md`.
 
+## Linux release gate — 2026-10-09
+
+[GitHub Actions run 37950049115](https://github.com/herrerogusano/LegalDesk/actions/runs/37950049115)
+completed successfully for commit `5b360a5`. It passed 770 Python tests,
+strict CloudFormation lint, Node contract checks and both IDP and existing
+offline browser behavior gates. The extracted Lambda ZIP was checked in
+Linux/Python 3.12 with imports constrained to the artifact, pinned dependency
+versions and versioned prompt checks; this supersedes the earlier unexecuted
+Linux artifact limitation.
+
+The workflow has no deployment permissions. These results do not establish
+model quality, Textract operation or deployed Gateway/M2M authorization.
+The live runner is still under supervisor review, including real HTTP response
+contracts, timeout handling, cleanup and honest usage accounting. No IDP
+deployment, inference or OCR was executed by this validation.
+
 ## Primary references checked
 
 - [Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html)

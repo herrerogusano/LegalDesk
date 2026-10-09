@@ -106,8 +106,10 @@ automatic review's service-principal gate was explicitly approved by the owner
 on 2026-10-09; implementation is in progress. This does not replace the historical public-beta
 phase. The processing/machine-review foundation and gated infrastructure have
 offline validation. Human integration, chronological history and selected-field
-queries now have local coverage (764 tests, one platform-specific skip); UI
-behavioral hardening, real evaluation and AWS E2E remain in progress.
+queries and UI now have local coverage. GitHub Actions run `37950049115`
+passed 770 Python tests, browser behavior gates, strict IaC lint and the
+extracted Lambda artifact checks on Linux/Python 3.12. Real evaluation and
+AWS E2E remain in progress.
 IDP is not deployed or accepted yet.
 
 Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
