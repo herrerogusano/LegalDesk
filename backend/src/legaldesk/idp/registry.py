@@ -16,6 +16,7 @@ class IDPFieldSpec:
     description: str
     evidence_required: bool = True
     review_sensitive: bool = False
+    lexical_kind: str = "literal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,55 +38,55 @@ class IDPSchema:
             raise IDPContractError("field is not in the selected schema") from None
 
 
-def _fields(*specs: tuple[str, str, str, bool, bool]) -> Mapping[str, IDPFieldSpec]:
+def _fields(*specs: tuple[str, str, str, bool, bool, str]) -> Mapping[str, IDPFieldSpec]:
     return MappingProxyType({
-        name: IDPFieldSpec(name, value_type, description, evidence_required, review_sensitive)
-        for name, value_type, description, evidence_required, review_sensitive in specs
+        name: IDPFieldSpec(name, value_type, description, evidence_required, review_sensitive, lexical_kind)
+        for name, value_type, description, evidence_required, review_sensitive, lexical_kind in specs
     })
 
 
 _CONTRACT = _fields(
-    ("parties", "array[string]", "Named contract parties", True, False),
-    ("effective_date", "date", "Explicit effective date", True, False),
-    ("explicit_expiration_date", "date", "Explicit expiration date", True, False),
-    ("initial_duration_value", "number", "Explicit initial duration", True, False),
-    ("initial_duration_unit", "string", "Initial duration unit", True, False),
-    ("automatic_renewal", "boolean", "Explicit automatic renewal", True, True),
-    ("renewal_period_value", "number", "Renewal period value", True, True),
-    ("renewal_period_unit", "string", "Renewal period unit", True, True),
-    ("termination_notice_value", "number", "Termination notice value", True, True),
-    ("termination_notice_unit", "string", "Termination notice unit", True, True),
-    ("amount", "number", "Explicit monetary amount", True, False),
-    ("currency", "string", "Explicit currency", True, False),
-    ("jurisdiction", "string", "Jurisdiction stated in the document", True, True),
-    ("governing_law", "string", "Explicit governing law", True, True),
-    ("subtype", "string", "Supported subtype such as NDA", True, False),
+    ("parties", "array[string]", "Named contract parties", True, False, "literal"),
+    ("effective_date", "date", "Explicit effective date", True, False, "date"),
+    ("explicit_expiration_date", "date", "Explicit expiration date", True, False, "date"),
+    ("initial_duration_value", "number", "Explicit initial duration", True, False, "duration"),
+    ("initial_duration_unit", "string", "Initial duration unit", True, False, "duration_unit"),
+    ("automatic_renewal", "boolean", "Explicit automatic renewal", True, True, "boolean"),
+    ("renewal_period_value", "number", "Renewal period value", True, True, "duration"),
+    ("renewal_period_unit", "string", "Renewal period unit", True, True, "duration_unit"),
+    ("termination_notice_value", "number", "Termination notice value", True, True, "duration"),
+    ("termination_notice_unit", "string", "Termination notice unit", True, True, "duration_unit"),
+    ("amount", "number", "Explicit monetary amount", True, False, "amount"),
+    ("currency", "string", "Explicit currency", True, False, "currency"),
+    ("jurisdiction", "string", "Jurisdiction stated in the document", True, True, "literal"),
+    ("governing_law", "string", "Explicit governing law", True, True, "literal"),
+    ("subtype", "string", "Supported subtype such as NDA", True, False, "literal"),
 )
 
 _DEMAND = _fields(
-    ("claimants", "array[string]", "Claimants", True, False),
-    ("defendants", "array[string]", "Defendants", True, False),
-    ("court", "string", "Named court", True, False),
-    ("case_number", "string", "Case number", True, False),
-    ("filing_date", "date", "Filing date", True, False),
-    ("claims", "array[string]", "Claims or requested remedies", True, True),
-    ("claimed_amount", "number", "Claimed monetary amount", True, False),
-    ("currency", "string", "Claimed amount currency", True, False),
+    ("claimants", "array[string]", "Claimants", True, False, "literal"),
+    ("defendants", "array[string]", "Defendants", True, False, "literal"),
+    ("court", "string", "Named court", True, False, "literal"),
+    ("case_number", "string", "Case number", True, False, "literal"),
+    ("filing_date", "date", "Filing date", True, False, "date"),
+    ("claims", "array[string]", "Claims or requested remedies", True, True, "literal"),
+    ("claimed_amount", "number", "Claimed monetary amount", True, False, "amount"),
+    ("currency", "string", "Claimed amount currency", True, False, "currency"),
 )
 
 _JUDGMENT = _fields(
-    ("court", "string", "Named court", True, False),
-    ("case_number", "string", "Case number", True, False),
-    ("decision_date", "date", "Decision date", True, False),
-    ("parties", "array[string]", "Judgment parties", True, False),
-    ("operative_ruling", "string", "Operative ruling", True, True),
-    ("costs_statement", "string", "Costs statement", True, True),
-    ("appeal_information", "string", "Appeal information", True, True),
+    ("court", "string", "Named court", True, False, "literal"),
+    ("case_number", "string", "Case number", True, False, "literal"),
+    ("decision_date", "date", "Decision date", True, False, "date"),
+    ("parties", "array[string]", "Judgment parties", True, False, "literal"),
+    ("operative_ruling", "string", "Operative ruling", True, True, "interpretive"),
+    ("costs_statement", "string", "Costs statement", True, True, "interpretive"),
+    ("appeal_information", "string", "Appeal information", True, True, "interpretive"),
 )
 
 _UNKNOWN = _fields(
-    ("document_type", "string", "Observed document type or ambiguity", True, True),
-    ("general_document_evidence", "string", "General identifying evidence", True, False),
+    ("document_type", "string", "Observed document type or ambiguity", True, True, "interpretive"),
+    ("general_document_evidence", "string", "General identifying evidence", True, False, "literal"),
 )
 
 

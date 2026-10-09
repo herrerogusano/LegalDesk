@@ -5,6 +5,7 @@ from .registry import DEFAULT_SCHEMAS, IDPFieldSpec, IDPSchema, IDPSchemaRegistr
 from .persistence import (
     AuthoritativeJobLocator,
     Boto3DynamoIDPRepository,
+    Boto3DynamoStageLedger,
     DeliveryCandidatePage,
     IDPIdempotencyConflict,
     IDPRepository,
@@ -15,7 +16,9 @@ from .persistence import (
     job_sort_key,
     matter_partition_key,
     run_sort_key,
+    stage_sort_key,
 )
+from .artifacts import Boto3S3IDPArtifactStore, IDPArtifactError, IDPArtifactStore, InMemoryIDPArtifactStore, idp_artifact_key
 from .worker import (
     IDPDocumentLookup,
     IDPPaidCallGate,
@@ -41,6 +44,8 @@ from .acquisition import (
     normalize_page_text,
 )
 from .ocr import (
+    Boto3DynamoOCRJobStore,
+    Boto3TextractProvider,
     InMemoryOCRJobStore,
     OCRCompletion,
     OCRCoordinator,
@@ -70,5 +75,25 @@ from .processing import (
     validate_evidence_anchor,
 )
 from .rules import DerivedMetadataEngine, DerivedValue, add_calendar_months, add_calendar_years, derive_anniversary
+from .providers import ConverseClient, IDPConverseClassifier, IDPConverseExtractor, IDPModelConfig, IDPProviderError, boto3_idp_runtime_client, classifier_json_schema, default_idp_prompt_path, extractor_json_schema
+from .pipeline import IDPPipelineResult, IDPProcessingPipeline
+from .trigger import IDPTriggerError, VerifiedCleanIDPTrigger
+from .review import (
+    Boto3DynamoIDPDecisionRepository,
+    CognitoM2MTokenProvider,
+    IDPDecisionAction,
+    IDPFieldDecision,
+    IDPQueryResult,
+    IDPReviewError,
+    IDPReviewGateway,
+    IDPReviewInvocation,
+    IDPReviewService,
+    IDPMachineGatewayClient,
+    IDPMachineTokenProvider,
+    InMemoryIDPDecisionRepository,
+    create_machine_review_task,
+    dispatch_review_after_persist,
+    query_selected_document,
+)
 
 __all__ = [name for name in globals() if not name.startswith("_")]

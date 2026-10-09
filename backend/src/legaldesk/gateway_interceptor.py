@@ -54,6 +54,12 @@ GATEWAY_GRANT_SORT_KEY = "PROFILE"
 GATEWAY_GRANT_TTL_SECONDS = 300
 GATEWAY_INVOCATION_ENTITY = "HarnessInvocationBinding"
 GATEWAY_INVOCATION_TTL_SECONDS = 300
+IDP_REVIEW_GRANT_ENTITY = "IDPReviewInvocationGrant"
+IDP_REVIEW_GRANT_TTL_SECONDS = 120
+IDP_REVIEW_CREATE_TOOL = "create_review_task"
+IDP_REVIEW_SCOPE = "legaldesk-idp/review-create"
+IDP_REVIEW_PURPOSE = "idp-review-create"
+IDP_REVIEW_INVOCATION_ENTITY = "IDPReviewInvocation"
 GATEWAY_EXPIRY_INDEX_ENTITY = "GatewayExpiryIndex"
 GATEWAY_TOOL_DELIMITER = "___"
 _APPLICATION_ALLOWED_TOOL_NAMES = frozenset(
@@ -78,9 +84,9 @@ def _target_for_gateway_tool(tool_name: object) -> GatewayTarget:
     expected = {
         **{
             f"{GatewayTarget.REVIEW_LAMBDA.value}{GATEWAY_TOOL_DELIMITER}{name}": GatewayTarget.REVIEW_LAMBDA
-            for name in ("create_review_task", "list_review_tasks", "get_review_task", "update_review_task")
+            for name in ("create_review_task", "list_review_tasks", "get_review_task", "update_review_task", IDP_REVIEW_CREATE_TOOL)
         },
-        **{name: GatewayTarget.REVIEW_LAMBDA for name in ("create_review_task", "list_review_tasks", "get_review_task", "update_review_task")},
+        **{name: GatewayTarget.REVIEW_LAMBDA for name in ("create_review_task", "list_review_tasks", "get_review_task", "update_review_task", IDP_REVIEW_CREATE_TOOL)},
         f"{GatewayTarget.METADATA_MCP.value}{GATEWAY_TOOL_DELIMITER}list_matter_documents": (
             GatewayTarget.METADATA_MCP
         ),
@@ -128,6 +134,83 @@ class GatewayAuthorizationGrant:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class IDPReviewInvocationGrant:
+    """Machine-only capability for the additive IDP review-create target."""
+
+    grant_id: str
+    machine_client_id: str
+    scope: str
+    purpose: str
+    requested_matter_id: str
+    document_id: str
+    run_id: str
+    document_sha256: str
+    correlation_id: str
+    field_names: tuple[str, ...]
+    expires_at: int
+
+    @property
+    def item(self) -> dict[str, object]:
+        return {
+            "pk": idp_review_grant_partition_key(self.grant_id),
+            "sk": GATEWAY_GRANT_SORT_KEY,
+            "entityType": IDP_REVIEW_GRANT_ENTITY,
+            "machineClientId": self.machine_client_id,
+            "scope": self.scope,
+            "purpose": self.purpose,
+            "requestedMatterId": self.requested_matter_id,
+            "documentId": self.document_id,
+            "runId": self.run_id,
+            "documentSha256": self.document_sha256,
+            "correlationId": self.correlation_id,
+            "fieldNames": list(self.field_names),
+            "expiresAt": self.expires_at,
+            "ttl": self.expires_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class IDPReviewInvocationRecord:
+    """Durable worker-created request, written before any Gateway call."""
+
+    invocation_id: str
+    machine_client_id: str
+    scope: str
+    purpose: str
+    tool_name: str
+    requested_matter_id: str
+    document_id: str
+    run_id: str
+    document_sha256: str
+    correlation_id: str
+    field_names: tuple[str, ...]
+    expires_at: int
+    delivery_state: str = "PENDING"
+
+    @property
+    def item(self) -> dict[str, object]:
+        return {
+            "pk": idp_review_invocation_partition_key(self.invocation_id),
+            "sk": GATEWAY_GRANT_SORT_KEY,
+            "entityType": IDP_REVIEW_INVOCATION_ENTITY,
+            "invocationId": self.invocation_id,
+            "machineClientId": self.machine_client_id,
+            "scope": self.scope,
+            "purpose": self.purpose,
+            "toolName": self.tool_name,
+            "requestedMatterId": self.requested_matter_id,
+            "documentId": self.document_id,
+            "runId": self.run_id,
+            "documentSha256": self.document_sha256,
+            "correlationId": self.correlation_id,
+            "fieldNames": list(self.field_names),
+            "expiresAt": self.expires_at,
+            "deliveryState": self.delivery_state,
+            "ttl": self.expires_at,
+        }
+
+
 class GatewayGrantRepository(Protocol):
     def put(self, grant: GatewayAuthorizationGrant) -> None: ...
 
@@ -141,6 +224,18 @@ class GatewayGrantRepository(Protocol):
 
     def delete_invocation(self, invocation_id: str) -> None: ...
 
+    def put_idp_review(self, grant: IDPReviewInvocationGrant) -> None: ...
+
+    def get_idp_review(self, grant_id: str) -> Mapping[str, object] | None: ...
+
+    def delete_idp_review(self, grant_id: str) -> None: ...
+
+    def put_idp_review_invocation(self, record: IDPReviewInvocationRecord) -> None: ...
+
+    def get_idp_review_invocation(self, invocation_id: str) -> Mapping[str, object] | None: ...
+
+    def update_idp_review_invocation(self, record: IDPReviewInvocationRecord) -> None: ...
+
     def list_expired_candidates(self, *, now: float, limit: int) -> tuple[Mapping[str, object], ...]: ...
 
 
@@ -148,15 +243,27 @@ def gateway_grant_partition_key(grant_id: str) -> str:
     return f"GATEWAY#GRANT#{grant_id}"
 
 
+def idp_review_grant_partition_key(grant_id: str) -> str:
+    return f"GATEWAY#IDP-REVIEW#{grant_id}"
+
+
+def idp_review_invocation_partition_key(invocation_id: str) -> str:
+    return f"GATEWAY#IDP-INVOCATION#{invocation_id}"
+
+
 @dataclass(slots=True)
 class InMemoryGatewayGrantRepository:
     grants: dict[str, Mapping[str, object]]
     invocations: dict[str, Mapping[str, object]]
+    idp_reviews: dict[str, Mapping[str, object]]
+    idp_invocations: dict[str, Mapping[str, object]]
     expiry_index: dict[tuple[str, str], Mapping[str, object]]
 
     def __init__(self) -> None:
         self.grants = {}
         self.invocations = {}
+        self.idp_reviews: dict[str, Mapping[str, object]] = {}
+        self.idp_invocations: dict[str, Mapping[str, object]] = {}
         self.expiry_index: dict[tuple[str, str], Mapping[str, object]] = {}
 
     @staticmethod
@@ -212,6 +319,32 @@ class InMemoryGatewayGrantRepository:
         if item is not None:
             index = self._expiry_item(record_id=invocation_id, kind="invocation", item=item)
             self.expiry_index.pop((index["pk"], index["sk"]), None)
+
+    def put_idp_review(self, grant: IDPReviewInvocationGrant) -> None:
+        existing = self.idp_reviews.get(grant.grant_id)
+        if existing is not None and existing != grant.item:
+            raise RuntimeError("IDP review grant collision")
+        self.idp_reviews[grant.grant_id] = grant.item
+
+    def get_idp_review(self, grant_id: str) -> Mapping[str, object] | None:
+        return self.idp_reviews.get(grant_id)
+
+    def delete_idp_review(self, grant_id: str) -> None:
+        self.idp_reviews.pop(grant_id, None)
+
+    def put_idp_review_invocation(self, record: IDPReviewInvocationRecord) -> None:
+        existing = self.idp_invocations.get(record.invocation_id)
+        if existing is not None and existing != record.item:
+            raise RuntimeError("IDP invocation collision")
+        self.idp_invocations[record.invocation_id] = record.item
+
+    def get_idp_review_invocation(self, invocation_id: str) -> Mapping[str, object] | None:
+        return self.idp_invocations.get(invocation_id)
+
+    def update_idp_review_invocation(self, record: IDPReviewInvocationRecord) -> None:
+        if record.invocation_id not in self.idp_invocations:
+            raise RuntimeError("IDP invocation is missing")
+        self.idp_invocations[record.invocation_id] = record.item
 
     def list_expired_candidates(self, *, now: float, limit: int) -> tuple[Mapping[str, object], ...]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= 100:
@@ -297,6 +430,38 @@ class Boto3DynamoGatewayGrantRepository:
         self.table.delete_item(Key={"pk": gateway_invocation_partition_key(invocation_id), "sk": GATEWAY_GRANT_SORT_KEY})
         if isinstance(item, Mapping):
             self._delete_expiry_index(grant_id=invocation_id, kind="invocation", item=item)
+
+    def put_idp_review(self, grant: IDPReviewInvocationGrant) -> None:
+        try:
+            self.table.put_item(Item=grant.item, ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)")
+        except Exception:
+            existing = self.get_idp_review(grant.grant_id)
+            if existing != grant.item:
+                raise
+
+    def get_idp_review(self, grant_id: str) -> Mapping[str, object] | None:
+        response = self.table.get_item(Key={"pk": idp_review_grant_partition_key(grant_id), "sk": GATEWAY_GRANT_SORT_KEY}, ConsistentRead=True)
+        item = response.get("Item") if isinstance(response, Mapping) else None
+        return item if isinstance(item, Mapping) else None
+
+    def delete_idp_review(self, grant_id: str) -> None:
+        self.table.delete_item(Key={"pk": idp_review_grant_partition_key(grant_id), "sk": GATEWAY_GRANT_SORT_KEY})
+
+    def put_idp_review_invocation(self, record: IDPReviewInvocationRecord) -> None:
+        try:
+            self.table.put_item(Item=record.item, ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)")
+        except Exception:
+            existing = self.get_idp_review_invocation(record.invocation_id)
+            if existing != record.item:
+                raise
+
+    def get_idp_review_invocation(self, invocation_id: str) -> Mapping[str, object] | None:
+        response = self.table.get_item(Key={"pk": idp_review_invocation_partition_key(invocation_id), "sk": GATEWAY_GRANT_SORT_KEY}, ConsistentRead=True)
+        item = response.get("Item") if isinstance(response, Mapping) else None
+        return item if isinstance(item, Mapping) else None
+
+    def update_idp_review_invocation(self, record: IDPReviewInvocationRecord) -> None:
+        self.table.put_item(Item=record.item, ConditionExpression="attribute_exists(pk) AND attribute_exists(sk) AND #entity = :entity AND #run = :run", ExpressionAttributeNames={"#entity": "entityType", "#run": "runId"}, ExpressionAttributeValues={":entity": IDP_REVIEW_INVOCATION_ENTITY, ":run": record.run_id})
 
     def _put_expiry_index(self, *, grant_id: str, kind: str, item: Mapping[str, object]) -> None:
         expires_at = item.get("expiresAt")
@@ -420,6 +585,211 @@ def _decode_verified_subject(authorization: object) -> str:
     if not isinstance(subject, str) or not subject.strip() or len(subject) > 256:
         raise AuthorizationDenied("access denied")
     return subject
+
+
+def _decode_verified_claims(authorization: object) -> Mapping[str, object]:
+    """Read claims after the Gateway has already verified the JWT.
+
+    The interceptor is not a JWT verifier.  AgentCore/CUSTOM_JWT performs
+    signature, issuer, audience and expiry checks before this function runs;
+    this local decode only selects the already-verified client/scope claims.
+    """
+    if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
+        raise AuthorizationDenied("access denied")
+    parts = authorization[7:].strip().split(".")
+    if len(parts) != 3 or not all(parts):
+        raise AuthorizationDenied("access denied")
+    try:
+        encoded = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError) as exc:
+        raise AuthorizationDenied("access denied") from exc
+    if not isinstance(claims, Mapping):
+        raise AuthorizationDenied("access denied")
+    return claims
+
+
+def transform_idp_review_gateway_request(
+    event: Mapping[str, object],
+    *,
+    grant_repository: GatewayGrantRepository,
+    machine_client_id: str,
+    scope: str = IDP_REVIEW_SCOPE,
+    grant_id_factory: Any = uuid4,
+    correlation_id_factory: Any = uuid4,
+    invocation_resolver: Any | None = None,
+) -> dict[str, object]:
+    """Issue the dedicated IDP machine capability through the existing Gateway.
+
+    This is intentionally separate from ``transform_gateway_request``: no
+    user authorization store, human grant, ``VerifiedIdentity`` or
+    ``RequestContext`` is constructed for a machine token.  The target later
+    resolves all references against the durable run.
+    """
+    if not isinstance(machine_client_id, str) or not machine_client_id.strip():
+        raise AuthorizationDenied("access denied")
+    mcp = event.get("mcp") if isinstance(event, Mapping) else None
+    request = mcp.get("gatewayRequest") if isinstance(mcp, Mapping) else None
+    if not isinstance(request, Mapping) or not isinstance(request.get("headers"), Mapping) or not isinstance(request.get("body"), Mapping):
+        raise AuthorizationDenied("access denied")
+    headers = request["headers"]
+    claims = _decode_verified_claims(_header_selector(headers, "authorization"))
+    client = claims.get("client_id") or claims.get("clientId")
+    token_use = claims.get("token_use") or claims.get("tokenUse")
+    raw_scope = claims.get("scope", "")
+    scopes = frozenset(raw_scope.split()) if isinstance(raw_scope, str) else frozenset(raw_scope) if isinstance(raw_scope, (list, tuple, set)) else frozenset()
+    if client != machine_client_id or token_use != "access" or scope not in scopes:
+        raise AuthorizationDenied("access denied")
+    body = request["body"]
+    params = body.get("params")
+    if not isinstance(params, Mapping) or params.get("name") not in {IDP_REVIEW_CREATE_TOOL, f"{GatewayTarget.REVIEW_LAMBDA.value}{GATEWAY_TOOL_DELIMITER}{IDP_REVIEW_CREATE_TOOL}", f"@legaldesk_gateway/{GatewayTarget.REVIEW_LAMBDA.value}{GATEWAY_TOOL_DELIMITER}{IDP_REVIEW_CREATE_TOOL}"}:
+        raise AuthorizationDenied("access denied")
+    arguments = _normalize_arguments(params.get("arguments"))
+    if set(arguments) - {"matterId", "invocationId"} or "invocationId" not in arguments:
+        raise AuthorizationDenied("access denied")
+    raw_request = mcp.get("rawGatewayRequest") if isinstance(mcp, Mapping) else None
+    matter_id = _raw_matter_selector(raw_request)
+    if arguments.get("matterId") not in {None, matter_id}:
+        raise AuthorizationDenied("access denied")
+    invocation_id = arguments.get("invocationId")
+    try:
+        invocation_id = str(UUID(invocation_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise AuthorizationDenied("access denied") from exc
+    record_get = getattr(grant_repository, "get_idp_review_invocation", None)
+    if not callable(record_get) or invocation_resolver is None:
+        raise AuthorizationDenied("access denied")
+    try:
+        invocation = record_get(invocation_id)
+    except Exception as exc:
+        raise AuthorizationDenied("access denied") from exc
+    required = {"pk", "sk", "entityType", "invocationId", "machineClientId", "scope", "purpose", "toolName", "requestedMatterId", "documentId", "runId", "documentSha256", "correlationId", "fieldNames", "expiresAt", "deliveryState", "ttl"}
+    if not isinstance(invocation, Mapping) or set(invocation) != required or invocation.get("entityType") != IDP_REVIEW_INVOCATION_ENTITY or invocation.get("pk") != idp_review_invocation_partition_key(invocation_id) or invocation.get("sk") != GATEWAY_GRANT_SORT_KEY:
+        raise AuthorizationDenied("access denied")
+    expires = invocation.get("expiresAt")
+    if invocation.get("machineClientId") != machine_client_id or invocation.get("scope") != scope or invocation.get("purpose") != IDP_REVIEW_PURPOSE or invocation.get("toolName") != IDP_REVIEW_CREATE_TOOL or invocation.get("requestedMatterId") != matter_id or invocation.get("deliveryState") not in {"PENDING", "IN_FLIGHT", "AMBIGUOUS"} or isinstance(expires, bool) or not isinstance(expires, (int, float, Decimal)) or not math.isfinite(float(expires)) or float(expires) <= time.time():
+        raise AuthorizationDenied("access denied")
+    try:
+        auth = invocation_resolver(invocation, machine_client_id)
+    except Exception as exc:
+        raise AuthorizationDenied("access denied") from exc
+    if not isinstance(auth, Mapping) or any(auth.get(key) != invocation.get(source) for key, source in (("matter_id", "requestedMatterId"), ("document_id", "documentId"), ("run_id", "runId"), ("document_sha256", "documentSha256"))):
+        raise AuthorizationDenied("access denied")
+    field_names = tuple(invocation.get("fieldNames", ()))
+    if len(field_names) > 64 or any(not isinstance(item, str) or not item.strip() for item in field_names):
+        raise AuthorizationDenied("access denied")
+    correlation = invocation.get("correlationId")
+    try:
+        correlation = str(UUID(correlation))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise AuthorizationDenied("access denied") from exc
+    grant_id = str(grant_id_factory())
+    try:
+        UUID(grant_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise AuthorizationDenied("access denied") from exc
+    grant = IDPReviewInvocationGrant(
+        grant_id=grant_id, machine_client_id=machine_client_id, scope=scope,
+        purpose=IDP_REVIEW_PURPOSE, requested_matter_id=matter_id,
+        document_id=str(invocation["documentId"]), run_id=str(invocation["runId"]), document_sha256=str(invocation["documentSha256"]).lower(),
+        correlation_id=correlation, field_names=field_names,
+        expires_at=int(time.time()) + IDP_REVIEW_GRANT_TTL_SECONDS,
+    )
+    grant_repository.put_idp_review(grant)
+    transformed_body = dict(body)
+    transformed_params = dict(params)
+    transformed_arguments = {"_legaldeskGrantId": grant_id}
+    transformed_params["arguments"] = transformed_arguments
+    transformed_body["params"] = transformed_params
+    return {"interceptorOutputVersion": "1.0", "mcp": {"transformedGatewayRequest": {"body": transformed_body}}}
+
+
+def _idp_machine_claims(authorization: object, *, machine_client_id: str, scope: str) -> bool:
+    try:
+        claims = _decode_verified_claims(authorization)
+    except AuthorizationDenied:
+        return False
+    client = claims.get("client_id") or claims.get("clientId")
+    token_use = claims.get("token_use") or claims.get("tokenUse")
+    raw_scope = claims.get("scope", "")
+    scopes = frozenset(raw_scope.split()) if isinstance(raw_scope, str) else frozenset(raw_scope) if isinstance(raw_scope, (list, tuple, set)) else frozenset()
+    return client == machine_client_id and token_use == "access" and scope in scopes
+
+
+def _configured_machine_client(authorization: object, *, machine_client_id: str) -> bool:
+    """Identify the configured client before any human-subject fallback."""
+    try:
+        claims = _decode_verified_claims(authorization)
+    except AuthorizationDenied:
+        return False
+    return (claims.get("client_id") or claims.get("clientId")) == machine_client_id
+
+
+def _idp_deployment_scope_allows(*, tenant_id: str, matter_id: str) -> bool:
+    """Require the deployment-owned beta shard before machine delegation."""
+    configured_tenant = os.environ.get("LEGALDESK_IDP_REVIEW_TENANT_ID", "").strip()
+    raw_matters = os.environ.get("LEGALDESK_IDP_REVIEW_MATTER_IDS", "").strip()
+    if not configured_tenant or not raw_matters:
+        return False
+    try:
+        matters = {item.strip() for item in raw_matters.split(",") if item.strip()}
+    except Exception:
+        return False
+    return tenant_id == configured_tenant and len(matters) <= 2 and matter_id in matters
+
+
+def _idp_review_invocation_resolver(record: Mapping[str, object], machine_client_id: str) -> Mapping[str, object]:
+    """Resolve a machine request from the durable job locator/run, no Scan."""
+    table_name = os.environ.get("IDP_TABLE_NAME") or os.environ.get("REVIEW_TASK_TABLE_NAME")
+    if not table_name:
+        raise AuthorizationDenied("access denied")
+    from .idp.persistence import Boto3DynamoIDPRepository
+    from .idp.models import FieldAcceptance, IDPJobStatus
+    repository = Boto3DynamoIDPRepository(table_name)
+    run_id, matter_id, document_id = record.get("runId"), record.get("requestedMatterId"), record.get("documentId")
+    if not all(isinstance(value, str) and value.strip() for value in (run_id, matter_id, document_id)):
+        raise AuthorizationDenied("access denied")
+    job = repository.get_job(run_id)
+    if job is None or job.matter_id != matter_id or job.document_id != document_id:
+        raise AuthorizationDenied("access denied")
+    if not _idp_deployment_scope_allows(tenant_id=job.tenant_id, matter_id=matter_id):
+        raise AuthorizationDenied("access denied")
+    run = repository.get_run(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id, run_id=run_id)
+    if run is None or run.status is not IDPJobStatus.REVIEW_REQUIRED or run.document_sha256 != record.get("documentSha256"):
+        raise AuthorizationDenied("access denied")
+    if not run.source_key:
+        raise AuthorizationDenied("access denied")
+    from .documents import Boto3DynamoDocumentMetadataRepository
+    metadata_repository = Boto3DynamoDocumentMetadataRepository(table_name)
+    metadata = metadata_repository.get_for_scope(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id)
+    if metadata is None or metadata.s3_key != run.source_key:
+        raise AuthorizationDenied("access denied")
+    # Canonical uploads do not require custom S3 metadata.  Re-read the
+    # authoritative bounded bytes and hash them at the authorization boundary;
+    # a same-key/size mutation therefore cannot reuse a durable run.
+    import boto3
+    from .idp.runtime import Boto3IDPDocumentReader
+    from .idp.models import DocumentForIDP
+    bucket = os.environ.get("LEGALDESK_SOURCE_BUCKET") or "__configured_source_bucket__"
+    metadata_document = getattr(metadata, "document", metadata)
+    source_document = DocumentForIDP(
+        tenant_id=getattr(metadata_document, "tenant_id", job.tenant_id), matter_id=getattr(metadata_document, "matter_id", job.matter_id),
+        document_id=getattr(metadata_document, "document_id", job.document_id), media_type=getattr(metadata_document, "media_type", "application/pdf"),
+        file_size_bytes=getattr(metadata_document, "file_size_bytes", 0),
+        malware_scan_clean=True, source_key=metadata.s3_key,
+    )
+    try:
+        Boto3IDPDocumentReader(metadata_repository, boto3.client("s3"), bucket_name=bucket, max_bytes=20 * 1024 * 1024).read(job=job, document=source_document)
+    except Exception as exc:
+        raise AuthorizationDenied("access denied") from exc
+    fields = tuple(sorted(name for name, value in run.fields.items() if value.acceptance is FieldAcceptance.REVIEW_REQUIRED))
+    if not fields:
+        raise AuthorizationDenied("access denied")
+    return {
+        "tenant_id": run.tenant_id, "matter_id": run.matter_id, "document_id": run.document_id,
+        "run_id": run.run_id, "document_sha256": run.document_sha256,
+        "correlation_id": job.correlation_id, "field_names": fields,
+    }
 
 
 def _raw_gateway_body(raw_gateway_request: object) -> Mapping[str, object]:
@@ -702,6 +1072,16 @@ def transform_gateway_request(
     body = gateway_request.get("body")
     if not isinstance(headers, Mapping) or not isinstance(body, Mapping):
         raise AuthorizationDenied("access denied")
+    early_params = body.get("params")
+    early_operation = _local_gateway_tool_name(early_params.get("name")) if isinstance(early_params, Mapping) else None
+    early_client = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID") or os.environ.get("LEGALDESK_IDP_MACHINE_CLIENT_ID")
+    early_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE") or os.environ.get("LEGALDESK_IDP_MACHINE_SCOPE", IDP_REVIEW_SCOPE)
+    if early_client and _configured_machine_client(_header_selector(headers, "authorization"), machine_client_id=early_client) and not _idp_machine_claims(_header_selector(headers, "authorization"), machine_client_id=early_client, scope=early_scope):
+        raise AuthorizationDenied("access denied")
+    if target is GatewayTarget.REVIEW_LAMBDA and early_operation == IDP_REVIEW_CREATE_TOOL and early_client and _idp_machine_claims(_header_selector(headers, "authorization"), machine_client_id=early_client, scope=early_scope):
+        if grant_repository is None:
+            raise AuthorizationDenied("access denied")
+        return transform_idp_review_gateway_request(event, grant_repository=grant_repository, machine_client_id=early_client, scope=early_scope, invocation_resolver=_idp_review_invocation_resolver)
     subject = _decode_verified_subject(_header_selector(headers, "authorization"))
     raw_gateway_request = mcp.get("rawGatewayRequest") if isinstance(mcp, Mapping) else None
     raw_matter_id = _raw_matter_selector(raw_gateway_request)
@@ -721,6 +1101,22 @@ def transform_gateway_request(
     if header_matter_id is not None and header_matter_id != raw_matter_id:
         raise AuthorizationDenied("access denied")
     matter_id = raw_matter_id
+    operation = _local_gateway_tool_name(params.get("name")) if isinstance(params, Mapping) else None
+    machine_client_id = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID") or os.environ.get("LEGALDESK_IDP_MACHINE_CLIENT_ID")
+    machine_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE") or os.environ.get("LEGALDESK_IDP_MACHINE_SCOPE", IDP_REVIEW_SCOPE)
+    if machine_client_id and _idp_machine_claims(_header_selector(headers, "authorization"), machine_client_id=machine_client_id, scope=machine_scope) and operation != IDP_REVIEW_CREATE_TOOL:
+        raise AuthorizationDenied("access denied")
+    if target is GatewayTarget.REVIEW_LAMBDA and operation == IDP_REVIEW_CREATE_TOOL:
+        if machine_client_id and _idp_machine_claims(_header_selector(headers, "authorization"), machine_client_id=machine_client_id, scope=machine_scope):
+            if grant_repository is None:
+                raise AuthorizationDenied("access denied")
+            return transform_idp_review_gateway_request(
+                event,
+                grant_repository=grant_repository,
+                machine_client_id=machine_client_id,
+                scope=machine_scope,
+                invocation_resolver=_idp_review_invocation_resolver,
+            )
     # Application Harness calls must resolve a server-issued binding before
     # their correlation or Memory headers are accepted. Legacy component
     # calls retain generated correlation when no invocation ID is present.
@@ -1076,13 +1472,34 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
             audit["authorizationParsable"] = True
         except AuthorizationDenied:
             pass
-        store = _authorization_store_from_environment()
-        if store is None:
+        grants = _grant_repository_from_environment()
+        if grants is None:
             audit.update(_safe_decision_metadata(decision="DENY", code="SERVICE_UNAVAILABLE", target_invoked=False, tool_name=tool_name))
             _LOGGER.warning("gateway authorization unavailable %s", json.dumps(audit, sort_keys=True))
             return _safe_error(event, "service unavailable", authorization_code="SERVICE_UNAVAILABLE")
-        grants = _grant_repository_from_environment()
-        if grants is None:
+        # The dedicated machine path is authorized by CUSTOM_JWT client/scope
+        # claims and its own capability.  It must not require or construct a
+        # human AuthorizationStore/VerifiedIdentity.
+        machine_client_id = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID") or os.environ.get("LEGALDESK_IDP_MACHINE_CLIENT_ID")
+        machine_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE") or os.environ.get("LEGALDESK_IDP_MACHINE_SCOPE", IDP_REVIEW_SCOPE)
+        if machine_client_id and _configured_machine_client(authorization, machine_client_id=machine_client_id) and not _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope):
+            audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
+            return _safe_error(event, authorization_code="ACCESS_DENIED")
+        if machine_client_id and _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope) and _local_gateway_tool_name(tool_name) != IDP_REVIEW_CREATE_TOOL:
+            audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
+            return _safe_error(event, authorization_code="ACCESS_DENIED")
+        if _local_gateway_tool_name(tool_name) == IDP_REVIEW_CREATE_TOOL and machine_client_id and _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope):
+            response = transform_gateway_request(
+                event,
+                target=target,
+                authorization_store=None,  # type: ignore[arg-type]
+                grant_repository=grants,
+            )
+            audit.update(_safe_decision_metadata(decision="ALLOW", code="ALLOW", target_invoked=False, tool_name=tool_name))
+            _LOGGER.info("gateway IDP machine authorization allowed %s", json.dumps(audit, sort_keys=True))
+            return response
+        store = _authorization_store_from_environment()
+        if store is None:
             audit.update(_safe_decision_metadata(decision="DENY", code="SERVICE_UNAVAILABLE", target_invoked=False, tool_name=tool_name))
             _LOGGER.warning("gateway authorization unavailable %s", json.dumps(audit, sort_keys=True))
             return _safe_error(event, "service unavailable", authorization_code="SERVICE_UNAVAILABLE")
@@ -1113,11 +1530,15 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
 __all__ = [
     "GatewayTarget",
     "GatewayAuthorizationGrant",
+    "IDPReviewInvocationGrant",
+    "IDPReviewInvocationRecord",
     "HarnessInvocationGrant",
     "GatewayGrantRepository",
     "Boto3DynamoGatewayGrantRepository",
     "InMemoryGatewayGrantRepository",
     "gateway_grant_partition_key",
+    "idp_review_grant_partition_key",
+    "idp_review_invocation_partition_key",
     "gateway_invocation_partition_key",
     "GATEWAY_GRANT_ENTITY",
     "GATEWAY_GRANT_SORT_KEY",
@@ -1128,4 +1549,8 @@ __all__ = [
     "InterceptorEnvelope",
     "gateway_request_interceptor",
     "transform_gateway_request",
+    "transform_idp_review_gateway_request",
+    "IDP_REVIEW_CREATE_TOOL",
+    "IDP_REVIEW_SCOPE",
+    "IDP_REVIEW_PURPOSE",
 ]

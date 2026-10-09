@@ -27,6 +27,11 @@ from .reconciliation import (
     ReconciliationReport,
 )
 from .state import DynamoDBEphemeralStateStore
+from .idp.models import IDPConfig, IDPJobStatus
+from .idp.persistence import Boto3DynamoIDPRepository
+from .idp.trigger import VerifiedCleanIDPTrigger
+from .idp.providers import idp_prompt_identity
+from .idp_lambda import Boto3IDPSQSQueue
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
@@ -54,6 +59,8 @@ class ReconciliationConfig:
     ingestion_stale_seconds: float
     limit_per_scope: int
     max_batch: int = _MAX_LIMIT
+    idp_enabled: bool = False
+    idp_recovery_limit_per_scope: int = 25
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "ReconciliationConfig":
@@ -100,6 +107,10 @@ class ReconciliationConfig:
         )
         if not upload_scopes and not ingestion_scopes:
             raise ReconciliationLambdaError("reconciliation configuration is invalid")
+        raw_idp = values.get("LEGALDESK_IDP_ENABLED", "false").strip().lower()
+        if raw_idp not in {"true", "false"}:
+            raise ReconciliationLambdaError("reconciliation configuration is invalid")
+        idp_enabled = raw_idp == "true"
         return cls(
             region=required("AWS_REGION", re.compile(r"^[a-z0-9-]{1,32}$")),
             table_name=required("LEGALDESK_METADATA_TABLE_NAME"),
@@ -114,6 +125,8 @@ class ReconciliationConfig:
                 "LEGALDESK_RECONCILIATION_INGESTION_STALE_SECONDS", minimum=60, maximum=24 * 60 * 60
             ),
             limit_per_scope=bounded_int("LEGALDESK_RECONCILIATION_LIMIT_PER_SCOPE", minimum=1, maximum=_MAX_LIMIT, default=25),
+            idp_enabled=idp_enabled,
+            idp_recovery_limit_per_scope=bounded_int("LEGALDESK_IDP_RECOVERY_LIMIT_PER_SCOPE", minimum=1, maximum=_MAX_LIMIT, default=25),
         )
 
 
@@ -166,6 +179,7 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
         table = boto3.resource("dynamodb", region_name=config.region, config=sdk_config).Table(config.table_name)
         s3 = boto3.client("s3", region_name=config.region, config=sdk_config)
         bedrock_agent = boto3.client("bedrock-agent", region_name=config.region, config=sdk_config)
+        sqs = boto3.client("sqs", region_name=config.region, config=sdk_config) if config.idp_enabled else None
     except ReconciliationLambdaError:
         raise
     except Exception:
@@ -181,12 +195,90 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
         knowledge_base_id=_required_env("LEGALDESK_KNOWLEDGE_BASE_ID"),
         data_source_id=_required_env("LEGALDESK_DATA_SOURCE_ID"),
     )
+    idp_recovery = None
+    if config.idp_enabled:
+        queue_url = _required_env("LEGALDESK_IDP_QUEUE_URL")
+        queue_arn = _required_env("LEGALDESK_IDP_QUEUE_ARN")
+        model_id = _required_env("LEGALDESK_IDP_MODEL_ID")
+        idp_repository = Boto3DynamoIDPRepository(config.table_name, table=table)
+        review_recovery = None
+        if os.environ.get("LEGALDESK_IDP_REVIEW_ENABLED", "false").strip().lower() == "true":
+            from .idp.review import CognitoM2MTokenProvider, IDPMachineGatewayClient, dispatch_review_after_persist
+            review_url = os.environ.get("LEGALDESK_IDP_GATEWAY_URL", "").strip()
+            token_endpoint = os.environ.get("LEGALDESK_IDP_TOKEN_ENDPOINT", "").strip()
+            client_id = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID", "").strip()
+            secret_name = os.environ.get("LEGALDESK_IDP_M2M_SECRET_PARAMETER_NAME", "").strip()
+            review_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE", "legaldesk-idp/review-create").strip()
+            if not all((review_url, token_endpoint, client_id, secret_name)):
+                raise ReconciliationLambdaError("review recovery configuration is invalid")
+            ssm = boto3.client("ssm", region_name=config.region, config=sdk_config)
+            token_provider = CognitoM2MTokenProvider(ssm_client=ssm, parameter_name=secret_name, token_endpoint=token_endpoint, client_id=client_id, scope=review_scope, timeout_seconds=15.0)
+            gateway = IDPMachineGatewayClient(gateway_url=review_url, token_provider=token_provider, timeout_seconds=15.0)
+            invocation_repository = Boto3DynamoGatewayGrantRepository(config.table_name, table=table)
+
+            def recover_review_dispatch(*, tenant_id: str, matter_id: str, limit: int) -> tuple[object, ...]:
+                recovered: list[object] = []
+                cursor = idp_repository.get_review_recovery_cursor(tenant_id=tenant_id, matter_id=matter_id)
+                if callable(getattr(metadata, "list_for_scope_page", None)):
+                    documents, next_cursor = metadata.list_for_scope_page(tenant_id=tenant_id, matter_id=matter_id, limit=min(limit, 100), cursor=cursor)
+                else:
+                    documents, next_cursor = metadata.list_for_scope(tenant_id=tenant_id, matter_id=matter_id, limit=min(limit, 100)), None
+                try:
+                    for document in documents:
+                        if len(recovered) >= limit:
+                            break
+                        runs = idp_repository.list_runs(tenant_id=tenant_id, matter_id=matter_id, document_id=document.document_id, limit=2)
+                        for run in runs:
+                            if run.status is not IDPJobStatus.REVIEW_REQUIRED or len(recovered) >= limit:
+                                continue
+                            job = idp_repository.get_job(run.run_id)
+                            if job is None or job.review_delivery_state == "SENT":
+                                continue
+                            try:
+                                dispatch_review_after_persist(run=run, job=job, invocation_repository=invocation_repository, gateway=gateway, machine_client_id=client_id, scope=review_scope, job_repository=idp_repository)
+                                recovered.append(job)
+                            except Exception:
+                                # Leave the run REVIEW_REQUIRED; the next bounded
+                                # schedule retries the Gateway capability only.
+                                continue
+                finally:
+                    # Advance past terminal/non-review rows even when one
+                    # malformed candidate fails; no page can starve later docs.
+                    idp_repository.set_review_recovery_cursor(tenant_id=tenant_id, matter_id=matter_id, cursor=next_cursor)
+                return tuple(recovered)
+
+            review_recovery = recover_review_dispatch
+        idp_config = IDPConfig.from_mapping({
+            "max_bytes": os.environ.get("LEGALDESK_IDP_MAX_BYTES", str(20 * 1024 * 1024)),
+            "max_pages": os.environ.get("LEGALDESK_IDP_MAX_PAGES", "100"),
+            "visibility_timeout_seconds": os.environ.get("LEGALDESK_IDP_CLAIM_LEASE_SECONDS", "480"),
+            "max_attempts": os.environ.get("LEGALDESK_IDP_MAX_ATTEMPTS", "3"),
+            "max_calls_per_run": os.environ.get("LEGALDESK_IDP_MAX_CALLS_PER_RUN", "2"),
+            "global_deadline_seconds": os.environ.get("LEGALDESK_IDP_GLOBAL_DEADLINE_SECONDS", "330"),
+        })
+        trigger = VerifiedCleanIDPTrigger(
+            repository=idp_repository,
+            queue=Boto3IDPSQSQueue(sqs, queue_url=queue_url),
+            config=idp_config,
+            enabled=True,
+            model_id=model_id,
+            prompt_version=idp_prompt_identity(os.environ.get("LEGALDESK_IDP_PROMPT_VERSION", "1.0.0")),
+            review_recovery=review_recovery,
+        )
+        if not queue_arn.startswith("arn:"):
+            raise ReconciliationLambdaError("reconciliation configuration is invalid")
+        idp_recovery = lambda **scope: trigger.recover_delivery(
+            **scope,
+            metadata_repository=metadata,
+            object_storage=storage,
+        )
     return ReconciliationService(
         metadata_repository=metadata,
         object_storage=storage,
         state_store=state_store,
         ingestion_service=ingestion,
         gateway_repository=Boto3DynamoGatewayGrantRepository(config.table_name, table=table),
+        idp_recovery=idp_recovery,
         max_batch=config.max_batch,
     )
 
@@ -250,6 +342,12 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
         _logger.error("reconciliation_failed", extra={"error_code": "processing_failed"})
         raise ReconciliationLambdaError("reconciliation failed") from None
     result = {"status": "completed", "uploads": _report(upload), "ingestion": _report(ingestion), "gateway": _report(gateway)}
+    if config.idp_enabled:
+        recover = getattr(service, "reconcile_idp_scopes", None)
+        if not callable(recover):
+            raise ReconciliationLambdaError("IDP reconciliation composition is unavailable")
+        idp = recover(scopes=config.upload_scopes, limit_per_scope=config.idp_recovery_limit_per_scope)
+        result["idp"] = _report(idp)
     _logger.info(
         "reconciliation_completed",
         extra={"upload_changed": upload.changed, "ingestion_changed": ingestion.changed, "gateway_changed": gateway.changed},

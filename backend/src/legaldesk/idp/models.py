@@ -90,17 +90,17 @@ class IDPSkipReason(StrEnum):
 
 
 PUBLIC_IDP_STATUS = MappingProxyType({
-    IDPJobStatus.ENQUEUE_PENDING: "PENDING",
-    IDPJobStatus.DELIVERY_IN_FLIGHT: "PENDING",
-    IDPJobStatus.DELIVERY_AMBIGUOUS: "RETRY_REQUIRED",
-    IDPJobStatus.QUEUED: "QUEUED",
-    IDPJobStatus.CLAIMED: "PROCESSING",
-    IDPJobStatus.PROCESSING: "PROCESSING",
-    IDPJobStatus.WAITING_FOR_OCR: "PROCESSING",
+    IDPJobStatus.ENQUEUE_PENDING: "PENDING_IDP",
+    IDPJobStatus.DELIVERY_IN_FLIGHT: "PENDING_IDP",
+    IDPJobStatus.DELIVERY_AMBIGUOUS: "PENDING_IDP",
+    IDPJobStatus.QUEUED: "PENDING_IDP",
+    IDPJobStatus.CLAIMED: "PROCESSING_IDP",
+    IDPJobStatus.PROCESSING: "PROCESSING_IDP",
+    IDPJobStatus.WAITING_FOR_OCR: "PROCESSING_IDP",
     IDPJobStatus.SKIPPED: "IDP_SKIPPED",
     IDPJobStatus.REVIEW_REQUIRED: "IDP_REVIEW_REQUIRED",
-    IDPJobStatus.COMPLETED: "COMPLETED",
-    IDPJobStatus.FAILED: "FAILED",
+    IDPJobStatus.COMPLETED: "IDP_COMPLETED",
+    IDPJobStatus.FAILED: "IDP_FAILED",
 })
 
 
@@ -153,6 +153,8 @@ class IDPConfig:
     max_pages: int = DEFAULT_MAX_PAGES
     visibility_timeout_seconds: int = 300
     max_attempts: int = 3
+    max_calls_per_run: int = 2
+    global_deadline_seconds: int = 330
 
     def __post_init__(self) -> None:
         if isinstance(self.max_bytes, bool) or not isinstance(self.max_bytes, int) or not 1 <= self.max_bytes <= 100 * 1024 * 1024:
@@ -163,6 +165,10 @@ class IDPConfig:
             raise IDPContractError("visibility_timeout_seconds is invalid")
         if isinstance(self.max_attempts, bool) or not isinstance(self.max_attempts, int) or not 1 <= self.max_attempts <= 10:
             raise IDPContractError("max_attempts is invalid")
+        if isinstance(self.max_calls_per_run, bool) or not isinstance(self.max_calls_per_run, int) or not 1 <= self.max_calls_per_run <= 8:
+            raise IDPContractError("max_calls_per_run is invalid")
+        if isinstance(self.global_deadline_seconds, bool) or not isinstance(self.global_deadline_seconds, int) or not 60 <= self.global_deadline_seconds <= 330:
+            raise IDPContractError("global_deadline_seconds is invalid")
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> "IDPConfig":
@@ -181,6 +187,8 @@ class IDPConfig:
             max_pages=integer("max_pages", DEFAULT_MAX_PAGES),
             visibility_timeout_seconds=integer("visibility_timeout_seconds", 300),
             max_attempts=integer("max_attempts", 3),
+            max_calls_per_run=integer("max_calls_per_run", 2),
+            global_deadline_seconds=integer("global_deadline_seconds", 330),
         )
 
 
@@ -216,6 +224,7 @@ class IDPFieldResult:
     validation: Mapping[str, bool] = field(default_factory=dict)
     schema_version: str = IDP_SCHEMA_VERSION
     reason: str | None = None
+    provenance: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _nonempty(self.field, "field")
@@ -235,6 +244,9 @@ class IDPFieldResult:
         if any(not isinstance(key, str) or not isinstance(value, bool) for key, value in self.validation.items()):
             raise IDPContractError("validation is invalid")
         object.__setattr__(self, "validation", MappingProxyType(dict(self.validation)))
+        if any(not isinstance(key, str) for key in self.provenance):
+            raise IDPContractError("provenance is invalid")
+        object.__setattr__(self, "provenance", MappingProxyType(dict(self.provenance)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +269,11 @@ class IDPJob:
     claimed_until: datetime | None = None
     skip_reason: IDPSkipReason | None = None
     error_code: str | None = None
+    # Durable review-dispatch projection.  These fields are references only;
+    # proposed values remain in the immutable run artifact.
+    review_delivery_state: str | None = None
+    review_invocation_id: str | None = None
+    review_task_id: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
@@ -278,6 +295,11 @@ class IDPJob:
         _aware_datetime(self.updated_at, "updated_at")
         if self.claimed_until is not None:
             _aware_datetime(self.claimed_until, "claimed_until")
+        if self.review_delivery_state is not None and self.review_delivery_state not in {"PENDING", "IN_FLIGHT", "AMBIGUOUS", "SENT"}:
+            raise IDPContractError("review_delivery_state is invalid")
+        for name in ("review_invocation_id", "review_task_id"):
+            if getattr(self, name) is not None:
+                _nonempty(getattr(self, name), name)
         if self.status is IDPJobStatus.SKIPPED and self.skip_reason is None:
             raise IDPContractError("skipped jobs require a reason")
 
@@ -296,6 +318,10 @@ class IDPExtractionRun:
     status: IDPJobStatus
     fields: Mapping[str, IDPFieldResult] = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
+    # Canonical source identity used to fence the document pointer.  It is
+    # optional for old durable runs; new production runs populate it after
+    # the final authoritative re-read.
+    source_key: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("run_id", "tenant_id", "matter_id", "document_id", "schema_version", "model_id", "prompt_version"):
@@ -306,6 +332,8 @@ class IDPExtractionRun:
         if any(not isinstance(result, IDPFieldResult) or name != result.field for name, result in self.fields.items()):
             raise IDPContractError("run fields are invalid")
         _aware_datetime(self.created_at, "created_at")
+        if self.source_key is not None:
+            _nonempty(self.source_key, "source_key")
         object.__setattr__(self, "fields", MappingProxyType(dict(self.fields)))
 
 
@@ -335,6 +363,7 @@ class DocumentForIDP:
     malware_scan_clean: bool
     page_count: int | None = None
     content_sha256: str | None = None
+    source_key: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("tenant_id", "matter_id", "document_id", "media_type"):
@@ -347,6 +376,8 @@ class DocumentForIDP:
             raise IDPContractError("page_count is invalid")
         if self.content_sha256 is not None:
             _sha256(self.content_sha256, "content_sha256")
+        if self.source_key is not None:
+            _nonempty(self.source_key, "source_key")
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

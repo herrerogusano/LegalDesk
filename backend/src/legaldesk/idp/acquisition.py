@@ -28,6 +28,9 @@ MAX_TOTAL_TEXT_CHARS = 4_000_000
 MAX_PAGE_RESOURCES = 256
 MAX_TOTAL_RESOURCES = 10_000
 MAX_IMAGE_PIXELS = 50_000_000
+MAX_COMPRESSED_CONTENT_STREAM_BYTES = 32 * 1024 * 1024
+MAX_DECOMPRESSED_STREAM_BYTES = 75 * 1024 * 1024  # documented library ceiling; extraction never disables pypdf's finite guard.
+MAX_FORM_XOBJECT_DEPTH = 8
 
 
 class PDFAcquisitionError(IDPContractError):
@@ -128,29 +131,75 @@ def acquire_pdf(
 
     raster_pages: set[int] = set()
     resource_total = 0
+    compressed_stream_total = 0
+    seen_xobjects: set[int] = set()
+
+    def inspect_resources(resources: object, *, depth: int) -> bool:
+        """Conservatively discover nested Form->Image resources."""
+
+        nonlocal resource_total
+        if depth > MAX_FORM_XOBJECT_DEPTH:
+            raise PDFLimitExceeded("RESOURCE_DEPTH_LIMIT")
+        if hasattr(resources, "get_object"):
+            resources = resources.get_object()
+        if not hasattr(resources, "get"):
+            return False
+        xobjects = resources.get("/XObject")
+        if xobjects is None:
+            return False
+        if hasattr(xobjects, "get_object"):
+            xobjects = xobjects.get_object()
+        if not hasattr(xobjects, "values"):
+            raise PDFAcquisitionError("XObject resource dictionary is invalid")
+        found_image = False
+        for reference in xobjects.values():
+            resource = reference.get_object() if hasattr(reference, "get_object") else reference
+            marker = id(resource)
+            if marker in seen_xobjects:
+                continue
+            seen_xobjects.add(marker)
+            resource_total += 1
+            if resource_total > MAX_TOTAL_RESOURCES:
+                raise PDFLimitExceeded("RESOURCE_LIMIT")
+            if not hasattr(resource, "get"):
+                raise PDFAcquisitionError("XObject resource is invalid")
+            subtype = resource.get("/Subtype")
+            if subtype == "/Image":
+                width, height = resource.get("/Width"), resource.get("/Height")
+                if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0 and width * height > MAX_IMAGE_PIXELS:
+                    raise PDFLimitExceeded("IMAGE_RESOURCE_LIMIT")
+                found_image = True
+            elif subtype == "/Form":
+                found_image = inspect_resources(resource.get("/Resources") or {}, depth=depth + 1) or found_image
+        return found_image
+
     # Inspect resource dictionaries before invoking text extraction.  A page
     # with a digital header over an image body is not considered fully covered.
     for number, page in enumerate(reader.pages, start=1):
         try:
+            # An indirect XObject can be reused on another page; it must be
+            # deduplicated within one page's recursion, not globally, or the
+            # second page could lose its conservative OCR requirement.
+            seen_xobjects = set()
+            contents = page.get("/Contents")
+            content_items = contents if isinstance(contents, list) else [contents] if contents is not None else []
+            for reference in content_items:
+                stream = reference.get_object() if hasattr(reference, "get_object") else reference
+                length = stream.get("/Length") if hasattr(stream, "get") else None
+                if isinstance(length, int) and length >= 0:
+                    compressed_stream_total += length
+                    if compressed_stream_total > MAX_COMPRESSED_CONTENT_STREAM_BYTES:
+                        raise PDFLimitExceeded("CONTENT_STREAM_LIMIT")
             resources = page.get("/Resources") or {}
             if hasattr(resources, "get_object"):
                 resources = resources.get_object()
-            xobjects = resources.get("/XObject") if hasattr(resources, "get") else None
-            if xobjects is None:
-                continue
-            if hasattr(xobjects, "get_object"):
-                xobjects = xobjects.get_object()
-            count = len(xobjects)
-            resource_total += count
-            if count > MAX_PAGE_RESOURCES or resource_total > MAX_TOTAL_RESOURCES:
+            if not hasattr(resources, "get"):
+                raise PDFAcquisitionError("page resources are invalid")
+            before = resource_total
+            found_image = inspect_resources(resources, depth=0)
+            if resource_total - before > MAX_PAGE_RESOURCES:
                 raise PDFLimitExceeded("RESOURCE_LIMIT")
-            for reference in xobjects.values():
-                resource = reference.get_object() if hasattr(reference, "get_object") else reference
-                if resource.get("/Subtype") != "/Image":
-                    continue
-                width, height = resource.get("/Width"), resource.get("/Height")
-                if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0 and width * height > MAX_IMAGE_PIXELS:
-                    raise PDFLimitExceeded("IMAGE_RESOURCE_LIMIT")
+            if found_image:
                 raster_pages.add(number)
         except PDFLimitExceeded:
             raise
@@ -195,6 +244,8 @@ __all__ = [
     "MAX_PAGE_RESOURCES",
     "MAX_TOTAL_RESOURCES",
     "MAX_IMAGE_PIXELS",
+    "MAX_COMPRESSED_CONTENT_STREAM_BYTES",
+    "MAX_DECOMPRESSED_STREAM_BYTES",
     "PDFAcquisitionError",
     "PDFLimitExceeded",
     "PDFTextDocument",

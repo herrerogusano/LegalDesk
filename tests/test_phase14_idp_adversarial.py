@@ -30,7 +30,8 @@ from legaldesk.idp.ocr import (  # noqa: E402
     OCRStartRequest,
     OCRStatus,
 )
-from legaldesk.idp.registry import IDPSchemaRegistry  # noqa: E402
+from legaldesk.idp.models import DocumentType  # noqa: E402
+from legaldesk.idp.registry import IDPFieldSpec, IDPSchema, IDPSchemaRegistry  # noqa: E402
 from legaldesk.idp.processing import IDPOutputError, parse_extractor_output  # noqa: E402
 
 
@@ -144,7 +145,10 @@ class TestPhase14IDPAdversarial(unittest.TestCase):
     def test_invented_evidence_offsets_are_rejected(self) -> None:
         schema = IDPSchemaRegistry().get("CONTRACT")
         raw = _field_output(effective_date=_present("2026-01-15", "Effective date: 15 January 2026.", start=9999, end=10010))
-        result = parse_extractor_output(raw, schema=schema, page_text=_page_text(), content_sha256=SHA)
+        try:
+            result = parse_extractor_output(raw, schema=schema, page_text=_page_text(), content_sha256=SHA)
+        except IDPOutputError:
+            return  # Rejecting fabricated offsets is safe.
         field = result.fields["effective_date"]
         self.assertNotEqual(field.acceptance.value, "AUTO_ACCEPTED")
         self.assertEqual(field.evidence, ())
@@ -163,6 +167,25 @@ class TestPhase14IDPAdversarial(unittest.TestCase):
         }]}
         with self.assertRaises(IDPSourceArnError):
             worker.handle_sqs_event(event)
+
+    def test_ocr_outer_wrong_queue_cannot_be_overridden_by_inner_message_source(self) -> None:
+        provider = TextProvider()
+        store = InMemoryOCRJobStore()
+        coordinator = OCRCoordinator(provider, store)
+        record = coordinator.start(_ocr_request("run-outer-arn", "token-outer-arn"))
+        forged_event = {"Records": [{
+            "eventSourceARN": "arn:aws:sqs:eu-west-1:attacker:wrong-queue",
+            "body": json.dumps({
+                "TopicArn": EXPECTED_TOPIC_ARN,
+                "Message": json.dumps({
+                    "JobId": record.textract_job_id,
+                    "Status": "SUCCEEDED",
+                    "sourceArn": EXPECTED_QUEUE_ARN,
+                }),
+            }),
+        }]}
+        with self.assertRaises(OCRContractError):
+            coordinator.accept_completion(forged_event, source_arn=EXPECTED_QUEUE_ARN)
 
     def test_wrong_sns_topic_arn_is_rejected_even_with_outer_source_marker(self) -> None:
         provider = TextProvider()
@@ -214,6 +237,52 @@ class TestPhase14IDPAdversarial(unittest.TestCase):
         coordinator.accept_completion(_completion_event(record.textract_job_id, "SUCCEEDED"), source_arn=EXPECTED_QUEUE_ARN)
         with self.assertRaises(OCRContractError):
             coordinator.read_detection_pages(store.get_by_run("run-4"), max_pages=2)  # type: ignore[arg-type]
+
+    def test_new_numeric_registry_field_cannot_accept_unrelated_quote(self) -> None:
+        custom_schema = IDPSchema(
+            DocumentType.CONTRACT,
+            "1.1.0",
+            {"new_numeric_field": IDPFieldSpec("new_numeric_field", "number", "Synthetic schema evolution field")},
+        )
+        registry = IDPSchemaRegistry({(DocumentType.CONTRACT, "1.1.0"): custom_schema})
+        raw = json.dumps({
+            "schema_version": "1.1.0",
+            "fields": {"new_numeric_field": _present(42, "Effective date: 15 January 2026.")},
+        })
+        result = parse_extractor_output(raw, schema=registry.get(DocumentType.CONTRACT, "1.1.0"), page_text=_page_text(), content_sha256=SHA)
+        self.assertNotEqual(result.fields["new_numeric_field"].acceptance.value, "AUTO_ACCEPTED")
+
+    def test_model_cannot_inject_acceptance_or_origin(self) -> None:
+        schema = IDPSchemaRegistry().get("CONTRACT")
+        raw = json.dumps({
+            "schema_version": "1.0.0",
+            "fields": {"effective_date": {
+                "value": "2026-01-15", "presence": "PRESENT",
+                "acceptance": "HUMAN_CONFIRMED", "origin": "DERIVED",
+                "evidence": [{"page": 1, "quote": "Effective date: 15 January 2026.", "content_sha256": SHA}],
+            }},
+        })
+        try:
+            result = parse_extractor_output(raw, schema=schema, page_text=_page_text(), content_sha256=SHA)
+        except IDPOutputError:
+            return  # Unknown control fields are rejected at the schema boundary.
+        field = result.fields["effective_date"]
+        self.assertNotEqual(field.acceptance.value, "HUMAN_CONFIRMED")
+        self.assertNotEqual(field.origin.value, "DERIVED")
+
+    def test_model_cannot_replace_server_content_hash_or_page(self) -> None:
+        schema = IDPSchemaRegistry().get("CONTRACT")
+        raw = json.dumps({
+            "schema_version": "1.0.0",
+            "fields": {"effective_date": {
+                "value": "2026-01-15", "presence": "PRESENT",
+                "evidence": [{"page": 99, "quote": "Effective date: 15 January 2026.", "content_sha256": "b" * 64}],
+            }},
+        })
+        result = parse_extractor_output(raw, schema=schema, page_text=_page_text(), content_sha256=SHA)
+        field = result.fields["effective_date"]
+        self.assertNotEqual(field.acceptance.value, "AUTO_ACCEPTED")
+        self.assertEqual(field.evidence, ())
 
 
 if __name__ == "__main__":

@@ -397,6 +397,16 @@ class InMemoryReviewTaskRepository:
             raise RuntimeError("review task already exists")
         self.tasks[key] = task
 
+    def save_machine_task(self, task: ReviewTask) -> None:
+        """Idempotent service-principal write; no human context is created."""
+        key = (task.tenant_id, task.matter_id, task.review_task_id)
+        existing = self.tasks.get(key)
+        if existing is not None:
+            if existing != task:
+                raise ReviewTaskIdempotencyConflict("machine review task idempotency conflict")
+            return
+        self.tasks[key] = task
+
     def list(self, *, context: RequestContext, limit: int = MAX_REVIEW_TASKS) -> tuple[ReviewTask, ...]:
         context = require_authorized_context(context)
         records = [
@@ -1072,6 +1082,13 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
         grants = _gateway_grant_repository_from_environment()
         if grants is None:
             return {"error": "service_unavailable"}
+        # Dedicated IDP review creation is a machine-only branch.  It is
+        # deliberately checked before the human grant parser so an M2M token
+        # can never fall through to a human ``RequestContext`` path.
+        idp_grant_get = getattr(grants, "get_idp_review", None)
+        idp_raw = idp_grant_get(grant_id) if callable(idp_grant_get) else None
+        if isinstance(idp_raw, Mapping):
+            return _handle_idp_machine_review_grant(grants, grant_id, idp_raw)
         raw_grant = grants.get(grant_id)
         if not isinstance(raw_grant, Mapping):
             return {"error": "access_denied"}
@@ -1135,6 +1152,83 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
         return {"error": "service_unavailable"}
 
 
+def _handle_idp_machine_review_grant(grants: Any, grant_id: str, raw_grant: Mapping[str, object]) -> dict[str, object]:
+    """Validate and execute the exact-purpose IDP grant at the Review target."""
+    from .gateway_interceptor import IDP_REVIEW_GRANT_ENTITY, IDP_REVIEW_PURPOSE, IDP_REVIEW_SCOPE, idp_review_grant_partition_key
+    required = {"pk", "sk", "entityType", "machineClientId", "scope", "purpose", "requestedMatterId", "documentId", "runId", "documentSha256", "correlationId", "fieldNames", "expiresAt", "ttl"}
+    if (set(raw_grant) != required and set(raw_grant) != required - {"ttl"}) or raw_grant.get("entityType") != IDP_REVIEW_GRANT_ENTITY or raw_grant.get("pk") != idp_review_grant_partition_key(grant_id) or raw_grant.get("sk") != "PROFILE":
+        return {"error": "access_denied"}
+    import time
+    expires_at = raw_grant.get("expiresAt")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float, Decimal)) or not math.isfinite(float(expires_at)) or float(expires_at) <= time.time():
+        return {"error": "access_denied"}
+    machine_client = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID") or os.environ.get("LEGALDESK_IDP_MACHINE_CLIENT_ID")
+    configured_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE") or os.environ.get("LEGALDESK_IDP_MACHINE_SCOPE", IDP_REVIEW_SCOPE)
+    if not machine_client or raw_grant.get("machineClientId") != machine_client or raw_grant.get("scope") != configured_scope or raw_grant.get("purpose") != IDP_REVIEW_PURPOSE:
+        return {"error": "access_denied"}
+    if not all(isinstance(raw_grant.get(name), str) and str(raw_grant[name]).strip() for name in ("requestedMatterId", "documentId", "runId", "documentSha256", "correlationId")):
+        return {"error": "access_denied"}
+    try:
+        UUID(str(raw_grant["correlationId"]))
+    except (ValueError, TypeError, AttributeError):
+        return {"error": "access_denied"}
+    fields = raw_grant.get("fieldNames")
+    if not isinstance(fields, list) or len(fields) > 64 or any(not isinstance(item, str) for item in fields):
+        return {"error": "access_denied"}
+    config = _repositories_from_environment()
+    table_name = os.environ.get("IDP_TABLE_NAME") or os.environ.get("REVIEW_TASK_TABLE_NAME")
+    if config is None or not table_name:
+        return {"error": "service_unavailable"}
+    try:
+        from .idp.persistence import Boto3DynamoIDPRepository
+        from .idp.review import IDPReviewInvocation, IDPReviewService, create_machine_review_task
+        review_repository, _ = config
+        idp_repository = Boto3DynamoIDPRepository(table_name)
+        job = idp_repository.get_job(str(raw_grant["runId"]))
+        if job is None or job.matter_id != str(raw_grant["requestedMatterId"]) or job.document_id != str(raw_grant["documentId"]):
+            return {"error": "access_denied"}
+        from .gateway_interceptor import _idp_deployment_scope_allows
+        if not _idp_deployment_scope_allows(tenant_id=job.tenant_id, matter_id=job.matter_id):
+            return {"error": "access_denied"}
+        # Tenant is never accepted from the request.  The durable job locator
+        # supplies it before the run is read.
+        run = idp_repository.get_run(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id, run_id=job.job_id)
+        if run is None:
+            return {"error": "access_denied"}
+        if run.source_key is None or run.document_sha256 != raw_grant["documentSha256"]:
+            return {"error": "access_denied"}
+        from .documents import Boto3DynamoDocumentMetadataRepository
+        metadata_repository = Boto3DynamoDocumentMetadataRepository(table_name)
+        metadata = metadata_repository.get_for_scope(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id)
+        if metadata is None or metadata.s3_key != run.source_key:
+            return {"error": "access_denied"}
+        # Verify the current canonical bytes, not optional user-controlled S3
+        # metadata.  The reader bounds the object before hashing and binds the
+        # result to the immutable job SHA.
+        from .idp.runtime import Boto3IDPDocumentReader
+        from .idp.models import DocumentForIDP
+        import boto3
+        metadata_document = getattr(metadata, "document", metadata)
+        source_document = DocumentForIDP(
+            tenant_id=getattr(metadata_document, "tenant_id", job.tenant_id), matter_id=getattr(metadata_document, "matter_id", job.matter_id),
+            document_id=getattr(metadata_document, "document_id", job.document_id), media_type=getattr(metadata_document, "media_type", "application/pdf"),
+            file_size_bytes=getattr(metadata_document, "file_size_bytes", 0), malware_scan_clean=True,
+            source_key=metadata.s3_key,
+        )
+        try:
+            Boto3IDPDocumentReader(
+                metadata_repository, boto3.client("s3"),
+                bucket_name=os.environ.get("LEGALDESK_SOURCE_BUCKET") or "__configured_source_bucket__",
+                max_bytes=20 * 1024 * 1024,
+            ).read(job=job, document=source_document)
+        except Exception:
+            return {"error": "access_denied"}
+        invocation = IDPReviewInvocation(tenant_id=run.tenant_id, matter_id=run.matter_id, document_id=run.document_id, run_id=run.run_id, document_sha256=str(raw_grant["documentSha256"]), correlation_id=str(raw_grant["correlationId"]), machine_client_id=machine_client, field_names=tuple(fields))
+        return dict(create_machine_review_task(invocation=invocation, run=run, review_repository=review_repository, service_actor="service:idp-review"))
+    except Exception:
+        return {"error": "service_unavailable"}
+
+
 class Boto3DynamoReviewTaskRepository:
     """DynamoDB adapter using the existing Phase 02 metadata table keys."""
 
@@ -1176,7 +1270,9 @@ class Boto3DynamoReviewTaskRepository:
             item["resolutionNote"] = task.resolution_note
         if task.archived_at is not None:
             item["archivedAt"] = task.archived_at.isoformat()
-        return item
+        if task.source is not None:
+            item.update({"source": task.source, "idpRunId": task.idp_run_id, "idpDocumentId": task.idp_document_id, "idpDocumentSha256": task.idp_document_sha256, "idpFieldNames": list(task.idp_field_names)})
+        return {key: value for key, value in item.items() if value is not None}
 
     @staticmethod
     def _task_from_item(*, item: Mapping[str, object], context: RequestContext, review_task_id: str) -> ReviewTask:
@@ -1221,6 +1317,13 @@ class Boto3DynamoReviewTaskRepository:
             raise ReviewTaskPersistenceError("review task store unavailable")
         if archived_at is not None and archived_at.tzinfo is None:
             raise ReviewTaskPersistenceError("review task store unavailable")
+        source = item.get("source")
+        idp_run_id = item.get("idpRunId")
+        idp_document_id = item.get("idpDocumentId")
+        idp_document_sha256 = item.get("idpDocumentSha256")
+        idp_field_names = item.get("idpFieldNames", ())
+        if source is not None and (source != "IDP" or not all(isinstance(value, str) and value.strip() for value in (idp_run_id, idp_document_id, idp_document_sha256)) or not isinstance(idp_field_names, list) or any(not isinstance(value, str) for value in idp_field_names)):
+            raise ReviewTaskPersistenceError("review task store unavailable")
         return ReviewTask(
             review_task_id=item["reviewTaskId"],
             matter_id=item["matterId"],
@@ -1237,6 +1340,11 @@ class Boto3DynamoReviewTaskRepository:
             closed_at=closed_at,
             resolution_note=resolution_note,
             archived_at=archived_at,
+            source=source,
+            idp_run_id=idp_run_id,
+            idp_document_id=idp_document_id,
+            idp_document_sha256=idp_document_sha256,
+            idp_field_names=tuple(idp_field_names),
         )
 
     def get(self, *, context: RequestContext, review_task_id: str) -> ReviewTask | None:
@@ -1269,13 +1377,29 @@ class Boto3DynamoReviewTaskRepository:
         except Exception as exc:
             raise ReviewTaskPersistenceError("review task store unavailable") from exc
 
+    def save_machine_task(self, task: ReviewTask) -> None:
+        """Idempotent machine path using the same scoped item primitive.
+
+        The caller has already traversed the Gateway's dedicated machine
+        grant; this method does not construct a human ``RequestContext``.
+        """
+        item = self._item(task)
+        key = {"pk": item["pk"], "sk": item["sk"]}
+        try:
+            self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)")
+        except Exception:
+            response = self.table.get_item(Key=key, ConsistentRead=True)
+            existing = response.get("Item") if isinstance(response, Mapping) else None
+            if existing != item:
+                raise ReviewTaskPersistenceError("machine review task idempotency conflict") from None
+
     def list(self, *, context: RequestContext, limit: int = MAX_REVIEW_TASKS) -> tuple[ReviewTask, ...]:
         context = require_authorized_context(context)
         if not isinstance(limit, int) or not 1 <= limit <= MAX_REVIEW_TASKS:
             raise ReviewTaskValidationError("limit is invalid")
         try:
             from boto3.dynamodb.conditions import Key
-            projection = "#pk,#sk,#entityType,#tenantId,#matterId,#reviewTaskId,#createdByUserId,#reason,#status,#correlationId,#createdAt,#updatedAt,#note,#dueAt,#closedAt,#resolutionNote,#archivedAt"
+            projection = "#pk,#sk,#entityType,#tenantId,#matterId,#reviewTaskId,#createdByUserId,#reason,#status,#correlationId,#createdAt,#updatedAt,#note,#dueAt,#closedAt,#resolutionNote,#archivedAt,#source,#idpRunId,#idpDocumentId,#idpDocumentSha256,#idpFieldNames"
             response = self.table.query(
                 KeyConditionExpression=Key("pk").eq(review_task_partition_key(context.tenant_id, context.matter_id)) & Key("sk").begins_with("REVIEW#"),
                 Limit=limit,
@@ -1285,7 +1409,7 @@ class Boto3DynamoReviewTaskRepository:
                     "#pk": "pk", "#sk": "sk", "#entityType": "entityType", "#tenantId": "tenantId", "#matterId": "matterId",
                     "#reviewTaskId": "reviewTaskId", "#createdByUserId": "createdByUserId", "#reason": "reason", "#status": "status",
                     "#correlationId": "correlationId", "#createdAt": "createdAt", "#updatedAt": "updatedAt", "#note": "note", "#archivedAt": "archivedAt",
-                    "#dueAt": "dueAt", "#closedAt": "closedAt", "#resolutionNote": "resolutionNote",
+                    "#dueAt": "dueAt", "#closedAt": "closedAt", "#resolutionNote": "resolutionNote", "#source": "source", "#idpRunId": "idpRunId", "#idpDocumentId": "idpDocumentId", "#idpDocumentSha256": "idpDocumentSha256", "#idpFieldNames": "idpFieldNames",
                 },
             )
             records: list[ReviewTask] = []

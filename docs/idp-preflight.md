@@ -170,11 +170,31 @@ tests, and the broader `test_phase14_idp*.py` discovery (99 tests) passed locall
 These counts overlap and must not be added together. Coverage includes changed
 or deleted source content after extraction, corrupt PDFs, duplicate review-required
 jobs, prompt drift, crash-after-save recovery and cross-method generation fences.
+Both classifier and extractor Converse requests also passed botocore input-shape
+validation offline using their default repository prompt discovery. This checks
+SDK request structure, not model availability or service acceptance of a schema.
 
 This remains offline evidence. Timeout/lease coordination and the approved M2M
 Gateway integration are under review; human correction, structured query/UI,
 real model evaluation and deployed AWS E2E are not yet accepted. No IDP deployment
 or paid inference/OCR has occurred at this checkpoint.
+
+## Disabled implementation checkpoint — 2026-10-09
+
+Supervisor full offline discovery passed: **734 tests, one platform-specific
+skip**. The machine contract suite includes actual interceptor/Review target and
+scheduled reconciler composition, canonical bytes with empty S3 metadata,
+cross-tenant/matter denial, strict machine/human separation, duplicate creation,
+ambiguous dispatch recovery and no resend after `SENT`. Repository-name-based
+authorization exceptions are prohibited; missing deployment scope fails closed.
+
+The M2M route uses the existing `create_review_task` tool with additive opaque
+invocation references and separate short-lived machine grants. Infrastructure
+gates remain disabled by default. Existing human review behavior is preserved.
+Human field-decision/query helpers are still contracts, not connected UI/API
+functionality. Chronological history/effective-run resolution, including recovery
+across more than two reruns of one document, needs the next integration review.
+This checkpoint does not satisfy real model quality or deployed E2E acceptance.
 
 ## Primary references checked
 

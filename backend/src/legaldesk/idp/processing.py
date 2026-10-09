@@ -32,6 +32,7 @@ from .registry import IDPSchema
 MAX_MODEL_OUTPUT_BYTES = 400_000
 MAX_EVIDENCE_ANCHORS = 8
 MAX_EVIDENCE_QUOTE_CHARS = 4_000
+MAX_FIELD_REASON_CHARS = 1_000
 MAX_STAGE_KEY_CHARS = 128
 
 
@@ -153,6 +154,7 @@ class ClassificationResult:
     prompt_version: str
     model_id: str
     acceptance: FieldAcceptance
+    metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 def parse_classifier_output(
@@ -162,6 +164,7 @@ def parse_classifier_output(
     content_sha256: str,
     prompt_version: str,
     model_id: str,
+    provider_metadata: Mapping[str, object] | None = None,
 ) -> ClassificationResult:
     value = _object(parse_strict_json(raw), "classifier output")
     _only_keys(value, {"document_type", "subtype", "evidence"}, "classifier output")
@@ -177,7 +180,7 @@ def parse_classifier_output(
     evidence = _evidence(value.get("evidence", []), page_text=page_text, content_sha256=content_sha256, required=False)
     # Classification acceptance is server policy; model output cannot mark it human-confirmed.
     acceptance = FieldAcceptance.AUTO_ACCEPTED if evidence else FieldAcceptance.PROVISIONAL
-    return ClassificationResult(document_type, subtype, evidence, prompt_version, model_id, acceptance)
+    return ClassificationResult(document_type, subtype, evidence, prompt_version, model_id, acceptance, dict(provider_metadata or {}))
 
 
 class DocumentClassifier(Protocol):
@@ -189,6 +192,7 @@ class ExtractionResult:
     document_type: DocumentType
     schema_version: str
     fields: Mapping[str, IDPFieldResult]
+    metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 def _validate_value(value: Any, value_type: str) -> bool:
@@ -266,7 +270,7 @@ def _numeric_tokens(text: str) -> tuple[Decimal, ...]:
     return tuple(values)
 
 
-def _lexical_support(value: Any, value_type: str, field_name: str, anchors: tuple[EvidenceAnchor, ...], page_text: Mapping[int, str]) -> bool:
+def _lexical_support(value: Any, value_type: str, lexical_kind: str, anchors: tuple[EvidenceAnchor, ...]) -> bool:
     """Return true only when the quote lexically supports a literal value."""
 
     if not anchors:
@@ -278,14 +282,20 @@ def _lexical_support(value: Any, value_type: str, field_name: str, anchors: tupl
             return False
         date_tokens = re.findall(r"\d{4}-\d{2}-\d{2}|\d{1,2}\s+(?:de\s+)?[A-Za-záéíóúñ]+\s+(?:de\s+)?\d{4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4}", quoted)
         return normalized in (date_value for date_value in (_normalized_date(token) for token in date_tokens) if date_value)
-    if value_type == "number" and field_name in {"amount", "claimed_amount", "initial_duration_value", "renewal_period_value", "termination_notice_value"}:
+    if lexical_kind in {"amount", "duration"} and value_type == "number":
         try:
             expected = Decimal(str(value))
         except (InvalidOperation, ValueError):
             return False
         return any(candidate == expected for candidate in _numeric_tokens(quoted))
     if value_type == "number":
-        return True
+        return False
+    if lexical_kind == "boolean":
+        normalized = normalize_page_text(quoted).casefold()
+        return (value is True and bool(re.search(r"\b(true|yes|sí|si|automatic|auto(?:maticamente|mático))\b", normalized))) or (value is False and bool(re.search(r"\b(false|no|not|sin|never|nunca)\b", normalized)))
+    if lexical_kind == "currency":
+        code = normalize_page_text(str(value)).casefold()
+        return code in normalize_page_text(quoted).casefold() or (code == "eur" and "€" in quoted) or (code == "usd" and "$" in quoted)
     if value_type == "string":
         return normalize_page_text(str(value)).casefold() in normalize_page_text(quoted).casefold()
     if value_type == "array[string]":
@@ -293,8 +303,8 @@ def _lexical_support(value: Any, value_type: str, field_name: str, anchors: tupl
     return False
 
 
-def _unavailable_field(name: str, schema_version: str, reason: str) -> IDPFieldResult:
-    return IDPFieldResult(name, presence=FieldPresence.UNKNOWN, acceptance=FieldAcceptance.UNAVAILABLE, schema_version=schema_version, reason=reason)
+def _unavailable_field(name: str, schema_version: str, reason: str, *, schema_valid: bool = False) -> IDPFieldResult:
+    return IDPFieldResult(name, presence=FieldPresence.UNKNOWN, acceptance=FieldAcceptance.UNAVAILABLE, schema_version=schema_version, validation={"schema_valid": schema_valid, "anchor_found": False, "lexical_support": False}, reason=reason)
 
 
 def parse_extractor_output(
@@ -314,7 +324,7 @@ def parse_extractor_output(
     for name, spec in schema.fields.items():
         item = raw_fields.get(name)
         if item is None:
-            result[name] = _unavailable_field(name, schema.version, "field not provided; no review required")
+            result[name] = _unavailable_field(name, schema.version, "field not provided; no review required", schema_valid=True)
             continue
         if not isinstance(item, dict):
             result[name] = _unavailable_field(name, schema.version, "field record is malformed")
@@ -329,18 +339,27 @@ def parse_extractor_output(
                 if not _validate_value(field_value, spec.value_type):
                     raise IDPOutputError("value does not match the registry type or an unambiguous format")
                 anchors = _evidence(item.get("evidence", []), page_text=page_text, content_sha256=content_sha256, required=spec.evidence_required)
-                lexically_supported = _lexical_support(field_value, spec.value_type, name, anchors, page_text)
-                # Review-sensitive values and values whose quote cannot prove
-                # the literal token remain provisional, never auto-accepted.
-                acceptance = FieldAcceptance.AUTO_ACCEPTED if spec.review_sensitive is False and lexically_supported else FieldAcceptance.PROVISIONAL
-                origin = FieldOrigin.LITERAL if lexically_supported and not spec.review_sensitive else FieldOrigin.INTERPRETIVE
+                lexically_supported = _lexical_support(field_value, spec.value_type, spec.lexical_kind, anchors)
+                reason = item.get("reason")
+                if reason is not None and (not isinstance(reason, str) or len(reason) > MAX_FIELD_REASON_CHARS):
+                    raise IDPOutputError("field reason is invalid or exceeds the bound")
+                # Origin describes whether the quoted text supports the
+                # literal value; review sensitivity is an acceptance policy,
+                # not a reason to relabel a literal quote as interpretive.
+                acceptance = FieldAcceptance.REVIEW_REQUIRED if spec.review_sensitive else FieldAcceptance.AUTO_ACCEPTED if lexically_supported else FieldAcceptance.PROVISIONAL
+                origin = FieldOrigin.LITERAL if lexically_supported else FieldOrigin.INTERPRETIVE
+                validation = {"schema_valid": True, "anchor_found": bool(anchors), "lexical_support": lexically_supported}
             else:
                 if field_value is not None:
                     raise IDPOutputError("non-present fields cannot contain a value")
                 anchors = _evidence(item.get("evidence", []), page_text=page_text, content_sha256=content_sha256, required=False)
                 acceptance = FieldAcceptance.PROVISIONAL if presence is FieldPresence.AMBIGUOUS else FieldAcceptance.UNAVAILABLE
                 origin = FieldOrigin.INTERPRETIVE if presence is FieldPresence.AMBIGUOUS else FieldOrigin.LITERAL
-            result[name] = IDPFieldResult(name, field_value, presence, origin, acceptance, anchors, reason=item.get("reason"))
+                reason = item.get("reason")
+                if reason is not None and (not isinstance(reason, str) or len(reason) > MAX_FIELD_REASON_CHARS):
+                    raise IDPOutputError("field reason is invalid or exceeds the bound")
+                validation = {"schema_valid": True, "anchor_found": bool(anchors), "lexical_support": False}
+            result[name] = IDPFieldResult(name, field_value, presence, origin, acceptance, anchors, validation=validation, reason=reason)
         except EvidenceValidationError:
             result[name] = _unavailable_field(name, schema.version, "evidence validation failed")
         except IDPOutputError:
@@ -429,6 +448,10 @@ class StageCallLedger:
     def get(self, *, run_id: str, stage: PaidStage) -> PaidStageRecord | None:
         with self._lock:
             return self._records.get((run_id, stage))
+
+    def count(self, *, run_id: str) -> int:
+        with self._lock:
+            return sum(1 for (record_run, _stage) in self._records if record_run == run_id)
 
 
 __all__ = [

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import math
 from time import time
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from .documents import DocumentMetadataRepository, ObjectStorage
 from .domain.models import DocumentStatus
@@ -124,6 +124,7 @@ class ReconciliationService:
         state_store: EphemeralStateStore,
         ingestion_service: AsyncKnowledgeBaseIngestionService | None = None,
         gateway_repository: GatewayGrantRepository | None = None,
+        idp_recovery: Callable[..., Sequence[object]] | None = None,
         clock: Callable[[], float] = time,
         max_batch: int = MAX_RECONCILIATION_BATCH,
     ) -> None:
@@ -134,8 +135,43 @@ class ReconciliationService:
         self.state_store = state_store
         self.ingestion_service = ingestion_service
         self.gateway_repository = gateway_repository
+        self.idp_recovery = idp_recovery
         self.clock = clock
         self.max_batch = max_batch
+
+    def reconcile_idp_scopes(
+        self,
+        *,
+        scopes: Sequence[ReconciliationScope],
+        limit_per_scope: int | None = None,
+    ) -> ReconciliationReport:
+        """Recover IDP clean-document intents and bounded delivery gaps.
+
+        The callback is composed only by the scheduled Lambda with the
+        server-owned metadata/object-store scope.  This service never accepts
+        queue tenant selectors and never performs discovery outside these
+        explicit matter partitions.
+        """
+
+        if self.idp_recovery is None:
+            return ReconciliationReport()
+        if not scopes:
+            return ReconciliationReport()
+        scopes = self._bounded(scopes, "IDP scopes")
+        limit = self._limit(limit_per_scope or self.max_batch)
+        report = ReconciliationReport()
+        for scope in scopes:
+            identifier = f"{scope.tenant_id}/{scope.matter_id}"
+            try:
+                recovered = tuple(self.idp_recovery(tenant_id=scope.tenant_id, matter_id=scope.matter_id, limit=limit))
+            except Exception:
+                report.failed += 1
+                report.record(identifier, "idp_recovery_failed")
+                continue
+            report.examined += min(limit, len(recovered))
+            report.changed += min(limit, len(recovered))
+            report.record(identifier, "idp_recovered" if recovered else "idp_no_candidates")
+        return report
 
     def reconcile_pending_uploads(
         self,

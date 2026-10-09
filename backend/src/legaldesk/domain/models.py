@@ -133,6 +133,13 @@ class ReviewTask:
     # Operator retention may strip workflow/user text while retaining a
     # bounded metadata record for auditability.
     archived_at: datetime | None = None
+    # Optional additive source reference for IDP-created review tasks.  Human
+    # chat tasks leave these unset and retain their existing contract.
+    source: str | None = None
+    idp_run_id: str | None = None
+    idp_document_id: str | None = None
+    idp_document_sha256: str | None = None
+    idp_field_names: tuple[str, ...] = ()
 
     @property
     def reason_code(self) -> str:

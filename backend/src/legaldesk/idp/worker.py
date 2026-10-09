@@ -36,6 +36,10 @@ class IDPDocumentLookup(Protocol):
     def __call__(self, *, tenant_id: str, matter_id: str, document_id: str) -> DocumentForIDP | None: ...
 
 
+class IDPProcessor(Protocol):
+    def process(self, *, job: IDPJob, document: DocumentForIDP, claim: IDPClaim) -> IDPJob: ...
+
+
 class IDPWorkerError(RuntimeError):
     pass
 
@@ -62,14 +66,23 @@ def create_verified_clean_job(*, repository: IDPRepository, document: DocumentFo
 
     if not document.malware_scan_clean:
         raise IDPContractError("IDP job requires a verified clean document")
-    job = IDPJob(
+    job = build_verified_clean_job(document=document, schema_version=schema_version, model_id=model_id, prompt_version=prompt_version, generation=generation, max_attempts=max_attempts)
+    record_intent = getattr(repository, "record_clean_intent", None)
+    if callable(record_intent):
+        record_intent(job=job)
+    return repository.create_job(job)
+
+
+def build_verified_clean_job(*, document: DocumentForIDP, schema_version: str = IDP_SCHEMA_VERSION, model_id: str = "", prompt_version: str = "", generation: str = "initial", max_attempts: int = 3) -> IDPJob:
+    if not document.malware_scan_clean:
+        raise IDPContractError("IDP job requires a verified clean document")
+    return IDPJob(
         job_id=new_id(), tenant_id=document.tenant_id, matter_id=document.matter_id,
         document_id=document.document_id, document_sha256=document.content_sha256 or "",
         idempotency_key=idempotency_key(document=document, schema_version=schema_version, model_id=model_id, prompt_version=prompt_version, generation=generation),
         schema_version=schema_version, model_id=model_id, prompt_version=prompt_version,
         max_attempts=max_attempts,
     )
-    return repository.create_job(job)
 
 
 def _publish_and_finalize(*, repository: IDPRepository, queue: IDPQueue, current: IDPJob) -> IDPJob:
@@ -104,8 +117,10 @@ def redeliver_ambiguous_job(*, repository: IDPRepository, queue: IDPQueue, job_i
     """Explicit bounded reconciliation action; never an automatic retry loop."""
 
     current = repository.get_job(job_id)
-    if current is None or current.status not in (IDPJobStatus.DELIVERY_AMBIGUOUS, IDPJobStatus.DELIVERY_IN_FLIGHT):
+    if current is None or current.status not in (IDPJobStatus.ENQUEUE_PENDING, IDPJobStatus.DELIVERY_AMBIGUOUS, IDPJobStatus.DELIVERY_IN_FLIGHT):
         raise IDPContractError("IDP delivery is not eligible for reconciliation")
+    if current.status is IDPJobStatus.ENQUEUE_PENDING:
+        return enqueue_verified_clean_job(repository=repository, queue=queue, job=current)
     return _publish_and_finalize(repository=repository, queue=queue, current=current)
 
 
@@ -147,7 +162,7 @@ class IDPPaidCallGate:
 
 
 class IDPWorker:
-    def __init__(self, *, repository: IDPRepository, document_lookup: IDPDocumentLookup, config: IDPConfig, expected_source_arn: str, worker_id: str) -> None:
+    def __init__(self, *, repository: IDPRepository, document_lookup: IDPDocumentLookup, config: IDPConfig, expected_source_arn: str, worker_id: str, processor: IDPProcessor | None = None) -> None:
         if not expected_source_arn.strip() or not worker_id.strip():
             raise IDPContractError("worker configuration is invalid")
         self.repository = repository
@@ -155,6 +170,7 @@ class IDPWorker:
         self.config = config
         self.expected_source_arn = expected_source_arn
         self.worker_id = worker_id
+        self.processor = processor
 
     def handle_sqs_event(self, event: Mapping[str, object]) -> dict[str, list[dict[str, str]]]:
         records = event.get("Records") if isinstance(event, Mapping) else None
@@ -185,14 +201,28 @@ class IDPWorker:
         job, document = self.locator.locate(payload)
         # At-least-once delivery is expected.  Terminal jobs are acknowledged
         # without touching the document or issuing another paid call.
-        if job.status in (IDPJobStatus.SKIPPED, IDPJobStatus.COMPLETED, IDPJobStatus.FAILED, IDPJobStatus.DELIVERY_AMBIGUOUS):
+        if job.status in (IDPJobStatus.SKIPPED, IDPJobStatus.REVIEW_REQUIRED, IDPJobStatus.COMPLETED, IDPJobStatus.FAILED, IDPJobStatus.DELIVERY_AMBIGUOUS):
             return job
+        if job.attempt >= job.max_attempts:
+            exhaust = getattr(self.repository, "fail_exhausted", None)
+            if callable(exhaust):
+                failed = exhaust(job_id=job.job_id)
+                project = getattr(self.repository, "project_document_job_status", None)
+                if callable(project):
+                    project(job=failed, source_key=getattr(document, "source_key", None))
+                return failed
         claim = self.repository.claim_job(job_id=job.job_id, worker_id=self.worker_id, lease_seconds=self.config.visibility_timeout_seconds)
         reason = preflight_document(document=document, config=self.config)
         if reason is not None:
-            return self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.VALIDATED, status=IDPJobStatus.SKIPPED, skip_reason=reason)
-        # No paid provider call occurs in foundation 14.1.  Leave a durable
-        # checkpoint for the next block rather than pretending processing ran.
+            skipped = self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.VALIDATED, status=IDPJobStatus.SKIPPED, skip_reason=reason)
+            project = getattr(self.repository, "project_document_job_status", None)
+            if callable(project):
+                project(job=skipped, source_key=getattr(document, "source_key", None))
+            return skipped
+        if self.processor is not None:
+            validated = self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.VALIDATED, status=IDPJobStatus.PROCESSING)
+            return self.processor.process(job=validated, document=document, claim=claim)
+        # Injectable foundation mode intentionally stops before paid work.
         return self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.PAID_CALL_READY, status=IDPJobStatus.PROCESSING)
 
 

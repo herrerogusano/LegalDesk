@@ -840,6 +840,15 @@ class InMemoryDocumentMetadataRepository:
         )
         return documents if limit is None else documents[:limit]
 
+    def list_for_scope_page(
+        self, *, tenant_id: str, matter_id: str, limit: int, cursor: str | None = None
+    ) -> tuple[tuple[Document, ...], str | None]:
+        values = sorted(self.list_for_scope(tenant_id=tenant_id, matter_id=matter_id), key=lambda item: item.document_id)
+        if cursor is not None:
+            values = [item for item in values if item.document_id > cursor]
+        page = tuple(values[:limit])
+        return page, (page[-1].document_id if page and len(values) > len(page) else None)
+
     def delete_for_scope(
         self, *, tenant_id: str, matter_id: str, document_id: str
     ) -> None:
@@ -1165,6 +1174,24 @@ class Boto3DynamoDocumentMetadataRepository:
                 break
             query_kwargs["ExclusiveStartKey"] = last_key
         return tuple(documents)
+
+    def list_for_scope_page(
+        self, *, tenant_id: str, matter_id: str, limit: int, cursor: str | None = None
+    ) -> tuple[tuple[Document, ...], str | None]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("document query limit must be positive")
+        from boto3.dynamodb.conditions import Key
+        key_condition: Any = Key("pk").eq(document_partition_key(tenant_id, matter_id)) & Key("sk").begins_with("DOCUMENT#")
+        kwargs: dict[str, Any] = {"KeyConditionExpression": key_condition, "ConsistentRead": True, "Limit": limit}
+        if cursor:
+            kwargs["ExclusiveStartKey"] = {"pk": document_partition_key(tenant_id, matter_id), "sk": document_sort_key(cursor)}
+        response = self.table.query(**kwargs)
+        documents = tuple(_document_from_item(item) for item in response.get("Items", ()))
+        last = response.get("LastEvaluatedKey")
+        next_cursor = None
+        if isinstance(last, Mapping) and isinstance(last.get("sk"), str) and last["sk"].startswith("DOCUMENT#"):
+            next_cursor = last["sk"][len("DOCUMENT#"):]
+        return documents, next_cursor
 
     def delete_for_scope(
         self, *, tenant_id: str, matter_id: str, document_id: str
