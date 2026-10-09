@@ -528,7 +528,21 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
     def safe_error_type(exc: BaseException) -> str:
         return type(exc).__name__ if type(exc).__name__ in {"Error", "TimeoutError", "TypeError", "ReferenceError", "RangeError", "AssertionError", "SmokeFailure"} else "UnknownError"
 
-    def parse_child(stdout: object) -> dict[str, object]:
+    def safe_child_stderr_class(stderr: object) -> str:
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        if not isinstance(stderr, str) or not stderr.strip():
+            return "empty"
+        lowered = stderr.lower()
+        if "unhandled" in lowered and "rejection" in lowered:
+            return "unhandled_rejection"
+        if "timeout" in lowered:
+            return "timeout"
+        if "permission" in lowered:
+            return "permission"
+        return "nonempty"
+
+    def parse_child(stdout: object, *, returncode: object = None, stderr: object = None) -> dict[str, object]:
         if isinstance(stdout, bytes):
             stdout = stdout.decode("utf-8", errors="replace")
         if not isinstance(stdout, str):
@@ -540,7 +554,10 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
                 continue
             if isinstance(value, Mapping) and value.get("smoke") == "phase14-idp-browser" and value.get("result") in {"PASS", "NOT_EXECUTED", "FAIL"}:
                 return dict(value)
-        return {"result": "FAIL", "category": "browser_report_invalid", "errorType": "InvalidReport"}
+        diagnostic: dict[str, object] = {"stderrClass": safe_child_stderr_class(stderr)}
+        if isinstance(returncode, int) and not isinstance(returncode, bool):
+            diagnostic["childReturnCode"] = returncode
+        return {"result": "FAIL", "category": "browser_report_invalid", "errorType": "InvalidReport", "diagnostics": diagnostic}
 
     try:
         raw_matter = budget.call("dynamodb", table.get_item, Key={"pk": f"AUTH#MATTER#{config.matter_id}", "sk": "PROFILE"}, ConsistentRead=True).get("Item")
@@ -574,7 +591,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
         child_env.update({"LEGALDESK_P14_BASE_URL": config.base_url.rstrip("/"), "LEGALDESK_P14_IDP_HOST": config.idp_host, "LEGALDESK_P14_USERNAME": username, "LEGALDESK_P14_PASSWORD": password, "LEGALDESK_P14_MATTER_ID": config.matter_id, "LEGALDESK_P14_CROSS_MATTER_ID": config.cross_matter_id, "LEGALDESK_IDP_FIXTURE_PATH": fixture["path"], "LEGALDESK_IDP_FIXTURE_ID": fixture["id"], "LEGALDESK_IDP_EXPECTED_SOURCE": expected_source, "LEGALDESK_IDP_FIELD_NAME": field_name, "LEGALDESK_IDP_REVIEW_FIELD": config.review_field_name, "LEGALDESK_IDP_QUESTION": question, "LEGALDESK_IDP_EXPECTED_STATUS": expected_status, "LEGALDESK_IDP_EXPECTED_SKIP_REASON": str(fixture.get("skip_reason") or ""), "LEGALDESK_IDP_EXPECTED_DOCUMENT_TYPE": str(fixture["expected_type"] or ""), "LEGALDESK_IDP_REVIEW_ACTION": config.review_action, "LEGALDESK_IDP_DEADLINE_EPOCH_MS": str(child_deadline_epoch_ms)})
         try:
             child = subprocess.run(["node", str(BROWSER_RUNNER)], cwd=ROOT, env=child_env, capture_output=True, text=True, timeout=child_timeout)
-            report = parse_child(child.stdout)
+            report = parse_child(child.stdout, returncode=child.returncode, stderr=child.stderr)
             progress = parse_safe_child_progress(child.stdout)
             if isinstance(progress.get("cleanup"), Mapping) and not isinstance(report.get("cleanup"), Mapping):
                 # A child can fail before returning its normal report. Preserve
@@ -583,7 +600,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
                 report["cleanup"] = progress["cleanup"]
             child_timed_out = False
         except subprocess.TimeoutExpired as exc:
-            report = {"result": "FAIL", "category": "browser_timeout", "errorType": "TimeoutError", **parse_safe_child_progress(exc.stdout)}
+            report = {"result": "FAIL", "category": "browser_timeout", "errorType": "TimeoutError", "diagnostics": {"stderrClass": safe_child_stderr_class(exc.stderr)}, **parse_safe_child_progress(exc.stdout)}
             child_timed_out = True
         if report.get("result") == "PASS":
             validate_browser_report(report)

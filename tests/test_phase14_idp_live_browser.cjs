@@ -9,6 +9,7 @@ const {
   selectBoundReviewTask,
   selectBoundReviewField,
   safeResponseWait,
+  responseJson,
 } = require("./phase14_idp_live_browser.cjs");
 
 assert.deepStrictEqual(
@@ -37,5 +38,14 @@ safeResponseWait({ waitForResponse: () => Promise.reject(new Error("secret URL/b
   process.stdout.write("phase14 idp browser helper contracts: ok\n");
 }).catch(error => {
   process.stderr.write(`${error.name}: browser helper contract failed\n`);
+  process.exitCode = 1;
+});
+
+const statusDiagnostics = {};
+responseJson({ ok: () => false, status: () => 403 }, "upload_authorization", statusDiagnostics).catch(error => {
+  assert.strictEqual(error.message, "upload_authorization");
+  assert.deepStrictEqual(statusDiagnostics, { httpStatus: 403, responseWait: "upload_authorization" });
+}).catch(error => {
+  process.stderr.write(`${error.name}: HTTP status contract failed\n`);
   process.exitCode = 1;
 });

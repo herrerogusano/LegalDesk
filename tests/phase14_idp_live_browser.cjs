@@ -137,9 +137,29 @@ async function preflight() {
   return { result: "PASS", smoke: "phase14-idp-browser", phase: "preflight", browserExecutable: true, fixtureSha256: fixtureDigest() };
 }
 
-async function responseJson(response, category) {
-  if (!response || !response.ok()) throw new SmokeFailure(response ? category : `${category}_missing`);
+async function responseJson(response, category, diagnostics = {}) {
+  if (!response) throw new SmokeFailure(`${category}_missing`);
+  let ok = false;
+  let status = null;
+  try { ok = response.ok(); status = response.status(); } catch (_error) { throw new SmokeFailure(category); }
+  if (!ok) {
+    if (Number.isInteger(status) && status >= 100 && status <= 599) diagnostics.httpStatus = status;
+    diagnostics.responseWait = category;
+    throw new SmokeFailure(category);
+  }
   try { return await response.json(); } catch (_error) { throw new SmokeFailure(category); }
+}
+
+function assertResponseOk(response, category, diagnostics = {}) {
+  if (!response) throw new SmokeFailure(`${category}_missing`);
+  let ok = false;
+  let status = null;
+  try { ok = response.ok(); status = response.status(); } catch (_error) { throw new SmokeFailure(category); }
+  if (!ok) {
+    if (Number.isInteger(status) && status >= 100 && status <= 599) diagnostics.httpStatus = status;
+    diagnostics.responseWait = category;
+    throw new SmokeFailure(category);
+  }
 }
 
 function safeResponseWait(page, predicate, label, diagnostics) {
@@ -270,11 +290,11 @@ async function run() {
     csrf = me.body.csrfToken;
     setPhase("matter_selection");
     await page.locator("#matter-select").waitFor({ state: "visible", timeout: 30_000 });
-    const conversationResponsePromise = safeResponseWait(page, response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, "conversation_create", diagnostics);
+    const conversationResponsePromise = safeResponseWait(page, response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST"; } catch (_error) { return false; } }, "conversation_create", diagnostics);
     await page.locator("#matter-select").selectOption(MATTER_ID);
     await page.waitForFunction(() => !document.querySelector("#document-file").disabled, null, { timeout: 30_000 });
     const conversationResponse = await conversationResponsePromise;
-    const conversation = await responseJson(conversationResponse, "conversation_create");
+    const conversation = await responseJson(conversationResponse, "conversation_create", diagnostics);
     conversationId = conversation && conversation.conversationId;
     sessionId = conversation && conversation.sessionId;
     correlationId = conversation && conversation.correlationId || "";
@@ -283,10 +303,10 @@ async function run() {
     emitCleanupProgress("conversation_ready", { conversationId, sessionId, scopes: cleanupScopes });
 
     setPhase("upload");
-    const uploadResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, "upload_authorization", diagnostics);
+    const uploadResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST"; } catch (_error) { return false; } }, "upload_authorization", diagnostics);
     await page.locator("#document-file").setInputFiles(FIXTURE_PATH);
     await page.locator("#upload-button").click();
-    const authorization = await responseJson(await uploadResponse, "upload_authorization");
+    const authorization = await responseJson(await uploadResponse, "upload_authorization", diagnostics);
     const documentId = authorization && authorization.document && authorization.document.documentId;
     if (!SAFE_ID.test(documentId || "")) throw new SmokeFailure("upload_metadata");
     emitCleanupProgress("document_uploaded", { conversationId, sessionId, documentId, scopes: cleanupScopes });
@@ -365,11 +385,11 @@ async function run() {
       setPhase("human_review");
       // Reuse the normal authenticated review list/detail UI. The machine
       // client creates the task; this browser session is the human actor.
-      const reloadConversationPromise = safeResponseWait(page, response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST" && response.ok(); } catch (_error) { return false; } }, "conversation_reload", diagnostics);
+      const reloadConversationPromise = safeResponseWait(page, response => { try { return new URL(response.url()).pathname === "/api/conversations" && response.request().method() === "POST"; } catch (_error) { return false; } }, "conversation_reload", diagnostics);
       await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
       await page.locator("#matter-select").waitFor({ state: "visible", timeout: 30_000 });
       await page.locator("#matter-select").selectOption(MATTER_ID);
-      const reloadConversation = await responseJson(await reloadConversationPromise, "conversation_reload");
+      const reloadConversation = await responseJson(await reloadConversationPromise, "conversation_reload", diagnostics);
       conversationId = reloadConversation && reloadConversation.conversationId;
       sessionId = reloadConversation && reloadConversation.sessionId;
       correlationId = reloadConversation && reloadConversation.correlationId || "";
@@ -402,7 +422,7 @@ async function run() {
       const decisionResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.includes("/reviews/") && response.request().method() === "PATCH"; } catch (_error) { return false; } }, "human_decision", diagnostics);
       await actionButton.click();
       const decision = await decisionResponse;
-      if (!decision.ok()) throw new SmokeFailure("human_decision_response");
+      assertResponseOk(decision, "human_decision_response", diagnostics);
       const decisionPayload = await decision.json();
       if (!decisionPayload || decisionPayload.reviewTaskId !== reviewTask.reviewTaskId) throw new SmokeFailure("human_decision_binding_mismatch");
       review = { status: "EXECUTED", action: REVIEW_ACTION, fieldName: reviewFieldName, taskId: reviewTask.reviewTaskId, documentId, runId: idp.runId };
@@ -447,5 +467,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, safeResponseWait };
+  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, safeResponseWait, responseJson, assertResponseOk };
 }
