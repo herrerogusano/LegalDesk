@@ -218,6 +218,19 @@ These are local validation results, not a CloudFormation change set or deployed
 authorization proof. No IDP AWS resources were deployed and no paid model/OCR
 calls were made. Human integration/history/query and real evaluation remain open.
 
+## Release dependency follow-up — 2026-10-09
+
+Review found that CD builds Lambda dependencies from an explicit wheel list,
+not the project's editable dependency tree. The PDF dependency is now also
+pinned as `pypdf==6.20.0` in that list, and the Linux/Python 3.12 CD dependency
+import/version check includes it. This fixes the release input; that target
+environment check has not been executed locally on Windows.
+
+Offline CI now runs the pinned CloudFormation linter on seven relevant
+templates. Supervisor additionally checked the document-security template
+without waivers and ran five release-packaging tests (one host symlink skip)
+plus the tooling-consistency test. This does not deploy or activate IDP.
+
 ## Primary references checked
 
 - [Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html)

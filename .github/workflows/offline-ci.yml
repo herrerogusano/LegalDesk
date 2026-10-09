@@ -29,6 +29,16 @@ jobs:
           node-version: "24.x"
       - name: Install local packages
         run: python -m pip install --disable-pip-version-check -e ".[aws,release-tools]" -e agent
+      - name: Strict-lint Phase 14 CloudFormation templates
+        run: >-
+          cfn-lint
+          infra/cloudformation/phase-14-idp.yaml
+          infra/cloudformation/phase-07-review-task.yaml
+          infra/cloudformation/phase-08-gateway-mcp.yaml
+          infra/cloudformation/phase-14-reconciliation.yaml
+          infra/cloudformation/phase-14-document-security.yaml
+          infra/cloudformation/phase-14-public-edge.yaml
+          infra/cloudformation/cd-iam.yaml
       - name: Run Python unit and integration tests
         run: python -B -m unittest discover -s tests -q
       - name: Check Node helper contracts

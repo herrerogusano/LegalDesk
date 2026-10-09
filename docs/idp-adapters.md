@@ -19,10 +19,18 @@ Required enabled-mode configuration:
 - `LEGALDESK_IDP_MODEL_ID`, `LEGALDESK_IDP_PROMPT_VERSION`
 - `LEGALDESK_IDP_OCR_SNS_TOPIC_ARN`, `LEGALDESK_IDP_OCR_ROLE_ARN`
 - `LEGALDESK_IDP_OCR_SQS_SOURCE_ARN`
-- review creation only: `LEGALDESK_IDP_M2M_CLIENT_ID` and
-  `LEGALDESK_IDP_REVIEW_SCOPE` (`legaldesk-idp/review-create`); these are
-  consumed by the existing Gateway/interceptor/Review target, not by the
-  upload or RAG path.
+- review creation only, separately enabled by
+  `LEGALDESK_IDP_REVIEW_ENABLED=true`: `LEGALDESK_IDP_GATEWAY_URL`,
+  `LEGALDESK_IDP_TOKEN_ENDPOINT`, `LEGALDESK_IDP_M2M_CLIENT_ID`,
+  `LEGALDESK_IDP_M2M_SECRET_PARAMETER_NAME` and
+  `LEGALDESK_IDP_REVIEW_SCOPE` (`legaldesk-idp/review-create`). Worker and
+  scheduled recovery use this fixed Gateway endpoint; no direct target call.
+- interceptor and Review target additionally require `IDP_TABLE_NAME`,
+  `LEGALDESK_SOURCE_BUCKET`, the matching dedicated client/scope,
+  `LEGALDESK_IDP_REVIEW_TENANT_ID` and
+  `LEGALDESK_IDP_REVIEW_MATTER_IDS` (one or two deployment-owned matter IDs).
+  Missing scope configuration denies machine access rather than using a
+  human identity or a test-only authorization exception.
 
 The server-controlled prompt artifacts are `prompts/idp-classifier.md` and
 `prompts/idp-extractor.md`; packaged Lambda code resolves them from the

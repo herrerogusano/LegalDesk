@@ -13,6 +13,13 @@ ROOT = Path(__file__).parents[1]
 
 
 class ReleasePackagingTests(unittest.TestCase):
+    def test_lambda_constraints_pin_runtime_pdf_dependency(self) -> None:
+        constraints = (ROOT / "packaging" / "constraints-python312-manylinux-x86_64.txt").read_text(encoding="utf-8")
+        self.assertIn("pypdf==6.20.0", constraints.splitlines())
+        self.assertIn('"pypdf>=6.20,<7"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        workflow = (ROOT / ".github" / "workflows" / "production-cd.yml").read_text(encoding="utf-8")
+        self.assertIn('"pypdf": "6.20.0"', workflow)
+
     def test_lambda_and_frontend_contents_are_bounded_and_manifested(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             dependency_root = Path(temp) / "deps"
