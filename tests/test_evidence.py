@@ -205,7 +205,7 @@ class EvidenceResolverContractTests(unittest.TestCase):
         self.assertIn("explicitly state which requested material detail", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("both the number", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("what is being counted", ANSWER_WRITER_SYSTEM_PROMPT)
-        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.5.0")
+        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.4.0")
         self.assertRegex(ANSWER_WRITER_PROMPT_SHA256, r"^[0-9a-f]{64}$")
         self.assertIn("every material conflicting value", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("Never swap the parties", ANSWER_WRITER_SYSTEM_PROMPT)
@@ -335,24 +335,6 @@ class EvidenceResolverContractTests(unittest.TestCase):
                 {"grounded": True, "score": 1.0, "matchedCitationIds": ["citation-1"]},
                 supporting_citation_ids=["citation-1", "citation-2"],
             )
-
-
-class AnswerWriterPromptContractTests(unittest.TestCase):
-    def test_prompt_requires_subject_restatement_and_hash_is_pinned(self) -> None:
-        import hashlib
-
-        prompt = " ".join(ANSWER_WRITER_SYSTEM_PROMPT.split())
-        self.assertIn("restates the subject of the question", prompt)
-        self.assertIn("add no new facts", prompt)
-        self.assertIn("Never put citation markers", prompt)
-        self.assertEqual(
-            ANSWER_WRITER_PROMPT_SHA256,
-            hashlib.sha256(ANSWER_WRITER_SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
-        )
-        self.assertEqual(
-            ANSWER_WRITER_PROMPT_SHA256,
-            "9b112af9f3bd876dc20dca5342245e2f60c270d68d3c632773eb64b9f2b3c726",
-        )
 
 
 if __name__ == "__main__":

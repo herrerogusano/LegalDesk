@@ -103,7 +103,7 @@ EVIDENCE_RESOLVER_PROMPT_SHA256 = hashlib.sha256(
     EVIDENCE_RESOLVER_SYSTEM_PROMPT.encode("utf-8")
 ).hexdigest()
 
-ANSWER_WRITER_PROMPT_VERSION = "1.5.0"
+ANSWER_WRITER_PROMPT_VERSION = "1.4.0"
 ANSWER_WRITER_SYSTEM_PROMPT = """You are the LegalDesk Answer Writer.
 
 Write one concise answer using only the selected authorized passages. The
@@ -147,12 +147,6 @@ change the answer or its fixed evidence status.
 Prefer neutral words already present in the question or selected evidence.
 Do not add background facts, implications, recommendations, or interpretations
 that the selected evidence does not state.
-
-Begin the answer with a clause that restates the subject of the question in your
-own words (for example "The termination notice is ..."), so the answer is
-self-contained and visibly responds to the question. Keep it faithful to the
-evidence: add no new facts and do not quote long passages verbatim. Never put
-citation markers, brackets, or other structural tokens before the prose.
 
 For insufficient_evidence, use this generic structure without copying its
 placeholders: "The evidence establishes [supported subject or relationship],

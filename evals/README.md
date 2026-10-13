@@ -114,7 +114,7 @@ The resolver schema is exposed locally as a Bedrock Converse
 remains mandatory. Native provider citations are not enabled because this
 design uses its own `supportingCitationIds` contract.
 
-The separated writer contract is version `1.5.0` (sha256 `9b112af9f3bd876dc20dca5342245e2f60c270d68d3c632773eb64b9f2b3c726`). Version 1.5.0 adds one instruction: the answer's first clause restates the question's subject in the writer's own words, with no new facts, no long verbatim quotes and no citation markers before the prose. Reason: the contextual-grounding guardrail blocked correct answers on RELEVANCE (0.03-0.31 vs 0.5) for short questions whose answer did not restate the subject; thresholds are unchanged. Previous version `1.4.0` (sha256 `04d46e6d...`) is the one pinned by the Phase 12 runners and the earlier holdout reports. It preserves the required
+The separated writer contract is version `1.4.0`. It preserves the required
 `answer` field and may additionally return a bounded `relationships` array of
 server-validated `{actor, action, recipient}` objects. The holdout's directed
 relationship check uses that structured projection for actor/recipient
