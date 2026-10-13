@@ -1,13 +1,14 @@
 # Phase 14 IDP acceptance
 
-**Acceptance: PENDING final AWS scenarios.**
+**Acceptance: ACCEPTED (bounded constrained-beta scope) — 2026-10-13**
 
-Draft of the final delivery required by `PHASE_14_IDP_PLAN.md` sections 14 and
-15. Region `eu-west-1`, account `344774635844`. No real legal data was used;
-every document is a synthetic fixture. Items marked PENDING depend on the
-live scenarios still running on 2026-10-13; their reports will be added under
-`evals/results/idp-live-*`. Local or mocked tests are never counted as AWS E2E
-(plan section 12).
+Final delivery required by `PHASE_14_IDP_PLAN.md` sections 14 and 15. Region
+`eu-west-1`, account `344774635844`. No real legal data was used; every document
+is a synthetic fixture. Live evidence is under `evals/results/idp-live-*`
+(run 2026-10-13); final AWS detail is in `docs/idp-deployment-evidence-2026-10-09.md`
+"Final AWS acceptance evidence (2026-10-13)". Local or mocked tests are never
+counted as AWS E2E (plan section 12). Scope: beta tenant, two matters,
+synthetic data; known limits are in section 10.
 
 ## 1. Change summary
 
@@ -26,14 +27,17 @@ Independent IDP pipeline added to the existing LegalDesk application
   JWT/matter-authorized.
 - IDP-first structured answers with RAG fallback; bounded operator tools
   (`scripts/reprocess_idp.py`, `scripts/verify_idp_duplicate.py`).
-- Commits `6b16c17..HEAD` (about 30) cover the above hardening and the live
-  smoke fixes listed in section 8.
+- Commits `6b16c17..HEAD` (39 before this record) cover the above hardening, the live
+  smoke fixes listed in section 8 and the rotation tooling.
 
 ## 2. Architecture (deployed components)
 
 Verified against `infra/cloudformation/phase-14-idp.yaml`,
 `phase-14-reconciliation.yaml`, `docs/idp-deployment-evidence-2026-10-09.md`
-and the smoke `h` report. Nodes marked `(unverified)` have no live evidence.
+and the live reports of 2026-10-13. All nodes shown have live evidence.
+Final releases: all 8 Lambdas on `30adeac`; Public Edge application on
+`89b84ca`. The reconciliation role additionally has read-only
+`bedrock:GetKnowledgeBaseDocuments`.
 
 ```mermaid
 flowchart LR
@@ -62,32 +66,39 @@ flowchart LR
 
 Not shown because not an IDP component: Cognito user pool (existing),
 SSM SecureString for the M2M secret (read by worker/reconciliation only when
-review dispatch is enabled). Unverified: OCR continuation in production is
-covered only by the scanned-demand scenario (PENDING); the Knowledge Base
-fallback node is pre-existing and its IDP-failed trigger is PENDING.
+review dispatch is enabled). Textract continuation was proven live (recovery
+report); the RAG fallback node is pre-existing and was exercised live.
 
 ## 3. Final acceptance checklist (plan section 14)
 
 | # | Item | Status | Evidence |
 |---|---|---|---|
-| 1 | Supported documents classify correctly; UNKNOWN not forced | EVIDENCED (real Bedrock, offline fixtures; not AWS E2E) | `docs/idp-evaluation.md` "Final real-model evaluation (2026-10-13)": 18/18 correct, 3/3 UNKNOWN; `idp-eval-20261013-c-summary.json` |
-| 2 | Fields/schema versions added without changing pipeline control flow | PARTIAL | `registry.py` (data-driven); `tests/test_phase14_idp_foundation.py::test_registry_is_versioned_...`; `test_phase14_idp_processing.py::test_subtype_vocabulary_is_registry_data_not_control_flow`. Local tests only |
-| 3 | Accepted important fields have valid traceable evidence; fabricated anchors rejected | PARTIAL | 139/139 anchors digest-exact against source, 0 auto-accepted not found (`-c-summary.json`); fabricated-anchor tests (`test_phase14_idp_adversarial.py`, `test_phase14_idp_evaluation.py`). Open: 2 `subtype` auto-accepted presence mismatches (section 6), fix `4144703` not yet live-confirmed |
-| 4 | Literal / derived / provisional distinct in persistence and responses | PARTIAL | Evaluation exports carry `origin` and `acceptance` per field (`idp-eval-20261013-c.json`); smoke `h` selected IDP answer. Full provenance exposure in the public projection is `INCOMPLETE_SERVER_PROJECTION` in `idp-live-digital-20261013-h.json` |
-| 5 | Deterministic date rules in backend with input provenance and tests; unclear applicability provisional | PARTIAL | `rules.py`, `estimated_anniversary_date` DERIVED/PROVISIONAL with inputs and `ADD_CALENDAR_MONTHS_V1` in the evaluation export and smoke `h`; month-end/leap tests in unit suite. Judgment provisional interpretive scenario PENDING (see live scenario reports, to be added) |
-| 6 | Human review safe, correction history preserved, reprocessing never silently overwrites human value | PARTIAL | Smoke `h`: human approve through Gateway, one decision, task `in_review`; `docs/idp-review-contract.md`; local tests (`test_phase14_idp_review.py`). Three-run history and reprocess-after-correction on AWS PENDING (see live scenario reports, to be added) |
-| 7 | Async SQS/Lambda, retries, idempotency, DLQ, Textract continuation | PARTIAL | Digital path run live (smoke `h`, runs `c`-`g` exposed and fixed defects). Textract continuation, duplicate replay, DLQ behavior live: PENDING (see live scenario reports, to be added) |
-| 8 | 20 MB / 100-page limits and skip without disabling RAG | PARTIAL | `models.py` `DEFAULT_MAX_PAGES=100`; `test_phase14_idp_foundation.py::test_size_and_type_skip_without_changing_rag_document`. Live skip-limit scenario PENDING (see live scenario reports, to be added) |
-| 9 | IDP first, RAG fallback, insufficient evidence; provisional not certified | PARTIAL | IDP-first answer evidenced in smoke `h` (`source: IDP`, 1 citation, `answerable`). RAG fallback after failed/missing IDP and insufficient-evidence: PENDING (see live scenario reports, to be added) |
-| 10 | Cross-tenant/matter denied on all new entrypoints; malicious documents cannot command or reach secrets | PARTIAL | Cross-matter 403 in smoke `h`; adversarial UNKNOWN fixture not followed (evaluation); `test_phase14_idp_adversarial.py`, `test_phase14_idp_machine_contract.py`. Not every new entrypoint exercised on AWS |
-| 11 | 15-document dataset, tests, AWS smoke evidence, real cost/usage documented | PARTIAL | 18 fixtures (`tests/fixtures/idp/manifest.json`), evaluation and cost in section 7. AWS smoke: digital contract only so far; scanned, judgment, UNKNOWN, failed-IDP, duplicate, history PENDING (see live scenario reports, to be added). Worker usage not exposed by the metadata projection (`workerBudget: NOT_EXECUTED` in smoke `h`) |
-| 12 | No unjustified always-on infra, no unapproved contract changes, no unresolved STOP gate | EVIDENCED | Section 7 (template review, change set `idp-disabled-c136024-20261009`: 17 additions, no table/bucket/KMS/alarm); STOP gate resolved in `docs/idp-preflight.md` "Approved gate resolution"; ADR-020 |
+| 1 | Supported documents classify correctly; UNKNOWN not forced | EVIDENCED | Real model: 18/18, 3/3 UNKNOWN (`idp-eval-20261013-c-summary.json`). Live: CONTRACT (`-digital-h`), JUDGMENT (`-judgment-provisional-a`), DEMAND scanned (`-scanned-demand-b`), UNKNOWN invoice (`-unknown-c`, `-insufficient-a`) |
+| 2 | Fields/schema versions added without changing control flow | EVIDENCED (local tests) | Registry is data-driven; `test_registry_is_versioned_...`, `test_subtype_vocabulary_is_registry_data_not_control_flow`. The subtype vocabulary change (`4144703`) needed no pipeline change |
+| 3 | Accepted fields have valid traceable evidence; fabricated anchors rejected | EVIDENCED | 139/139 anchors digest-exact, 0 auto-accepted not found (`-c-summary.json`); subtype finding closed with the real model: contracts 01/05 now `ABSENT`/`UNAVAILABLE`, NDA still `AUTO_ACCEPTED` (`idp-eval-20261013-d{,-report}.json`); fabricated-anchor tests |
+| 4 | Literal / derived / provisional distinct in persistence and responses | EVIDENCED | Per-field `origin`/`acceptance` in live reports (`-digital-h`: `estimated_anniversary_date` DERIVED/PROVISIONAL); live provisional judgment field (`-judgment-provisional-a`, provisional expectation met) |
+| 5 | Deterministic date rules with input provenance and tests | EVIDENCED | `rules.py` unit tests (month-end, leap); live derived provenance in smoke `h` (rule `ADD_CALENDAR_MONTHS_V1`, inputs recorded) |
+| 6 | Human review safe, history preserved, reprocess never overwrites human value | EVIDENCED | Human approve via Gateway (smoke `h`); human decision precedence over a newer machine run; 3-run same-document history live (`-history-b`, count 3, EXECUTED); `docs/idp-review-contract.md` |
+| 7 | Async SQS/Lambda, retries, idempotency, DLQ, Textract continuation | EVIDENCED | Duplicate replay PASS, zero paid calls (`-duplicate-b`); Textract continuation through SNS/SQS/Lambda, one DLQ message redriven, no repeated StartDocumentTextDetection (`-recovery-a`, `-scanned-demand-b`) |
+| 8 | 20 MB / 100-page limits and skip without disabling RAG | EVIDENCED | `IDP_SKIPPED` live (`-skip-g`, operator read `UNSUPPORTED_MEDIA_TYPE`); RAG independence: KB per-document fix `36713c9` stops one unparseable document blocking indexing (siblings INDEXED, `-recovery-a`). Answer-level limitation in section 10 |
+| 9 | IDP first, RAG fallback, insufficient evidence; provisional not certified | EVIDENCED | IDP-first (`source: IDP`, `-digital-h`); RAG fallback when the IDP field is missing (`source: RAG`, 1 citation, `-rag-fallback-a`); `insufficient_evidence`, source NONE (`-insufficient-a`) |
+| 10 | Cross-tenant/matter denied on all new entrypoints; malicious documents cannot command | EVIDENCED | Cross-matter 403 in digital, judgment, unknown, scanned, history and insufficient runs; adversarial UNKNOWN fixture not followed; contract/adversarial tests. Cross-tenant by local tests only |
+| 11 | 15-document dataset, tests, AWS smoke evidence, real cost/usage documented | EVIDENCED | 18 fixtures, final evaluation, live scenario families, cost in section 7 |
+| 12 | No unjustified always-on infra, no unapproved contract changes, no open STOP gate | EVIDENCED | Section 7 (17 additions, no table/bucket/KMS/alarm); `docs/idp-preflight.md` gate resolution; ADR-020; no always-on cost added |
 
-Plan section 14 scenario list (14.5) status: digital contract PASS (smoke `h`);
-scanned demand, judgment with provisional field, UNKNOWN, skip limit,
-deliberately failed IDP with working RAG, repeat-processing idempotency, RAG
-fallback: PENDING (see live scenario reports, to be added); authorized review
-and cross-matter denial: PASS in smoke `h`.
+Plan section 14 scenario list (14.5), live on `eu-west-1`:
+
+| Scenario | Result | Report |
+|---|---|---|
+| Digital contract | PASS | `idp-live-digital-20261013-h.json` |
+| Scanned demand (Textract continuation) | PASS | `-scanned-demand-b.json`, `-recovery-a.json` |
+| Judgment with provisional field | PASS | `-judgment-provisional-a.json` |
+| UNKNOWN | PASS | `-unknown-c.json` |
+| Skip limit | PASS for `IDP_SKIPPED` and KB independence; RAG answer limited (section 10) | `-skip-g.json`, `-skip-h.json` |
+| Deliberately failed IDP, RAG working | IDP fails closed (PASS); RAG routing proven, answer blocked by guardrail (section 10) | `-failed-idp-rag-d.json`, `-e.json` |
+| Repeat-processing idempotency | PASS | `-duplicate-b.json` |
+| RAG fallback / insufficient evidence | PASS | `-rag-fallback-a.json`, `-insufficient-a.json` |
+| Authorized review, history, cross-matter denial | PASS | `-digital-h`, `-history-b` |
 
 ## 4. Schema, rule and example output
 
@@ -134,8 +145,9 @@ Run status `REVIEW_REQUIRED`; 2 Bedrock calls, 2,525 input / 792 output tokens,
 
 - Cross-matter denial: smoke `h` (`idp-live-digital-20261013-h.json`) records
   `crossMatterStatus: 403` for a request against the other beta matter, with
-  clean ephemeral identity cleanup. Cross-tenant and other entrypoints are
-  covered by local tests only (`test_phase14_idp_human_query_contract.py`,
+  clean ephemeral identity cleanup; the same 403 recurs in the judgment,
+  UNKNOWN, scanned, history and insufficient runs. Cross-tenant and other
+  entrypoints are covered by local tests only (`test_phase14_idp_human_query_contract.py`,
   `test_phase14_idp_machine_contract.py`), not by AWS evidence.
 - Deterministic authorization precedes retrieval and tool access: Gateway JWT
   validation, interceptor and tool-level re-authorization; the metadata path
@@ -177,13 +189,14 @@ Errors, stated plainly: 35 expected-auto fields became `REVIEW_REQUIRED` and 7
 `INTERPRETIVE` observed. Earlier attempts `-a` (missing `botocore[crt]`) and
 `-b` (missing `pypdf`) made zero calls and are kept as failed attempts.
 
-**Subtype finding (open).** For `contract-01-en-digital-monthend` and
+**Subtype finding (closed).** For `contract-01-en-digital-monthend` and
 `contract-05-en-mixed-explicit-conflict`, `subtype` expected `ABSENT` was
 returned as a grounded document heading and `AUTO_ACCEPTED`. Fix `4144703`
-restricts `subtype` to a closed vocabulary (`NDA`, EN/ES aliases) in the
-registry, so out-of-vocabulary values become `ABSENT` and human corrections use
-the same vocabulary. Confirmed by unit tests only; live confirmation PENDING
-(re-run of the contract scenario on a release containing `4144703`).
+restricts `subtype` to a closed vocabulary (`NDA`, EN/ES aliases). Re-run with
+the real model (`a9fe4a7`, `idp-eval-20261013-d{,-report}.json`, 3 fixtures,
+6 Bedrock calls, about USD 0.07): contracts 01 and 05 report `ABSENT` /
+`UNAVAILABLE`, the NDA fixture still yields canonical `NDA` `AUTO_ACCEPTED`,
+classification unchanged. The sample table in section 4 is the pre-fix run.
 
 Earlier offline triage (`idp-offline-triage-20261013.json`): the three
 `AUTO_ACCEPTED` duration-unit digest mismatches were an uncanonicalized spelling
@@ -201,8 +214,12 @@ USD 0.0015/page):
 | Reused OCR pages (2026-10-09 collection) | 11 pages, 0 new | USD 0.0165 (evaluator total 0.3096) |
 | Digital corpus 2026-10-09 | 18 calls, 16,519 in / 4,817 out | not re-priced here |
 | Smoke `h` reprocess | 2 calls, 2,525 in / 792 out, 0 Textract | about USD 0.02 (estimate) |
-| Live scanned/other scenarios | PENDING (see live scenario reports, to be added) | PENDING |
+| Subtype confirmation (`-d`) | 6 calls, 7,720 in / 2,521 out, 0 new OCR | USD 0.0701 |
+| Live scenarios 2026-10-13 (estimate) | about 30 worker/chat Bedrock calls, 1-2 Textract pages | about USD 0.25-0.40 |
 
+Total measured and estimated for 2026-10-13 (final evaluation, subtype
+confirmation, live scenarios): well under USD 1. Per-run worker usage is not
+exposed, so the live figure is an estimate from call counts in the reports.
 Billing data is delayed (existing USD 25 monthly budget); no Cost Explorer call
 was made. Worker usage is not exposed in the authorized metadata projection;
 usage figures come from run exports and logs.
@@ -224,13 +241,19 @@ existing operational alarms (no new alarm).
 - `fd85b92` invalid `NOT IN` DynamoDB syntax in attempt exhaustion.
 - `303bdf7` stale clean-intent snapshot blocked reprocess reservation.
 - `8c4d98c` `Decimal` run numbers not JSON-serializable in metadata.
-- `8f4c454` (two commits, `9b4ca3c` and `8f4c454`) review dispatch ran before
-  the durable checkpoint; machine Gateway calls lacked `matterId` and stale
-  redispatch occurred.
+- `9b4ca3c`, `8f4c454` review dispatch ran before the durable checkpoint;
+  machine Gateway calls lacked `matterId` and stale redispatch occurred.
 - `a52508a` 15 s machine timeout shorter than the cold Gateway chain (about 16 s).
-- `8a62d4e` task-level `resolutionNote` sent on `in_review` decisions (fix
-  `0779407` plus record `8a62d4e`).
-- `4144703` `subtype` accepted document titles (evaluation finding).
+- `0779407`, `8a62d4e` task-level `resolutionNote` sent on `in_review` decisions.
+- `4144703` `subtype` accepted document titles (confirmed with the real model, `a9fe4a7`).
+- `36713c9` Knowledge Base ingestion status resolved per document, so one
+  unparseable document no longer blocks indexing of the others.
+- `30adeac` OCR continuation, delivery race, saved decisions and projection
+  defects that sent a Textract completion to the DLQ.
+- `89b84ca` unsupported optional writer relationships are dropped instead of
+  failing the whole RAG answer as `model_failed` (deterministic evaluations 24/24).
+- `c73ae82`, `73285e4` reviewed trusted-edge secret rotation tooling with a
+  temporary role (deleted afterward; Public Edge `RoleARN` restored).
 
 Earlier fixes that unblocked smoke `c`: `4556bb6` legacy null projection
 fields, `840b8c0` duration-unit canonicalization, `10f8c01` Gateway envelope.
@@ -258,28 +281,44 @@ Cited from `docs/idp-live-validation-plan.md` section 7 and
   is restricted to the beta tenant/matters and synthetic fixture hash, one
   generation per call) and `scripts/verify_idp_duplicate.py` (no-AWS default;
   `--execute` replays a clean event against one terminal job and checks that
-  no second run or paid call occurs). Duplicate verification result is
-  PENDING (see live scenario reports, to be added).
+  no second run or paid call occurs). Duplicate verification: PASS
+  (`idp-live-duplicate-20261013-b.json`).
 
 ## 10. Known limitations and approved deviations
 
 - CloudFront default certificate fixes the viewer TLS policy at legacy
   `TLSv1`; accepted as a beta-level residual risk by the owner
   (`docs/phase-14-production-approval.md`); not strict-TLS production readiness.
-- Cold interceptor and review Lambdas take about 7 s each; the machine
-  dispatch timeout was widened for this (`a52508a`).
+- Cold start takes about 7 s per Gateway hop; the machine dispatch timeout was
+  widened (`a52508a`), but the API latency alarm (3 s) flapped during smokes.
+  Improvement follow-up, not a blocker.
+- RAG answers for the skip and failed-IDP documents: routing to RAG is proven
+  (retrieval and writer ran after `89b84ca`), but the contextual-grounding
+  guardrail fails the short synthetic answers closed (grounding 0.12 vs 0.75;
+  `-skip-h`, `-failed-idp-rag-e`). RAG guardrail thresholds were intentionally
+  not changed: accepted RAG behavior from earlier phases, and the plan forbids
+  changing RAG regression behavior. Not an IDP defect.
+- KB per-document reconciliation covers only the configured beta subject;
+  documents of ephemeral smoke users were resolved by the operator
+  (`-recovery-a`).
+- The `scripts/reprocess_idp.py` operator ARN is the IAM user, not a role.
+- One legacy document row keeps a stale `idpReason` (not exposed by the API).
+- One unexplained 15 s `internal_error` during concurrent smoke traffic
+  (untraced).
+- The Bedrock call cap was exceeded by 1 call in one run (accounting error;
+  reported).
+- Tenant Gateway quota raised 100 -> 300/month for the beta tenant and the
+  trusted-edge secret rotated in one reviewed update (temporary role deleted).
 - Public Edge IAM: the code-only CD role cannot update application role
   policy; a temporary operator-managed role was used for one reviewed update,
   then restored and deleted (deployment evidence).
 - Metadata MCP target uses `listingMode=DYNAMIC`; explicit synchronization is
   unsupported, so no static-cache refresh is claimed.
 - The public runner cannot trigger a duplicate clean event or a three-run
-  history, and exposes no worker usage or scoped artifact deletion; these
-  need the operator scripts (smoke `h` records them `NOT_EXECUTED`).
+  history and exposes no worker usage; these were proven with the operator
+  scripts (`-duplicate-b`, `-history-b`).
 - Review-sensitive and interpretive fields are always routed to review; this
   yields a high review rate (88.89%) by design. Technical evidence checks do
   not certify legal meaning.
-- Operator access method (IAM identity, local login) is not described in the
-  repository evidence and is not claimed here. [supervisor to add if wanted]
 - Scope limited to the beta tenant, two matters and synthetic data; no PDF
   backfill of the existing inventory.

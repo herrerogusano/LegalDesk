@@ -1,6 +1,6 @@
 # IDP deployment and validation evidence — 2026-10-09
 
-Status: **IN PROGRESS**, not phase acceptance. Scope: owner-approved
+Status: **ACCEPTED (bounded constrained-beta scope), 2026-10-13**; see the final section at the end of this file. Earlier sections are the historical checkpoints and are kept unchanged. Scope: owner-approved
 `PHASE_14_IDP_PLAN.md`, ADR-020 machine identity, and continuation instruction
 to finish the phase. No real legal documents or personal passwords are used.
 
@@ -228,3 +228,78 @@ acceptance.
   CloudFormation change-set/template history and the pre-update immutable code
   versions captured by the operator; no unrecorded rollback identifier is
   inferred here.
+
+## Final AWS acceptance evidence (2026-10-13)
+
+Supersedes the "not yet PASS" statements above; those sections remain as the
+historical record. Acceptance: ACCEPTED (bounded constrained-beta scope) --
+2026-10-13. Summary and checklist: `docs/phase-14-idp-acceptance.md`. All data
+synthetic; reports under `evals/results/` (no document text).
+
+### Final releases
+- All 8 Lambdas on `30adeac` (`release-30adeac.json`, PASS); Public Edge
+  application on `89b84ca` (`release-89b84ca.json`, PASS; previous artifact
+  `30adeac`, S3 version recorded in the report).
+- The reconciliation template adds read-only `bedrock:GetKnowledgeBaseDocuments`.
+- Trusted-edge secret rotated through the temporary role stack
+  `LegalDeskPhase14EdgeRotationBootstrap` (runbook "Trusted-edge secret
+  rotation"); the temporary role was deleted and the Public Edge `RoleARN`
+  restored to `LegalDeskProductionCloudFormation`. Tenant Gateway quota raised
+  100 -> 300/month for the beta tenant in the same update.
+
+### Live scenarios (all PASS unless noted)
+| Scenario | Report | Outcome |
+|---|---|---|
+| Digital contract | `idp-live-digital-20261013-h` | `IDP_REVIEW_REQUIRED`, IDP answer with 1 citation, cross-matter 403, derived date PROVISIONAL |
+| Judgment, provisional field | `idp-live-judgment-provisional-20261013-a` | JUDGMENT classified, provisional expectation met |
+| Duplicate clean event | `idp-live-duplicate-20261013-b` | one duplicate message consumed and acknowledged; state byte-identical; 0 paid calls |
+| UNKNOWN | `idp-live-unknown-20261013-c` | UNKNOWN, review required; RAG answered a missing IDP field (1 citation) |
+| Recovery / Textract | `idp-live-recovery-20261013-a` | DLQ completion redriven once; `WAITING_FOR_OCR` -> `SUCCEEDED`; 0 new Start, 1 Get, 1 page, 2 Bedrock calls; document `IDP_REVIEW_REQUIRED` |
+| Scanned demand | `idp-live-scanned-demand-20261013-b` | DEMAND classified after continuation |
+| History | `idp-live-history-20261013-b` | three runs preserved (count 3) |
+| RAG fallback / insufficient | `idp-live-rag-fallback-20261013-a`, `idp-live-insufficient-20261013-a` | `source: RAG` with citation; `insufficient_evidence`, source NONE |
+| Skip limit | `idp-live-skip-20261013-g` | `IDP_SKIPPED` (operator read: `UNSUPPORTED_MEDIA_TYPE`); KB siblings INDEXED; RAG answer limited, see below |
+| Failed IDP, RAG working | `idp-live-failed-idp-rag-20261013-d` | IDP `FAILED` in about 2 s, 0 paid calls (fail closed); RAG answer limited, see below |
+
+Knowledge Base per-document truth (recovery report): three documents `INDEXED`,
+the image-only document `NOT_FOUND` and set `FAILED`; commit `36713c9` makes
+ingestion resolve status per document, so one unparseable document does not
+block the rest.
+
+### Evaluation
+Final real-model run `idp-eval-20261013-c*`: 18/18 classification, 3/3 UNKNOWN,
+139/139 anchors digest-exact. Subtype confirmation `-d*` after `4144703`:
+contracts 01 and 05 `ABSENT`/`UNAVAILABLE`, NDA preserved. Offline triage
+`idp-offline-triage-20261013.json`: 0 unresolved auto-accepted mismatches.
+
+### Defects found and fixed live
+`fd85b92` NOT IN syntax; `303bdf7` stale clean-intent snapshot; `8c4d98c`
+Decimal serialization; `9b4ca3c` and `8f4c454` dispatch after durable
+checkpoint and `matterId`; `a52508a` machine timeout; `8a62d4e` (`0779407`)
+resolutionNote on `in_review`; `4144703` subtype vocabulary; `36713c9` per-
+document KB status; `30adeac` OCR continuation, delivery race, saved decisions
+and projection; `89b84ca` optional writer relationships dropped; rotation
+tooling `c73ae82` and `73285e4`.
+
+### Cost measured
+Owner-reviewed prices (docs/idp-evaluation.md). Final evaluation USD 0.2931
+Bedrock + 0.0165 reused OCR; subtype confirmation USD 0.0701 (6 calls); live
+scenarios about 30 worker/chat Bedrock calls and 1-2 Textract pages, estimated
+USD 0.25-0.40 (per-run worker usage is not exposed). Total for the day well
+under USD 1; no always-on infrastructure added.
+
+### Limitations (not blockers)
+- Skip and failed-IDP documents: RAG routing is proven (retrieval and writer
+  ran on `89b84ca`), but the contextual-grounding guardrail fails the short
+  synthetic answers closed (grounding 0.12 vs 0.75;
+  `idp-live-skip-20261013-h`, `idp-live-failed-idp-rag-20261013-e`). RAG
+  guardrail thresholds intentionally unchanged (accepted RAG behavior; the plan
+  forbids changing RAG regression behavior).
+- Cold start about 7 s per Gateway hop; the 3 s API latency alarm flapped
+  during smokes (improvement follow-up).
+- KB per-document reconciliation covers only the configured beta subject;
+  ephemeral smoke users' documents were resolved by the operator.
+- Reprocess operator ARN is the IAM user, not a role.
+- Stale `idpReason` on one legacy document row (not exposed).
+- One unexplained 15 s `internal_error` during concurrent smoke traffic (untraced).
+- Bedrock call cap exceeded by 1 call in one run (accounting error, reported).
