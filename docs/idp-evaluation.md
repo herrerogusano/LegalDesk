@@ -241,3 +241,69 @@ the digital corpus is preserved as an export-enum erratum and is interpreted
 under the corrected review-required contract. The earlier failed exports and
 the collection-only OCR metadata remain immutable; the OCR collector is counted
 once for cost and is not double-counted through H/I/J replay metadata.
+
+## Final real-model evaluation (2026-10-13)
+
+Single immutable run of the current code (classifier and extractor prompt labels
+`1.0.2`, model `eu.anthropic.claude-sonnet-4-6`, `eu-west-1`) over all 18
+manifest fixtures, executed with `evals/phase14_idp_real_runner.py --execute
+--confirm-real-bedrock` and the existing preexisting-Textract artifact
+(`tmp/idp-ocr-20261009-g`, 8 scanned/mixed fixtures; 0 new Textract pages).
+Exports (create-only): `evals/results/idp-eval-20261013-c.json` (SHA-256
+`03c04322...`), its evaluator report `idp-eval-20261013-c-report.json`, and the
+source-backed summary `idp-eval-20261013-c-summary.json`. Attempts `-a`
+(`.started` journal only; client creation failed on a missing `botocore[crt]`,
+zero calls) and `-b` (all 18 `FAILED` before any call: `pypdf` missing in the
+local venv, zero calls, zero usage) are kept as immutable failed attempts and
+are not results. `pypdf==6.20.0` (already a declared dependency) was then
+installed in the venv.
+
+| Metric | Result |
+| --- | --- |
+| Classification | 18/18 correct (CONTRACT 5, DEMAND 5, JUDGMENT 5, UNKNOWN 3; no off-diagonal) |
+| Review rate | 16/18 (88.89%); the two non-review records are the adversarial and negative UNKNOWN fixtures |
+| Fields compared | 156; 77 observed `AUTO_ACCEPTED` |
+| Presence / value / origin / acceptance mismatches | 11 / 11 / 18 / 55 (plus 4 presence and 11 value `UNKNOWN`, i.e. not comparable) |
+| Anchor revalidation against source | 139/139 anchors digest-exact on the cited page; 0 not found (0 among auto-accepted) |
+| Evaluator anchor-vs-oracle mismatches | 24 (`ORACLE_ANCHOR_MISMATCH`); all valid source spans, routed or non-auto except as listed below |
+| Wall time | 112.1 s summed (mean 6.2 s, max 10.2 s per document; sequential) |
+| Bedrock | 36 calls, 38,869 input and 9,991 output tokens |
+| Textract | 0 new pages (11 pages from the 2026-10-09 collection reused, already priced) |
+| Estimated cost | Bedrock USD 0.2931 (about USD 0.0163 per document); evaluator total including the reused 11 OCR pages USD 0.3096; owner-reviewed rates of $3.30/$16.50 per million tokens and $0.0015 per page |
+
+Acceptance (expected to observed): 75 auto stayed auto; 35 expected-auto became
+`REVIEW_REQUIRED`, 7 `PROVISIONAL`, 4 `UNAVAILABLE`; expected-review fields
+became review (4) or unavailable (3); 22 expected-unavailable stayed
+unavailable. No expected-review field was auto-accepted. Origin: 17 expected
+`LITERAL` observed `INTERPRETIVE`, 1 the reverse. Presence mismatches (11): 6 expected-absent fields produced a value (`subtype`
+x4, `jurisdiction` x2), 2 expected-ambiguous notice fields returned absent, 2
+demand-05 amount fields were `NOT_APPLICABLE` instead of absent, and the
+adversarial `document_type` was absent. A further 4 are not comparable (null
+`UNAVAILABLE` fields such as `effective_date` for contracts 02 and 05); none of
+these 15 is auto-accepted except the two `subtype` findings below.
+
+Hard rules:
+
+- UNKNOWN forced into a supported class: 0 (3/3 UNKNOWN).
+- Adversarial instruction followed: no (classified UNKNOWN, no extracted value
+  from the injected instruction; status `COMPLETED`, no auto-accepted field).
+- Auto-accepted anchor not found in source: 0.
+- Auto-accepted value mismatch: **2 open findings, not resolved.** `subtype` for
+  `contract-01-en-digital-monthend` and `contract-05-en-mixed-explicit-conflict`
+  is expected `ABSENT` in the fixtures, but the model returned a literal,
+  source-backed span (page 1, a short all-caps heading at the start of the
+  page; offsets 0-17 and 0-27, digest-exact) and the field was `AUTO_ACCEPTED`
+  (`LITERAL`). The value cannot be compared by digest because the fixture has
+  none. This is a presence mismatch: the span is real, but the fixture
+  expectation says the document does not state a subtype. For contract 02 and 04
+  the same behaviour is routed (`PROVISIONAL`). Path responsible: the
+  `subtype` registry field (`literal`, optional, `backend/src/legaldesk/idp/
+  registry.py`) plus the model's choice of a title as subtype; the parser's
+  literal lexical check accepts any grounded span. No runtime or fixture change
+  was made. Resolving this needs an owner decision: either treat a title as an
+  acceptable `subtype` and update the fixture expectation, or require subtype to
+  be review-gated or constrained to a closed vocabulary.
+
+All other mismatches are review-routed, provisional or unavailable. The
+mismatch set is dominated by conservative routing (35 auto-to-review) and by
+oracle anchors that differ from the model's valid alternate spans.

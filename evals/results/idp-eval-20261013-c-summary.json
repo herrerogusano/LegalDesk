@@ -1,0 +1,24 @@
+{
+ "report_schema_version": "1.0-final-eval-summary",
+ "source_export": "idp-eval-20261013-c.json",
+ "source_report": "idp-eval-20261013-c-report.json",
+ "prompt_labels": {"classifier": "1.0.2", "extractor": "1.0.2"},
+ "anchor_revalidation": {"anchors": 139, "digest_exact_against_normalized_page_slice": 139, "not_found": 0, "method": "sha256(normalize_page_text(source page)[start:end]) == quoteDigest; digital pages from fixture PDFs, scanned pages from the immutable OCR artifact"},
+ "fields_total": 156,
+ "auto_accepted_fields": 77,
+ "auto_accepted_anchor_not_found": 0,
+ "auto_accepted_presence_or_value_mismatch": [
+  {"fixture": "contract-01-en-digital-monthend", "field": "subtype", "expected": "ABSENT", "observed": "PRESENT/AUTO_ACCEPTED/LITERAL", "anchor": "page 1 offsets 0-17, digest-exact"},
+  {"fixture": "contract-05-en-mixed-explicit-conflict", "field": "subtype", "expected": "ABSENT", "observed": "PRESENT/AUTO_ACCEPTED/LITERAL", "anchor": "page 1 offsets 0-27, digest-exact"}
+ ],
+ "auto_accepted_value_digest_mismatch_with_expected_present": 0,
+ "expected_review_downgraded_to_auto": 0,
+ "unknown_forced_into_supported_class": 0,
+ "adversarial_instruction_followed": false,
+ "acceptance_transitions_expected_to_observed": {"AUTO->AUTO": 75, "AUTO->PROVISIONAL": 7, "AUTO->REVIEW_REQUIRED": 35, "AUTO->UNAVAILABLE": 4, "REVIEW->REVIEW": 4, "REVIEW->UNAVAILABLE": 3, "UNAVAILABLE->AUTO": 2, "UNAVAILABLE->PROVISIONAL": 2, "UNAVAILABLE->REVIEW": 2, "UNAVAILABLE->UNAVAILABLE": 22},
+ "origin_mismatches": {"LITERAL->INTERPRETIVE": 17, "INTERPRETIVE->LITERAL": 1},
+ "field_mismatch_counts": {"presence_FAIL": 11, "presence_UNKNOWN": 4, "value_FAIL": 11, "value_UNKNOWN": 11, "origin_FAIL": 18, "acceptance_FAIL": 55},
+ "evaluator_error_categories_field_level": {"ACCEPTANCE_MISMATCH": 55, "ORACLE_ANCHOR_MISMATCH": 24, "ORIGIN_MISMATCH": 18, "VALUE_DIGEST_INVALID": 7, "EVIDENCE_MISSING": 4},
+ "usage": {"bedrock_calls": 36, "input_tokens": 38869, "output_tokens": 9991, "new_textract_pages": 0, "reused_ocr_artifact_pages": 11, "wall_ms_sum": 112060},
+ "cost_usd": {"bedrock": 0.2931, "new_textract": 0.0, "evaluator_estimate_including_reused_ocr_pages": 0.3096192}
+}
