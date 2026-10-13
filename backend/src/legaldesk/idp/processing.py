@@ -26,7 +26,7 @@ from .models import (
     IDP_SCHEMA_VERSION,
     utc_now,
 )
-from .registry import IDPSchema
+from .registry import CLOSED_VOCABULARIES, IDPSchema
 
 
 MAX_MODEL_OUTPUT_BYTES = 400_000
@@ -248,6 +248,31 @@ def _duration_unit_lexical_support(value: Any, quoted: str) -> bool:
     return any(_canonical_duration_unit(token) == canonical for token in tokens)
 
 
+def _vocab_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[-‐‑–—]", " ", normalize_page_text(value).casefold())).strip()
+
+
+def _canonical_vocabulary_value(lexical_kind: str, value: Any) -> str | None:
+    """Map a model value to its canonical closed-vocabulary entry, else None."""
+
+    vocabulary = CLOSED_VOCABULARIES.get(lexical_kind)
+    if vocabulary is None or not isinstance(value, str) or not value.strip():
+        return None
+    text = _vocab_text(value)
+    for canonical, aliases in vocabulary.items():
+        if text == canonical.casefold() or text in {_vocab_text(alias) for alias in aliases}:
+            return canonical
+    return None
+
+
+def _vocabulary_lexical_support(lexical_kind: str, value: Any, quoted: str) -> bool:
+    canonical = _canonical_vocabulary_value(lexical_kind, value)
+    if canonical is None:
+        return False
+    text = _vocab_text(quoted)
+    return any(re.search(rf"(?<!\w){re.escape(_vocab_text(alias))}(?!\w)", text) for alias in CLOSED_VOCABULARIES[lexical_kind][canonical])
+
+
 def _normalized_date(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -314,6 +339,8 @@ def _lexical_support(value: Any, value_type: str, lexical_kind: str, anchors: tu
         return any(candidate == expected for candidate in _numeric_tokens(quoted))
     if lexical_kind == "duration_unit" and value_type == "string":
         return _duration_unit_lexical_support(value, quoted)
+    if lexical_kind in CLOSED_VOCABULARIES:
+        return _vocabulary_lexical_support(lexical_kind, value, quoted)
     if value_type == "number":
         return False
     if lexical_kind == "boolean":
@@ -364,6 +391,14 @@ def parse_extractor_output(
                     canonical_unit = _canonical_duration_unit(field_value)
                     if canonical_unit is not None:
                         field_value = canonical_unit
+                if spec.lexical_kind in CLOSED_VOCABULARIES:
+                    field_value = _canonical_vocabulary_value(spec.lexical_kind, field_value)
+                    if field_value is None:
+                        # Outside the closed vocabulary (e.g. a page heading):
+                        # not a usable value.  Report ABSENT, drop the anchor
+                        # (it does not evidence absence) and require no review.
+                        result[name] = IDPFieldResult(name, None, FieldPresence.ABSENT, FieldOrigin.LITERAL, FieldAcceptance.UNAVAILABLE, (), validation={"schema_valid": True, "anchor_found": False, "lexical_support": False}, reason="value is outside the supported vocabulary")
+                        continue
                 if spec.value_type == "date":
                     field_value = _normalized_date(field_value)
                 if not _validate_value(field_value, spec.value_type):

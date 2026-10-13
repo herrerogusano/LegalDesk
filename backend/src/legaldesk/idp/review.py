@@ -660,7 +660,12 @@ class IDPReviewService:
             # deliberately absent from the client decision contract.
             if not evidence:
                 raise IDPReviewError("corrections require source evidence")
-            from .processing import _lexical_support
+            from .processing import _canonical_vocabulary_value, _lexical_support
+            from .registry import CLOSED_VOCABULARIES
+            if spec.lexical_kind in CLOSED_VOCABULARIES:
+                value = _canonical_vocabulary_value(spec.lexical_kind, value)
+                if value is None:
+                    raise IDPReviewError("proposed value is outside the supported vocabulary")
             lexical = _lexical_support(value, spec.value_type, spec.lexical_kind, evidence)
             proposed = {
                 "value": value,

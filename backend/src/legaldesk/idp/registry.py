@@ -60,8 +60,21 @@ _CONTRACT = _fields(
     ("currency", "string", "Explicit currency", True, False, "currency"),
     ("jurisdiction", "string", "Jurisdiction stated in the document", True, True, "literal"),
     ("governing_law", "string", "Explicit governing law", True, True, "literal"),
-    ("subtype", "string", "Supported subtype such as NDA", True, False, "literal"),
+    ("subtype", "string", "Supported subtype (closed vocabulary: NDA) only when explicitly stated; never a document title", True, False, "closed_vocabulary:subtype"),
 )
+
+# Closed vocabularies are registry data: canonical value -> accepted spellings
+# (EN/ES).  Adding a subtype means adding an entry here; pipeline control flow
+# is unchanged.  A value outside the vocabulary is never a usable field value.
+CLOSED_VOCABULARIES: Mapping[str, Mapping[str, tuple[str, ...]]] = MappingProxyType({
+    "closed_vocabulary:subtype": MappingProxyType({
+        "NDA": (
+            "nda", "non disclosure agreement", "nondisclosure agreement", "confidentiality agreement",
+            "acuerdo de confidencialidad", "contrato de confidencialidad",
+            "acuerdo de no divulgacion", "acuerdo de no divulgación",
+        ),
+    }),
+})
 
 _DEMAND = _fields(
     ("claimants", "array[string]", "Claimants", True, False, "literal"),
@@ -122,4 +135,4 @@ class IDPSchemaRegistry:
         return tuple(sorted({kind for kind, _version in self._schemas}, key=lambda item: item.value))
 
 
-__all__ = ["DEFAULT_SCHEMAS", "IDPFieldSpec", "IDPSchema", "IDPSchemaRegistry"]
+__all__ = ["CLOSED_VOCABULARIES", "DEFAULT_SCHEMAS", "IDPFieldSpec", "IDPSchema", "IDPSchemaRegistry"]

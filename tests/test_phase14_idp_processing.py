@@ -197,6 +197,58 @@ class ProcessingTests(unittest.TestCase):
                 self.assertEqual(field.origin.value, "INTERPRETIVE")
                 self.assertFalse(field.validation["lexical_support"])
 
+    def _subtype(self, value: str, quote: str, page_text: dict[int, str] | None = None):
+        return parse_extractor_output(
+            json.dumps({"fields": {"subtype": {"presence": "PRESENT", "value": value, "evidence": [{"page": 1, "quote": quote}]}}}),
+            schema=IDPSchemaRegistry().get(DocumentType.CONTRACT),
+            page_text=page_text or {1: quote},
+            content_sha256="a" * 64,
+        ).fields["subtype"]
+
+    def test_heading_like_subtype_with_valid_anchor_is_absent_not_auto_accepted(self) -> None:
+        # Regression for 2026-10-13 real-model eval: the page-1 all-caps title
+        # was returned as subtype and AUTO_ACCEPTED while the oracle is absent.
+        for value in ("SERVICES AGREEMENT", "Master Services Agreement", "CONTRATO DE PRESTACIÓN DE SERVICIOS", "services"):
+            with self.subTest(value=value):
+                field = self._subtype(value, value.upper() if value.isupper() else value)
+                self.assertIsNone(field.value)
+                self.assertEqual(field.presence.value, "ABSENT")
+                self.assertEqual(field.acceptance, FieldAcceptance.UNAVAILABLE)
+                self.assertEqual(field.evidence, ())
+
+    def test_explicit_nda_in_english_and_spanish_canonicalizes_and_is_auto_accepted(self) -> None:
+        cases = (
+            ("NDA", "This is a confidentiality agreement (NDA)."),
+            ("Non-Disclosure Agreement", "NON-DISCLOSURE AGREEMENT between ACME and Beta"),
+            ("nda", "Mutual NDA effective 2026-01-15"),
+            ("acuerdo de confidencialidad", "ACUERDO DE CONFIDENCIALIDAD entre ACME y Beta"),
+            ("NDA", "Este es un acuerdo de confidencialidad."),
+        )
+        for value, quote in cases:
+            with self.subTest(value=value, quote=quote):
+                field = self._subtype(value, quote)
+                self.assertEqual(field.value, "NDA")
+                self.assertEqual(field.acceptance, FieldAcceptance.AUTO_ACCEPTED)
+                self.assertEqual(field.origin.value, "LITERAL")
+
+    def test_nda_value_not_supported_by_its_quote_is_not_auto_accepted(self) -> None:
+        field = self._subtype("NDA", "SERVICES AGREEMENT")
+        self.assertEqual(field.value, "NDA")
+        self.assertNotEqual(field.acceptance, FieldAcceptance.AUTO_ACCEPTED)
+        self.assertFalse(field.validation["lexical_support"])
+
+    def test_subtype_vocabulary_is_registry_data_not_control_flow(self) -> None:
+        from legaldesk.idp import processing
+        from legaldesk.idp.registry import CLOSED_VOCABULARIES
+
+        kind = IDPSchemaRegistry().get(DocumentType.CONTRACT).field("subtype").lexical_kind
+        self.assertEqual(tuple(CLOSED_VOCABULARIES[kind]), ("NDA",))
+        extended = {**CLOSED_VOCABULARIES, kind: {**CLOSED_VOCABULARIES[kind], "MSA": ("master services agreement",)}}
+        with patch.object(processing, "CLOSED_VOCABULARIES", extended):
+            field = self._subtype("Master Services Agreement", "MASTER SERVICES AGREEMENT")
+        self.assertEqual(field.value, "MSA")
+        self.assertEqual(field.acceptance, FieldAcceptance.AUTO_ACCEPTED)
+
     def test_stage_ledger_has_distinct_atomic_paid_stages(self) -> None:
         ledger = StageCallLedger()
         barrier = Barrier(2)
