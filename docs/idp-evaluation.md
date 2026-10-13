@@ -307,3 +307,23 @@ Hard rules:
 All other mismatches are review-routed, provisional or unavailable. The
 mismatch set is dominated by conservative routing (35 auto-to-review) and by
 oracle anchors that differ from the model's valid alternate spans.
+
+### Subtype fix confirmation
+
+After commit `4144703` (CONTRACT `subtype` restricted to a closed vocabulary,
+NDA only; any other value becomes `ABSENT`), the same bounded real runner was
+re-run on three fixtures only (`contract-01-en-digital-monthend`,
+`contract-05-en-mixed-explicit-conflict`, `contract-03-en-mixed-nda`; the
+existing `tmp/idp-ocr-20261009-g` artifact, 0 new Textract pages). Exports
+(create-only): `evals/results/idp-eval-20261013-d.json` and
+`idp-eval-20261013-d-report.json`. Result: `subtype` for contract-01 and
+contract-05 is now `ABSENT` / `UNAVAILABLE` (matches the fixture expectation;
+the two open `AUTO_ACCEPTED` findings above are closed). The NDA fixture
+(`contract-03`) still yields `subtype` `AUTO_ACCEPTED`, `PRESENT`, same value
+digest as in run `-c`, evidence valid. Classification is unchanged (3/3
+CONTRACT). No new `AUTO_ACCEPTED` mismatch: the only auto-accepted fields
+besides the NDA subtype are `parties`, as before. Model variance on contract-05
+moved `renewal_period_unit/value` from `REVIEW_REQUIRED` to `UNAVAILABLE`
+(still not auto-accepted). Cost: 6 Bedrock calls, 7,720 input and 2,521 output
+tokens, about USD 0.067 Bedrock (evaluator total USD 0.0701 including the 2
+reused OCR pages).
