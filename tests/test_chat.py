@@ -277,6 +277,64 @@ class GroundedChatTests(unittest.TestCase):
         self.assertEqual(response.operation_status, "error")
         self.assertEqual(response.answer, TECHNICAL_ERROR_ANSWER)
 
+    def _answer_with_writer_output(self, passage: str, written: Mapping[str, object], cited: str = "citation-1"):
+        class Writer:
+            def write(self, request: object) -> Mapping[str, object]:
+                return written
+
+        return self.answer(
+            [result("tnt_aurora", "mat_sundial", "doc-one", passage)],
+            FakeGenerator(),
+            evidence_resolver=FakeEvidenceResolver(
+                {"coverage": "complete", "conflict": False, "supportingCitationIds": [cited]}
+            ),
+            answer_writer=Writer(),  # type: ignore[arg-type]
+            grounding_validator=FakeGroundingValidator(
+                {"grounded": True, "score": 0.95, "matchedCitationIds": [cited]}
+            ),
+        )
+
+    def test_unsupported_optional_relationship_is_dropped_when_projection_not_required(self) -> None:
+        response = self._answer_with_writer_output(
+            "The reply is due within thirty days of delivery.",
+            {
+                "answer": "The reply is due within thirty days.",
+                "relationships": [
+                    {"actor": "recipient", "action": "respond within thirty days", "recipient": "sender"}
+                ],
+            },
+        )
+        self.assertEqual(response.operation_status, "ok")
+        self.assertEqual(response.answer, "The reply is due within thirty days.")
+        self.assertEqual([c.citation_id for c in response.citations], ["citation-1"])
+        self.assertNotIn("sender", response.answer)
+
+    def test_unsupported_relationship_still_rejected_when_projection_required(self) -> None:
+        response = self._answer_with_writer_output(
+            "The supplier must send written notice to the buyer.",
+            {
+                "answer": "The supplier must send notice.",
+                "relationships": [
+                    {"actor": "vendor", "action": "send written notice", "recipient": "client"}
+                ],
+            },
+        )
+        self.assertEqual(response.operation_status, "error")
+        self.assertEqual(response.answer, TECHNICAL_ERROR_ANSWER)
+
+    def test_invalid_citation_still_rejected_with_optional_relationship(self) -> None:
+        response = self._answer_with_writer_output(
+            "The reply is due within thirty days of delivery.",
+            {
+                "answer": "The reply is due within thirty days.",
+                "relationships": [
+                    {"actor": "recipient", "action": "respond within thirty days", "recipient": "sender"}
+                ],
+            },
+            cited="citation-99",
+        )
+        self.assertEqual(response.operation_status, "error")
+
     def test_productive_grounding_uses_only_selected_passages_and_one_output_guardrail(self) -> None:
         resolver = FakeEvidenceResolver(
             {"coverage": "complete", "conflict": False, "supportingCitationIds": ["citation-1"]}

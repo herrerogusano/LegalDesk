@@ -661,10 +661,21 @@ def answer_question(
                         "answer writer omitted a required directed relationship"
                     )
                 if relationships:
-                    relationships = validate_writer_relationships_against_evidence(
-                        relationships,
-                        selected_evidence,
-                    )
+                    try:
+                        relationships = validate_writer_relationships_against_evidence(
+                            relationships,
+                            selected_evidence,
+                        )
+                    except EvidenceContractError:
+                        if evidence_requires_relationship_projection(selected_evidence):
+                            raise
+                        # Optional relationships are advisory when the evidence
+                        # does not require a directed projection: drop an
+                        # unsupported (e.g. paraphrased) one and keep the prose
+                        # answer, which still passes citation and grounding
+                        # validation. The dropped value is never surfaced.
+                        relationships = ()
+                if relationships:
                     # Structured relationships are the authoritative public
                     # rendering for directional claims; this prevents prose
                     # from reversing a validated actor/action/recipient.
