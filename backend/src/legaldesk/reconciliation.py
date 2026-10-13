@@ -22,6 +22,7 @@ from .state import EphemeralStateStore
 
 
 MAX_RECONCILIATION_BATCH = 100
+_MAX_PENDING_DOCUMENT_PAGES = 3
 _INGESTION_STALE_STATUSES = frozenset({"STARTING", "RECOVERY_PENDING", "PENDING"})
 
 
@@ -356,6 +357,105 @@ class ReconciliationService:
                 stale_after_seconds=stale_after_seconds,
             ) if candidates else ReconciliationReport()
             self._merge(report, child)
+        return report
+
+    def reconcile_pending_ingestion_documents(
+        self,
+        *,
+        scopes: Sequence[ReconciliationScope],
+        stale_after_seconds: float,
+        limit_per_scope: int | None = None,
+        max_pages: int = _MAX_PENDING_DOCUMENT_PAGES,
+        has_budget: Callable[[], bool] | None = None,
+    ) -> ReconciliationReport:
+        """Resolve stale PENDING_INGESTION documents of any uploading subject.
+
+        Complements the subject-bound operation index, whose rows are
+        short-lived.  Candidates come only from the explicit tenant/matter
+        document partition (a keyed Query, never a scan), read in at most
+        ``max_pages`` pages and filtered in memory.  Each stale pending
+        document is resolved by its own Knowledge Base status; anything not
+        proven INDEXED or FAILED stays pending (fail closed).
+        """
+
+        if self.ingestion_service is None:
+            raise ValueError("ingestion reconciliation is not configured")
+        scopes = self._bounded(scopes, "pending document scopes")
+        limit = self._limit(limit_per_scope or self.max_batch)
+        stale_after = self._positive_duration(stale_after_seconds)
+        if not isinstance(max_pages, int) or isinstance(max_pages, bool) or not 0 < max_pages <= _MAX_PENDING_DOCUMENT_PAGES:
+            raise ValueError("pending document page bound is invalid")
+        list_page = getattr(self.metadata_repository, "list_for_scope_page", None)
+        if not callable(list_page):
+            raise ValueError("document partition paging is not configured")
+        now = self.clock()
+        report = ReconciliationReport()
+        for scope in scopes:
+            if has_budget is not None and not has_budget():
+                break
+            identifier = f"{scope.tenant_id}/{scope.matter_id}"
+            stale: list[Any] = []
+            cursor: str | None = None
+            try:
+                for _ in range(max_pages):
+                    page, cursor = list_page(
+                        tenant_id=scope.tenant_id, matter_id=scope.matter_id, limit=limit, cursor=cursor
+                    )
+                    for document in page:
+                        report.examined += 1
+                        item_id = f"{identifier}/{getattr(document, 'document_id', '')}"
+                        if document.tenant_id != scope.tenant_id or document.matter_id != scope.matter_id:
+                            report.skipped += 1
+                            report.record(item_id, "scope_mismatch")
+                            continue
+                        if document.status is not DocumentStatus.PENDING_INGESTION:
+                            continue
+                        try:
+                            age = now - document.uploaded_at.timestamp()
+                        except (AttributeError, OverflowError, OSError, ValueError):
+                            report.ambiguous += 1
+                            report.record(item_id, "invalid_timestamp")
+                            continue
+                        if not math.isfinite(age) or age < stale_after:
+                            report.skipped += 1
+                            report.record(item_id, "not_stale")
+                            continue
+                        if len(stale) < limit:
+                            stale.append(document)
+                    if len(stale) >= limit or not cursor:
+                        break
+            except Exception:
+                report.failed += 1
+                report.record(identifier, "query_failed")
+                continue
+            if not stale:
+                continue
+            try:
+                resolved = self.ingestion_service.resolve_documents_independently(
+                    tenant_id=scope.tenant_id, matter_id=scope.matter_id, documents=tuple(stale)
+                )
+            except Exception:
+                report.failed += 1
+                report.record(identifier, "status_failed")
+                continue
+            for document in stale:
+                item_id = f"{identifier}/{document.document_id}"
+                target = resolved.get(document.document_id)
+                if target is None:
+                    report.skipped += 1
+                    report.record(item_id, "status_unproven")
+                    continue
+                try:
+                    self.metadata_repository.update_status(
+                        tenant_id=scope.tenant_id, matter_id=scope.matter_id,
+                        document_id=document.document_id, status=target,
+                    )
+                except Exception:
+                    report.failed += 1
+                    report.record(item_id, "update_failed")
+                    continue
+                report.changed += 1
+                report.record(item_id, "document_indexed" if target is DocumentStatus.INDEXED else "document_failed")
         return report
 
     def reconcile_gateway(

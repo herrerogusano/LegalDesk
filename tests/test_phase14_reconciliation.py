@@ -309,5 +309,166 @@ class Phase14ReconciliationTests(unittest.TestCase):
         self.assertEqual(sum(item.get("entityType") == "GatewayExpiryIndex" for item in table.items.values()), 1)
 
 
+BUCKET = "bucket-a"
+
+
+def _pending(document_id: str, *, age_seconds: float = 5_000.0, tenant_id: str = "tenant-a", matter_id: str = "matter-a") -> Document:
+    document = _document(
+        tenant_id=tenant_id, matter_id=matter_id, document_id=document_id,
+        status=DocumentStatus.PENDING_INGESTION, age_seconds=age_seconds,
+    )
+    return replace(document, s3_key=f"tenants/{tenant_id}/matters/{matter_id}/documents/{document_id}/original.txt")
+
+
+class _KbClient:
+    def __init__(self, states: dict[str, str]) -> None:
+        self.states = states
+        self.calls: list[list[str]] = []
+
+    def get_knowledge_base_documents(self, **kwargs):
+        uris = [item["s3"]["uri"] for item in kwargs["documentIdentifiers"]]
+        self.calls.append(uris)
+        return {"documentDetails": [
+            {"identifier": {"dataSourceType": "S3", "s3": {"uri": uri}}, "status": self.states[uri]}
+            for uri in uris if uri in self.states
+        ]}
+
+
+class _PagedMetadata(InMemoryDocumentMetadataRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.page_calls: list[tuple[int, str | None]] = []
+
+    def list_for_scope(self, **_kwargs):
+        raise AssertionError("pending-document reconciliation must page the matter partition")
+
+    def list_for_scope_page(self, *, tenant_id, matter_id, limit, cursor=None):
+        self.page_calls.append((limit, cursor))
+        values = sorted(
+            (d for (t, m, _), d in self.documents.items() if (t, m) == (tenant_id, matter_id)),
+            key=lambda item: item.document_id,
+        )
+        if cursor is not None:
+            values = [item for item in values if item.document_id > cursor]
+        page = tuple(values[:limit])
+        return page, (page[-1].document_id if page and len(values) > len(page) else None)
+
+
+class Phase14PendingDocumentReconciliationTests(unittest.TestCase):
+    def _build(self, states: dict[str, str], documents: tuple[Document, ...]):
+        from legaldesk.ingestion import AsyncKnowledgeBaseIngestionService
+
+        metadata = _PagedMetadata()
+        for document in documents:
+            metadata.save(document)
+        client = _KbClient(states)
+        store = InMemoryEphemeralStateStore(clock=lambda: NOW)
+        ingestion = AsyncKnowledgeBaseIngestionService(
+            client=client, object_verifier=object(), metadata_repository=metadata, state_store=store,
+            knowledge_base_id="kb-a", data_source_id="ds-a", clock=lambda: NOW, source_bucket=BUCKET,
+        )
+        service = ReconciliationService(
+            metadata_repository=metadata, object_storage=InMemoryObjectStorage(), state_store=store,
+            ingestion_service=ingestion, clock=lambda: NOW,
+        )
+        return service, metadata, client
+
+    @staticmethod
+    def _uri(document: Document) -> str:
+        return f"s3://{BUCKET}/{document.s3_key}"
+
+    def _status(self, metadata, document_id: str) -> DocumentStatus:
+        return metadata.get_for_scope(tenant_id="tenant-a", matter_id="matter-a", document_id=document_id).status
+
+    def test_stale_pending_document_of_another_subject_is_resolved_without_operation_rows(self) -> None:
+        indexed, failed, unknown = _pending("doc-i"), _pending("doc-f"), _pending("doc-u")
+        service, metadata, _client = self._build(
+            {self._uri(indexed): "INDEXED", self._uri(failed): "FAILED", self._uri(unknown): "INDEXING"},
+            (indexed, failed, unknown),
+        )
+        report = service.reconcile_pending_ingestion_documents(
+            scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, limit_per_scope=10,
+        )
+        self.assertEqual(report.changed, 2)
+        self.assertEqual(self._status(metadata, "doc-i"), DocumentStatus.INDEXED)
+        self.assertEqual(self._status(metadata, "doc-f"), DocumentStatus.FAILED)
+        self.assertEqual(self._status(metadata, "doc-u"), DocumentStatus.PENDING_INGESTION)
+
+    def test_unknown_missing_and_not_found_statuses_stay_pending(self) -> None:
+        a, b, c = _pending("doc-a"), _pending("doc-b"), _pending("doc-c")
+        service, metadata, _client = self._build(
+            {self._uri(a): "NOT_FOUND", self._uri(b): "PENDING"}, (a, b, c),
+        )
+        report = service.reconcile_pending_ingestion_documents(
+            scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, limit_per_scope=10,
+        )
+        self.assertEqual(report.changed, 0)
+        for document_id in ("doc-a", "doc-b", "doc-c"):
+            self.assertEqual(self._status(metadata, document_id), DocumentStatus.PENDING_INGESTION)
+
+    def test_fresh_and_non_pending_documents_are_not_resolved(self) -> None:
+        fresh = _pending("doc-fresh", age_seconds=10.0)
+        done = replace(_pending("doc-done"), status=DocumentStatus.INDEXED)
+        service, metadata, client = self._build({self._uri(fresh): "INDEXED"}, (fresh, done))
+        report = service.reconcile_pending_ingestion_documents(
+            scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, limit_per_scope=10,
+        )
+        self.assertEqual(report.changed, 0)
+        self.assertEqual(client.calls, [])
+        self.assertEqual(self._status(metadata, "doc-fresh"), DocumentStatus.PENDING_INGESTION)
+
+    def test_paging_and_candidates_are_bounded_per_scope(self) -> None:
+        documents = tuple(_pending(f"doc-{index:03d}") for index in range(12))
+        states = {f"s3://{BUCKET}/{d.s3_key}": "INDEXED" for d in documents}
+        service, metadata, client = self._build(states, documents)
+        report = service.reconcile_pending_ingestion_documents(
+            scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, limit_per_scope=5,
+        )
+        self.assertEqual(report.changed, 5)
+        self.assertEqual(sum(len(call) for call in client.calls), 5)
+        self.assertTrue(all(len(call) <= 10 for call in client.calls))
+        self.assertTrue(all(limit == 5 for limit, _ in metadata.page_calls))
+        self.assertLessEqual(len(metadata.page_calls), 3)
+        with self.assertRaises(ValueError):
+            service.reconcile_pending_ingestion_documents(
+                scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, max_pages=4,
+            )
+
+    def test_only_configured_scopes_are_queried_and_foreign_rows_are_ignored(self) -> None:
+        own, foreign = _pending("doc-own"), _pending("doc-foreign", matter_id="matter-b")
+        service, metadata, client = self._build(
+            {self._uri(own): "INDEXED", self._uri(foreign): "INDEXED"}, (own, foreign),
+        )
+        service.reconcile_pending_ingestion_documents(
+            scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, limit_per_scope=10,
+        )
+        self.assertEqual(self._status(metadata, "doc-own"), DocumentStatus.INDEXED)
+        self.assertEqual(
+            metadata.get_for_scope(tenant_id="tenant-a", matter_id="matter-b", document_id="doc-foreign").status,
+            DocumentStatus.PENDING_INGESTION,
+        )
+        self.assertEqual(client.calls, [[self._uri(own)]])
+
+    def test_provider_error_and_exhausted_budget_fail_closed(self) -> None:
+        document = _pending("doc-a")
+        service, metadata, client = self._build({}, (document,))
+
+        def boom(**_kwargs):
+            raise RuntimeError("provider unavailable")
+
+        client.get_knowledge_base_documents = boom
+        report = service.reconcile_pending_ingestion_documents(
+            scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, limit_per_scope=10,
+        )
+        self.assertEqual(report.changed, 0)
+        self.assertEqual(self._status(metadata, "doc-a"), DocumentStatus.PENDING_INGESTION)
+        calls = []
+        client.get_knowledge_base_documents = lambda **kw: calls.append(kw) or {"documentDetails": []}
+        service.reconcile_pending_ingestion_documents(
+            scopes=(ReconciliationScope("tenant-a", "matter-a"),), stale_after_seconds=60, has_budget=lambda: False,
+        )
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
