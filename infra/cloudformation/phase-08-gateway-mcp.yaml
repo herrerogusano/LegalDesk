@@ -261,7 +261,7 @@ Resources:
         S3Bucket: !Ref InterceptorCodeBucket
         S3Key: !Ref InterceptorCodeKey
         S3ObjectVersion: !Ref InterceptorCodeVersion
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
@@ -287,7 +287,7 @@ Resources:
         S3Bucket: !Ref MetadataMcpCodeBucket
         S3Key: !Ref MetadataMcpCodeKey
         S3ObjectVersion: !Ref MetadataMcpCodeVersion
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:

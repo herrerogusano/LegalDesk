@@ -527,9 +527,9 @@ def _mcp_repositories_from_environment(
         or os.environ.get("MCP_SCHEMA_VERSION", MCP_SCHEMA_VERSION) != MCP_SCHEMA_VERSION
     ):
         return None
-    import boto3
+    from .aws_cache import dynamodb_table
 
-    table = boto3.resource("dynamodb").Table(table_name)
+    table = dynamodb_table(table_name)
     return (
         Boto3DynamoAuthorizationStore(table_name, table=table),
         Boto3DynamoDocumentMetadataRepository(
@@ -545,15 +545,10 @@ def _idp_artifact_store_from_environment(*, metadata_repository: Any) -> tuple[A
     bucket = (os.environ.get("LEGALDESK_IDP_ARTIFACT_BUCKET") or os.environ.get("LEGALDESK_SOURCE_BUCKET") or "").strip()
     if not bucket:
         return None, None
-    import boto3
-    from botocore.config import Config
+    from .aws_cache import default_s3_config, s3_client
     from .idp.artifacts import Boto3S3IDPArtifactStore
     from .idp.runtime import Boto3IDPDocumentReader
-    s3 = boto3.client(
-        "s3",
-        region_name=os.environ.get("AWS_REGION"),
-        config=Config(connect_timeout=5, read_timeout=15, retries={"total_max_attempts": 1, "mode": "standard"}),
-    )
+    s3 = s3_client(region_name=os.environ.get("AWS_REGION"), config_factory=default_s3_config)
     return (
         Boto3S3IDPArtifactStore(bucket, client=s3),
         Boto3IDPDocumentReader(metadata_repository, s3, bucket_name=os.environ.get("LEGALDESK_SOURCE_BUCKET") or bucket, max_bytes=20 * 1024 * 1024),
@@ -743,6 +738,20 @@ def _normalize_headers(headers: Mapping[object, object]) -> dict[str, object] | 
             return None
         normalized[normalized_key] = value
     return normalized
+
+
+def _prewarm_container() -> None:
+    """Build immutable AWS handles in the boosted-CPU init phase (Lambda only)."""
+
+    from .aws_cache import prewarm
+
+    prewarm(
+        tables=(os.environ.get("DOCUMENT_METADATA_TABLE_NAME") or os.environ.get("REVIEW_TASK_TABLE_NAME"),),
+        s3=bool(os.environ.get("LEGALDESK_IDP_ARTIFACT_BUCKET") or os.environ.get("LEGALDESK_SOURCE_BUCKET")),
+    )
+
+
+_prewarm_container()
 
 
 __all__ = [

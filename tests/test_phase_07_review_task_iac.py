@@ -40,7 +40,7 @@ class Phase07ReviewTaskInfrastructureTests(unittest.TestCase):
         self.assertIn("S3Key: !Ref ReviewTaskCodeKey", self.template)
         self.assertIn("S3ObjectVersion: !Ref ReviewTaskCodeVersion", self.template)
         self.assertIn("Timeout: 10", self.template)
-        self.assertIn("MemorySize: 256", self.template)
+        self.assertIn("MemorySize: 512", self.template)
         # Reserved concurrency is applied at deployment time when the account
         # quota permits it; the smoke account's Lambda quota is 10 with the
         # provider-required unreserved floor of 10, so CFN must omit it.

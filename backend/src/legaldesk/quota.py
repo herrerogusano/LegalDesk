@@ -222,8 +222,9 @@ class DynamoDBQuotaLedger:
         self.limits = limits or QuotaLimits()
         self.clock = clock
         if table is None:
-            import boto3
-            table = boto3.resource("dynamodb").Table(table_name)
+            from .aws_cache import dynamodb_table
+
+            table = dynamodb_table(table_name)
         self.table = table
 
     @classmethod

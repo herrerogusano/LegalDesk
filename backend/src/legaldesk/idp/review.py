@@ -201,8 +201,9 @@ class Boto3DynamoIDPDecisionRepository:
         if not isinstance(table_name, str) or not table_name.strip():
             raise IDPReviewError("decision table is invalid")
         if table is None:
-            import boto3
-            table = boto3.resource("dynamodb").Table(table_name)
+            from ..aws_cache import dynamodb_table
+
+            table = dynamodb_table(table_name)
         self.table = table
 
     @staticmethod
