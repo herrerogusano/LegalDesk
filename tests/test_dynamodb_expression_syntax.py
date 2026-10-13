@@ -37,6 +37,33 @@ class DynamoDBExpressionSyntaxTests(unittest.TestCase):
         ]
         self.assertEqual(offenders, [], "DynamoDB rejects NOT IN; use NOT (#attr IN (...))")
 
+    def test_literal_attribute_values_are_all_referenced(self) -> None:
+        """DynamoDB rejects ExpressionAttributeValues no expression uses."""
+
+        alias = re.compile(r":[A-Za-z_][A-Za-z0-9_]*")
+        offenders: list[str] = []
+        checked = 0
+        for path in SOURCE_ROOT.rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+                if not isinstance(node, ast.Call):
+                    continue
+                keywords = {keyword.arg: keyword.value for keyword in node.keywords if keyword.arg}
+                values = keywords.get("ExpressionAttributeValues")
+                if not isinstance(values, ast.Dict) or any(key is None or not isinstance(key, ast.Constant) for key in values.keys):
+                    continue
+                expressions = [keywords[name] for name in EXPRESSION_KEYWORDS if name in keywords]
+                if not expressions:
+                    continue
+                text = " ".join(inner.value for expression in expressions for inner in ast.walk(expression) if isinstance(inner, ast.Constant) and isinstance(inner.value, str))
+                if any(isinstance(inner, (ast.Name, ast.JoinedStr, ast.BinOp, ast.Call)) for expression in expressions for inner in ast.walk(expression)):
+                    continue  # expression built at runtime; the DynamoDB-rules fakes cover it
+                checked += 1
+                unused = sorted(str(key.value) for key in values.keys if str(key.value) not in set(alias.findall(text)))
+                if unused:
+                    offenders.append(f"{path.relative_to(SOURCE_ROOT)}:{node.lineno} unused {unused}")
+        self.assertEqual(offenders, [])
+        self.assertGreater(checked, 5)
+
     def test_guard_sees_the_attempt_exhaustion_condition(self) -> None:
         literals = [text for _, text in _expression_literals(SOURCE_ROOT / "legaldesk" / "idp" / "persistence.py")]
         self.assertTrue(any("NOT (#status IN (" in text and ":max" in text for text in literals))

@@ -123,7 +123,7 @@ class VerifiedCleanIDPTrigger:
                 continue
             if getattr(getattr(document, "malware_scan_status", None), "value", None) != "NO_THREATS_FOUND":
                 continue
-            if getattr(getattr(document, "status", None), "value", None) not in {"UPLOADED", "PENDING_INGESTION", "INDEXED"}:
+            if getattr(getattr(document, "status", None), "value", None) not in {"UPLOADED", "PENDING_INGESTION", "INDEXED", "FAILED"}:  # FAILED = RAG parse failure only; malware CLEAN is checked above
                 continue
             source_key = getattr(document, "s3_key", None)
             size = getattr(document, "file_size_bytes", None)

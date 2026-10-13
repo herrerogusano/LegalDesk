@@ -29,6 +29,19 @@ from .rules import DerivedMetadataEngine
 from .worker import IDPDocumentLookup, IDPProcessor, IDPWorker
 
 
+# FAILED is the RAG/KB-parse outcome for one document (e.g. an image-only scan)
+# and is independent of IDP; eligibility still requires malware_scan_status CLEAN.
+_IDP_ELIGIBLE_DOCUMENT_STATUSES = frozenset({DocumentStatus.UPLOADED, DocumentStatus.PENDING_INGESTION, DocumentStatus.INDEXED, DocumentStatus.FAILED})
+
+# Each PDFLimitExceeded reason keeps its own closed skip vocabulary entry; the
+# structural resource limits share RESOURCE_LIMIT instead of reading as SIZE_LIMIT.
+_SKIP_REASON_BY_LIMIT = {
+    "SIZE_LIMIT": IDPSkipReason.SIZE_LIMIT,
+    "PAGE_LIMIT": IDPSkipReason.PAGE_LIMIT,
+    "TEXT_LIMIT": IDPSkipReason.TEXT_LIMIT,
+}
+
+
 class IDPRuntimeConfigurationError(IDPContractError):
     pass
 
@@ -111,7 +124,7 @@ class Boto3IDPDocumentReader:
         document = self.metadata.get_for_scope(tenant_id=tenant_id, matter_id=matter_id, document_id=document_id)
         if document is None:
             return None
-        clean = document.malware_scan_status is MalwareScanStatus.CLEAN and document.status in {DocumentStatus.UPLOADED, DocumentStatus.PENDING_INGESTION, DocumentStatus.INDEXED}
+        clean = document.malware_scan_status is MalwareScanStatus.CLEAN and document.status in _IDP_ELIGIBLE_DOCUMENT_STATUSES
         return DocumentForIDP(tenant_id=document.tenant_id, matter_id=document.matter_id, document_id=document.document_id, media_type=document.media_type, file_size_bytes=document.file_size_bytes, malware_scan_clean=clean, content_sha256=None, source_key=document.s3_key)
 
     def read(self, *, job: IDPJob, document: DocumentForIDP) -> tuple[DocumentForIDP, bytes]:
@@ -225,7 +238,7 @@ class ProductionIDPProcessor(IDPProcessor):
                 return self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.VALIDATED, status=IDPJobStatus.WAITING_FOR_OCR)
             return self._persist_completed(job=job, claim=claim, result=result)
         except PDFLimitExceeded as exc:
-            reason = IDPSkipReason.PAGE_LIMIT if exc.reason == "PAGE_LIMIT" else IDPSkipReason.SIZE_LIMIT
+            reason = _SKIP_REASON_BY_LIMIT.get(exc.reason, IDPSkipReason.RESOURCE_LIMIT)
             skipped = self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.VALIDATED, status=IDPJobStatus.SKIPPED, skip_reason=reason)
             self._project_job_state(skipped, source_key=authoritative.source_key)
             return skipped

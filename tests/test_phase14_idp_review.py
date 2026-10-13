@@ -25,6 +25,7 @@ from legaldesk.idp.models import (
     IDPJobStatus,
 )
 from legaldesk.idp.review import (
+    Boto3DynamoIDPDecisionRepository,
     IDPDecisionAction,
     IDPReviewInvocation,
     IDPReviewService,
@@ -34,6 +35,8 @@ from legaldesk.idp.review import (
     dispatch_review_after_persist,
 )
 
+
+from tests.dynamodb_rules import as_boto3_item
 
 HASH = "a" * 64
 
@@ -86,6 +89,49 @@ class ReviewTests(unittest.TestCase):
         result = query_selected_document(context=context, document_id="doc-a", field_name="costs_statement", repository=Repo(), review_service=service)
         self.assertEqual(result.source, "IDP")
         self.assertEqual(result.value["value"], "paid")
+
+    def _context(self):
+        store = InMemoryAuthorizationStore(
+            users_by_subject={"subject": User("user-a", "subject", frozenset({"tenant-a"}))},
+            matters_by_id={"matter-a": Matter("matter-a", "tenant-a", "Matter", frozenset({"user-a"}))},
+        )
+        return build_request_context(_gateway_identity_from_verified_subject("subject"), "matter-a", store, correlation_id=str(uuid4()))
+
+    def test_saved_decision_round_trips_through_boto3_decimal_items(self):
+        # Regression (live smoke): boto3 returned the decision evidence page as
+        # Decimal, EvidenceAnchor rejected it and every read of the document failed.
+        class Table:
+            def __init__(self): self.items = {}
+            def put_item(self, *, Item, **_): self.items[(Item["pk"], Item["sk"])] = Item
+            def get_item(self, *, Key, **_): return {"Item": as_boto3_item(self.items[(Key["pk"], Key["sk"])])}
+            def query(self, **_): return {"Items": [as_boto3_item(item) for item in self.items.values()]}
+
+        anchor = EvidenceAnchor(page=2, quote="costs reserved", content_sha256=HASH, start=10, end=24)
+        base = self._run()
+        field = IDPFieldResult(field="costs_statement", value="reserved", presence=FieldPresence.PRESENT, origin=FieldOrigin.LITERAL, acceptance=FieldAcceptance.REVIEW_REQUIRED, evidence=(anchor,))
+        run = IDPExtractionRun(run_id=base.run_id, tenant_id=base.tenant_id, matter_id=base.matter_id, document_id=base.document_id, document_sha256=HASH, document_type=DocumentType.JUDGMENT, schema_version=base.schema_version, model_id="model", prompt_version="prompt", status=IDPJobStatus.REVIEW_REQUIRED, fields={field.field: field}, created_at=base.created_at)
+        service = IDPReviewService(Boto3DynamoIDPDecisionRepository("table", table=Table()))
+        service.record_human_decision(context=self._context(), run=run, field_name="costs_statement", action=IDPDecisionAction.CORRECT, proposed={"value": "paid"}, result={"value": "paid", "presence": "PRESENT"}, evidence=(anchor,), reason="reviewed")
+        loaded = service.decisions.list_decisions(tenant_id="tenant-a", matter_id="matter-a", document_id="doc-a", field_name="costs_statement")
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].evidence, (anchor,))
+        self.assertIs(type(loaded[0].evidence[0].page), int)
+        self.assertIs(type(loaded[0].evidence[0].start), int)
+        effective = service.effective_field(run=run, field_name="costs_statement")
+        self.assertEqual((effective["value"], effective["acceptance"]), ("paid", FieldAcceptance.HUMAN_CONFIRMED.value))
+
+    def test_human_decision_outranks_a_newer_machine_run_of_the_same_content(self):
+        # Plan 14: reprocessing never silently replaces a human-confirmed value.
+        older = self._run()
+        context = self._context()
+        service = IDPReviewService(InMemoryIDPDecisionRepository())
+        service.record_human_decision(context=context, run=older, field_name="costs_statement", action=IDPDecisionAction.CORRECT, proposed={"value": "paid"}, result={"value": "paid", "presence": "PRESENT"}, evidence=older.fields["costs_statement"].evidence, reason="reviewed")
+        machine = IDPFieldResult(field="costs_statement", value="reserved-again", presence=FieldPresence.PRESENT, origin=FieldOrigin.LITERAL, acceptance=FieldAcceptance.AUTO_ACCEPTED, evidence=older.fields["costs_statement"].evidence)
+        newer = IDPExtractionRun(run_id="run-b", tenant_id="tenant-a", matter_id="matter-a", document_id="doc-a", document_sha256=HASH, document_type=DocumentType.JUDGMENT, schema_version="1.0.0", model_id="model", prompt_version="prompt-2", status=IDPJobStatus.COMPLETED, fields={"costs_statement": machine}, created_at=datetime.now(timezone.utc))
+        effective = service.effective_field(run=newer, field_name="costs_statement")
+        self.assertEqual((effective["value"], effective["acceptance"]), ("paid", FieldAcceptance.HUMAN_CONFIRMED.value))
+        service.record_human_decision(context=context, run=newer, field_name="costs_statement", action=IDPDecisionAction.REJECT, proposed=None, result=None, evidence=(), reason="wrong")
+        self.assertEqual(service.effective_field(run=newer, field_name="costs_statement")["acceptance"], FieldAcceptance.REJECTED.value)
 
     def test_dispatch_persists_invocation_before_gateway_and_marks_sent(self):
         from legaldesk.gateway_interceptor import InMemoryGatewayGrantRepository

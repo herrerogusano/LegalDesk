@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
+from tests.dynamodb_rules import enforce_expression_rules  # noqa: E402
 from legaldesk.idp import (  # noqa: E402
     Boto3DynamoIDPRepository,
     DocumentType,
@@ -27,6 +28,7 @@ from legaldesk.idp import (  # noqa: E402
     IDPFieldResult,
     IDPJob,
     IDPJobStatus,
+    IDPSkipReason,
     matter_partition_key,
 )
 
@@ -130,12 +132,14 @@ class _ExpressionTable:
         return {"Item": dict(item)} if item is not None else {}
 
     def put_item(self, *, Item: dict[str, object], ConditionExpression: str | None = None, ExpressionAttributeNames=None, ExpressionAttributeValues=None, **_: object) -> None:
+        enforce_expression_rules({"ConditionExpression": ConditionExpression, "ExpressionAttributeNames": ExpressionAttributeNames, "ExpressionAttributeValues": ExpressionAttributeValues})
         key = self._key(Item)
         if not self._holds(ConditionExpression, ExpressionAttributeNames or {}, ExpressionAttributeValues or {}, self.items.get(key)):
             raise RuntimeError("conditional put failed")
         self.items[key] = dict(Item)
 
     def update_item(self, *, Key: dict[str, str], UpdateExpression: str, ConditionExpression: str | None = None, ExpressionAttributeNames=None, ExpressionAttributeValues=None, **_: object) -> None:
+        enforce_expression_rules({"UpdateExpression": UpdateExpression, "ConditionExpression": ConditionExpression, "ExpressionAttributeNames": ExpressionAttributeNames, "ExpressionAttributeValues": ExpressionAttributeValues})
         key = (Key["pk"], Key["sk"])
         if key not in self.items:
             raise RuntimeError("update target missing")
@@ -150,6 +154,9 @@ class _ExpressionTable:
             lhs, _, rhs = assignment.strip().partition("=")
             if rhs.strip() in values:
                 item[names.get(lhs.strip(), lhs.strip())] = values[rhs.strip()]
+        if "REMOVE" in UpdateExpression:
+            for alias in UpdateExpression.split("REMOVE", 1)[1].split(","):
+                item.pop(names[alias.strip()], None)
 
 
 def _run(*, run_id: str, status: IDPJobStatus, created_at: datetime, model: str = "model-a", prompt: str = "prompt-a", schema: str = "1.0.0") -> IDPExtractionRun:
@@ -199,6 +206,38 @@ class GenerationContractTests(unittest.TestCase):
                 repository.project_document_job_status(job=_job(job_id=f"job-{status}", status=status, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)), source_key="canonical.pdf")
                 pointer = table.items[(matter_partition_key("tenant-a", "matter-a"), "DOCUMENT#document-a")]
                 self.assertEqual(pointer["idpStatus"], public_status)
+
+    def test_reprocessed_run_replaces_stale_failure_job_reason_and_attempt(self) -> None:
+        # Regression (live smoke): a reprocessed document kept showing the old
+        # job and MAX_ATTEMPTS_EXHAUSTED after its new run was promoted.
+        table = self._pointer_table()
+        repository = Boto3DynamoIDPRepository("synthetic", table=table)
+        key = (matter_partition_key("tenant-a", "matter-a"), "DOCUMENT#document-a")
+        failed = replace(_job(job_id="old-job", status=IDPJobStatus.FAILED, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)), attempt=3, error_code="MAX_ATTEMPTS_EXHAUSTED")
+        repository.project_document_job_status(job=failed, source_key="canonical.pdf")
+        pointer = table.items[key]
+        self.assertEqual((pointer["idpStatus"], pointer["idpReason"], pointer["idpJobId"], pointer["idpAttempt"]), ("IDP_FAILED", "MAX_ATTEMPTS_EXHAUSTED", "old-job", 3))
+        repository.project_document_status(run=_run(run_id="new-job", status=IDPJobStatus.COMPLETED, created_at=datetime(2026, 2, 1, tzinfo=timezone.utc)))
+        pointer = table.items[key]
+        self.assertEqual((pointer["idpStatus"], pointer["idpRunId"], pointer["idpJobId"]), ("IDP_COMPLETED", "new-job", "new-job"))
+        self.assertNotIn("idpReason", pointer)
+        self.assertNotIn("idpAttempt", pointer)
+
+    def test_job_projection_reason_matches_state(self) -> None:
+        key = (matter_partition_key("tenant-a", "matter-a"), "DOCUMENT#document-a")
+        table = self._pointer_table()
+        repository = Boto3DynamoIDPRepository("synthetic", table=table)
+        moments = iter(datetime(2026, 1, day, tzinfo=timezone.utc) for day in range(1, 10))
+        failed = replace(_job(job_id="j-fail", status=IDPJobStatus.FAILED, created_at=next(moments)), error_code="MAX_ATTEMPTS_EXHAUSTED")
+        repository.project_document_job_status(job=failed, source_key="canonical.pdf")
+        self.assertEqual(table.items[key]["idpReason"], "MAX_ATTEMPTS_EXHAUSTED")
+        skipped = replace(_job(job_id="j-skip", status=IDPJobStatus.QUEUED, created_at=next(moments)), status=IDPJobStatus.SKIPPED, skip_reason=IDPSkipReason.TEXT_LIMIT)
+        repository.project_document_job_status(job=skipped, source_key="canonical.pdf")
+        self.assertEqual((table.items[key]["idpStatus"], table.items[key]["idpReason"]), ("IDP_SKIPPED", "TEXT_LIMIT"))
+        processing = _job(job_id="j-run", status=IDPJobStatus.PROCESSING, created_at=next(moments))
+        repository.project_document_job_status(job=processing, source_key="canonical.pdf")
+        self.assertEqual((table.items[key]["idpStatus"], table.items[key]["idpJobId"]), ("PROCESSING_IDP", "j-run"))
+        self.assertNotIn("idpReason", table.items[key])
 
     def test_newer_run_fences_older_job_terminal_projection(self) -> None:
         table = self._pointer_table()

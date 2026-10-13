@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
+from tests.dynamodb_rules import enforce_expression_rules  # noqa: E402
 from legaldesk.idp import (  # noqa: E402
     DocumentForIDP,
     DocumentType,
@@ -89,9 +90,11 @@ class BotoExpressionTable:
         return {"Item": item} if item is not None else {}
 
     def put_item(self, **kwargs):
+        enforce_expression_rules(kwargs)
         self.calls.append({"put_item": kwargs})
 
     def update_item(self, **kwargs):
+        enforce_expression_rules(kwargs)
         self.calls.append({"update_item": kwargs})
 
 

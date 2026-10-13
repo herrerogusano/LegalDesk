@@ -206,6 +206,12 @@ def _validate_limit(limit: int) -> int:
     return limit
 
 
+# A worker may legitimately receive the SQS message before the producer's
+# post-publish QUEUED write lands: the producer's DELIVERY_IN_FLIGHT write is the
+# durable precondition of the publish, so it is the exact pre-publish state.
+_CLAIMABLE_DELIVERY = (IDPJobStatus.QUEUED, IDPJobStatus.DELIVERY_IN_FLIGHT)
+
+
 class InMemoryIDPRepository:
     """Thread-safe fake with the same conditional semantics as production."""
 
@@ -330,7 +336,7 @@ class InMemoryIDPRepository:
             now = self.clock() if now is None else now
             safe_reclaim = job.status in (IDPJobStatus.CLAIMED, IDPJobStatus.PROCESSING, IDPJobStatus.WAITING_FOR_OCR) and job.claimed_until is not None and job.claimed_until <= now and job.checkpoint in (IDPCheckpoint.CREATED, IDPCheckpoint.VALIDATED, IDPCheckpoint.PAID_CALL_READY)
             continuation = allow_waiting_for_ocr and job.status is IDPJobStatus.WAITING_FOR_OCR and job.checkpoint is IDPCheckpoint.VALIDATED
-            if not ((job.status is IDPJobStatus.QUEUED and job.claim_token is None) or safe_reclaim or continuation) or job.attempt >= job.max_attempts:
+            if not ((job.status in _CLAIMABLE_DELIVERY and job.claim_token is None) or safe_reclaim or continuation) or job.attempt >= job.max_attempts:
                 raise IDPConcurrencyError("IDP job is not claimable")
             token = new_id()
             claimed = replace(
@@ -623,7 +629,7 @@ class Boto3DynamoIDPRepository:
         document_key = {"pk": matter_partition_key(job.tenant_id, job.matter_id), "sk": f"DOCUMENT#{job.document_id}"}
         intent_statuses = tuple(status.value for status in IDP_TERMINAL_JOB_STATUSES)
         values: dict[str, object] = {
-            ":intent": job_item, ":pending": IDPJobStatus.ENQUEUE_PENDING.value,
+            ":intent": job_item, ":pending": public_idp_status(IDPJobStatus.ENQUEUE_PENDING), ":newjob": job.job_id,
             ":hash": job.document_sha256, ":document": job.document_id,
             ":source": expected_source_key, ":expected_run": expected_run_id or "",
             ":terminal_statuses": intent_statuses, ":null": "NULL",
@@ -641,7 +647,7 @@ class Boto3DynamoIDPRepository:
         if verified_intent_job_id:
             values[":verified_terminal_job"] = verified_intent_job_id
         # DynamoDB's IN operator requires individual placeholders, not a list.
-        names = {"#document": "documentId", "#canonical": "s3Key", "#hash": "idpDocumentSha256", "#run": "idpRunId", "#intent": "idpCleanIntent", "#status": "status", "#idpstatus": "idpStatus", "#job": "jobId"}
+        names = {"#document": "documentId", "#canonical": "s3Key", "#hash": "idpDocumentSha256", "#run": "idpRunId", "#intent": "idpCleanIntent", "#status": "status", "#idpstatus": "idpStatus", "#job": "jobId", "#idpjob": "idpJobId", "#idpreason": "idpReason", "#idpattempt": "idpAttempt"}
         del values[":terminal_statuses"]
         status_values: dict[str, object] = {}
         for index, status in enumerate(intent_statuses):
@@ -651,7 +657,7 @@ class Boto3DynamoIDPRepository:
         update = {
             "TableName": self.table_name,
             "Key": document_key,
-            "UpdateExpression": "SET #intent = :intent, #idpstatus = :pending, #hash = :hash",
+            "UpdateExpression": "SET #intent = :intent, #idpstatus = :pending, #hash = :hash, #idpjob = :newjob REMOVE #idpreason, #idpattempt",
             "ExpressionAttributeNames": names,
             "ExpressionAttributeValues": values,
             "ConditionExpression": condition,
@@ -717,7 +723,7 @@ class Boto3DynamoIDPRepository:
                 Key=key,
                 UpdateExpression="SET #intent = :intent, #status = :pending, #hash = :hash",
                 ExpressionAttributeNames={"#intent": "idpCleanIntent", "#status": "idpStatus", "#hash": "idpIntentDocumentSha256", "#document": "documentId", "#existing_hash": "idpDocumentSha256", "#run": "idpRunId"},
-                ExpressionAttributeValues={":intent": intent, ":pending": IDPJobStatus.ENQUEUE_PENDING.value, ":hash": job.document_sha256, ":document": job.document_id, ":null": "NULL"},
+                ExpressionAttributeValues={":intent": intent, ":pending": public_idp_status(IDPJobStatus.ENQUEUE_PENDING), ":hash": job.document_sha256, ":document": job.document_id, ":null": "NULL"},
                 # The read above handles same-intent crash recovery.  The
                 # write itself must only create a previously absent intent;
                 # permitting the same idempotency key here would let a
@@ -833,14 +839,14 @@ class Boto3DynamoIDPRepository:
         now = _now() if now is None else now
         safe_reclaim = job.status in (IDPJobStatus.CLAIMED, IDPJobStatus.PROCESSING, IDPJobStatus.WAITING_FOR_OCR) and job.claimed_until is not None and job.claimed_until <= now and job.checkpoint in (IDPCheckpoint.CREATED, IDPCheckpoint.VALIDATED, IDPCheckpoint.PAID_CALL_READY)
         continuation = allow_waiting_for_ocr and job.status is IDPJobStatus.WAITING_FOR_OCR and job.checkpoint is IDPCheckpoint.VALIDATED
-        if not ((job.status is IDPJobStatus.QUEUED and job.claim_token is None) or safe_reclaim or continuation) or job.attempt >= job.max_attempts:
+        if not ((job.status in _CLAIMABLE_DELIVERY and job.claim_token is None) or safe_reclaim or continuation) or job.attempt >= job.max_attempts:
             raise IDPConcurrencyError("IDP job is not claimable")
         token = new_id()
         until = now + timedelta(seconds=lease_seconds)
         key = {"pk": matter_partition_key(job.tenant_id, job.matter_id), "sk": job_sort_key(job.job_id)}
         try:
-            condition = "((#status = :queued AND attribute_not_exists(#claim)) OR (#status IN (:claimed_status, :processing_status, :waiting_status) AND #until <= :now AND #checkpoint IN (:created, :validated, :ready)) OR (#status = :waiting_status AND #checkpoint = :validated AND #attempt < :max_attempts)) AND #attempt < :max_attempts" if allow_waiting_for_ocr else "((#status = :queued AND attribute_not_exists(#claim)) OR (#status IN (:claimed_status, :processing_status, :waiting_status) AND #until <= :now AND #checkpoint IN (:created, :validated, :ready))) AND #attempt < :max_attempts"
-            self.table.update_item(Key=key, UpdateExpression="SET #status = :claimed, #attempt = #attempt + :one, #claim = :claim, #until = :until, #updated = :updated", ExpressionAttributeNames={"#status": "status", "#attempt": "attempt", "#claim": "claimToken", "#until": "claimedUntil", "#checkpoint": "checkpoint", "#updated": "updatedAt"}, ExpressionAttributeValues={":claimed": IDPJobStatus.CLAIMED.value, ":one": 1, ":claim": token, ":until": until.isoformat(), ":updated": now.isoformat(), ":queued": IDPJobStatus.QUEUED.value, ":claimed_status": IDPJobStatus.CLAIMED.value, ":processing_status": IDPJobStatus.PROCESSING.value, ":waiting_status": IDPJobStatus.WAITING_FOR_OCR.value, ":now": now.isoformat(), ":created": IDPCheckpoint.CREATED.value, ":validated": IDPCheckpoint.VALIDATED.value, ":ready": IDPCheckpoint.PAID_CALL_READY.value, ":max_attempts": job.max_attempts}, ConditionExpression=condition)
+            condition = "((#status IN (:queued, :in_flight) AND attribute_not_exists(#claim)) OR (#status IN (:claimed_status, :processing_status, :waiting_status) AND #until <= :now AND #checkpoint IN (:created, :validated, :ready)) OR (#status = :waiting_status AND #checkpoint = :validated AND #attempt < :max_attempts)) AND #attempt < :max_attempts" if allow_waiting_for_ocr else "((#status IN (:queued, :in_flight) AND attribute_not_exists(#claim)) OR (#status IN (:claimed_status, :processing_status, :waiting_status) AND #until <= :now AND #checkpoint IN (:created, :validated, :ready))) AND #attempt < :max_attempts"
+            self.table.update_item(Key=key, UpdateExpression="SET #status = :claimed, #attempt = #attempt + :one, #claim = :claim, #until = :until, #updated = :updated", ExpressionAttributeNames={"#status": "status", "#attempt": "attempt", "#claim": "claimToken", "#until": "claimedUntil", "#checkpoint": "checkpoint", "#updated": "updatedAt"}, ExpressionAttributeValues={":claimed": IDPJobStatus.CLAIMED.value, ":one": 1, ":claim": token, ":until": until.isoformat(), ":updated": now.isoformat(), ":queued": IDPJobStatus.QUEUED.value, ":in_flight": IDPJobStatus.DELIVERY_IN_FLIGHT.value, ":claimed_status": IDPJobStatus.CLAIMED.value, ":processing_status": IDPJobStatus.PROCESSING.value, ":waiting_status": IDPJobStatus.WAITING_FOR_OCR.value, ":now": now.isoformat(), ":created": IDPCheckpoint.CREATED.value, ":validated": IDPCheckpoint.VALIDATED.value, ":ready": IDPCheckpoint.PAID_CALL_READY.value, ":max_attempts": job.max_attempts}, ConditionExpression=condition)
         except Exception as exc:
             raise IDPConcurrencyError("IDP job is not claimable") from exc
         return IDPClaim(job_id, token, worker_id, until)
@@ -925,9 +931,13 @@ class Boto3DynamoIDPRepository:
         try:
             self.table.update_item(
                 Key=key,
-                UpdateExpression="SET #status = :status, #run = :run, #hash = :hash, #generation = :generation, #source = :source",
-                ExpressionAttributeNames={"#status": "idpStatus", "#run": "idpRunId", "#hash": "idpDocumentSha256", "#generation": "idpGenerationAt", "#source": "idpSourceKey", "#document": "documentId", "#canonical": "s3Key"},
-                ExpressionAttributeValues={":status": public_idp_status(run.status), ":run": run.run_id, ":hash": run.document_sha256, ":generation": run.created_at.isoformat(), ":source": run.source_key or "", ":document": run.document_id, ":null": "NULL"},
+                # The promoted run is the job that produced it (run_id == job_id):
+                # point idpJobId at it and drop the previous generation's
+                # failure reason/attempt so a reprocessed document does not keep
+                # showing e.g. MAX_ATTEMPTS_EXHAUSTED.
+                UpdateExpression="SET #status = :status, #run = :run, #hash = :hash, #generation = :generation, #source = :source, #job = :job REMOVE #reason, #attempt",
+                ExpressionAttributeNames={"#status": "idpStatus", "#run": "idpRunId", "#hash": "idpDocumentSha256", "#generation": "idpGenerationAt", "#source": "idpSourceKey", "#job": "idpJobId", "#reason": "idpReason", "#attempt": "idpAttempt", "#document": "documentId", "#canonical": "s3Key"},
+                ExpressionAttributeValues={":status": public_idp_status(run.status), ":run": run.run_id, ":hash": run.document_sha256, ":generation": run.created_at.isoformat(), ":source": run.source_key or "", ":job": run.run_id, ":document": run.document_id, ":null": "NULL"},
                 # The pointer may advance for a newer generation/content hash,
                 # but only while the metadata row still names this exact
                 # canonical object.  Queue/job fields never authorize it.
@@ -945,16 +955,26 @@ class Boto3DynamoIDPRepository:
         """
 
         key = {"pk": matter_partition_key(job.tenant_id, job.matter_id), "sk": f"DOCUMENT#{job.document_id}"}
-        names = {"#status": "idpStatus", "#reason": "idpReason", "#attempt": "idpAttempt", "#job": "idpJobId", "#generation": "idpGenerationAt", "#document": "documentId"}
+        # A reason exists only for the states that have one; pending/processing
+        # projections clear a previous generation's reason instead of inventing
+        # PROCESSING_FAILED.
+        if job.status is IDPJobStatus.SKIPPED:
+            reason: str | None = job.skip_reason.value if job.skip_reason is not None else "SKIPPED"  # SKIPPED jobs always carry a reason
+        elif job.status is IDPJobStatus.FAILED:
+            reason = job.error_code or "PROCESSING_FAILED"
+        else:
+            reason = None
+        names = {"#status": "idpStatus", "#attempt": "idpAttempt", "#job": "idpJobId", "#generation": "idpGenerationAt", "#document": "documentId", "#reason": "idpReason"}
         values: dict[str, object] = {
             ":status": public_idp_status(job.status),
-            ":reason": job.skip_reason.value if job.skip_reason is not None else (job.error_code or "PROCESSING_FAILED"),
             ":attempt": job.attempt,
             ":job": job.job_id,
             ":generation": job.created_at.isoformat(),
             ":document": job.document_id,
             ":null": "NULL",
         }
+        if reason is not None:
+            values[":reason"] = reason
         condition = "#document = :document AND (attribute_not_exists(#generation) OR attribute_type(#generation, :null) OR #generation <= :generation)"
         if source_key:
             names["#canonical"] = "s3Key"
@@ -963,7 +983,7 @@ class Boto3DynamoIDPRepository:
         try:
             self.table.update_item(
                 Key=key,
-                UpdateExpression="SET #status = :status, #reason = :reason, #attempt = :attempt, #job = :job, #generation = :generation",
+                UpdateExpression="SET #status = :status, #reason = :reason, #attempt = :attempt, #job = :job, #generation = :generation" if reason is not None else "SET #status = :status, #attempt = :attempt, #job = :job, #generation = :generation REMOVE #reason",
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
                 ConditionExpression=condition,

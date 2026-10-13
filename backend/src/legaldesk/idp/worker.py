@@ -98,6 +98,16 @@ def _publish_and_finalize(*, repository: IDPRepository, queue: IDPQueue, current
     try:
         return repository.mark_delivery(job_id=current.job_id, status=IDPJobStatus.QUEUED)
     except Exception as exc:
+        # A fast worker may have claimed the job straight from
+        # DELIVERY_IN_FLIGHT (the message was already visible).  The delivery
+        # then succeeded; the job moved past the delivery states and must not be
+        # reported as ambiguous or re-published.
+        try:
+            observed = repository.get_job(current.job_id)
+        except Exception:
+            observed = None
+        if observed is not None and observed.status not in (IDPJobStatus.ENQUEUE_PENDING, IDPJobStatus.DELIVERY_IN_FLIGHT, IDPJobStatus.DELIVERY_AMBIGUOUS):
+            return observed
         # SQS may already contain the message.  Marking ambiguous makes a
         # bounded reconciler eligible to resend the same idempotent job.
         try:

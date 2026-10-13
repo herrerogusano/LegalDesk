@@ -1240,6 +1240,20 @@ class Boto3DynamoDocumentMetadataRepository:
                 raise DocumentMetadataError("document metadata deletion failed") from exc
 
 
+def _public_idp_status_value(value: object) -> str | None:
+    """Rows written before the projection fix may hold a raw job status
+    (for example ENQUEUE_PENDING); only the public vocabulary is exposed."""
+
+    if not isinstance(value, str):
+        return None
+    from .idp.models import IDPJobStatus, public_idp_status
+
+    try:
+        return public_idp_status(IDPJobStatus(value))
+    except ValueError:
+        return value
+
+
 def _document_from_item(item: Mapping[str, Any]) -> Document:
     return Document(
         document_id=str(item["documentId"]),
@@ -1258,7 +1272,7 @@ def _document_from_item(item: Mapping[str, Any]) -> Document:
         malware_scan_version_id=item.get("malwareScanVersionId") if isinstance(item.get("malwareScanVersionId"), str) else None,
         file_size_bytes=int(item.get("fileSizeBytes", 0)),
         uploaded_at=datetime.fromisoformat(str(item["uploadedAt"])),
-        idp_status=item.get("idpStatus") if isinstance(item.get("idpStatus"), str) else None,
+        idp_status=_public_idp_status_value(item.get("idpStatus")),
         idp_reason=item.get("idpReason") if isinstance(item.get("idpReason"), str) else None,
         idp_attempt=int(item["idpAttempt"]) if isinstance(item.get("idpAttempt"), (int, Decimal)) and not isinstance(item.get("idpAttempt"), bool) else None,
         idp_job_id=item.get("idpJobId") if isinstance(item.get("idpJobId"), str) else None,

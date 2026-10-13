@@ -241,6 +241,7 @@ class Boto3DynamoIDPDecisionRepository:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise IDPReviewError("decision limit is invalid")
         from boto3.dynamodb.conditions import Key
+        from .persistence import _from_dynamo
         query_kwargs: dict[str, object] = {
             "KeyConditionExpression": Key("pk").eq(f"TENANT#{tenant_id}#MATTER#{matter_id}") & Key("sk").begins_with(f"IDP#DECISION#{document_id}#{field_name}#"),
             "Limit": min(100, limit), "ConsistentRead": True, "ScanIndexForward": False,
@@ -253,6 +254,9 @@ class Boto3DynamoIDPDecisionRepository:
                 if not isinstance(raw, Mapping):
                     continue
                 try:
+                    # boto3 returns every number (evidence page/start/end, values)
+                    # as Decimal; EvidenceAnchor requires plain ints.
+                    raw = _from_dynamo(raw)
                     evidence = tuple(EvidenceAnchor(page=item["page"], quote=item["quote"], content_sha256=item["contentSha256"], start=item.get("start"), end=item.get("end")) for item in raw.get("evidence", ()))
                     values.append(IDPFieldDecision(decision_id=raw["decisionId"], tenant_id=raw["tenantId"], matter_id=raw["matterId"], document_id=raw["documentId"], run_id=raw["runId"], document_sha256=raw["documentSha256"], schema_version=raw["schemaVersion"], field_name=raw["fieldName"], action=IDPDecisionAction(raw["action"]), reviewer_user_id=raw["reviewerUserId"], correlation_id=raw["correlationId"], previous=raw.get("previous", {}), proposed=raw.get("proposed"), result=raw.get("result"), evidence=evidence, reason=raw["reason"], created_at=datetime.fromisoformat(raw["createdAt"]), review_task_id=raw.get("reviewTaskId")))
                 except (KeyError, TypeError, ValueError) as exc:

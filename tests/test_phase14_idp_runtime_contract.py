@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import threading
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).parents[1] / "backend" / "src"))
 
 from legaldesk.domain.models import DocumentStatus, MalwareScanStatus  # noqa: E402
+from tests.dynamodb_rules import enforce_expression_rules  # noqa: E402
 from legaldesk.idp import (  # noqa: E402
     Boto3DynamoIDPRepository,
     DocumentForIDP,
@@ -46,6 +48,7 @@ from legaldesk.idp.ocr import (  # noqa: E402
     Boto3DynamoOCRJobStore,
     Boto3TextractProvider,
     OCRCoordinator,
+    OCRStatus,
 )
 from legaldesk.idp.providers import IDPModelConfig  # noqa: E402
 from legaldesk.idp import providers as _providers  # noqa: E402
@@ -71,6 +74,7 @@ class _ConditionAwareTable:
     def __init__(self) -> None:
         self.items: dict[tuple[str, str], dict[str, object]] = {}
         self.name = "synthetic-idp-table"
+        self._lock = threading.RLock()
         self.meta = SimpleNamespace(client=self)
 
     @staticmethod
@@ -162,12 +166,18 @@ class _ConditionAwareTable:
         return {"Item": dict(item)} if item is not None else {}
 
     def put_item(self, *, Item: dict[str, object], ConditionExpression: str | None = None, ExpressionAttributeNames: dict[str, str] | None = None, ExpressionAttributeValues: dict[str, object] | None = None, **_: object) -> None:
+        enforce_expression_rules({"ConditionExpression": ConditionExpression, "ExpressionAttributeNames": ExpressionAttributeNames, "ExpressionAttributeValues": ExpressionAttributeValues})
         key = self._key(Item)
         if not self._condition_holds(ConditionExpression, ExpressionAttributeNames or {}, ExpressionAttributeValues or {}, self.items.get(key)):
             raise RuntimeError("conditional put failed")
         self.items[key] = dict(Item)
 
     def update_item(self, *, Key: dict[str, str], UpdateExpression: str, ConditionExpression: str | None = None, ExpressionAttributeNames: dict[str, str] | None = None, ExpressionAttributeValues: dict[str, object] | None = None, **_: object) -> None:
+        enforce_expression_rules({"UpdateExpression": UpdateExpression, "ConditionExpression": ConditionExpression, "ExpressionAttributeNames": ExpressionAttributeNames, "ExpressionAttributeValues": ExpressionAttributeValues})
+        with self._lock:
+            self._update_locked(Key, UpdateExpression, ConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues)
+
+    def _update_locked(self, Key, UpdateExpression, ConditionExpression, ExpressionAttributeNames, ExpressionAttributeValues) -> None:
         key = (Key["pk"], Key["sk"])
         if key not in self.items:
             raise RuntimeError("conditional update target missing")
@@ -195,8 +205,6 @@ class _ConditionAwareTable:
                     if base.strip() in names and increment.strip() in values:
                         attribute = names[base.strip()]
                         item[attribute] = int(item.get(attribute, 0)) + int(values[increment.strip()])
-        if "#attempt" in names and ":one" in values:
-            item[names["#attempt"]] = int(item.get(names["#attempt"], 0)) + int(values[":one"])
         for alias in remove_part.split(","):
             alias = alias.strip()
             if alias in names:
@@ -213,6 +221,7 @@ class _ConditionAwareTable:
             item = dict(put["Item"])
             key = self._key(item)
             condition = put.get("ConditionExpression")
+            enforce_expression_rules(put)
             if not self._condition_holds(condition if isinstance(condition, str) else None, put.get("ExpressionAttributeNames", {}) or {}, put.get("ExpressionAttributeValues", {}) or {}, snapshot.get(key)):
                 raise RuntimeError("conditional transaction failed")
             pending.append(item)
@@ -609,6 +618,61 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(len(textract.get_calls), 1)
         self.assertEqual(len(bedrock.calls), 2)
         self.assertEqual(metadata.document.rag_state, "INDEXED_AND_AVAILABLE")
+
+    def test_ocr_completion_update_sends_only_referenced_aliases(self) -> None:
+        # Regression (live smoke): the completion UpdateItem carried an unused
+        # ":pending" value, which DynamoDB rejects.  The shared fake enforces it.
+        for next_token in (None, "page-token"):
+            with self.subTest(next_token=next_token):
+                _repository, _metadata, _reader, _processor, _worker, _bedrock, _textract, table, job = self._start_scanned()
+                store = Boto3DynamoOCRJobStore(table, tenant_id="tenant-a", matter_id="matter-a")
+                record = store.get_by_run(job.job_id)
+                store.put(replace(record, status=OCRStatus.SUCCEEDED, next_token=next_token))  # type: ignore[type-var]
+                stored = table.items[("TENANT#tenant-a#MATTER#matter-a", f"IDP#OCR#{job.job_id}")]
+                self.assertEqual(stored["status"], OCRStatus.SUCCEEDED.value)
+                self.assertEqual(stored.get("nextToken"), next_token)
+
+    def test_pdf_limit_skips_report_their_own_reason(self) -> None:
+        # Regression (live smoke): a text-limit skip was reported as SIZE_LIMIT.
+        from legaldesk.idp.acquisition import PDFLimitExceeded
+        from legaldesk.idp.models import IDPSkipReason
+
+        expected = {"SIZE_LIMIT": IDPSkipReason.SIZE_LIMIT, "PAGE_LIMIT": IDPSkipReason.PAGE_LIMIT, "TEXT_LIMIT": IDPSkipReason.TEXT_LIMIT, "RESOURCE_LIMIT": IDPSkipReason.RESOURCE_LIMIT, "CONTENT_STREAM_LIMIT": IDPSkipReason.RESOURCE_LIMIT}
+        for limit, reason in expected.items():
+            with self.subTest(limit=limit):
+                _repository, _metadata, _reader, _processor, worker, bedrock, _textract, _table, job = self._context("contract-01-en-digital-monthend.pdf")
+                with mock.patch("legaldesk.idp.runtime.IDPProcessingPipeline.process", side_effect=PDFLimitExceeded(limit)):
+                    result = worker.process_message({"jobId": job.job_id})
+                self.assertEqual((result.status, result.skip_reason), (IDPJobStatus.SKIPPED, reason))
+                self.assertEqual(len(bedrock.calls), 0)
+
+    def test_raw_job_status_in_a_stored_document_row_is_exposed_as_public_status(self) -> None:
+        from legaldesk.documents import _public_idp_status_value
+
+        self.assertEqual(_public_idp_status_value("ENQUEUE_PENDING"), "PENDING_IDP")
+        self.assertEqual(_public_idp_status_value("IDP_SKIPPED"), "IDP_SKIPPED")
+        self.assertIsNone(_public_idp_status_value(None))
+
+    def test_rag_failed_document_is_idp_eligible_only_when_malware_scan_is_clean(self) -> None:
+        # A KB parse failure (image-only scan) marks the document FAILED; IDP OCR
+        # is then the only way to read it.  RAG status stays untouched.
+        cases = (
+            (DocumentStatus.FAILED, MalwareScanStatus.CLEAN, IDPJobStatus.WAITING_FOR_OCR),
+            (DocumentStatus.FAILED, MalwareScanStatus.THREATS_FOUND, IDPJobStatus.SKIPPED),
+            (DocumentStatus.FAILED, MalwareScanStatus.FAILED, IDPJobStatus.SKIPPED),
+            (DocumentStatus.FAILED, MalwareScanStatus.PENDING, IDPJobStatus.SKIPPED),
+        )
+        for rag_status, scan, expected in cases:
+            with self.subTest(scan=scan):
+                _repository, metadata, _reader, _processor, worker, bedrock, textract, _table, job = self._context("contract-02-es-scanned-leapday.pdf")
+                metadata.document.status, metadata.document.malware_scan_status = rag_status, scan
+                result = worker.process_message({"jobId": job.job_id})
+                self.assertEqual(result.status, expected)
+                self.assertEqual(len(bedrock.calls), 0)
+                self.assertEqual(len(textract.start_calls), 1 if expected is IDPJobStatus.WAITING_FOR_OCR else 0)
+                self.assertIs(metadata.document.status, DocumentStatus.FAILED)
+                if expected is IDPJobStatus.SKIPPED:
+                    self.assertEqual(result.skip_reason.value, "MALWARE_NOT_CLEAN")
 
     def test_failed_ocr_is_terminal_without_model_or_rag_mutation(self) -> None:
         _repository, metadata, reader, processor, _worker, bedrock, _textract, table, job = self._start_scanned()

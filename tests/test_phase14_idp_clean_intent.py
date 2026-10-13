@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -160,7 +161,7 @@ class CleanIntentTests(unittest.TestCase):
         self.assertIn("attribute_not_exists(#run)", condition)
         self.assertNotIn("#intent.#idempotencyKey", condition)
         values = request["ExpressionAttributeValues"]
-        self.assertEqual(values[":pending"], {"S": "ENQUEUE_PENDING"})
+        self.assertEqual(values[":pending"], {"S": "PENDING_IDP"})
 
     def test_boto_initial_write_accepts_legacy_null_hash_and_run_without_dropping_cas(self) -> None:
         import boto3
@@ -235,6 +236,14 @@ class CleanIntentTests(unittest.TestCase):
         self.assertIn("attribute_type(#hash, :null)", update["ConditionExpression"])
         self.assertIn("attribute_type(#run, :null)", update["ConditionExpression"])
         self.assertEqual(update["ExpressionAttributeValues"][":null"], {"S": "NULL"})
+        # The public pointer never holds the raw ENQUEUE_PENDING job status, and
+        # a reprocess reservation drops the previous generation's reason.
+        self.assertEqual(update["ExpressionAttributeValues"][":pending"], {"S": "PENDING_IDP"})
+        self.assertEqual(update["ExpressionAttributeValues"][":newjob"], {"S": "operator-job"})
+        self.assertIn("#idpjob = :newjob", update["UpdateExpression"])
+        self.assertIn("REMOVE #idpreason, #idpattempt", update["UpdateExpression"])
+        used = set(re.findall(r":[A-Za-z_][A-Za-z0-9_]*", update["UpdateExpression"] + update["ConditionExpression"]))
+        self.assertEqual(used, set(update["ExpressionAttributeValues"]))
 
     def test_trigger_does_not_create_or_publish_when_old_clean_event_loses_race(self) -> None:
         class Repository:
@@ -277,6 +286,21 @@ class CleanIntentTests(unittest.TestCase):
         self.assertEqual(recovered, ())
         self.assertEqual(repository.get_job(initial.job_id).status, IDPJobStatus.COMPLETED)
         self.assertEqual(queue.published, [])
+
+    def test_recovery_considers_rag_failed_documents_only_when_malware_scan_is_clean(self) -> None:
+        for scan, eligible in ((MalwareScanStatus.CLEAN, True), (MalwareScanStatus.THREATS_FOUND, False), (MalwareScanStatus.FAILED, False)):
+            with self.subTest(scan=scan):
+                document = SimpleNamespace(
+                    tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+                    media_type="application/pdf", file_size_bytes=1,
+                    s3_key="tenants/t/document.pdf", status=DocumentStatus.FAILED,
+                    malware_scan_status=scan,
+                )
+                queue = _Queue()
+                trigger = VerifiedCleanIDPTrigger(repository=InMemoryIDPRepository(), queue=queue, config=IDPConfig(), enabled=True, model_id="model", prompt_version="prompt")
+                recovered = trigger.recover_clean_documents(metadata_repository=_Metadata(document), object_storage=_Storage(), tenant_id=TENANT, matter_id=MATTER, limit=1)
+                self.assertEqual(len(recovered), 1 if eligible else 0)
+                self.assertEqual(len(queue.published), 1 if eligible else 0)
 
     def test_recovery_does_not_replace_active_operator_generation(self) -> None:
         document = SimpleNamespace(

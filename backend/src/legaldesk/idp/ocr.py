@@ -242,7 +242,9 @@ class Boto3DynamoOCRJobStore:
                 raise OCRContractError("terminal OCR state cannot regress")
             try:
                 update = "SET #status = :status"
-                update_values = {**values, ":job_id": record.textract_job_id, ":status": record.status.value}
+                # Only the aliases this expression references: DynamoDB rejects
+                # ExpressionAttributeValues that no expression uses.
+                update_values = {":run": record.run_id, ":hash": record.client_request_token, ":waiting": OCRStatus.WAITING_FOR_OCR.value, ":job_id": record.textract_job_id, ":status": record.status.value}
                 if record.next_token is not None:
                     update += ", #next = :next"
                     names["#next"] = "nextToken"
