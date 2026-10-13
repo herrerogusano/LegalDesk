@@ -95,6 +95,30 @@ synthetic document, its IDP artifacts and one `idp-work-dlq` message are
 retained so the same job can resume with committed-stage reuse instead of
 repeating inference. Smoke `c` is not PASS.
 
+## Live resume smoke PASS (2026-10-13)
+
+Runs `d`–`g` (`evals/results/idp-live-digital-20261013-*.json`) each exposed
+one runtime defect, fixed and redeployed through reviewed code-only change
+sets: invalid `NOT IN` DynamoDB syntax in attempt exhaustion (`fd85b92`),
+stale clean-intent reprocess reservation (`303bdf7`), `Decimal` JSON
+serialization in metadata (`8c4d98c`), review dispatch before the durable
+checkpoint and machine Gateway arguments missing `matterId` (`8f4c454`),
+a 15 s machine timeout below the ~16 s cold Gateway chain (`a52508a`), and a
+task-level `resolutionNote` sent on `in_review` decisions (`8a62d4e`).
+Smoke `c` was not resumable (attempts exhausted); its job was failed through
+the fixed path and the document reprocessed once (2 Bedrock calls, 2,525
+input / 792 output tokens, 0 Textract).
+
+Report `idp-live-digital-20261013-h.json` is **PASS** on release `8a62d4e`
+(Lambda code `a52508a`): machine review SENT with one idempotent review task,
+metadata read, `effective_date` answered from IDP (not RAG) with one citation,
+human approve through Gateway (task `in_review`, one decision), cross-matter
+403, and clean ephemeral identity/state/memory cleanup. Not covered by this
+run: duplicate clean-event replay, three-run history, worker usage
+visibility, full provenance exposure, production OCR continuation and the
+remaining phase acceptance items. Cold interceptor/review Lambdas still take
+about 7 s each.
+
 ## Public-edge service-role constraint
 
 The existing stack uses `LegalDeskProductionCloudFormation`, intentionally
