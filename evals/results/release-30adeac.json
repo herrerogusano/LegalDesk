@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "commit": "30adeac2bd976346e0ae23db6a59aa90729425e6",
+  "lambdaSha256": "d62e3768b869bb94bed8e9b0a1ed0cadb62678e6da8905e9d4d8f8321a994868",
+  "lambdaObjectVersion": "o9rXHXwcrtjZjvUFyrdogpPe7Bhodrk9",
+  "frontendVersions": {
+    "app.js": "jbwDpaGHnrGtsUbggMV_Gw_fHZanmwLk",
+    "citations.js": "vjcV1DpTvGi7EgmonAI9TS1PHxXobLW3",
+    "diagnostics.js": "5mpfIFA25.nF9ZuMF.Q86pEDXgt3tHxu",
+    "index.html": "dl3gH7OEF9ke8Lw9rz.qKgR3r_0814zW",
+    "styles.css": "pVeg.vpES7jD044BLt9I2cKbXnS2Cx1p"
+  },
+  "changeSetName": "legaldesk-30adeac2bd97",
+  "invalidationId": "IB25Y47MK2E32WB0TN9ZRUFMMP",
+  "previousLambda": {
+    "key": "phase-14/8a62d4e75b929906b4b70b7bdca108f7847db761/legaldesk-lambda.zip",
+    "version": "GYXidhQuhRAmyrU3eItmthB6k5ti8T5Y"
+  },
+  "checks": {
+    "/": 200,
+    "/logout": 302,
+    "/api/me": 403,
+    "/app.js": 200,
+    "/citations.js": 200,
+    "/diagnostics.js": 200,
+    "/index.html": 200,
+    "/styles.css": 200
+  },
+  "previousFrontendVersions": {
+    "index.html": "dl3gH7OEF9ke8Lw9rz.qKgR3r_0814zW",
+    "styles.css": "pVeg.vpES7jD044BLt9I2cKbXnS2Cx1p",
+    "app.js": "jbwDpaGHnrGtsUbggMV_Gw_fHZanmwLk",
+    "citations.js": "vjcV1DpTvGi7EgmonAI9TS1PHxXobLW3",
+    "diagnostics.js": "5mpfIFA25.nF9ZuMF.Q86pEDXgt3tHxu"
+  }
+}

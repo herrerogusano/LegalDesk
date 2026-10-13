@@ -7,14 +7,14 @@ name = "legaldesk"
 version = "0.1.0"
 description = "Tenant-safe legal document assistant with grounded RAG and verifiable citations on AWS Bedrock AgentCore"
 requires-python = ">=3.11"
-dependencies = ["PyJWT[crypto]>=2.10,<3"]
+dependencies = ["PyJWT[crypto]>=2.10,<3", "pypdf>=6.20,<7"]
 
 [project.scripts]
 legaldesk = "legaldesk.__main__:main"
 
 [project.optional-dependencies]
 aws = ["boto3>=1.42,<2"]
-release-tools = ["PyYAML==6.0.3", "cfn-lint==1.39.1"]
+release-tools = ["PyYAML==6.0.3", "cfn-lint==1.57.2"]
 
 [tool.setuptools]
 package-dir = {"" = "backend/src"}

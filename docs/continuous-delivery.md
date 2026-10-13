@@ -33,7 +33,8 @@ provider inference or renew the application's semantic/holdout attestation.
 ## Deployment boundary
 
 `.github/workflows/production-cd.yml` runs reusable offline CI and pinned
-release tooling/lint before the only job with `id-token: write`. Production
+release tooling/lint (`cfn-lint==1.57.2`) before the only job with
+`id-token: write`. Production
 deployments are serialized with `cancel-in-progress: false`; pushes to `prod`
 are the normal trigger, while manual dispatch fails closed unless its input is
 exactly `DEPLOY_PROD`.

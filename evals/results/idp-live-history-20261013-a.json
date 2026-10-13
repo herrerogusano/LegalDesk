@@ -1,0 +1,56 @@
+{
+ "authorizedReadPath": {
+  "cause": "MCP get_document_metadata -> mcp_service_unavailable; reproduced read-only: IDPReviewService.effective_fields_for_run raises 'decision record is malformed' caused by 'evidence page is invalid' for EVERY run of this document, because the smoke-h APPROVE decision's evidence page is read back from DynamoDB as Decimal (backend/src/legaldesk/idp/review.py:256)",
+  "report": "evals/results/idp-live-history-insufficient-20261013-a.json",
+  "result": "FAIL api_500 (resume metadata read, 2 attempts)"
+ },
+ "documentId": "81b1f440-c628-4137-911f-8113d0247a2d",
+ "historyOperatorRead": {
+  "count": 3,
+  "runs": [
+   [
+    "bae6e64f",
+    "IDP_REVIEW_REQUIRED",
+    "2026-10-13T15:08:21"
+   ],
+   [
+    "68b64b47",
+    "IDP_REVIEW_REQUIRED",
+    "2026-10-13T12:31:51"
+   ],
+   [
+    "14513697",
+    "IDP_REVIEW_REQUIRED",
+    "2026-10-09T16:35:24"
+   ]
+  ]
+ },
+ "humanDecision": {
+  "codePath": "review.py:737-752 resolves the newest decision with matching documentSha256+schemaVersion across runs, so after the Decimal fix the expected effective acceptance is HUMAN_CONFIRMED; this is NOT yet evidenced live",
+  "decisions": [
+   {
+    "action": "APPROVE",
+    "field": "automatic_renewal",
+    "runId": "68b64b47"
+   }
+  ],
+  "effectiveAcceptanceViaAuthorizedPath": "NOT_OBSERVABLE (bug above)",
+  "newRunRawAcceptance": "REVIEW_REQUIRED"
+ },
+ "note": "The decision bug predates the reprocess: since the smoke-h approval, every authorized metadata read and selected-field IDP query for this document fails (chat silently falls back to RAG).",
+ "reprocess": {
+  "bedrockCalls": 2,
+  "executedAtUtc": "2026-10-13T15:08:09Z",
+  "finalJobStatus": "IDP_REVIEW_REQUIRED",
+  "firstDelivery": "worker received the SQS message before the job was marked QUEUED (DELIVERY_IN_FLIGHT) -> not claimable -> batch item failure, message hidden for the 2160 s visibility timeout",
+  "inputTokens": 2525,
+  "jobId": "bae6e64f-3bdd-42e2-8667-4c468029b3cd",
+  "operatorRepublish": "2026-10-13T15:18:42Z one {jobId} message via production adapter; claimed and completed in ~30 s",
+  "outputTokens": 792,
+  "promptVersion": "1.0.2",
+  "reviewDeliveryState": "SENT",
+  "textractPages": 0
+ },
+ "result": "PARTIAL_BLOCKED_BY_RUNTIME_BUG",
+ "scenario": "three-run-history-and-human-decision-after-reprocess"
+}

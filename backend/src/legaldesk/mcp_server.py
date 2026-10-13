@@ -86,6 +86,14 @@ GET_DOCUMENT_METADATA_SCHEMA: dict[str, object] = {
             "maxLength": 128,
             "description": "Matter containing the document.",
         },
+        "historyLimit": {
+            "type": "integer", "minimum": 1, "maximum": 20,
+            "description": "Optional bounded IDP extraction history page size.",
+        },
+        "historyCursor": {
+            "type": "string", "maxLength": 4096,
+            "description": "Opaque server-issued IDP history cursor.",
+        },
     },
     "required": ["documentId", "matterId"],
 }
@@ -114,6 +122,8 @@ class MCPServer:
 
     metadata_repository: DocumentMetadataRepository
     telemetry_sink: TelemetrySink | None = None
+    idp_repository: Any | None = None
+    idp_review_service: Any | None = None
 
     def handle_jsonrpc(
         self,
@@ -257,7 +267,7 @@ class MCPServer:
                 ]
             }
         elif name == GET_DOCUMENT_METADATA:
-            self._strict_params(arguments, expected={"documentId"})
+            self._strict_params(arguments, expected={"documentId"}, optional={"historyLimit", "historyCursor"})
             document_id = arguments.get("documentId")
             if (
                 not isinstance(document_id, str)
@@ -272,6 +282,14 @@ class MCPServer:
             if not isinstance(document, Document) or not self._in_scope(document, context):
                 raise MCPRequestError("document not found")
             payload = {"document": self._safe_document(document, context)}
+            if self.idp_repository is not None:
+                payload["idp"] = self._idp_projection(
+                    context=context,
+                    document_id=document_id,
+                    document=document,
+                    history_limit=arguments.get("historyLimit"),
+                    history_cursor=arguments.get("historyCursor"),
+                )
         else:
             raise MCPRequestError("tool not found")
         result = {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
@@ -285,6 +303,125 @@ class MCPServer:
             count=len(payload.get("documents", ())) if isinstance(payload.get("documents"), list) else None,
         )
         return result
+
+    def _idp_projection(
+        self,
+        *,
+        context: RequestContext,
+        document_id: str,
+        document: Document | None = None,
+        history_limit: object = None,
+        history_cursor: object = None,
+    ) -> dict[str, object]:
+        """Build a bounded current IDP projection from server-owned runs."""
+
+        if history_limit is None:
+            limit = 1
+        elif isinstance(history_limit, bool) or not isinstance(history_limit, int) or not 1 <= history_limit <= 20:
+            raise MCPRequestError("history limit is invalid")
+        else:
+            limit = history_limit
+        if history_cursor is not None and (not isinstance(history_cursor, str) or not history_cursor.strip()):
+            raise MCPRequestError("history cursor is invalid")
+        page_method = getattr(self.idp_repository, "list_run_history", None)
+        pointer_run_id = getattr(document, "idp_run_id", None) if document is not None else None
+        pointer_status = getattr(document, "idp_status", None) if document is not None else None
+        pointer_hash = getattr(document, "idp_document_sha256", None) if document is not None else None
+        pointer_source = getattr(document, "idp_source_key", None) if document is not None else None
+        # A persisted document pointer is authoritative for the current
+        # generation.  History is only a separately paged audit view and must
+        # never replace the pointer when a cursor is supplied.
+        pointed_run = None
+        if pointer_run_id and hasattr(self.idp_repository, "get_run"):
+            pointed_run = self.idp_repository.get_run(
+                tenant_id=context.tenant_id,
+                matter_id=context.matter_id,
+                document_id=document_id,
+                run_id=pointer_run_id,
+            )
+            if pointed_run is not None and (
+                pointer_hash is not None and pointed_run.document_sha256 != pointer_hash
+                or pointer_source is not None and pointed_run.source_key != pointer_source
+            ):
+                # Never expose a run whose durable identity disagrees with
+                # the current document projection.
+                pointed_run = None
+
+        if callable(page_method):
+            current_page = page_method(tenant_id=context.tenant_id, matter_id=context.matter_id, document_id=document_id, limit=1, cursor=None)
+            current_runs = tuple(getattr(current_page, "runs", ()))
+            page = page_method(tenant_id=context.tenant_id, matter_id=context.matter_id, document_id=document_id, limit=limit, cursor=history_cursor) if history_limit is not None else current_page
+            runs = tuple(getattr(page, "runs", ()))
+            next_cursor = getattr(page, "next_cursor", None)
+        else:
+            current_runs = tuple(self.idp_repository.list_runs(tenant_id=context.tenant_id, matter_id=context.matter_id, document_id=document_id, limit=1))
+            runs = tuple(self.idp_repository.list_runs(tenant_id=context.tenant_id, matter_id=context.matter_id, document_id=document_id, limit=limit)) if history_limit is not None else current_runs
+            next_cursor = None
+
+        def field_payload(name: str, result: Any) -> dict[str, object]:
+            if isinstance(result, Mapping):
+                return {
+                    "name": name, "value": result.get("value"),
+                    "presence": result.get("presence"), "origin": result.get("origin"),
+                    "acceptance": result.get("acceptance"),
+                    "provenance": dict(result.get("provenance", {}) or {}),
+                    "evidence": [
+                        {"page": item.page, "quote": item.quote[:2_000], "contentSha256": item.content_sha256, "start": item.start, "end": item.end}
+                        for item in tuple(result.get("evidence", ()))[:8]
+                    ],
+                    "reason": result.get("reason", ""),
+                }
+            evidence = []
+            for anchor in tuple(getattr(result, "evidence", ()))[:8]:
+                evidence.append({
+                    "page": anchor.page, "quote": anchor.quote[:2_000],
+                    "contentSha256": anchor.content_sha256,
+                    "start": anchor.start, "end": anchor.end,
+                })
+            return {
+                "name": name, "value": getattr(result, "value", None),
+                "presence": getattr(getattr(result, "presence", None), "value", None),
+                "origin": getattr(getattr(result, "origin", None), "value", None),
+                "acceptance": getattr(getattr(result, "acceptance", None), "value", None),
+                "provenance": dict(getattr(result, "provenance", {}) or {}),
+                "evidence": evidence,
+                "reason": getattr(result, "reason", ""),
+            }
+
+        current = pointed_run if pointer_run_id else (current_runs[0] if current_runs else None)
+        effective_fields = {}
+        if current is not None:
+            if self.idp_review_service is not None and hasattr(self.idp_review_service, "effective_fields_for_run"):
+                effective_fields = dict(self.idp_review_service.effective_fields_for_run(run=current))
+            else:
+                for name, field_result in (getattr(current, "fields", {}) or {}).items():
+                    effective_fields[name] = self.idp_review_service.effective_field(run=current, field_name=name) if self.idp_review_service is not None else field_result
+        from .idp.models import public_idp_status
+        current_status = pointer_status or (public_idp_status(current.status) if current is not None else None)
+        # A terminal failure/skip or an in-flight generation may leave an
+        # older run reference on the document projection for auditability.
+        # Never present that stale run as usable current IDP data.  Only a
+        # completed or review-required generation may expose fields.
+        if current_status not in {"IDP_COMPLETED", "IDP_REVIEW_REQUIRED"}:
+            current = None
+        projection: dict[str, object] = {
+            "status": current_status,
+            "runId": getattr(current, "run_id", None),
+            "documentSha256": getattr(current, "document_sha256", None),
+            "documentType": getattr(getattr(current, "document_type", None), "value", None),
+            "schemaVersion": getattr(current, "schema_version", None),
+            "fields": [field_payload(name, result) for name, result in effective_fields.items()][:64] if current else [],
+        }
+        if current_status is None:
+            projection["enabled"] = False
+        if history_limit is not None:
+            projection["history"] = [
+                {"runId": run.run_id, "documentSha256": run.document_sha256, "schemaVersion": run.schema_version,
+                 "status": public_idp_status(run.status), "createdAt": run.created_at.isoformat()}
+                for run in runs
+            ]
+            projection["nextCursor"] = next_cursor
+        return projection
 
     @staticmethod
     def _strict_params(
@@ -363,6 +500,8 @@ def handle_metadata_request_for_identity(
     metadata_repository: DocumentMetadataRepository,
     correlation_id: str | None = None,
     telemetry_sink: TelemetrySink | None = None,
+    idp_repository: Any | None = None,
+    idp_review_service: Any | None = None,
 ) -> dict[str, object]:
     """Verified-edge adapter: authorize first, then dispatch the MCP request."""
 
@@ -372,7 +511,7 @@ def handle_metadata_request_for_identity(
         authorization_store,
         correlation_id=correlation_id,
     )
-    return MCPServer(metadata_repository, telemetry_sink=telemetry_sink).handle_jsonrpc(
+    return MCPServer(metadata_repository, telemetry_sink=telemetry_sink, idp_repository=idp_repository, idp_review_service=idp_review_service).handle_jsonrpc(
         request,
         request_context=context,
     )
@@ -398,6 +537,26 @@ def _mcp_repositories_from_environment(
             table=table,
             boto3_backed=True,
         ),
+    )
+
+
+def _idp_artifact_store_from_environment(*, metadata_repository: Any) -> tuple[Any | None, Any | None]:
+    """Return the production page-text verifier when the IDP bucket is configured."""
+    bucket = (os.environ.get("LEGALDESK_IDP_ARTIFACT_BUCKET") or os.environ.get("LEGALDESK_SOURCE_BUCKET") or "").strip()
+    if not bucket:
+        return None, None
+    import boto3
+    from botocore.config import Config
+    from .idp.artifacts import Boto3S3IDPArtifactStore
+    from .idp.runtime import Boto3IDPDocumentReader
+    s3 = boto3.client(
+        "s3",
+        region_name=os.environ.get("AWS_REGION"),
+        config=Config(connect_timeout=5, read_timeout=15, retries={"total_max_attempts": 1, "mode": "standard"}),
+    )
+    return (
+        Boto3S3IDPArtifactStore(bucket, client=s3),
+        Boto3IDPDocumentReader(metadata_repository, s3, bucket_name=os.environ.get("LEGALDESK_SOURCE_BUCKET") or bucket, max_bytes=20 * 1024 * 1024),
     )
 
 
@@ -501,8 +660,25 @@ def mcp_lambda_handler(event: Mapping[str, object], _lambda_context: object) -> 
         if repositories is None:
             return _http_json(503, {"error": "service_unavailable"})
         authorization_store, metadata_repository = repositories
+        table_name = os.environ.get("DOCUMENT_METADATA_TABLE_NAME") or os.environ.get("REVIEW_TASK_TABLE_NAME")
+        idp_repository = None
+        idp_review_service = None
+        if table_name:
+            try:
+                from .idp.persistence import Boto3DynamoIDPRepository
+                from .idp.review import Boto3DynamoIDPDecisionRepository, IDPReviewService
+                shared_table = getattr(metadata_repository, "table", None)
+                idp_repository = Boto3DynamoIDPRepository(table_name, table=shared_table)
+                artifact_store, source_reader = _idp_artifact_store_from_environment(metadata_repository=metadata_repository)
+                idp_review_service = IDPReviewService(
+                    Boto3DynamoIDPDecisionRepository(table_name, table=shared_table),
+                    artifact_store=artifact_store,
+                    source_reader=source_reader,
+                )
+            except Exception:
+                return _http_json(503, {"error": "service_unavailable"})
         if lifecycle_method:
-            response = MCPServer(metadata_repository).handle_jsonrpc(request)
+            response = MCPServer(metadata_repository, idp_repository=idp_repository, idp_review_service=idp_review_service).handle_jsonrpc(request)
         else:
             grant_repository = _mcp_grant_repository_from_environment()
             grant = (
@@ -524,6 +700,8 @@ def mcp_lambda_handler(event: Mapping[str, object], _lambda_context: object) -> 
                 authorization_store=authorization_store,
                 metadata_repository=metadata_repository,
                 correlation_id=correlation_id,
+                idp_repository=idp_repository,
+                idp_review_service=idp_review_service,
             )
         if response is None:
             return {

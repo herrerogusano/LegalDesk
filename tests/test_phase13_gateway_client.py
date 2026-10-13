@@ -105,6 +105,29 @@ class GatewayClientTests(unittest.TestCase):
         self.assertEqual(result["correlationId"], self.binding.correlation_id)
         self.assertNotIn(self.token, repr(result))
 
+    def test_transport_mcp_content_is_decoded_into_application_result_envelope(self) -> None:
+        def response(request):
+            return GatewayHttpResponse(
+                200,
+                "application/json",
+                json.dumps({
+                    "jsonrpc": "2.0", "id": request["id"],
+                    "result": {"content": [{"type": "text", "text": json.dumps({
+                        "document": {"documentId": "doc-synthetic", "status": "INDEXED"},
+                        "idp": {"status": "IDP_COMPLETED", "documentSha256": "a" * 64},
+                    })}]},
+                }).encode(),
+            )
+
+        result = DirectGatewayInvoker(
+            self.binding.gateway_url,
+            transport=_Transport(response_factory=response),
+        ).invoke(self.binding, tool_name="get_document_metadata", arguments={"documentId": "doc-synthetic"})
+        self.assertEqual(result["status"], "SUCCESS")
+        self.assertEqual(result["tool"], "@legaldesk_gateway/metadata-mcp___get_document_metadata")
+        self.assertEqual(result["result"]["document"]["documentId"], "doc-synthetic")
+        self.assertEqual(result["result"]["idp"]["status"], "IDP_COMPLETED")
+
     def test_allowlist_denies_review_tool_from_metadata_binding(self) -> None:
         invoker = DirectGatewayInvoker(self.binding.gateway_url, transport=_Transport())
         with self.assertRaises(GatewayInvocationError):

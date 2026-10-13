@@ -1,0 +1,305 @@
+# IDP deployment and validation evidence — 2026-10-09
+
+Status: **ACCEPTED (bounded constrained-beta scope), 2026-10-13**; see the final section at the end of this file. Earlier sections are the historical checkpoints and are kept unchanged. Scope: owner-approved
+`PHASE_14_IDP_PLAN.md`, ADR-020 machine identity, and continuation instruction
+to finish the phase. No real legal documents or personal passwords are used.
+
+## Release and inventory
+
+- Account `344774635844`, region `eu-west-1`; existing dependency stacks were
+  read back in completed states before changes.
+- Offline CI `37951954927` passed the smoke-runner checkpoint. CI
+  `37952679076` passed and retained the exact Linux/Python 3.12 release for
+  `c136024881fc053e6a1e6a29097749a63214a2a9`.
+- Application ZIP SHA-256:
+  `0757bfffd2d35028f548e4a232a71b1918de618689c2894f498a65fd86da02d2`.
+  Frontend ZIP SHA-256:
+  `952c5fa5fd15029c93f4b8bb7d5285098991d36b808ace440204587b14f73502`.
+- Both downloaded archives matched their manifest. Application artifact was
+  uploaded create-only to existing versioned artifact storage at
+  `phase-14/c136024881fc053e6a1e6a29097749a63214a2a9/legaldesk-lambda.zip`,
+  version `mtJDZAPcKPRR_jR63azLQaz9Zz9TXSEv`, encrypted with SSE-S3.
+- Existing monthly budget reports USD 25; its reported spend is delayed billing
+  data, not evidence of zero account cost. All 12 existing operational alarms
+  were `OK` with actions enabled. No Cost Explorer API was called.
+- Approved EU Sonnet 4.6 profile is `ACTIVE` with six EU model destinations.
+  Public regional Textract price list was rechecked: SKU `HV3WZRSJSH5TPZZ6`,
+  first-million async text-detection pages USD 0.0015/page.
+- CI `37958343470` at commit `6b16c17` passed the immutable artifact gate.
+  The retained artifact SHA-256 is
+  `eb35a2b958c0489ef56f19c44ea581a859700678a3977ba7db9b58bcfd75ca9a`, S3
+  version `9rqKn7qLwtoTwhQDyASCz1O4euI0xZfj`.
+
+## Disabled-first infrastructure
+
+Change set `idp-disabled-c136024-20261009` for new stack
+`LegalDeskPhase14IDP` was reviewed before execution: exactly 17 additions,
+consisting of four SQS queues, Textract SNS completion channel/policies/
+subscription, two Lambda functions/log groups, three execution/notification
+roles, and the dedicated Cognito resource server/client. No new data table,
+bucket, KMS key, fixed-capacity service or enabled event-source mapping.
+`EnableIDPProcessing=false` and `EnableIDPReviewDispatch=false`.
+The stack reached `CREATE_COMPLETE`. Read-back confirmed both IDP Lambda
+functions have reserved concurrency `0` and no event-source mapping. The
+disabled-first rollout was therefore initially deployed without an active
+worker or OCR consumer. The later bounded enablement is recorded in the first
+enabled smoke checkpoint below.
+
+At this historical disabled-first checkpoint, the same consolidated rollout
+read back `UPDATE_COMPLETE` for
+`LegalDeskPhase14DocumentSecurity`, `LegalDeskPhase14Reconciliation`, and
+`LegalDeskPhase07ReviewTask`. `LegalDeskPhase08Gateway` is `UPDATE_COMPLETE`.
+The first `LegalDeskPhase14PublicEdge` update rolled back safely to
+`UPDATE_ROLLBACK_COMPLETE`: CloudFormation needed
+`logs:DescribeLogGroups` to resolve the existing `LogsLogGroupArn` dependency,
+but the temporary role did not yet have that regional metadata permission.
+No log content or write permission was involved. The corrected Public Edge
+update then reached `UPDATE_COMPLETE`; the original code-only role was
+subsequently restored and the temporary bootstrap stack was deleted after
+proof. These are control-plane statuses, not evidence that processing or
+machine review is enabled.
+
+The exact Cognito client was validated before the secret transfer. The helper
+passed and wrote Standard `SecureString` parameter version 1 without logging
+or outputting the secret. Review dispatch was disabled at this historical
+checkpoint; the first enabled smoke is recorded below.
+
+## First enabled smoke checkpoint
+
+The reviewed first-smoke updates reached `UPDATE_COMPLETE`:
+`idp-enable-6b16c17` for `LegalDeskPhase14IDP`,
+`idp-producer-6b16c17` for Document Security, and
+`idp-recovery-6b16c17` for Reconciliation. Both IDP event-source mappings are
+enabled with batch size 1 and maximum concurrency 2. Processing and machine
+review are enabled for this bounded first smoke. The classifier and extractor
+prompt labels are both `1.0.2`.
+
+The beta inventory contains five documents, including two clean canonical TXT
+documents; no PDF backfill was performed. The first live digital smoke is
+running and is not yet PASS. This checkpoint does not claim full evaluation,
+OCR production continuation, or AWS E2E acceptance.
+
+## First live digital smoke outcome
+
+Immutable reports `evals/results/idp-live-digital-20261009-{a,b,c}.json` and
+`...-c-stage-observation.json` record the attempts. Runs `a` and `b` stopped
+before upload (harness navigation/diagnostics; temporary identities and grants
+were cleaned up). Run `c` uploaded the synthetic contract, which reached
+`INDEXED` with `NO_THREATS_FOUND`; classifier and extractor stages committed
+(two Bedrock calls, 2,525 input / 792 output tokens, no OCR). The run was
+saved as `IDP_REVIEW_REQUIRED` but the public pointer was not promoted:
+diagnosis `LEGACY_DYNAMODB_NULL_GENERATION_REJECTED_BY_PROJECTION_CONDITION`.
+The runner then failed on the decoded Gateway metadata shape. Fixes
+`4556bb6`, `840b8c0` and `10f8c01` are committed but not deployed. The
+synthetic document, its IDP artifacts and one `idp-work-dlq` message are
+retained so the same job can resume with committed-stage reuse instead of
+repeating inference. Smoke `c` is not PASS.
+
+## Live resume smoke PASS (2026-10-13)
+
+Runs `d`–`g` (`evals/results/idp-live-digital-20261013-*.json`) each exposed
+one runtime defect, fixed and redeployed through reviewed code-only change
+sets: invalid `NOT IN` DynamoDB syntax in attempt exhaustion (`fd85b92`),
+stale clean-intent reprocess reservation (`303bdf7`), `Decimal` JSON
+serialization in metadata (`8c4d98c`), review dispatch before the durable
+checkpoint and machine Gateway arguments missing `matterId` (`8f4c454`),
+a 15 s machine timeout below the ~16 s cold Gateway chain (`a52508a`), and a
+task-level `resolutionNote` sent on `in_review` decisions (`8a62d4e`).
+Smoke `c` was not resumable (attempts exhausted); its job was failed through
+the fixed path and the document reprocessed once (2 Bedrock calls, 2,525
+input / 792 output tokens, 0 Textract).
+
+Report `idp-live-digital-20261013-h.json` is **PASS** on release `8a62d4e`
+(Lambda code `a52508a`): machine review SENT with one idempotent review task,
+metadata read, `effective_date` answered from IDP (not RAG) with one citation,
+human approve through Gateway (task `in_review`, one decision), cross-matter
+403, and clean ephemeral identity/state/memory cleanup. Not covered by this
+run: duplicate clean-event replay, three-run history, worker usage
+visibility, full provenance exposure, production OCR continuation and the
+remaining phase acceptance items. Cold interceptor/review Lambdas still take
+about 7 s each.
+
+## Public-edge service-role constraint
+
+The existing stack uses `LegalDeskProductionCloudFormation`, intentionally
+code-only. IDP additionally needs an exact artifact-read policy and environment
+configuration. That CD role remains unchanged. A temporary operator-managed
+CloudFormation role was created, scoped only to the inventoried existing
+application role/function, immutable code object, read-only distribution
+metadata, and the exact existing API integration GET/PATCH dependency required
+for URI re-evaluation. The first Public Edge update using that role rolled back
+safely because CloudFormation also required regional `logs:DescribeLogGroups`
+metadata access to resolve `LogsLogGroupArn`; no log content or write access
+was granted. The corrected Public Edge update reached `UPDATE_COMPLETE`, and
+the reviewed integration URI has no intended semantic change. The original
+code-only role is restored and confirmed. The temporary bootstrap stack was
+then deleted; `DescribeStacks` reports it does not exist. No account-wide IAM
+grant is authorized or needed.
+
+## Canary result (not acceptance)
+
+The immutable evaluation export
+`evals/results/idp-canary-contract-20261009-a.json` records the first real
+`contract-01-en-digital-monthend` attempt. It is `FAILED` with
+`EVALUATION_FAILED` and `PAID_OUTCOME_UNKNOWN`; provenance is `UNKNOWN` with
+two Bedrock calls recorded and provider usage unknown. This is neither a
+successful inference result nor evidence that no provider call occurred. It is
+retained as an honest failed/unknown result and must not be counted as a pass,
+as real-model acceptance, or as zero cost.
+
+## Subsequent diagnostic and deployment checkpoint
+
+- Review Task and Gateway updates reached `UPDATE_COMPLETE`. Metadata MCP
+  target is `READY` with `listingMode=DYNAMIC`; explicit synchronization was
+  rejected as unsupported for this mode, so no static-cache refresh is claimed.
+- Public Edge dependency-read correction was reviewed and executed using
+  change set `idp-public-edge-dependencies-c136024`; the stack reached
+  `UPDATE_COMPLETE`. The subsequent public release `3ff` passed with
+  application artifact SHA-256
+  `082fbcb138d72e49277037563ca9fd8bac49621b376faa1085cb470e8907ff97`, S3
+  version `q_ollMcijNsUTFgqvP0C3vodz3lz6aGi`, and CloudFront invalidation
+  `ICCU9E21DILODJ6423ZAQE2VO8`. The synthetic public check returned HTTP 200
+  for the public path and HTTP 403 for the protected path; this is not an AWS
+  E2E acceptance run. The original
+  `LegalDeskProductionCloudFormation` service role was restored and the stack
+  returned `UPDATE_COMPLETE`; the temporary bootstrap stack was then deleted
+  and `DescribeStacks` confirms that it does not exist.
+- Four immutable contract reports (`a`, `diagnostic-b`, `schema-fixed-c`,
+  `nullable-d`) preserve failed/unknown attempts rather than overwriting them.
+  The diagnostic identifies extractor provider validation. Isolated synthetic
+  schema checks revealed 61 optional parameters exceeding the provider limit
+  of 24, followed by a grammar-too-large error after the first simplification.
+- The corrected compact-prompt canary is preserved at
+  `evals/results/idp-canary-contract-20261009-compact-e.json`: prompt `1.0.2`,
+  `COMPLETE`, two provider calls, 2,272 input tokens, 789 output tokens, and
+  field-level `REVIEW_REQUIRED`. This is provider completion evidence, not
+  phase acceptance.
+- The immutable digital corpus report
+  `evals/results/idp-digital-corpus-20261009-f.json` covers nine documents and
+  18 provider calls (16,519 input and 4,817 output tokens) with expected
+  document classes. Its historical `COMPLETED` status for review fields is an
+  export-enum erratum; the report is preserved and those fields are interpreted
+  under the corrected review-required contract.
+- The targeted canonical-normalization report
+  `evals/results/idp-ocr-targeted-20261009-j.json` completed
+  `judgment-03-en-mixed-interpretive` with `REVIEW_REQUIRED` after the earlier
+  H/I anchor failures. IDP consumers are enabled only for the bounded first
+  smoke, which is not yet PASS.
+- The compact internal array schema is decoded into the unchanged persisted
+  mapping, with duplicate/name/coverage and existing typed/evidence validation.
+  Extractor prompt is now `1.0.2`. An isolated synthetic schema check succeeded
+  with `end_turn`, 1,517 input and 516 output tokens; raw response was not saved.
+  This proves provider grammar acceptance, not extraction accuracy or AWS E2E.
+  The observed provider boundary is consistent with AWS Bedrock's documented
+  structured-output schema validation and first-time grammar compilation; see
+  [AWS structured outputs](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html)
+  and [Anthropic Claude on Amazon Bedrock](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock).
+- CI run `37955864825` failed stale-runtime fake contract tests and remains
+  retained as diagnostic evidence. Corrected CI run `37956195348` passed.
+- The OCR collector artifact `idp-ocr-collection-20261009-g.json` is complete
+  for eight synthetic PDFs as whole PDFs (11 pages, bounded at 22 pages); this
+  is not production Textract continuation evidence. New worker duplicate-proof
+  telemetry is pending the next CI release. The first live digital smoke is
+  running and is not yet PASS.
+
+## Validation still outstanding
+
+Machine Gateway acceptance, first-smoke completion, real-model/OCR acceptance,
+real AWS E2E, and worker duplicate telemetry remain open. Failed canaries and
+review-required canaries are not phase acceptance. The OCR collector is not
+production continuation proof. IDP consumers are enabled only for the bounded
+first smoke, which is not yet PASS; no production Textract continuation has
+been accepted at this checkpoint.
+Storage/deployment/control-plane activity is not asserted free. A successful
+offline gate or `CREATE_COMPLETE`/`UPDATE_COMPLETE` status is not phase
+acceptance.
+
+## Rollback references captured
+
+- The immutable application artifact remains available at S3 version
+  `mtJDZAPcKPRR_jR63azLQaz9Zz9TXSEv` with SHA-256
+  `0757bfffd2d35028f548e4a232a71b1918de618689c2894f498a65fd86da02d2`.
+- The existing Public Edge service role
+  `arn:aws:iam::344774635844:role/LegalDeskProductionCloudFormation` was
+  restored through a reviewed successful stack update and confirmed by the
+  original `RoleARN`; temporary bootstrap stack deletion was subsequently
+  confirmed because `DescribeStacks` reports that the stack does not exist.
+- For the new IDP stack and disabled existing-stack updates, use the reviewed
+  CloudFormation change-set/template history and the pre-update immutable code
+  versions captured by the operator; no unrecorded rollback identifier is
+  inferred here.
+
+## Final AWS acceptance evidence (2026-10-13)
+
+Supersedes the "not yet PASS" statements above; those sections remain as the
+historical record. Acceptance: ACCEPTED (bounded constrained-beta scope) --
+2026-10-13. Summary and checklist: `docs/phase-14-idp-acceptance.md`. All data
+synthetic; reports under `evals/results/` (no document text).
+
+### Final releases
+- All 8 Lambdas on `30adeac` (`release-30adeac.json`, PASS); Public Edge
+  application on `89b84ca` (`release-89b84ca.json`, PASS; previous artifact
+  `30adeac`, S3 version recorded in the report).
+- The reconciliation template adds read-only `bedrock:GetKnowledgeBaseDocuments`.
+- Trusted-edge secret rotated through the temporary role stack
+  `LegalDeskPhase14EdgeRotationBootstrap` (runbook "Trusted-edge secret
+  rotation"); the temporary role was deleted and the Public Edge `RoleARN`
+  restored to `LegalDeskProductionCloudFormation`. Tenant Gateway quota raised
+  100 -> 300/month for the beta tenant in the same update.
+
+### Live scenarios (all PASS unless noted)
+| Scenario | Report | Outcome |
+|---|---|---|
+| Digital contract | `idp-live-digital-20261013-h` | `IDP_REVIEW_REQUIRED`, IDP answer with 1 citation, cross-matter 403, derived date PROVISIONAL |
+| Judgment, provisional field | `idp-live-judgment-provisional-20261013-a` | JUDGMENT classified, provisional expectation met |
+| Duplicate clean event | `idp-live-duplicate-20261013-b` | one duplicate message consumed and acknowledged; state byte-identical; 0 paid calls |
+| UNKNOWN | `idp-live-unknown-20261013-c` | UNKNOWN, review required; RAG answered a missing IDP field (1 citation) |
+| Recovery / Textract | `idp-live-recovery-20261013-a` | DLQ completion redriven once; `WAITING_FOR_OCR` -> `SUCCEEDED`; 0 new Start, 1 Get, 1 page, 2 Bedrock calls; document `IDP_REVIEW_REQUIRED` |
+| Scanned demand | `idp-live-scanned-demand-20261013-b` | DEMAND classified after continuation |
+| History | `idp-live-history-20261013-b` | three runs preserved (count 3) |
+| RAG fallback / insufficient | `idp-live-rag-fallback-20261013-a`, `idp-live-insufficient-20261013-a` | `source: RAG` with citation; `insufficient_evidence`, source NONE |
+| Skip limit | `idp-live-skip-20261013-g` | `IDP_SKIPPED` (operator read: `UNSUPPORTED_MEDIA_TYPE`); KB siblings INDEXED; RAG answer limited, see below |
+| Failed IDP, RAG working | `idp-live-failed-idp-rag-20261013-d` | IDP `FAILED` in about 2 s, 0 paid calls (fail closed); RAG answer limited, see below |
+
+Knowledge Base per-document truth (recovery report): three documents `INDEXED`,
+the image-only document `NOT_FOUND` and set `FAILED`; commit `36713c9` makes
+ingestion resolve status per document, so one unparseable document does not
+block the rest.
+
+### Evaluation
+Final real-model run `idp-eval-20261013-c*`: 18/18 classification, 3/3 UNKNOWN,
+139/139 anchors digest-exact. Subtype confirmation `-d*` after `4144703`:
+contracts 01 and 05 `ABSENT`/`UNAVAILABLE`, NDA preserved. Offline triage
+`idp-offline-triage-20261013.json`: 0 unresolved auto-accepted mismatches.
+
+### Defects found and fixed live
+`fd85b92` NOT IN syntax; `303bdf7` stale clean-intent snapshot; `8c4d98c`
+Decimal serialization; `9b4ca3c` and `8f4c454` dispatch after durable
+checkpoint and `matterId`; `a52508a` machine timeout; `8a62d4e` (`0779407`)
+resolutionNote on `in_review`; `4144703` subtype vocabulary; `36713c9` per-
+document KB status; `30adeac` OCR continuation, delivery race, saved decisions
+and projection; `89b84ca` optional writer relationships dropped; rotation
+tooling `c73ae82` and `73285e4`.
+
+### Cost measured
+Owner-reviewed prices (docs/idp-evaluation.md). Final evaluation USD 0.2931
+Bedrock + 0.0165 reused OCR; subtype confirmation USD 0.0701 (6 calls); live
+scenarios about 30 worker/chat Bedrock calls and 1-2 Textract pages, estimated
+USD 0.25-0.40 (per-run worker usage is not exposed). Total for the day well
+under USD 1; no always-on infrastructure added.
+
+### Limitations (not blockers)
+- Skip and failed-IDP documents: RAG routing is proven (retrieval and writer
+  ran on `89b84ca`), but the contextual-grounding guardrail fails the short
+  synthetic answers closed (grounding 0.12 vs 0.75;
+  `idp-live-skip-20261013-h`, `idp-live-failed-idp-rag-20261013-e`). RAG
+  guardrail thresholds intentionally unchanged (accepted RAG behavior; the plan
+  forbids changing RAG regression behavior).
+- Cold start about 7 s per Gateway hop; the 3 s API latency alarm flapped
+  during smokes (improvement follow-up).
+- KB per-document reconciliation covers only the configured beta subject;
+  ephemeral smoke users' documents were resolved by the operator.
+- Reprocess operator ARN is the IAM user, not a role.
+- Stale `idpReason` on one legacy document row (not exposed).
+- One unexplained 15 s `internal_error` during concurrent smoke traffic (untraced).
+- Bedrock call cap exceeded by 1 call in one run (accounting error, reported).

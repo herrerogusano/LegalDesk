@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import PurePath
 from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import quote
@@ -840,6 +841,15 @@ class InMemoryDocumentMetadataRepository:
         )
         return documents if limit is None else documents[:limit]
 
+    def list_for_scope_page(
+        self, *, tenant_id: str, matter_id: str, limit: int, cursor: str | None = None
+    ) -> tuple[tuple[Document, ...], str | None]:
+        values = sorted(self.list_for_scope(tenant_id=tenant_id, matter_id=matter_id), key=lambda item: item.document_id)
+        if cursor is not None:
+            values = [item for item in values if item.document_id > cursor]
+        page = tuple(values[:limit])
+        return page, (page[-1].document_id if page and len(values) > len(page) else None)
+
     def delete_for_scope(
         self, *, tenant_id: str, matter_id: str, document_id: str
     ) -> None:
@@ -999,7 +1009,7 @@ class Boto3DynamoDocumentMetadataRepository:
 
     @staticmethod
     def _item(document: Document) -> dict[str, Any]:
-        return {
+        item = {
             "pk": document_partition_key(document.tenant_id, document.matter_id),
             "sk": document_sort_key(document.document_id),
             "entityType": "Document",
@@ -1019,7 +1029,20 @@ class Boto3DynamoDocumentMetadataRepository:
             "malwareScanVersionId": document.malware_scan_version_id,
             "fileSizeBytes": document.file_size_bytes,
             "uploadedAt": document.uploaded_at.isoformat(),
+            "idpStatus": document.idp_status,
+            "idpReason": document.idp_reason,
+            "idpAttempt": document.idp_attempt,
+            "idpJobId": document.idp_job_id,
+            "idpRunId": document.idp_run_id,
+            "idpDocumentSha256": document.idp_document_sha256,
+            "idpGenerationAt": document.idp_generation_at,
+            "idpSourceKey": document.idp_source_key,
         }
+        # New document rows omit optional IDP projection fields rather than
+        # storing DynamoDB NULL values.  Readers still accept legacy NULLs;
+        # this keeps conditional projection/recovery expressions compatible
+        # with both old and newly-created rows.
+        return {key: value for key, value in item.items() if not (key.startswith("idp") and value is None)}
 
     def save(self, document: Document) -> None:
         self.table.put_item(Item=self._item(document))
@@ -1166,6 +1189,24 @@ class Boto3DynamoDocumentMetadataRepository:
             query_kwargs["ExclusiveStartKey"] = last_key
         return tuple(documents)
 
+    def list_for_scope_page(
+        self, *, tenant_id: str, matter_id: str, limit: int, cursor: str | None = None
+    ) -> tuple[tuple[Document, ...], str | None]:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("document query limit must be positive")
+        from boto3.dynamodb.conditions import Key
+        key_condition: Any = Key("pk").eq(document_partition_key(tenant_id, matter_id)) & Key("sk").begins_with("DOCUMENT#")
+        kwargs: dict[str, Any] = {"KeyConditionExpression": key_condition, "ConsistentRead": True, "Limit": limit}
+        if cursor:
+            kwargs["ExclusiveStartKey"] = {"pk": document_partition_key(tenant_id, matter_id), "sk": document_sort_key(cursor)}
+        response = self.table.query(**kwargs)
+        documents = tuple(_document_from_item(item) for item in response.get("Items", ()))
+        last = response.get("LastEvaluatedKey")
+        next_cursor = None
+        if isinstance(last, Mapping) and isinstance(last.get("sk"), str) and last["sk"].startswith("DOCUMENT#"):
+            next_cursor = last["sk"][len("DOCUMENT#"):]
+        return documents, next_cursor
+
     def delete_for_scope(
         self, *, tenant_id: str, matter_id: str, document_id: str
     ) -> None:
@@ -1199,6 +1240,20 @@ class Boto3DynamoDocumentMetadataRepository:
                 raise DocumentMetadataError("document metadata deletion failed") from exc
 
 
+def _public_idp_status_value(value: object) -> str | None:
+    """Rows written before the projection fix may hold a raw job status
+    (for example ENQUEUE_PENDING); only the public vocabulary is exposed."""
+
+    if not isinstance(value, str):
+        return None
+    from .idp.models import IDPJobStatus, public_idp_status
+
+    try:
+        return public_idp_status(IDPJobStatus(value))
+    except ValueError:
+        return value
+
+
 def _document_from_item(item: Mapping[str, Any]) -> Document:
     return Document(
         document_id=str(item["documentId"]),
@@ -1217,4 +1272,12 @@ def _document_from_item(item: Mapping[str, Any]) -> Document:
         malware_scan_version_id=item.get("malwareScanVersionId") if isinstance(item.get("malwareScanVersionId"), str) else None,
         file_size_bytes=int(item.get("fileSizeBytes", 0)),
         uploaded_at=datetime.fromisoformat(str(item["uploadedAt"])),
+        idp_status=_public_idp_status_value(item.get("idpStatus")),
+        idp_reason=item.get("idpReason") if isinstance(item.get("idpReason"), str) else None,
+        idp_attempt=int(item["idpAttempt"]) if isinstance(item.get("idpAttempt"), (int, Decimal)) and not isinstance(item.get("idpAttempt"), bool) else None,
+        idp_job_id=item.get("idpJobId") if isinstance(item.get("idpJobId"), str) else None,
+        idp_run_id=item.get("idpRunId") if isinstance(item.get("idpRunId"), str) else None,
+        idp_document_sha256=item.get("idpDocumentSha256") if isinstance(item.get("idpDocumentSha256"), str) else None,
+        idp_generation_at=item.get("idpGenerationAt") if isinstance(item.get("idpGenerationAt"), str) else None,
+        idp_source_key=item.get("idpSourceKey") if isinstance(item.get("idpSourceKey"), str) else None,
     )

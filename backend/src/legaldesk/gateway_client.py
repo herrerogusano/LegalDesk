@@ -20,6 +20,11 @@ from .identity import validate_https_endpoint
 
 MCP_PROTOCOL_VERSION = "2025-03-26"
 MAX_RESPONSE_BYTES = 64 * 1024
+# AgentCore Gateway's target schema accepts only primitive properties.  Keep
+# the IDP correction value opaque at that boundary, while retaining the raw
+# value for local/direct calls and letting the review target apply the normal
+# schema/type validation after decoding it.
+MAX_IDP_PROPOSED_VALUE_JSON_BYTES = 16 * 1024
 _TOOLS = {
     "list_matter_documents": "metadata-mcp___list_matter_documents",
     "get_document_metadata": "metadata-mcp___get_document_metadata",
@@ -36,6 +41,51 @@ class GatewayInvocationError(RuntimeError):
     def __init__(self, code: str = "gateway_unavailable") -> None:
         self.code = code
         super().__init__("Gateway operation failed")
+
+
+def _gateway_idp_arguments(
+    tool_name: str, arguments: Mapping[str, object]
+) -> dict[str, object]:
+    """Adapt the raw IDP decision to the deployed Gateway schema.
+
+    ``proposedValue`` is intentionally not validated here: the review target
+    owns field registry/type/evidence validation.  Gateway's CloudFormation
+    schema cannot represent that value's scalar-or-array union, however, so
+    the transport carries one strict JSON string.  This is a wire adapter,
+    not a second business-rule implementation.
+    """
+
+    adapted = dict(arguments)
+    decision = adapted.get("idpDecision")
+    if tool_name != "update_review_task" or decision is None:
+        return adapted
+    if not isinstance(decision, Mapping):
+        raise GatewayInvocationError("gateway_invalid_arguments")
+    # The public/raw contract accepts ``proposedValue`` only.  A
+    # ``proposedValueJson`` field is target-only wire data and must never be
+    # accepted from an HTTP/local caller as if it were already adapted.
+    if "proposedValueJson" in decision:
+        raise GatewayInvocationError("gateway_invalid_arguments")
+    if "proposedValue" not in decision:
+        return adapted
+    if decision.get("action") != "CORRECT":
+        raise GatewayInvocationError("gateway_invalid_arguments")
+    try:
+        encoded = json.dumps(
+            decision["proposedValue"],
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise GatewayInvocationError("gateway_invalid_arguments") from exc
+    if len(encoded.encode("utf-8")) > MAX_IDP_PROPOSED_VALUE_JSON_BYTES:
+        raise GatewayInvocationError("gateway_invalid_arguments")
+    adapted_decision = dict(decision)
+    adapted_decision.pop("proposedValue")
+    adapted_decision["proposedValueJson"] = encoded
+    adapted["idpDecision"] = adapted_decision
+    return adapted
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +284,7 @@ class DirectGatewayInvoker:
             request_id = str(UUID(request_id))
         except (ValueError, TypeError, AttributeError) as exc:
             raise GatewayInvocationError("gateway_invalid_request") from exc
-        request_arguments = dict(arguments)
+        request_arguments = _gateway_idp_arguments(tool_name, arguments)
         request_arguments["matterId"] = matter_id
         request = {
             "jsonrpc": "2.0",

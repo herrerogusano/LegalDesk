@@ -1,0 +1,11 @@
+{
+ "kind": "runtime-bug-diagnosis",
+ "scenarios": ["skip-limit RAG part", "failed-IDP-with-working-RAG"],
+ "symptom": "selected-field chat returns operationStatus=error (model_failed) for documents whose retrieval and resolver succeed; telemetry: resolve_evidence succeeded count=1, write_answer started, then generate_answer/write_answer error model_failed (~3 s)",
+ "affectedRuns": ["idp-live-skip-20261013-e/f (txt notice)", "idp-live-failed-idp-rag-20261013-b/c (judgment-04-es-digital)"],
+ "reproduction": "operator-side single Converse call with the deployed writer request builder on the synthetic notice (1 Bedrock call): provider returns {answer, relationships:[{actor:'recipient',action:'respond within thirty (30) days of delivery',recipient:'sender'}]}; validate_answer_writer_result passes; evidence_requires_relationship_projection is False; validate_writer_relationships_against_evidence raises EvidenceContractError 'writer relationship is not supported in evidence order'",
+ "rootCause": "backend/src/legaldesk/chat.py:663-665 validates every optional writer relationship against the evidence token order (backend/src/legaldesk/evidence.py:372-411) even when the evidence does not require a relationship projection; a paraphrased relation ('sender' is not in the passage) aborts the whole answer as model_failed instead of being dropped. The failure is swallowed into the generic model_failed code, so logs do not show the cause.",
+ "suggestedFix": "when evidence_requires_relationship_projection is False, discard writer relationships (keep the prose answer, which is still grounding-validated) or treat an unsupported optional relation as absent; log a closed error class (relationship_unsupported). Add a regression test with a writer stub returning a paraphrased optional relationship.",
+ "notDone": "no deploy, no code change in backend (out of authorization)",
+ "bedrockCallsForDiagnosis": 2
+}

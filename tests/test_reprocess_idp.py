@@ -1,0 +1,301 @@
+"""Offline contracts for the bounded synthetic-IDP reprocess operator."""
+
+from __future__ import annotations
+
+import hashlib
+import sys
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from unittest.mock import Mock
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend" / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from legaldesk.domain.models import DocumentStatus, MalwareScanStatus  # noqa: E402
+from legaldesk.idp.models import IDPJob, IDPJobStatus  # noqa: E402
+from legaldesk.idp.persistence import Boto3DynamoIDPRepository, IDPConcurrencyError, InMemoryIDPRepository  # noqa: E402
+from reprocess_idp import (  # noqa: E402
+    ReprocessError,
+    load_fixture,
+    request_reprocess,
+    validate_caller_identity,
+    validate_operator_scope,
+)
+
+
+TENANT = "synthetic-beta-tenant"
+MATTER = "synthetic-beta-matter"
+DOCUMENT = "synthetic-document"
+
+
+class _Document:
+    tenant_id = TENANT
+    matter_id = MATTER
+    document_id = DOCUMENT
+    media_type = "application/pdf"
+    status = DocumentStatus.INDEXED
+    malware_scan_status = MalwareScanStatus.CLEAN
+    s3_key = "tenants/synthetic/document.pdf"
+    idp_run_id = None
+    idp_document_sha256 = None
+    file_size_bytes = 0
+
+
+class _Metadata:
+    def __init__(self, document: _Document) -> None:
+        self.document = document
+
+    def get_for_scope(self, *, tenant_id: str, matter_id: str, document_id: str):
+        if (tenant_id, matter_id, document_id) != (TENANT, MATTER, DOCUMENT):
+            return None
+        return self.document
+
+
+class _Storage:
+    def __init__(self, key: str, body: bytes) -> None:
+        self.key, self.body = key, body
+
+    def head_object(self, *, key: str):
+        if key != self.key:
+            raise KeyError(key)
+        return {"ContentLength": len(self.body), "Metadata": {}}
+
+    def read_object_bytes(self, *, key: str, max_bytes: int) -> bytes:
+        # Mirror Boto3S3ObjectStorage: limits above 10 MiB are rejected.
+        if not 0 < max_bytes <= 10 * 1024 * 1024:
+            raise ValueError("object read limit is invalid")
+        if key != self.key or len(self.body) > max_bytes:
+            raise KeyError(key)
+        return self.body
+
+
+class _Queue:
+    def __init__(self) -> None:
+        self.job_ids: list[str] = []
+
+    def publish(self, *, job_id: str) -> str:
+        self.job_ids.append(job_id)
+        return f"message-{len(self.job_ids)}"
+
+
+def _fixture_and_dependencies():
+    fixture = load_fixture("contract-01-en-digital-monthend")
+    body = fixture.path.read_bytes()
+    document = _Document()
+    document.file_size_bytes = len(body)
+    return fixture, _Metadata(document), _Storage(document.s3_key, body), document
+
+
+class ReprocessOperatorTests(unittest.TestCase):
+    def test_scope_and_caller_allowlists_are_exact(self) -> None:
+        environ = {
+            "LEGALDESK_IDP_BETA_TENANT_ID": TENANT,
+            "LEGALDESK_IDP_BETA_MATTER_ID": MATTER,
+            "LEGALDESK_IDP_REVIEW_MATTER_IDS": MATTER,
+        }
+        validate_operator_scope(tenant_id=TENANT, matter_id=MATTER, environ=environ)
+        with self.assertRaises(ReprocessError):
+            validate_operator_scope(tenant_id="other", matter_id=MATTER, environ=environ)
+        validate_caller_identity({"Arn": "arn:aws:iam::123456789012:role/idp-operator", "Account": "123456789012"}, expected_arn="arn:aws:iam::123456789012:role/idp-operator")
+        with self.assertRaises(ReprocessError):
+            validate_caller_identity({"Arn": "arn:aws:iam::123456789012:role/other", "Account": "123456789012"}, expected_arn="arn:aws:iam::123456789012:role/idp-operator")
+
+    def test_reprocess_reads_current_bytes_and_enqueues_normal_job(self) -> None:
+        fixture, metadata, storage, document = _fixture_and_dependencies()
+        queue = _Queue()
+        repository = InMemoryIDPRepository()
+        job = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=queue,
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="synthetic-model", prompt_version="synthetic-prompt",
+            generation_factory=lambda: "server-generation-1",
+        )
+        self.assertEqual(job.status.value, "QUEUED")
+        self.assertEqual(job.document_sha256, fixture.sha256)
+        self.assertEqual(queue.job_ids, [job.job_id])
+
+    def test_changed_source_or_non_clean_document_fails_closed(self) -> None:
+        fixture, metadata, storage, document = _fixture_and_dependencies()
+        with self.assertRaisesRegex(ReprocessError, "canonical_source_hash_mismatch"):
+            request_reprocess(
+                repository=InMemoryIDPRepository(), metadata=metadata,
+                storage=_Storage(document.s3_key, b"x" * document.file_size_bytes), queue=_Queue(),
+                tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+                fixture=fixture, model_id="m", prompt_version="p",
+            )
+        document.malware_scan_status = MalwareScanStatus.PENDING
+        with self.assertRaisesRegex(ReprocessError, "document_not_verified_clean"):
+            request_reprocess(
+                repository=InMemoryIDPRepository(), metadata=metadata, storage=storage, queue=_Queue(),
+                tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+                fixture=fixture, model_id="m", prompt_version="p",
+            )
+
+    def test_cross_scope_document_reference_is_denied_before_storage_read(self) -> None:
+        fixture, metadata, storage, _ = _fixture_and_dependencies()
+        with self.assertRaisesRegex(ReprocessError, "document_not_found_in_scope"):
+            request_reprocess(
+                repository=InMemoryIDPRepository(), metadata=metadata, storage=storage, queue=_Queue(),
+                tenant_id="other-tenant", matter_id=MATTER, document_id=DOCUMENT,
+                fixture=fixture, model_id="m", prompt_version="p",
+            )
+
+    def test_same_generation_is_idempotent_and_preserves_existing_pointer(self) -> None:
+        fixture, metadata, storage, document = _fixture_and_dependencies()
+        document.idp_run_id = "old-run"
+        document.idp_document_sha256 = fixture.sha256
+        queue = _Queue()
+        repository = InMemoryIDPRepository()
+        factory = lambda: "same-generation"
+        first = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=queue,
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="m", prompt_version="p", generation_factory=factory,
+        )
+        second = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=queue,
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="m", prompt_version="p", generation_factory=factory,
+        )
+        self.assertEqual(first.job_id, second.job_id)
+        self.assertEqual(queue.job_ids, [first.job_id])
+        self.assertEqual(document.idp_run_id, "old-run")
+        self.assertEqual(document.idp_document_sha256, fixture.sha256)
+
+    def test_current_non_terminal_generation_blocks_second_paid_generation(self) -> None:
+        fixture, metadata, storage, document = _fixture_and_dependencies()
+        repository = InMemoryIDPRepository()
+        # A queued job is represented by the current pointer only in the
+        # server-owned document metadata; the operator must not create another
+        # paid generation while it is still active.
+        initial = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=_Queue(),
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "initial-op",
+        )
+        document.idp_run_id = initial.job_id
+        with self.assertRaisesRegex(ReprocessError, "current_generation_not_terminal"):
+            request_reprocess(
+                repository=repository, metadata=metadata, storage=storage, queue=_Queue(),
+                tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+                fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "second-op",
+            )
+
+    def _stale_intent(self, status: IDPJobStatus):
+        """Initial generation whose document intent snapshot stays ENQUEUE_PENDING."""
+
+        fixture, metadata, storage, document = _fixture_and_dependencies()
+        repository = InMemoryIDPRepository()
+        initial = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=_Queue(),
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "initial-op",
+        )
+        # The live job moves on; the document pointer stays NULL (legacy run
+        # never promoted) and the intent snapshot is not rewritten.
+        repository._jobs[initial.job_id] = replace(repository._jobs[initial.job_id], status=status)
+        self.assertEqual(repository._clean_intents[(TENANT, MATTER, DOCUMENT)].job_id, initial.job_id)
+        return fixture, metadata, storage, document, repository, initial
+
+    def test_stale_intent_snapshot_with_failed_job_allows_one_new_generation(self) -> None:
+        fixture, metadata, storage, _, repository, initial = self._stale_intent(IDPJobStatus.FAILED)
+        queue = _Queue()
+        second = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=queue,
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "second-op",
+        )
+        self.assertNotEqual(second.job_id, initial.job_id)
+        self.assertEqual(queue.job_ids, [second.job_id])
+
+    def test_stale_intent_snapshot_with_active_job_is_rejected_atomically(self) -> None:
+        fixture, metadata, storage, _, repository, initial = self._stale_intent(IDPJobStatus.PROCESSING)
+        with self.assertRaisesRegex(ReprocessError, "reprocess_generation_already_active"):
+            request_reprocess(
+                repository=repository, metadata=metadata, storage=storage, queue=_Queue(),
+                tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+                fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "second-op",
+            )
+        # The repository does not trust the caller's earlier read either.
+        job = IDPJob(job_id="second-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="second-idem", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id=initial.job_id)
+
+    def test_stale_intent_snapshot_with_mismatched_verified_job_is_rejected(self) -> None:
+        fixture, _, _, _, repository, _ = self._stale_intent(IDPJobStatus.FAILED)
+        job = IDPJob(job_id="second-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="second-idem", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id="other-job")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf")
+
+    def test_boto_reservation_rechecks_verified_intent_job_in_same_transaction(self) -> None:
+        import boto3
+
+        fixture, _, _, _ = _fixture_and_dependencies()
+        resource = boto3.resource("dynamodb", region_name="eu-west-1", endpoint_url="http://127.0.0.1:9", aws_access_key_id="offline", aws_secret_access_key="offline")
+        table = resource.Table("table")
+        table.get_item = Mock(return_value={})
+        table.query = Mock(return_value={"Items": []})
+        captured: dict[str, object] = {}
+
+        class AbortBeforeNetwork(Exception):
+            pass
+
+        def before_call(model, params, **kwargs):
+            captured.update(params)
+            raise AbortBeforeNetwork()
+
+        table.meta.client.meta.events.register("before-call.dynamodb.TransactWriteItems", before_call)
+        repository = Boto3DynamoIDPRepository("table", table=table)
+        job = IDPJob(job_id="reprocess-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="reprocess-idempotency", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id="stale-intent-job")
+        body = __import__("json").loads(captured["body"])
+        self.assertEqual(len(body["TransactItems"]), 5)
+        update = body["TransactItems"][3]["Update"]
+        self.assertIn("OR #intent.#job = :verified_terminal_job)", update["ConditionExpression"])
+        self.assertEqual(update["ExpressionAttributeValues"][":verified_terminal_job"], {"S": "stale-intent-job"})
+        check = body["TransactItems"][4]["ConditionCheck"]
+        self.assertEqual(check["Key"], {"pk": {"S": f"TENANT#{TENANT}#MATTER#{MATTER}"}, "sk": {"S": "IDP#JOB#stale-intent-job"}})
+        self.assertIn("#status IN (", check["ConditionExpression"])
+        self.assertNotIn("NOT IN", check["ConditionExpression"] + update["ConditionExpression"])
+        statuses = {value["S"] for key, value in check["ExpressionAttributeValues"].items() if key.startswith(":terminal")}
+        self.assertEqual(statuses, {status.value for status in (IDPJobStatus.FAILED, IDPJobStatus.COMPLETED, IDPJobStatus.REVIEW_REQUIRED, IDPJobStatus.SKIPPED)})
+        self.assertEqual(check["ExpressionAttributeValues"][":hash"], {"S": fixture.sha256})
+        with self.assertRaises(Exception):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id=job.job_id)
+
+    def test_real_boto_resource_serializes_atomic_reprocess_reservation(self) -> None:
+        import boto3
+
+        fixture, _, _, _ = _fixture_and_dependencies()
+        resource = boto3.resource("dynamodb", region_name="eu-west-1", endpoint_url="http://127.0.0.1:9", aws_access_key_id="offline", aws_secret_access_key="offline")
+        table = resource.Table("table")
+        table.get_item = Mock(return_value={})
+        table.query = Mock(return_value={"Items": []})
+        captured: dict[str, object] = {}
+
+        class AbortBeforeNetwork(Exception):
+            pass
+
+        def before_call(model, params, **kwargs):
+            captured.update(params)
+            raise AbortBeforeNetwork()
+
+        table.meta.client.meta.events.register("before-call.dynamodb.TransactWriteItems", before_call)
+        repository = Boto3DynamoIDPRepository("table", table=table)
+        job = IDPJob(job_id="reprocess-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="reprocess-idempotency", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf")
+        body = __import__("json").loads(captured["body"])
+        self.assertEqual(len(body["TransactItems"]), 4)
+        update = body["TransactItems"][3]["Update"]
+        self.assertEqual(update["Key"]["pk"], {"S": f"TENANT#{TENANT}#MATTER#{MATTER}"})
+        self.assertEqual(update["ExpressionAttributeValues"][":hash"], {"S": fixture.sha256})
+
+
+if __name__ == "__main__":
+    unittest.main()

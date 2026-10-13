@@ -106,6 +106,25 @@
             <p id="prepare-helper" class="sync-helper" hidden>Inicia la indexación únicamente de documentos cargados y listos para preparar.</p>
             <p id="document-action-status" class="app-message document-action-status" role="status" aria-live="polite" aria-atomic="true" hidden></p>
           </div>
+          <aside id="idp-panel" class="idp-panel" aria-labelledby="idp-heading" hidden>
+            <div class="section-heading-row">
+              <div>
+                <p class="field-label">EXTRACCIÓN DOCUMENTAL</p>
+                <h3 id="idp-heading">Datos extraídos</h3>
+              </div>
+              <p id="idp-status" class="document-count">Estado no disponible</p>
+            </div>
+            <p id="idp-state" class="app-message" role="status" aria-live="polite"></p>
+            <div id="idp-field-controls" class="idp-field-controls" hidden>
+              <div class="control-group">
+                <label class="field-label" for="idp-field-select">CAMPO</label>
+                <select id="idp-field-select" aria-describedby="idp-state"></select>
+              </div>
+              <button id="idp-field-query" class="button button-primary" type="button">Ver dato</button>
+            </div>
+            <article id="idp-result" class="idp-result" aria-live="polite" hidden></article>
+            <div id="idp-history" class="idp-history"></div>
+          </aside>
         </div>
       </section>
 

@@ -50,6 +50,10 @@ MAX_REVIEW_SNAPSHOT_BYTES = 48_000
 MAX_REVIEW_CITATIONS = 32
 MAX_REVIEW_PASSAGE_LENGTH = 16_000
 MAX_REVIEW_TASKS = 100
+# GatewayTargetSchemaDefinition cannot express the IDP correction value's
+# scalar-or-array union.  The transport adapter carries it as a bounded JSON
+# string; the target decodes it before the existing raw-input validator runs.
+MAX_IDP_PROPOSED_VALUE_JSON_BYTES = 16 * 1024
 _OPAQUE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _OPAQUE_SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:|@-]{0,255}$")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -130,6 +134,20 @@ UPDATE_REVIEW_TASK_TOOL_SCHEMA: dict[str, object] = {
         "reviewTaskId": {"type": "string", "pattern": _OPAQUE_KEY.pattern, "maxLength": 128},
         "status": {"type": "string", "enum": [ReviewTaskStatus.IN_REVIEW.value, ReviewTaskStatus.CLOSED.value]},
         "resolutionNote": {"type": "string", "maxLength": MAX_RESOLUTION_NOTE_LENGTH},
+        "idpDecision": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "fieldName": {"type": "string", "maxLength": 128},
+                "action": {"type": "string", "enum": ["APPROVE", "CORRECT", "REJECT"]},
+                # The value is a schema-dependent scalar or array.  Presence,
+                # origin, acceptance, evidence, and status are server-owned
+                # and must never be supplied as part of this value.
+                "proposedValue": {},
+                "reason": {"type": "string", "maxLength": 2_000},
+                "evidence": {"type": "array", "maxItems": 16},
+            },
+            "required": ["fieldName", "action", "reason"],
+        },
     },
     "required": ["reviewTaskId", "status"],
 }
@@ -297,6 +315,17 @@ class ReviewTaskRepository(Protocol):
         resolution_note: str = "",
     ) -> ReviewTask: ...
 
+    def update_with_idp_decision(
+        self,
+        *,
+        context: RequestContext,
+        review_task_id: str,
+        status: ReviewTaskStatus,
+        resolution_note: str = "",
+        decision: object,
+        decision_repository: object,
+    ) -> ReviewTask: ...
+
     def delete(self, *, context: RequestContext, review_task_id: str) -> None: ...
 
     def archive_closed(
@@ -397,6 +426,16 @@ class InMemoryReviewTaskRepository:
             raise RuntimeError("review task already exists")
         self.tasks[key] = task
 
+    def save_machine_task(self, task: ReviewTask) -> None:
+        """Idempotent service-principal write; no human context is created."""
+        key = (task.tenant_id, task.matter_id, task.review_task_id)
+        existing = self.tasks.get(key)
+        if existing is not None:
+            if existing != task:
+                raise ReviewTaskIdempotencyConflict("machine review task idempotency conflict")
+            return
+        self.tasks[key] = task
+
     def list(self, *, context: RequestContext, limit: int = MAX_REVIEW_TASKS) -> tuple[ReviewTask, ...]:
         context = require_authorized_context(context)
         records = [
@@ -420,6 +459,39 @@ class InMemoryReviewTaskRepository:
         if current is None:
             raise ReviewTaskValidationError("review task not found")
         updated = _transition_task(current, status=status, resolution_note=resolution_note)
+        self.tasks[key] = updated
+        return updated
+
+    def update_with_idp_decision(
+        self,
+        *,
+        context: RequestContext,
+        review_task_id: str,
+        status: ReviewTaskStatus,
+        resolution_note: str = "",
+        decision: object,
+        decision_repository: object,
+    ) -> ReviewTask:
+        """Test adapter for the same atomic boundary as DynamoDB.
+
+        The decision repository is deliberately supplied by the caller so the
+        test cannot accidentally pass a second, unrelated persistence store.
+        Save is attempted before replacing the task; an immutable decision
+        conflict therefore leaves the task unchanged.
+        """
+        context = require_authorized_context(context)
+        key = (context.tenant_id, context.matter_id, review_task_id)
+        current = self.tasks.get(key)
+        if current is None:
+            raise ReviewTaskValidationError("review task not found")
+        updated = _transition_task(current, status=status, resolution_note=resolution_note)
+        saver = getattr(decision_repository, "save_decision", None)
+        if not callable(saver):
+            raise ReviewTaskPersistenceError("IDP decision store unavailable")
+        try:
+            saver(decision)
+        except Exception as exc:
+            raise ReviewTaskPersistenceError("IDP decision transaction failed") from exc
         self.tasks[key] = updated
         return updated
 
@@ -551,7 +623,7 @@ def parse_get_review_task_input(payload: Mapping[str, object]) -> str:
 
 
 def parse_update_review_task_input(payload: Mapping[str, object]) -> tuple[str, ReviewTaskStatus, str]:
-    if not isinstance(payload, Mapping) or set(payload) - {"reviewTaskId", "status", "resolutionNote"} or not {"reviewTaskId", "status"}.issubset(payload):
+    if not isinstance(payload, Mapping) or set(payload) - {"reviewTaskId", "status", "resolutionNote", "idpDecision"} or not {"reviewTaskId", "status"}.issubset(payload):
         raise ReviewTaskValidationError("update input is invalid")
     review_task_id = _validate_key(payload.get("reviewTaskId"), field_name="reviewTaskId")
     try:
@@ -562,6 +634,105 @@ def parse_update_review_task_input(payload: Mapping[str, object]) -> tuple[str, 
     if not isinstance(resolution_note, str) or len(resolution_note) > MAX_RESOLUTION_NOTE_LENGTH:
         raise ReviewTaskValidationError("resolutionNote is invalid")
     return review_task_id, status, resolution_note
+
+
+def _reject_duplicate_json_key(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("non-finite JSON number")
+    return parsed
+
+
+def _decode_gateway_idp_decision_transport(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Decode only the Gateway wire adapter, then reuse raw validation.
+
+    The Gateway target receives ``proposedValueJson`` because its deployed
+    schema supports primitive properties only.  HTTP/local callers continue
+    to use ``proposedValue`` and never pass through this adapter.
+    """
+
+    decision = payload.get("idpDecision")
+    if decision is None:
+        return dict(payload)
+    if not isinstance(decision, Mapping):
+        return dict(payload)
+    if "proposedValueJson" not in decision:
+        return dict(payload)
+    if "proposedValue" in decision:
+        raise ReviewTaskValidationError("IDP decision transport is invalid")
+    if decision.get("action") != "CORRECT":
+        raise ReviewTaskValidationError("IDP decision transport is invalid")
+    encoded = decision.get("proposedValueJson")
+    if not isinstance(encoded, str) or len(encoded.encode("utf-8")) > MAX_IDP_PROPOSED_VALUE_JSON_BYTES:
+        raise ReviewTaskValidationError("IDP decision transport is invalid")
+    try:
+        proposed_value = json.loads(
+            encoded,
+            object_pairs_hook=_reject_duplicate_json_key,
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_json_float,
+        )
+    except (TypeError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ReviewTaskValidationError("IDP decision transport is invalid") from exc
+    decoded_decision = dict(decision)
+    decoded_decision.pop("proposedValueJson")
+    decoded_decision["proposedValue"] = proposed_value
+    decoded = dict(payload)
+    decoded["idpDecision"] = decoded_decision
+    return decoded
+
+
+def _parse_idp_decision_input(payload: Mapping[str, object]) -> tuple[str, str, Mapping[str, object] | None, tuple[Any, ...], str] | None:
+    raw = payload.get("idpDecision")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping) or set(raw) - {"fieldName", "action", "proposedValue", "reason", "evidence"} or not {"fieldName", "action", "reason"}.issubset(raw):
+        raise ReviewTaskValidationError("IDP decision is invalid")
+    field_name = _validate_key(raw.get("fieldName"), field_name="fieldName")
+    action = raw.get("action")
+    if action not in {"APPROVE", "CORRECT", "REJECT"}:
+        raise ReviewTaskValidationError("IDP decision action is invalid")
+    reason = raw.get("reason")
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 2_000:
+        raise ReviewTaskValidationError("IDP decision reason is invalid")
+    proposed_raw = raw.get("proposedValue")
+    if action == "CORRECT" and isinstance(proposed_raw, Mapping):
+        raise ReviewTaskValidationError("IDP correction value must not contain server-owned metadata")
+    if action == "CORRECT" and proposed_raw is None:
+        raise ReviewTaskValidationError("IDP correction value is required")
+    if action != "CORRECT" and proposed_raw is not None:
+        raise ReviewTaskValidationError("IDP proposed value is only valid for corrections")
+    evidence_values: list[Any] = []
+    raw_evidence = raw.get("evidence", ())
+    if not isinstance(raw_evidence, list) or len(raw_evidence) > 16:
+        raise ReviewTaskValidationError("IDP decision evidence is invalid")
+    from .idp.models import EvidenceAnchor
+    for item in raw_evidence:
+        if not isinstance(item, Mapping) or set(item) - {"page", "quote", "contentSha256", "start", "end"} or not {"page", "quote", "contentSha256"}.issubset(item):
+            raise ReviewTaskValidationError("IDP decision evidence is invalid")
+        try:
+            evidence_values.append(EvidenceAnchor(page=item["page"], quote=item["quote"], content_sha256=item["contentSha256"], start=item.get("start"), end=item.get("end")))
+        except Exception as exc:
+            raise ReviewTaskValidationError("IDP decision evidence is invalid") from exc
+    # Keep the repository decision shape explicit while deriving all other
+    # field metadata from the immutable run inside IDPReviewService.
+    proposed = {"value": proposed_raw} if action == "CORRECT" else None
+    return field_name, action, proposed, tuple(evidence_values), reason
 
 
 def _validated_existing_task(
@@ -804,6 +975,8 @@ def get_review_task(
     *,
     repository: ReviewTaskRepository,
     telemetry_sink: TelemetrySink | None = None,
+    idp_repository: Any | None = None,
+    idp_review_service: Any | None = None,
 ) -> dict[str, object]:
     context = require_authorized_context(context)
     review_task_id = parse_get_review_task_input(payload)
@@ -813,7 +986,76 @@ def get_review_task(
         raise ReviewTaskPersistenceError("review task store unavailable") from exc
     if task is None:
         raise ReviewTaskValidationError("review task not found")
-    return review_task_to_dict(task)
+    response = review_task_to_dict(task)
+    if task.source == "IDP" and idp_repository is not None:
+        if not all(isinstance(value, str) and value.strip() for value in (task.idp_run_id, task.idp_document_id, task.idp_document_sha256)):
+            raise ReviewTaskValidationError("IDP review references are invalid")
+        run = idp_repository.get_run(
+            tenant_id=context.tenant_id,
+            matter_id=context.matter_id,
+            document_id=task.idp_document_id,
+            run_id=task.idp_run_id,
+        )
+        if run is None or run.document_sha256 != task.idp_document_sha256 or run.tenant_id != context.tenant_id or run.matter_id != context.matter_id:
+            raise ReviewTaskValidationError("IDP review run is unavailable")
+        if idp_review_service is not None:
+            try:
+                validate = getattr(idp_review_service, "validate_run_evidence", None)
+                if callable(validate):
+                    validate(run=run)
+            except Exception as exc:
+                raise ReviewTaskValidationError("IDP review evidence is unavailable") from exc
+        from .idp.registry import IDPSchemaRegistry
+        try:
+            schema = IDPSchemaRegistry().get(run.document_type, run.schema_version)
+        except Exception as exc:
+            raise ReviewTaskValidationError("IDP review schema is unavailable") from exc
+        fields: list[dict[str, object]] = []
+        for name in task.idp_field_names:
+            field = run.fields.get(name)
+            if field is None:
+                raise ReviewTaskValidationError("IDP review field is unavailable")
+            try:
+                spec = schema.field(name)
+            except Exception as exc:
+                raise ReviewTaskValidationError("IDP review field schema is invalid") from exc
+            decisions = idp_review_service.decisions.list_decisions(
+                tenant_id=run.tenant_id, matter_id=run.matter_id,
+                document_id=run.document_id, field_name=name,
+            ) if idp_review_service is not None else ()
+            fields.append({
+                "name": name,
+                "valueType": spec.value_type,
+                "description": spec.description,
+                "documentSha256": run.document_sha256,
+                "schemaVersion": run.schema_version,
+                "result": {
+                    "value": field.value,
+                    "presence": field.presence.value,
+                    "origin": field.origin.value,
+                    "acceptance": field.acceptance.value,
+                    "reason": field.reason,
+                    "evidence": [
+                        {"page": anchor.page, "quote": anchor.quote[:2_000], "contentSha256": anchor.content_sha256, "start": anchor.start, "end": anchor.end}
+                        for anchor in field.evidence[:8]
+                    ],
+                },
+                "applicableDecisions": [
+                    {"decisionId": decision.decision_id, "action": decision.action.value, "runId": decision.run_id, "createdAt": decision.created_at.isoformat(), "reason": decision.reason}
+                    for decision in decisions[:20]
+                    if decision.document_sha256 == run.document_sha256 and decision.schema_version == run.schema_version
+                ],
+            })
+        response["idp"] = {
+            "runId": run.run_id,
+            "documentId": run.document_id,
+            "documentSha256": run.document_sha256,
+            "sourceKey": run.source_key,
+            "schemaVersion": run.schema_version,
+            "documentType": run.document_type.value,
+            "fields": fields,
+        }
+    return response
 
 
 def update_review_task(
@@ -822,21 +1064,86 @@ def update_review_task(
     *,
     repository: ReviewTaskRepository,
     telemetry_sink: TelemetrySink | None = None,
+    idp_repository: Any | None = None,
+    idp_review_service: Any | None = None,
 ) -> dict[str, object]:
     context = require_authorized_context(context)
     review_task_id, status, resolution_note = parse_update_review_task_input(payload)
+    idp_decision = _parse_idp_decision_input(payload)
+    decision_result = None
+    if idp_decision is not None:
+        if idp_repository is None or idp_review_service is None:
+            raise ReviewTaskPersistenceError("IDP review service unavailable")
+        task = repository.get(context=context, review_task_id=review_task_id)
+        if task is None or task.idp_run_id is None or task.idp_document_id is None or task.idp_document_sha256 is None:
+            raise ReviewTaskValidationError("review task is not an IDP task")
+        run = idp_repository.get_run(tenant_id=context.tenant_id, matter_id=context.matter_id, document_id=task.idp_document_id, run_id=task.idp_run_id)
+        if run is None or run.document_sha256 != task.idp_document_sha256:
+            raise ReviewTaskValidationError("IDP run is unavailable")
+        from .idp.review import IDPDecisionAction, IDPReviewError
+        field_name, action, proposed, evidence, reason = idp_decision
+        if field_name not in task.idp_field_names:
+            raise ReviewTaskValidationError("field is not assigned to this review task")
+        if task.status is ReviewTaskStatus.CLOSED:
+            raise ReviewTaskValidationError("closed IDP review tasks cannot receive new decisions")
+        if status is ReviewTaskStatus.CLOSED and len(task.idp_field_names) > 1:
+            # A task is a multi-field review unit.  Closing it after one
+            # field would strand the remaining fields while making the task
+            # look complete to recovery and operators.
+            completed = {field_name}
+            effective_by_name = idp_review_service.effective_fields_for_run(run=run) if hasattr(idp_review_service, "effective_fields_for_run") else None
+            for candidate in task.idp_field_names:
+                if candidate == field_name:
+                    continue
+                effective = effective_by_name[candidate] if effective_by_name is not None else idp_review_service.effective_field(run=run, field_name=candidate)
+                if effective is not None and effective.get("acceptance") in {"HUMAN_CONFIRMED", "REJECTED"}:
+                    completed.add(candidate)
+            if completed != set(task.idp_field_names):
+                raise ReviewTaskValidationError("all IDP review fields must be decided before closing")
+        if status is ReviewTaskStatus.CLOSED and not resolution_note:
+            resolution_note = reason
+        # Validate the task transition before appending the immutable audit
+        # decision.  The repository performs the final conditional write;
+        # this preflight prevents known closed/invalid transitions from
+        # creating an orphan decision.
+        _transition_task(task, status=status, resolution_note=resolution_note)
+        try:
+            # Build only: the task status and immutable decision must be
+            # committed together by the repository's single-table adapter.
+            # Persisting the decision here first would leave an audit orphan
+            # if the conditional task transition loses a race.
+            decision = idp_review_service.build_human_decision(context=context, run=run, field_name=field_name, action=IDPDecisionAction(action), proposed=proposed, result=None, evidence=evidence, reason=reason, review_task_id=task.review_task_id)
+        except IDPReviewError as exc:
+            raise ReviewTaskValidationError("IDP decision is invalid") from exc
+        decision_result = {"decisionId": decision.decision_id, "reviewTaskId": task.review_task_id, "fieldName": decision.field_name, "action": decision.action.value, "createdAt": decision.created_at.isoformat()}
     try:
-        task = repository.update(
-            context=context,
-            review_task_id=review_task_id,
-            status=status,
-            resolution_note=resolution_note,
-        )
+        if idp_decision is not None:
+            atomic_update = getattr(repository, "update_with_idp_decision", None)
+            if not callable(atomic_update):
+                raise ReviewTaskPersistenceError("atomic IDP review update is unavailable")
+            task = atomic_update(
+                context=context,
+                review_task_id=review_task_id,
+                status=status,
+                resolution_note=resolution_note,
+                decision=decision,
+                decision_repository=idp_review_service.decisions,
+            )
+        else:
+            task = repository.update(
+                context=context,
+                review_task_id=review_task_id,
+                status=status,
+                resolution_note=resolution_note,
+            )
     except ReviewTaskError:
         raise
     except Exception as exc:
         raise ReviewTaskPersistenceError("review task store unavailable") from exc
-    return review_task_to_dict(task)
+    response = review_task_to_dict(task)
+    if decision_result is not None:
+        response["idpDecision"] = decision_result
+    return response
 
 
 class ReviewTaskLambdaHandler:
@@ -852,10 +1159,14 @@ class ReviewTaskLambdaHandler:
         repository: ReviewTaskRepository,
         authorization_store: AuthorizationStore,
         telemetry_sink: TelemetrySink | None = None,
+        idp_repository: Any | None = None,
+        idp_review_service: Any | None = None,
     ) -> None:
         self.repository = repository
         self.authorization_store = authorization_store
         self.telemetry_sink = telemetry_sink
+        self.idp_repository = idp_repository
+        self.idp_review_service = idp_review_service
 
     def handle(
         self,
@@ -969,9 +1280,14 @@ class ReviewTaskLambdaHandler:
             if operation == LIST_REVIEW_TASKS_TOOL_NAME:
                 return list_review_tasks(context, payload, repository=self.repository, telemetry_sink=self.telemetry_sink)
             if operation == GET_REVIEW_TASK_TOOL_NAME:
-                return get_review_task(context, payload, repository=self.repository, telemetry_sink=self.telemetry_sink)
+                return get_review_task(context, payload, repository=self.repository, telemetry_sink=self.telemetry_sink, idp_repository=self.idp_repository, idp_review_service=self.idp_review_service)
             if operation == UPDATE_REVIEW_TASK_TOOL_NAME:
-                return update_review_task(context, payload, repository=self.repository, telemetry_sink=self.telemetry_sink)
+                # AgentCore's Gateway schema carries the IDP correction union
+                # as one bounded JSON string.  Decode that wire-only shape
+                # before entering the existing server-owned validator; local
+                # and HTTP callers continue to provide ``proposedValue``.
+                payload = _decode_gateway_idp_decision_transport(payload)
+                return update_review_task(context, payload, repository=self.repository, telemetry_sink=self.telemetry_sink, idp_repository=self.idp_repository, idp_review_service=self.idp_review_service)
             return {"error": "invalid_request"}
         except AuthorizationDenied:
             return {"error": "access_denied"}
@@ -998,6 +1314,27 @@ def _repositories_from_environment() -> tuple[ReviewTaskRepository, Authorizatio
         Boto3DynamoReviewTaskRepository(table_name, table=table),
         Boto3DynamoAuthorizationStore(table_name, table=table),
     )
+
+
+def _idp_artifact_store_from_environment(*, table: Any | None = None) -> tuple[Any | None, Any | None]:
+    """Build the trusted IDP page-text reader only for configured production."""
+    bucket = (os.environ.get("LEGALDESK_IDP_ARTIFACT_BUCKET") or os.environ.get("LEGALDESK_SOURCE_BUCKET") or "").strip()
+    if not bucket:
+        return None, None
+    import boto3
+    from botocore.config import Config
+    from .documents import Boto3DynamoDocumentMetadataRepository
+    from .idp.artifacts import Boto3S3IDPArtifactStore
+    from .idp.runtime import Boto3IDPDocumentReader
+    s3 = boto3.client(
+        "s3",
+        region_name=os.environ.get("AWS_REGION"),
+        config=Config(connect_timeout=5, read_timeout=15, retries={"total_max_attempts": 1, "mode": "standard"}),
+    )
+    artifact_store = Boto3S3IDPArtifactStore(bucket, client=s3)
+    metadata = Boto3DynamoDocumentMetadataRepository(os.environ["REVIEW_TASK_TABLE_NAME"], table=table, boto3_backed=True)
+    reader = Boto3IDPDocumentReader(metadata, s3, bucket_name=os.environ.get("LEGALDESK_SOURCE_BUCKET") or bucket, max_bytes=20 * 1024 * 1024)
+    return artifact_store, reader
 
 
 def _gateway_grant_repository_from_environment() -> Any | None:
@@ -1043,7 +1380,22 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
     if repository_config is None:
         return {"error": "service_unavailable"}
     repository, authorization_store = repository_config
-    return ReviewTaskLambdaHandler(repository, authorization_store).handle(
+    idp_repository = idp_review_service = None
+    if os.environ.get("REVIEW_TASK_TABLE_NAME"):
+      try:
+        from .idp.persistence import Boto3DynamoIDPRepository
+        from .idp.review import Boto3DynamoIDPDecisionRepository, IDPReviewService
+        table = getattr(repository, "table", None)
+        idp_repository = Boto3DynamoIDPRepository(os.environ["REVIEW_TASK_TABLE_NAME"], table=table)
+        artifact_store, source_reader = _idp_artifact_store_from_environment(table=table)
+        idp_review_service = IDPReviewService(
+            Boto3DynamoIDPDecisionRepository(os.environ["REVIEW_TASK_TABLE_NAME"], table=table),
+            artifact_store=artifact_store,
+            source_reader=source_reader,
+        )
+      except Exception:
+        return {"error": "service_unavailable"}
+    return ReviewTaskLambdaHandler(repository, authorization_store, idp_repository=idp_repository, idp_review_service=idp_review_service).handle(
         {"arguments": arguments}, authorized_context=envelope
     )
 
@@ -1072,6 +1424,13 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
         grants = _gateway_grant_repository_from_environment()
         if grants is None:
             return {"error": "service_unavailable"}
+        # Dedicated IDP review creation is a machine-only branch.  It is
+        # deliberately checked before the human grant parser so an M2M token
+        # can never fall through to a human ``RequestContext`` path.
+        idp_grant_get = getattr(grants, "get_idp_review", None)
+        idp_raw = idp_grant_get(grant_id) if callable(idp_grant_get) else None
+        if isinstance(idp_raw, Mapping):
+            return _handle_idp_machine_review_grant(grants, grant_id, idp_raw)
         raw_grant = grants.get(grant_id)
         if not isinstance(raw_grant, Mapping):
             return {"error": "access_denied"}
@@ -1122,7 +1481,22 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
         if repository_config is None:
             return {"error": "service_unavailable"}
         repository, authorization_store = repository_config
-        return ReviewTaskLambdaHandler(repository, authorization_store).handle_operation(
+        idp_repository = idp_review_service = None
+        if os.environ.get("REVIEW_TASK_TABLE_NAME"):
+          try:
+            from .idp.persistence import Boto3DynamoIDPRepository
+            from .idp.review import Boto3DynamoIDPDecisionRepository, IDPReviewService
+            table = getattr(repository, "table", None)
+            idp_repository = Boto3DynamoIDPRepository(os.environ["REVIEW_TASK_TABLE_NAME"], table=table)
+            artifact_store, source_reader = _idp_artifact_store_from_environment(table=table)
+            idp_review_service = IDPReviewService(
+                Boto3DynamoIDPDecisionRepository(os.environ["REVIEW_TASK_TABLE_NAME"], table=table),
+                artifact_store=artifact_store,
+                source_reader=source_reader,
+            )
+          except Exception:
+            return {"error": "service_unavailable"}
+        return ReviewTaskLambdaHandler(repository, authorization_store, idp_repository=idp_repository, idp_review_service=idp_review_service).handle_operation(
             str(operation), {"arguments": target_arguments}, authorized_context=envelope
         )
     except ReviewTaskValidationError:
@@ -1131,6 +1505,83 @@ def gateway_lambda_handler(event: Mapping[str, object], lambda_context: object) 
         return {"error": "invalid_request"}
     except AuthorizationDenied:
         return {"error": "access_denied"}
+    except Exception:
+        return {"error": "service_unavailable"}
+
+
+def _handle_idp_machine_review_grant(grants: Any, grant_id: str, raw_grant: Mapping[str, object]) -> dict[str, object]:
+    """Validate and execute the exact-purpose IDP grant at the Review target."""
+    from .gateway_interceptor import IDP_REVIEW_GRANT_ENTITY, IDP_REVIEW_PURPOSE, IDP_REVIEW_SCOPE, idp_review_grant_partition_key
+    required = {"pk", "sk", "entityType", "machineClientId", "scope", "purpose", "requestedMatterId", "documentId", "runId", "documentSha256", "correlationId", "fieldNames", "expiresAt", "ttl"}
+    if (set(raw_grant) != required and set(raw_grant) != required - {"ttl"}) or raw_grant.get("entityType") != IDP_REVIEW_GRANT_ENTITY or raw_grant.get("pk") != idp_review_grant_partition_key(grant_id) or raw_grant.get("sk") != "PROFILE":
+        return {"error": "access_denied"}
+    import time
+    expires_at = raw_grant.get("expiresAt")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float, Decimal)) or not math.isfinite(float(expires_at)) or float(expires_at) <= time.time():
+        return {"error": "access_denied"}
+    machine_client = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID") or os.environ.get("LEGALDESK_IDP_MACHINE_CLIENT_ID")
+    configured_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE") or os.environ.get("LEGALDESK_IDP_MACHINE_SCOPE", IDP_REVIEW_SCOPE)
+    if not machine_client or raw_grant.get("machineClientId") != machine_client or raw_grant.get("scope") != configured_scope or raw_grant.get("purpose") != IDP_REVIEW_PURPOSE:
+        return {"error": "access_denied"}
+    if not all(isinstance(raw_grant.get(name), str) and str(raw_grant[name]).strip() for name in ("requestedMatterId", "documentId", "runId", "documentSha256", "correlationId")):
+        return {"error": "access_denied"}
+    try:
+        UUID(str(raw_grant["correlationId"]))
+    except (ValueError, TypeError, AttributeError):
+        return {"error": "access_denied"}
+    fields = raw_grant.get("fieldNames")
+    if not isinstance(fields, list) or len(fields) > 64 or any(not isinstance(item, str) for item in fields):
+        return {"error": "access_denied"}
+    config = _repositories_from_environment()
+    table_name = os.environ.get("IDP_TABLE_NAME") or os.environ.get("REVIEW_TASK_TABLE_NAME")
+    if config is None or not table_name:
+        return {"error": "service_unavailable"}
+    try:
+        from .idp.persistence import Boto3DynamoIDPRepository
+        from .idp.review import IDPReviewInvocation, IDPReviewService, create_machine_review_task
+        review_repository, _ = config
+        idp_repository = Boto3DynamoIDPRepository(table_name)
+        job = idp_repository.get_job(str(raw_grant["runId"]))
+        if job is None or job.matter_id != str(raw_grant["requestedMatterId"]) or job.document_id != str(raw_grant["documentId"]):
+            return {"error": "access_denied"}
+        from .gateway_interceptor import _idp_deployment_scope_allows
+        if not _idp_deployment_scope_allows(tenant_id=job.tenant_id, matter_id=job.matter_id):
+            return {"error": "access_denied"}
+        # Tenant is never accepted from the request.  The durable job locator
+        # supplies it before the run is read.
+        run = idp_repository.get_run(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id, run_id=job.job_id)
+        if run is None:
+            return {"error": "access_denied"}
+        if run.source_key is None or run.document_sha256 != raw_grant["documentSha256"]:
+            return {"error": "access_denied"}
+        from .documents import Boto3DynamoDocumentMetadataRepository
+        metadata_repository = Boto3DynamoDocumentMetadataRepository(table_name)
+        metadata = metadata_repository.get_for_scope(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id)
+        if metadata is None or metadata.s3_key != run.source_key:
+            return {"error": "access_denied"}
+        # Verify the current canonical bytes, not optional user-controlled S3
+        # metadata.  The reader bounds the object before hashing and binds the
+        # result to the immutable job SHA.
+        from .idp.runtime import Boto3IDPDocumentReader
+        from .idp.models import DocumentForIDP
+        import boto3
+        metadata_document = getattr(metadata, "document", metadata)
+        source_document = DocumentForIDP(
+            tenant_id=getattr(metadata_document, "tenant_id", job.tenant_id), matter_id=getattr(metadata_document, "matter_id", job.matter_id),
+            document_id=getattr(metadata_document, "document_id", job.document_id), media_type=getattr(metadata_document, "media_type", "application/pdf"),
+            file_size_bytes=getattr(metadata_document, "file_size_bytes", 0), malware_scan_clean=True,
+            source_key=metadata.s3_key,
+        )
+        try:
+            Boto3IDPDocumentReader(
+                metadata_repository, boto3.client("s3"),
+                bucket_name=os.environ.get("LEGALDESK_SOURCE_BUCKET") or "__configured_source_bucket__",
+                max_bytes=20 * 1024 * 1024,
+            ).read(job=job, document=source_document)
+        except Exception:
+            return {"error": "access_denied"}
+        invocation = IDPReviewInvocation(tenant_id=run.tenant_id, matter_id=run.matter_id, document_id=run.document_id, run_id=run.run_id, document_sha256=str(raw_grant["documentSha256"]), correlation_id=str(raw_grant["correlationId"]), machine_client_id=machine_client, field_names=tuple(fields))
+        return dict(create_machine_review_task(invocation=invocation, run=run, review_repository=review_repository, service_actor="service:idp-review"))
     except Exception:
         return {"error": "service_unavailable"}
 
@@ -1176,7 +1627,9 @@ class Boto3DynamoReviewTaskRepository:
             item["resolutionNote"] = task.resolution_note
         if task.archived_at is not None:
             item["archivedAt"] = task.archived_at.isoformat()
-        return item
+        if task.source is not None:
+            item.update({"source": task.source, "idpRunId": task.idp_run_id, "idpDocumentId": task.idp_document_id, "idpDocumentSha256": task.idp_document_sha256, "idpFieldNames": list(task.idp_field_names)})
+        return {key: value for key, value in item.items() if value is not None}
 
     @staticmethod
     def _task_from_item(*, item: Mapping[str, object], context: RequestContext, review_task_id: str) -> ReviewTask:
@@ -1221,6 +1674,13 @@ class Boto3DynamoReviewTaskRepository:
             raise ReviewTaskPersistenceError("review task store unavailable")
         if archived_at is not None and archived_at.tzinfo is None:
             raise ReviewTaskPersistenceError("review task store unavailable")
+        source = item.get("source")
+        idp_run_id = item.get("idpRunId")
+        idp_document_id = item.get("idpDocumentId")
+        idp_document_sha256 = item.get("idpDocumentSha256")
+        idp_field_names = item.get("idpFieldNames", ())
+        if source is not None and (source != "IDP" or not all(isinstance(value, str) and value.strip() for value in (idp_run_id, idp_document_id, idp_document_sha256)) or not isinstance(idp_field_names, list) or any(not isinstance(value, str) for value in idp_field_names)):
+            raise ReviewTaskPersistenceError("review task store unavailable")
         return ReviewTask(
             review_task_id=item["reviewTaskId"],
             matter_id=item["matterId"],
@@ -1237,6 +1697,11 @@ class Boto3DynamoReviewTaskRepository:
             closed_at=closed_at,
             resolution_note=resolution_note,
             archived_at=archived_at,
+            source=source,
+            idp_run_id=idp_run_id,
+            idp_document_id=idp_document_id,
+            idp_document_sha256=idp_document_sha256,
+            idp_field_names=tuple(idp_field_names),
         )
 
     def get(self, *, context: RequestContext, review_task_id: str) -> ReviewTask | None:
@@ -1269,13 +1734,29 @@ class Boto3DynamoReviewTaskRepository:
         except Exception as exc:
             raise ReviewTaskPersistenceError("review task store unavailable") from exc
 
+    def save_machine_task(self, task: ReviewTask) -> None:
+        """Idempotent machine path using the same scoped item primitive.
+
+        The caller has already traversed the Gateway's dedicated machine
+        grant; this method does not construct a human ``RequestContext``.
+        """
+        item = self._item(task)
+        key = {"pk": item["pk"], "sk": item["sk"]}
+        try:
+            self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)")
+        except Exception:
+            response = self.table.get_item(Key=key, ConsistentRead=True)
+            existing = response.get("Item") if isinstance(response, Mapping) else None
+            if existing != item:
+                raise ReviewTaskPersistenceError("machine review task idempotency conflict") from None
+
     def list(self, *, context: RequestContext, limit: int = MAX_REVIEW_TASKS) -> tuple[ReviewTask, ...]:
         context = require_authorized_context(context)
         if not isinstance(limit, int) or not 1 <= limit <= MAX_REVIEW_TASKS:
             raise ReviewTaskValidationError("limit is invalid")
         try:
             from boto3.dynamodb.conditions import Key
-            projection = "#pk,#sk,#entityType,#tenantId,#matterId,#reviewTaskId,#createdByUserId,#reason,#status,#correlationId,#createdAt,#updatedAt,#note,#dueAt,#closedAt,#resolutionNote,#archivedAt"
+            projection = "#pk,#sk,#entityType,#tenantId,#matterId,#reviewTaskId,#createdByUserId,#reason,#status,#correlationId,#createdAt,#updatedAt,#note,#dueAt,#closedAt,#resolutionNote,#archivedAt,#source,#idpRunId,#idpDocumentId,#idpDocumentSha256,#idpFieldNames"
             response = self.table.query(
                 KeyConditionExpression=Key("pk").eq(review_task_partition_key(context.tenant_id, context.matter_id)) & Key("sk").begins_with("REVIEW#"),
                 Limit=limit,
@@ -1285,7 +1766,7 @@ class Boto3DynamoReviewTaskRepository:
                     "#pk": "pk", "#sk": "sk", "#entityType": "entityType", "#tenantId": "tenantId", "#matterId": "matterId",
                     "#reviewTaskId": "reviewTaskId", "#createdByUserId": "createdByUserId", "#reason": "reason", "#status": "status",
                     "#correlationId": "correlationId", "#createdAt": "createdAt", "#updatedAt": "updatedAt", "#note": "note", "#archivedAt": "archivedAt",
-                    "#dueAt": "dueAt", "#closedAt": "closedAt", "#resolutionNote": "resolutionNote",
+                    "#dueAt": "dueAt", "#closedAt": "closedAt", "#resolutionNote": "resolutionNote", "#source": "source", "#idpRunId": "idpRunId", "#idpDocumentId": "idpDocumentId", "#idpDocumentSha256": "idpDocumentSha256", "#idpFieldNames": "idpFieldNames",
                 },
             )
             records: list[ReviewTask] = []
@@ -1339,6 +1820,65 @@ class Boto3DynamoReviewTaskRepository:
             )
         except Exception as exc:
             raise ReviewTaskPersistenceError("review task store unavailable") from exc
+        return updated
+
+    def update_with_idp_decision(
+        self,
+        *,
+        context: RequestContext,
+        review_task_id: str,
+        status: ReviewTaskStatus,
+        resolution_note: str = "",
+        decision: object,
+        decision_repository: object,
+    ) -> ReviewTask:
+        """Atomically append an IDP decision and transition its task.
+
+        Both records live in the existing metadata table.  The resource's
+        injected client is intentionally used with native Python values; its
+        Dynamo hooks perform the one wire serialization.  A separate table or
+        a read-then-two-writes fallback would permit an orphan audit decision,
+        so production fails closed unless the decision repository is bound to
+        this exact table object.
+        """
+        context = require_authorized_context(context)
+        current = self.get(context=context, review_task_id=review_task_id)
+        if current is None:
+            raise ReviewTaskValidationError("review task not found")
+        updated = _transition_task(current, status=status, resolution_note=resolution_note)
+        try:
+            from .idp.review import Boto3DynamoIDPDecisionRepository
+            if not isinstance(decision_repository, Boto3DynamoIDPDecisionRepository) or decision_repository.table is not self.table:
+                raise ReviewTaskPersistenceError("IDP decision store is not the existing metadata table")
+            decision_item = decision_repository._item(decision)  # type: ignore[arg-type]
+            transaction_client = getattr(getattr(self.table, "meta", None), "client", None)
+            transact = getattr(transaction_client, "transact_write_items", None)
+            if not callable(transact):
+                raise ReviewTaskPersistenceError("atomic DynamoDB transaction client is required")
+            task_item = self._item(updated)
+            key = {"pk": task_item["pk"], "sk": task_item["sk"]}
+            transact(TransactItems=[
+                {
+                    "Put": {
+                        "TableName": self.table_name,
+                        "Item": task_item,
+                        "ConditionExpression": "attribute_exists(pk) AND attribute_exists(sk) AND #matterId = :matterId AND #status = :expectedStatus",
+                        "ExpressionAttributeNames": {"#matterId": "matterId", "#status": "status"},
+                        "ExpressionAttributeValues": {":matterId": context.matter_id, ":expectedStatus": current.status.value},
+                    }
+                },
+                {
+                    "Put": {
+                        "TableName": self.table_name,
+                        "Item": decision_item,
+                        "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+                    }
+                },
+            ])
+        except ReviewTaskPersistenceError:
+            raise
+        except Exception as exc:
+            raise ReviewTaskPersistenceError("atomic IDP review update failed") from exc
         return updated
 
     def delete(self, *, context: RequestContext, review_task_id: str) -> None:

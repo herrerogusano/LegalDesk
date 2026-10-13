@@ -25,6 +25,7 @@ Cada fase agrega una capacidad y deja tests que protegen lo aprendido.
 | 12 | `PLAN_12_EVALUATION_DEMO.md` | 20+ evals, README, demo, final audit | 11 |
 | 13 | `PLAN_13_INTEGRATION_RELEASE.md` | integración E2E local y preparación de release | 00–12 |
 | 14 | `PLAN_14_PUBLIC_BETA.md` | arquitectura y gates para beta pública autenticada | 13 |
+| 14-IDP extension | `PHASE_14_IDP_PLAN.md` | independent intelligent document processing; accepted (bounded constrained-beta scope) 2026-10-13 | existing public beta |
 
 ## Milestones
 
@@ -100,12 +101,30 @@ No confiar en el LLM para ninguna decisión de acceso.
 
 ## Estado
 
+IDP extension (2026-10-09 to 2026-10-13): preflight recorded in
+`docs/idp-preflight.md`; the automatic review's service-principal gate was
+approved by the owner on 2026-10-09. This does not replace the historical
+public-beta phase. Final real-model evaluation (18/18 classification, 139/139
+digest-exact anchors, subtype closed vocabulary confirmed) and live AWS
+scenarios (digital, scanned with Textract continuation, judgment with
+provisional field, UNKNOWN, duplicate, three-run history, IDP-first, RAG
+fallback, insufficient evidence, `IDP_SKIPPED`, cross-matter 403) are recorded
+in `docs/phase-14-idp-acceptance.md` and `evals/results/idp-live-*`. Final
+releases: all 8 Lambdas on `30adeac`, Public Edge application on `89b84ca`.
+Acceptance: ACCEPTED (bounded constrained-beta scope) - 2026-10-13. Known
+limitations: for the skip and failed-IDP documents RAG routing is proven but the
+contextual-grounding guardrail fails the short synthetic answers closed (RAG
+thresholds intentionally unchanged); cold start about 7 s per Gateway hop;
+Knowledge Base per-document reconciliation covers only the configured beta
+subject. See `docs/idp-deployment-evidence-2026-10-09.md`.
+
 Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
 `docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.
 La infraestructura de beta autenticada de Fase 14 está desplegada y la
-evidencia final de smoke, holdout y operaciones está registrada. El TLS por
-defecto de CloudFront queda documentado como riesgo residual aceptado; no se
-afirma strict TLS ni certificación para datos legales reales.
+evidencia final de smoke, holdout y operaciones está registrada; la extensión
+IDP descrita arriba sigue en su propio smoke acotado y no altera esa evidencia.
+El TLS por defecto de CloudFront queda documentado como riesgo residual aceptado; no
+se afirma strict TLS ni certificación para datos legales reales.
 
 - [x] Phase 13 integration, bounded live smoke and local release hardening (413 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; fail-closed endpoint/retrieval hardening; Phase 14 promotion evidence follows the constrained-beta scope)
 
@@ -124,6 +143,17 @@ afirma strict TLS ni certificación para datos legales reales.
   are `OK` with actions enabled. Default CloudFront TLS is an accepted residual
   because no custom domain is owned, so this is a deployed constrained beta,
   not strict TLS or real-legal-data certification.
+
+- [x] Phase 14 IDP extension (`PHASE_14_IDP_PLAN.md`): ACCEPTED (bounded
+  constrained-beta scope) 2026-10-13. Registry-driven classification and
+  extraction with evidence anchors, deterministic derived dates, human review
+  and history, async SQS/Textract pipeline, IDP-first answers with RAG fallback;
+  real-model evaluation 18/18 and live AWS scenarios recorded
+  (`docs/phase-14-idp-acceptance.md`); measured cost well under USD 1; no
+  always-on infrastructure added. Documented limitations, not blockers: RAG
+  guardrail fails short synthetic answers closed for skip/failed-IDP documents,
+  cold start about 7 s per Gateway hop, per-document KB reconciliation limited
+  to the configured beta subject.
 
 - [x] Phase 00
 - [x] Phase 01

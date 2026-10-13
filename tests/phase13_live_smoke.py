@@ -17,6 +17,7 @@ import sys
 import threading
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from wsgiref.simple_server import make_server
 
@@ -167,13 +168,25 @@ class _OfflineProvider:
         raise AssertionError(f"offline preflight attempted provider operation: {name}")
 
 
+class _OfflineTable(_OfflineProvider):
+    """Resource-shaped table seam for constructor-only composition checks.
+
+    Boto3 resource tables expose ``meta.client``.  Supplying that shape keeps
+    repository construction local; invoking any actual Dynamo operation still
+    fails closed through ``_OfflineProvider``.
+    """
+
+    def __init__(self):
+        self.meta = SimpleNamespace(client=_OfflineProvider())
+
+
 class _OfflineSession:
     """Scoped local session used to build the exact composition without AWS."""
 
     def __init__(self):
         self.client_services = []
         self.resource_services = []
-        self.table = _OfflineProvider()
+        self.table = _OfflineTable()
 
     def client(self, service, **kwargs):
         self.client_services.append(service)

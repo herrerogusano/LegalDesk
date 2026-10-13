@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Temporary stack-scoped CloudFormation service role for the reviewed Phase 14
+  Public Edge IDP artifact-read update. It cannot mutate the AgentCore Gateway,
+  CloudFront, application data, or any IAM role other than the existing public
+  application execution role. Its only API Gateway write scope is patching the
+  one existing integration so CloudFormation can re-evaluate its Lambda URI
+  dependency; no other API Gateway resource is in scope. It may describe log
+  group names in eu-west-1 only so CloudFormation can resolve the existing
+  LogsLogGroupArn dependency; it cannot read log events or write logs.
+
+Parameters:
+  ExistingApplicationRoleArn:
+    Type: String
+    AllowedPattern: "^arn:aws:iam::344774635844:role/LegalDeskPhase14PublicEdge-ApplicationExecutionRole-[A-Za-z0-9]+$"
+    Description: Exact existing Public Edge application execution role ARN
+  ApplicationFunctionArn:
+    Type: String
+    AllowedPattern: "^arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskPhase14PublicEdge-application$"
+    Description: Exact existing Public Edge application function ARN
+  CloudFrontDistributionArn:
+    Type: String
+    AllowedPattern: "^arn:aws:cloudfront::344774635844:distribution/[A-Z0-9]+$"
+    Description: Exact existing Public Edge distribution ARN; read-only metadata
+  PublicApiIntegrationArn:
+    Type: String
+    AllowedPattern: "^arn:aws:apigateway:eu-west-1::/apis/k7z9nuofg4/integrations/gs2d6w4$"
+    Description: Exact existing API integration dependency; no other API resource is in scope
+  ArtifactBucketArn:
+    Type: String
+    AllowedPattern: "^arn:aws:s3:::legaldeskphase08artifacts-legaldeskphase08artifact-4lbcgkaewrsw$"
+    Description: Existing immutable Lambda artifact bucket ARN
+  ArtifactObjectKey:
+    Type: String
+    AllowedPattern: "^phase-14/[0-9a-f]{40}/legaldesk-lambda\\.zip$"
+    Description: Exact immutable Lambda object key used by the reviewed update
+
+Resources:
+  PublicEdgeBootstrapCloudFormationRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: Temporary least-privilege service role for one reviewed Public Edge IDP artifact-read update
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFormationOnly
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskPhase14PublicEdgeIDPBootstrap
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadExistingApplicationRole
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:GetRolePolicy
+                Resource: !Ref ExistingApplicationRoleArn
+              - Sid: PatchExistingApplicationRoleInlinePolicy
+                Effect: Allow
+                Action: iam:PutRolePolicy
+                Resource: !Ref ExistingApplicationRoleArn
+              - Sid: UpdateOnlyExistingApplicationFunction
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListTags
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                Resource: !Ref ApplicationFunctionArn
+              - Sid: PassOnlyExistingApplicationRoleToLambda
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Ref ExistingApplicationRoleArn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+              - Sid: ReadOnlyExactImmutableArtifact
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "${ArtifactBucketArn}/${ArtifactObjectKey}"
+              - Sid: ReadOnlyExistingDistributionMetadata
+                Effect: Allow
+                Action:
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:ListTagsForResource
+                Resource: !Ref CloudFrontDistributionArn
+              - Sid: ReadAndPatchOnlyExistingApiIntegration
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:PATCH
+                Resource: !Ref PublicApiIntegrationArn
+              - Sid: DescribeRegionalLogGroupMetadataOnly
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: eu-west-1
+
+Outputs:
+  PublicEdgeBootstrapCloudFormationRoleArn:
+    Value: !GetAtt PublicEdgeBootstrapCloudFormationRole.Arn

@@ -1,0 +1,8 @@
+{
+ "cleanup": "runner cleanup succeeded (cleanupErrors=[])",
+ "idpSkipEvidence": "The browser reached phase selected_field, which requires the authorized metadata read to return status IDP_SKIPPED with skip reason UNSUPPORTED_MEDIA_TYPE (or no reason); operator read confirms document 6602b12d idpStatus=IDP_SKIPPED idpReason=UNSUPPORTED_MEDIA_TYPE, malware NO_THREATS_FOUND, 0 paid calls.",
+ "ragPart": "BLOCKED: document stayed PENDING_INGESTION because the KB sync also contained the failing image-only PDF (see idp-live-failed-idp-rag-20261013-a.json); the harness stopped before the RAG chat (rag_document_not_indexed).",
+ "result": "PARTIAL",
+ "scenario": "skip-limit",
+ "sourceReport": "evals/results/idp-live-skip-20261013-a.json"
+}

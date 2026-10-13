@@ -1,0 +1,11 @@
+{
+ "blockers": [
+  "Only INDEXED IDP document (81b1f440) is unreadable through the authorized metadata path (Decimal decision bug, review.py:256).",
+  "New uploads cannot reach INDEXED: the scanned demand (9e236538, image-only) makes every Knowledge Base sync report numberOfDocumentsFailed=1 ('no text content'), and ingestion.py:417-423 keeps all documents of such a job PENDING_INGESTION; chat then answers 'documents_processing' instead of RAG.",
+  "Tenant Gateway quota for October reached 99/100 after this session."
+ ],
+ "plannedMechanism": "reprocess an indexed document with a mismatched prompt label -> ProductionIDPProcessor.process fail-closed (_fail_ambiguous, zero paid calls) -> IDP_FAILED projection hides stale run -> selected-field chat uses cited RAG",
+ "result": "NOT_EXECUTED_BLOCKED",
+ "scenario": "deliberately-failed-IDP-with-RAG-and-RAG-fallback/insufficient-evidence",
+ "scenario7": "RAG fallback (IDP missing field) and insufficient-evidence were not executed live for the same reasons; the selected-field code path (http_app.py:951-1010) was not exercised end-to-end today."
+}

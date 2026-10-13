@@ -1,0 +1,21 @@
+{
+  "manifest_version": "1.0.0",
+  "dataset_id": "legaldesk-phase14-idp-smoke-v1",
+  "notice": "Synthetic fixture only. No legal advice and no real legal data.",
+  "fixtures": [
+    {
+      "id": "smoke-fictional-notice-30-days",
+      "filename": "fictional-notice-30-days.txt",
+      "sha256": "efad5b761e2efffdc23ed2b3652656960450405a818e157493d23e0ade50859a",
+      "size_bytes": 180,
+      "page_count": 0,
+      "expected_type": null,
+      "expected_status": "IDP_SKIPPED",
+      "expected_source": "RAG",
+      "field_name": "termination_notice_value",
+      "question": "What is the termination notice?",
+      "skip_reason": "UNSUPPORTED_MEDIA_TYPE",
+      "synthetic": true
+    }
+  ]
+}
