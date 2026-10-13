@@ -4,6 +4,8 @@ const assert = require("assert");
 const crypto = require("crypto");
 const fs = require("fs");
 const {
+  readWithTransientRetry,
+  SmokeFailure,
   classifySelectedResponse,
   parseMcpMetadata,
   quoteDigest,
@@ -67,3 +69,20 @@ responseJson({ ok: () => false, status: () => 403 }, "upload_authorization", sta
   process.stderr.write(`${error.name}: HTTP status contract failed\n`);
   process.exitCode = 1;
 });
+
+(async () => {
+  const noSleep = { sleep: async () => {} };
+  let calls = 0;
+  const retried = [];
+  assert.strictEqual(await readWithTransientRetry(async () => { calls += 1; if (calls === 1) throw new SmokeFailure("api_500"); return "ok"; }, { ...noSleep, onRetry: c => retried.push(c) }), "ok");
+  assert.deepStrictEqual([calls, retried], [2, ["api_500"]]);
+  calls = 0;
+  await assert.rejects(readWithTransientRetry(async () => { calls += 1; throw new SmokeFailure("api_403"); }, noSleep), /api_403/);
+  assert.strictEqual(calls, 1);
+  calls = 0;
+  await assert.rejects(readWithTransientRetry(async () => { calls += 1; throw new SmokeFailure("api_502"); }, noSleep), /api_502/);
+  assert.strictEqual(calls, 2);
+  calls = 0;
+  await assert.rejects(readWithTransientRetry(async () => { calls += 1; throw new SmokeFailure("metadata_shape"); }, noSleep), /metadata_shape/);
+  assert.strictEqual(calls, 1);
+})().catch(error => { console.error(error); process.exitCode = 1; });

@@ -113,6 +113,22 @@ function validateExistingMetadata(metadata, expected) {
   return idp;
 }
 
+// The first authorized read can hit a cold Gateway -> interceptor -> MCP
+// chain and exceed the application's Gateway timeout (HTTP 500).  Retry only
+// a server-side 5xx, a bounded number of times; authorization (4xx) and shape
+// failures are never retried.
+async function readWithTransientRetry(read, { attempts = 2, delayMs = 15_000, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), onRetry = () => {} } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try { return await read(); }
+    catch (error) {
+      const transient = error instanceof SmokeFailure && /^api_5\d\d$/.test(error.category);
+      if (!transient || attempt >= attempts) throw error;
+      onRetry(error.category, attempt);
+      await sleep(delayMs);
+    }
+  }
+}
+
 function classifySelectedResponse(response, fieldName) {
   const idp = response && response.idp;
   const hasIDPContract = idp && idp.field === fieldName
@@ -344,7 +360,9 @@ async function run() {
       // metadata read is authorized by the just-created session/matter
       // context; no provided hash/type/ID is accepted as authoritative.
       setPhase("resume_metadata");
-      const resumeMetadata = await loadMetadata(EXISTING_DOCUMENT_ID, 10);
+      const resumeMetadata = await readWithTransientRetry(() => { assertDeadline(); return loadMetadata(EXISTING_DOCUMENT_ID, 10); }, {
+        onRetry: category => { diagnostics.resumeMetadataRetry = category; },
+      });
       const resumeIdp = validateExistingMetadata(resumeMetadata, {
         documentId: EXISTING_DOCUMENT_ID,
         sourceSha256,
@@ -548,5 +566,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, validateExistingMetadata, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
+  module.exports = { readWithTransientRetry, SmokeFailure, classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, validateExistingMetadata, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
 }
