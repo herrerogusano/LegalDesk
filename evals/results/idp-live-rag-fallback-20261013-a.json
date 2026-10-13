@@ -1,0 +1,7 @@
+{
+ "scenario": "rag-fallback-and-insufficient-evidence",
+ "documentId": "1d44967f-d7b3-485a-b653-8dd1c3d74e6f",
+ "ragFallbackWhenIDPFieldMissing": {"report": "evals/results/idp-live-unknown-20261013-c.json", "field": "governing_law (not extracted for UNKNOWN)", "source": "RAG", "citationCount": 1, "evidenceStatus": "answerable", "result": "PASS"},
+ "insufficientEvidence": {"report": "evals/results/idp-live-insufficient-20261013-a.json", "source": "NONE", "citationCount": 0, "evidenceStatus": "insufficient_evidence", "bedrockCalls": 1, "result": "PASS"},
+ "note": "selectedFieldName is validated against the supported-field vocabulary (http_app.py:934), so an arbitrary field name returns HTTP 400 (idp-live-unknown-20261013-b.json, no Bedrock)"
+}

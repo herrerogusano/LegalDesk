@@ -1,0 +1,8 @@
+{
+ "scenario": "skip-limit",
+ "documentId": "6602b12d-1329-4979-aac2-e9c1fd25e473",
+ "idpSkipEvidence": "authorized Gateway metadata read returned IDP_SKIPPED (no run, no hash, no history; reason not exposed by projection) in reports e and f; operator read idpReason=UNSUPPORTED_MEDIA_TYPE",
+ "ragPart": "BLOCKED by runtime bug (idp-live-rag-writer-diagnosis-20261013-a.json); KB status INDEXED",
+ "harnessReports": {"b": "wrong document id typed by the operator (403, no effect)", "c": "resume_source_hash_mismatch before harness fix", "d": "same", "e": "selected_source_mismatch (chat error)", "f": "same with selectedObserved diagnostics"},
+ "result": "PARTIAL"
+}

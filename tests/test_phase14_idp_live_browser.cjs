@@ -119,6 +119,15 @@ assert.throws(() => validateExistingMetadata({ ...failedMetadata, idp: { ...fail
 // Without an explicit failure expectation the null hash is still rejected.
 assert.throws(() => validateExistingMetadata(failedMetadata, { ...failedExpected, expectedStatus: "" }), /resume_source_hash_mismatch/);
 assert.throws(() => validateExistingMetadata({ ...failedMetadata, idp: { ...failedMetadata.idp, status: "IDP_COMPLETED" } }, failedExpected), /resume_source_hash_mismatch/);
+// Preflight skip: no run, no hash, no history; only with the exact expected reason.
+const skipMetadata = { document: { documentId: "doc-existing", matterId: "matter-synthetic" }, idp: { status: "IDP_SKIPPED", documentSha256: null, reason: "UNSUPPORTED_MEDIA_TYPE", history: [] } };
+const skipExpected = { ...resumeExpected, documentType: null, expectedStatus: "IDP_SKIPPED", expectedSkipReason: "UNSUPPORTED_MEDIA_TYPE" };
+assert.strictEqual(validateExistingMetadata(skipMetadata, skipExpected).status, "IDP_SKIPPED");
+assert.throws(() => validateExistingMetadata(skipMetadata, { ...skipExpected, expectedSkipReason: "" }), /resume_source_hash_mismatch/);
+assert.throws(() => validateExistingMetadata(skipMetadata, { ...skipExpected, expectedSkipReason: "OTHER" }), /resume_source_hash_mismatch/);
+const { reason: _omitted, ...skipNoReason } = skipMetadata.idp;
+assert.strictEqual(validateExistingMetadata({ ...skipMetadata, idp: skipNoReason }, skipExpected).status, "IDP_SKIPPED");
+assert.throws(() => validateExistingMetadata({ ...skipMetadata, idp: { ...skipMetadata.idp, status: "IDP_FAILED" } }, skipExpected), /resume_source_hash_mismatch/);
 assert(browserSource.indexOf('setPhase("rag_index_wait")') < browserSource.indexOf('setPhase("idp_metadata")'), "free RAG index wait must precede Gateway metadata polling");
 assert(browserSource.includes('SKIP_REPLAY_READ ? metadata : await loadMetadata(documentId)'), "replay read may only be skipped explicitly");
 assert(browserSource.includes('"SKIPPED_TO_CONSERVE_GATEWAY_QUOTA"'), "a skipped replay must be reported, not claimed as executed");

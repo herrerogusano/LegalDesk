@@ -126,6 +126,14 @@ function validateExistingMetadata(metadata, expected) {
     && idp.status === expected.expectedStatus && idp.documentSha256 == null;
   if (failureProjection) {
     const history = Array.isArray(idp.history) ? idp.history : [];
+    // A preflight skip (unsupported media type) never creates an IDP run, so
+    // it has neither a hash nor history; accept that shape only when the
+    // expected reason is explicit and the server either exposes the same
+    // reason or (current projection) exposes none.
+    const observedReason = idp.reason || idp.idpReason || idp.skipReason || "";
+    const preflightSkip = expected.expectedStatus === "IDP_SKIPPED" && !history.length
+      && !!expected.expectedSkipReason && (!observedReason || observedReason === expected.expectedSkipReason);
+    if (preflightSkip) return idp;
     if (!history.length || !history.every(item => item && item.documentSha256 === expected.sourceSha256)) {
       throw new SmokeFailure("resume_source_hash_mismatch");
     }
@@ -421,6 +429,7 @@ async function run() {
         documentType: expectedDocumentType,
         matterId: MATTER_ID,
         expectedStatus,
+        expectedSkipReason: EXPECTED_SKIP_REASON,
       });
       resumeTerminalMetadata = resumeMetadata;
       documentId = EXISTING_DOCUMENT_ID;
@@ -553,7 +562,11 @@ async function run() {
         idpOrigin: response && response.idp && typeof response.idp.origin === "string" ? response.idp.origin : null,
         idpProvisional: response && response.idp && typeof response.idp.provisional === "boolean" ? response.idp.provisional : null,
       };
-      if (selected.source !== EXPECTED_SOURCE) throw new SmokeFailure("selected_source_mismatch");
+      if (selected.source !== EXPECTED_SOURCE) {
+        // Closed-vocabulary observation only (no answer text) to make a source mismatch diagnosable.
+        diagnostics.selectedObserved = { source: selected.source, citationCount: selected.citationCount, evidenceStatus: selected.evidenceStatus, operationStatus: selected.operationStatus };
+        throw new SmokeFailure("selected_source_mismatch");
+      }
       if (EXPECTED_SOURCE === "IDP" && (!Array.isArray(response.citations) || response.citations.length === 0)) throw new SmokeFailure("idp_citations_missing");
       assertSelectedExpectations(response, selected, { expectedEvidenceStatus: EXPECTED_EVIDENCE_STATUS, expectProvisional: EXPECT_PROVISIONAL });
     }
