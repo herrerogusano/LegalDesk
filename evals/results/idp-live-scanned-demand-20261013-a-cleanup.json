@@ -1,0 +1,21 @@
+{
+ "attempt": "a",
+ "executedAtUtc": "2026-10-13T15:00Z",
+ "kind": "manual-cleanup-addendum",
+ "reason": "runner cleanup failed for every step because the exported aws-login session credentials expired (~15 min) during the run; the runner now uses a refreshing credential_process profile",
+ "result": {
+  "cognitoDeleted": true,
+  "membershipRestored": true,
+  "memoryEventsDeleted": 0,
+  "profileDeleted": true,
+  "remainingState": 0,
+  "stateRowsDeleted": 27
+ },
+ "scenario": "scanned-demand",
+ "verifiedAfter": {
+  "cognitoUsersWithPrefixPhase14Idp": 0,
+  "matterAAuthorizedUserIds": [
+   "usr_phase14_beta"
+  ]
+ }
+}

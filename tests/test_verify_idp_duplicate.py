@@ -68,6 +68,25 @@ class VerifyIDPDuplicateTests(unittest.TestCase):
         events[0]["message"] = json.dumps({"event": "idp_worker_consumed", "jobId": "job-1", "messageId": "message-1", "outcome": "acknowledged", "status": "COMPLETED", "timestamp": 11})
         self.assertEqual(structured_consumption_events(events, job_id="job-1", message_id="message-1", started_ms=10), [{"timestamp": 11, "workerTimestamp": 11}])
 
+    def test_job_from_run_targets_current_run_job_when_pointer_job_is_stale(self) -> None:
+        table, target = self._snapshot_table()
+        pk = "TENANT#tenant-beta#MATTER#matter-beta"
+        # Pointer still names an older exhausted job; the current run's job is run-1.
+        table.items[(pk, "DOCUMENT#doc-1")]["idpJobId"] = "job-old"
+        table.items[(pk, "IDP#JOB#job-old")] = dict(table.items[(pk, "IDP#JOB#job-1")], jobId="job-old", status="FAILED")
+        table.items[(pk, "IDP#JOB#run-1")] = dict(table.items[(pk, "IDP#JOB#job-1")], jobId="run-1", status="IDP_REVIEW_REQUIRED")
+        stale = read_snapshot(table, target)
+        self.assertEqual(stale["jobId"], "job-old")
+        with self.assertRaises(DuplicateProofError):
+            validate_unchanged(stale, stale)
+        current = read_snapshot(table, target, job_from_run=True)
+        self.assertEqual(current["jobId"], "run-1")
+        validate_unchanged(current, current)
+        # A run job from another document/hash still fails closed.
+        table.items[(pk, "IDP#JOB#run-1")]["documentSha256"] = "f" * 64
+        with self.assertRaises(DuplicateProofError):
+            read_snapshot(table, target, job_from_run=True)
+
     def test_default_command_makes_no_aws_call(self) -> None:
         self.assertEqual(main([]), 0)
 

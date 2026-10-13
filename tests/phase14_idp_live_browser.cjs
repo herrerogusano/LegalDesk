@@ -23,8 +23,18 @@ const EXPECTED_SKIP_REASON = process.env.LEGALDESK_IDP_EXPECTED_SKIP_REASON || "
 const REVIEW_ACTION = process.env.LEGALDESK_IDP_REVIEW_ACTION || "none";
 const REVIEW_FIELD = process.env.LEGALDESK_IDP_REVIEW_FIELD || "";
 const EXISTING_DOCUMENT_ID = process.env.LEGALDESK_IDP_EXISTING_DOCUMENT_ID || "";
+// Optional scenario expectations (harness-only; empty means "not asserted").
+const EXPECTED_EVIDENCE_STATUS = process.env.LEGALDESK_IDP_EXPECTED_EVIDENCE_STATUS || "";
+const EXPECT_PROVISIONAL = process.env.LEGALDESK_IDP_EXPECT_PROVISIONAL === "1";
 const POLL_LIMIT = 20;
-const POLL_MS = 15_000;
+// RAG/document status polling uses the free document endpoint (no Gateway
+// quota) so metadata polls only start once indexing reached a terminal state.
+const INDEX_POLL_LIMIT = 40;
+const INDEX_POLL_MS = 10_000;
+// Gateway reads consume the tenant's monthly Gateway quota; the interval and
+// the optional replay read are configurable so bounded runs can conserve it.
+const POLL_MS = Math.min(60_000, Math.max(5_000, Number(process.env.LEGALDESK_IDP_POLL_MS || 15_000)));
+const SKIP_REPLAY_READ = process.env.LEGALDESK_IDP_SKIP_REPLAY_READ === "1";
 const API_CALL_LIMIT = 120;
 const DEADLINE_EPOCH_MS = Number(process.env.LEGALDESK_IDP_DEADLINE_EPOCH_MS || 0);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -108,10 +118,39 @@ function validateExistingMetadata(metadata, expected) {
   }
   const idp = metadata.idp;
   if (!idp || typeof idp !== "object") throw new SmokeFailure("resume_idp_metadata_missing");
+  // A terminal FAILED/SKIPPED projection deliberately hides the stale run
+  // (hash/type are null).  Only when that exact failure status is expected
+  // may the hash binding come from the server-owned run history instead; at
+  // least one history entry is required and every entry must match.
+  const failureProjection = ["IDP_FAILED", "IDP_SKIPPED"].includes(expected.expectedStatus || "")
+    && idp.status === expected.expectedStatus && idp.documentSha256 == null;
+  if (failureProjection) {
+    const history = Array.isArray(idp.history) ? idp.history : [];
+    if (!history.length || !history.every(item => item && item.documentSha256 === expected.sourceSha256)) {
+      throw new SmokeFailure("resume_source_hash_mismatch");
+    }
+    return idp;
+  }
   if (idp.documentSha256 !== expected.sourceSha256) throw new SmokeFailure("resume_source_hash_mismatch");
   if (expected.documentType && idp.documentType !== expected.documentType) throw new SmokeFailure("resume_document_type_mismatch");
   return idp;
 }
+
+// Scenario expectations on the selected-field answer.  Only closed
+// vocabulary/booleans are inspected; the answer text is never retained.
+function assertSelectedExpectations(response, selected, { expectedEvidenceStatus = "", expectProvisional = false } = {}) {
+  if (expectedEvidenceStatus && selected.evidenceStatus !== expectedEvidenceStatus) throw new SmokeFailure("selected_evidence_status_mismatch");
+  if (expectProvisional) {
+    const idp = response && response.idp;
+    if (selected.source !== "IDP" || !idp || idp.provisional !== true
+        || ["AUTO_ACCEPTED", "HUMAN_CONFIRMED"].includes(idp.acceptance)
+        || selected.evidenceStatus !== "ambiguous") {
+      throw new SmokeFailure("selected_not_labelled_provisional");
+    }
+  }
+}
+
+function documentIndexTerminal(status) { return status === "INDEXED" || status === "FAILED"; }
 
 // The first authorized read can hit a cold Gateway -> interceptor -> MCP
 // chain and exceed the application's Gateway timeout (HTTP 500).  Retry only
@@ -365,6 +404,9 @@ async function run() {
     emitCleanupProgress("conversation_ready", { conversationId, sessionId, scopes: cleanupScopes });
 
     let documentId;
+    let resumeTerminalMetadata = null;
+    let ragStatus = null;
+    let indexPolls = 0;
     if (EXISTING_DOCUMENT_ID) {
       // This is the only pre-processing path for an existing document.  The
       // metadata read is authorized by the just-created session/matter
@@ -378,14 +420,16 @@ async function run() {
         sourceSha256,
         documentType: expectedDocumentType,
         matterId: MATTER_ID,
+        expectedStatus,
       });
+      resumeTerminalMetadata = resumeMetadata;
       documentId = EXISTING_DOCUMENT_ID;
       diagnostics.resumeMode = "existing_document";
       diagnostics.authoritativeMetadataRead = true;
       emitCleanupProgress("existing_document_ready", { conversationId, sessionId, documentId, scopes: cleanupScopes });
       // Keep this local binding explicit: it prevents future edits from
       // accidentally treating a caller value as a fresh upload result.
-      if (!resumeIdp || resumeIdp.documentSha256 !== sourceSha256) throw new SmokeFailure("resume_source_hash_mismatch");
+      if (!resumeIdp || (resumeIdp.documentSha256 !== sourceSha256 && resumeIdp.documentSha256 != null)) throw new SmokeFailure("resume_source_hash_mismatch");
     } else {
       setPhase("upload");
       const uploadResponse = safeResponseWait(page, response => { try { return new URL(response.url()).pathname.endsWith("/upload-authorizations") && response.request().method() === "POST"; } catch (_error) { return false; } }, "upload_authorization", diagnostics);
@@ -416,13 +460,31 @@ async function run() {
       documentId = authorization && authorization.document && authorization.document.documentId;
       if (!SAFE_ID.test(documentId || "")) throw new SmokeFailure("upload_metadata");
       emitCleanupProgress("document_uploaded", { conversationId, sessionId, documentId, scopes: cleanupScopes });
+      // The real UI drives scan + ingestion.  Observe the RAG lifecycle
+      // through the free per-document endpoint before spending Gateway
+      // metadata reads; RAG expectations later require INDEXED.
+      setPhase("rag_index_wait");
+      for (; indexPolls < INDEX_POLL_LIMIT; indexPolls += 1) {
+        const payload = await apiJson(`/api/matters/${encodeURIComponent(MATTER_ID)}/documents/${encodeURIComponent(documentId)}`);
+        ragStatus = payload && payload.document && typeof payload.document.status === "string" ? payload.document.status : null;
+        if (documentIndexTerminal(ragStatus)) break;
+        assertDeadline();
+        await new Promise(resolve => setTimeout(resolve, INDEX_POLL_MS));
+      }
     }
 
     setPhase("idp_metadata");
     let metadata = null;
     let polls = 0;
     let terminal = false;
-    for (; polls < POLL_LIMIT; polls += 1) {
+    const resumeIdpStatus = resumeTerminalMetadata && resumeTerminalMetadata.idp && resumeTerminalMetadata.idp.status;
+    if (["IDP_COMPLETED", "IDP_REVIEW_REQUIRED", "IDP_FAILED", "IDP_SKIPPED"].includes(resumeIdpStatus)) {
+      // The authorized resume read is already terminal; reuse it instead of
+      // spending another Gateway read (the replay read below still runs).
+      metadata = resumeTerminalMetadata;
+      terminal = true;
+    }
+    for (; !terminal && polls < POLL_LIMIT; polls += 1) {
       try { metadata = await loadMetadata(documentId); }
       catch (error) {
         if (polls + 1 >= POLL_LIMIT) throw error;
@@ -444,7 +506,8 @@ async function run() {
     const observedReason = idp.reason || idp.idpReason || idp.skipReason || "";
     if (expectedStatus === "IDP_SKIPPED" && EXPECTED_SKIP_REASON && observedReason && observedReason !== EXPECTED_SKIP_REASON) throw new SmokeFailure("idp_skip_reason_mismatch");
     if (!expectedTerminalFailure && (!Array.isArray(idp.fields) || idp.fields.length === 0)) throw new SmokeFailure("idp_fields_missing");
-    if (expectedDocumentType && idp.documentType !== expectedDocumentType) throw new SmokeFailure("idp_type_mismatch");
+    // A failed/skipped projection intentionally exposes no document type.
+    if (expectedDocumentType && !expectedTerminalFailure && idp.documentType !== expectedDocumentType) throw new SmokeFailure("idp_type_mismatch");
     // A preflight-skip projection may intentionally have no IDP run/hash/type;
     // if the server does expose a hash, it must still match the uploaded bytes.
     if (typeof idp.documentSha256 === "string" && idp.documentSha256 !== sourceSha256) throw new SmokeFailure("source_hash_mismatch");
@@ -452,7 +515,7 @@ async function run() {
     // A second authorized metadata read is observable through the public
     // surface. It proves stable replay of the projection, but deliberately
     // does not claim duplicate clean-event/paid-stage idempotency.
-    const replayMetadata = await loadMetadata(documentId);
+    const replayMetadata = SKIP_REPLAY_READ ? metadata : await loadMetadata(documentId);
     const replayIdp = replayMetadata && replayMetadata.idp;
     const replayRunStable = expectedTerminalFailure
       ? (!idp.runId || replayIdp.runId === idp.runId)
@@ -460,10 +523,12 @@ async function run() {
     const replayHashStable = expectedTerminalFailure
       ? (!idp.documentSha256 || replayIdp.documentSha256 === idp.documentSha256)
       : replayIdp.documentSha256 === idp.documentSha256;
-    const publicReadReplay = replayIdp && idp && replayRunStable && replayHashStable && replayIdp.status === idp.status
-      ? { status: "EXECUTED", kind: "authorized_metadata_read", runId: idp.runId || null }
-      : { status: "FAIL", kind: "authorized_metadata_read" };
-    if (publicReadReplay.status !== "EXECUTED") throw new SmokeFailure("metadata_replay_changed_projection");
+    const publicReadReplay = SKIP_REPLAY_READ
+      ? { status: "SKIPPED_TO_CONSERVE_GATEWAY_QUOTA", kind: "authorized_metadata_read", runId: idp.runId || null }
+      : replayIdp && idp && replayRunStable && replayHashStable && replayIdp.status === idp.status
+        ? { status: "EXECUTED", kind: "authorized_metadata_read", runId: idp.runId || null }
+        : { status: "FAIL", kind: "authorized_metadata_read" };
+    if (!["EXECUTED", "SKIPPED_TO_CONSERVE_GATEWAY_QUOTA"].includes(publicReadReplay.status)) throw new SmokeFailure("metadata_replay_changed_projection");
 
     let reviewTask = null;
     if (REVIEW_ACTION !== "none") {
@@ -474,6 +539,7 @@ async function run() {
     }
 
     setPhase("selected_field");
+    if (!EXISTING_DOCUMENT_ID && fieldName && EXPECTED_SOURCE !== "IDP" && ragStatus !== "INDEXED") throw new SmokeFailure("rag_document_not_indexed");
     let selected = { source: "NONE", citationCount: 0, evidenceStatus: null };
     if (fieldName) {
       const response = await apiJson("/api/chat", { method: "POST", body: JSON.stringify({ matterId: MATTER_ID, conversationId, sessionId, question: IDP_QUESTION || `IDP field ${fieldName}`, selectedDocumentId: documentId, selectedFieldName: fieldName }) });
@@ -482,9 +548,14 @@ async function run() {
         citationCount: Array.isArray(response && response.citations) ? response.citations.length : 0,
         evidenceStatus: typeof (response && response.evidenceStatus) === "string" ? response.evidenceStatus : null,
         answerDigest: typeof (response && response.answer) === "string" ? digestValue(response.answer) : null,
+        operationStatus: typeof (response && response.operationStatus) === "string" ? response.operationStatus : null,
+        idpAcceptance: response && response.idp && typeof response.idp.acceptance === "string" ? response.idp.acceptance : null,
+        idpOrigin: response && response.idp && typeof response.idp.origin === "string" ? response.idp.origin : null,
+        idpProvisional: response && response.idp && typeof response.idp.provisional === "boolean" ? response.idp.provisional : null,
       };
       if (selected.source !== EXPECTED_SOURCE) throw new SmokeFailure("selected_source_mismatch");
       if (EXPECTED_SOURCE === "IDP" && (!Array.isArray(response.citations) || response.citations.length === 0)) throw new SmokeFailure("idp_citations_missing");
+      assertSelectedExpectations(response, selected, { expectedEvidenceStatus: EXPECTED_EVIDENCE_STATUS, expectProvisional: EXPECT_PROVISIONAL });
     }
 
     let review = { status: "NOT_EXECUTED", action: REVIEW_ACTION, reason: REVIEW_ACTION === "none" ? "review_action_not_requested" : "" };
@@ -551,7 +622,7 @@ async function run() {
     const historyItems = idp && Array.isArray(idp.history) ? idp.history : [];
     const history = { status: historyItems.length >= 3 ? "EXECUTED" : "NOT_EXECUTED", count: historyItems.length, reason: historyItems.length >= 3 ? null : "three-run same-document history unavailable from current public trigger" };
     const coreProof = (["IDP_COMPLETED", "IDP_REVIEW_REQUIRED"].includes(idp.status) || Boolean(expectedTerminalFailure))
-      && publicReadReplay.status === "EXECUTED" && denied === 403
+      && ["EXECUTED", "SKIPPED_TO_CONSERVE_GATEWAY_QUOTA"].includes(publicReadReplay.status) && denied === 403
       && (REVIEW_ACTION === "none" || review.status === "EXECUTED");
     const cases = [{ fixtureId: FIXTURE_ID, documentType: idp.documentType || null, documentSha256: idp.documentSha256 || sourceSha256, status: idp.status || "UNKNOWN", fields: sanitizeFields(idp), derived: null, observed: {} }];
     return {
@@ -559,7 +630,9 @@ async function run() {
       proofComplete: false,
       smoke: "phase14-idp-browser", fixtureId: FIXTURE_ID, documentId,
       runId: typeof idp.runId === "string" ? idp.runId : null,
-      documentSha256: sourceSha256, idpStatus: idp.status, idpReason: observedReason || null, selected, review, crossMatterStatus: denied,
+      documentSha256: sourceSha256, idpStatus: idp.status, idpReason: observedReason || null, idpDocumentType: idp.documentType || null, selected, review, crossMatterStatus: denied,
+      rag: { status: ragStatus, indexPolls, mode: EXISTING_DOCUMENT_ID ? "not_observed_resume" : "document_endpoint" },
+      expectations: { evidenceStatus: EXPECTED_EVIDENCE_STATUS || null, provisional: EXPECT_PROVISIONAL, status: expectedStatus || null, documentType: expectedDocumentType || null },
       polls: { iterations: polls, max: POLL_LIMIT, intervalSeconds: POLL_MS / 1000 },
       history,
       idempotencyReplay: { status: "NOT_EXECUTED", reason: "duplicate clean-event trigger unavailable to public runner", observedPublicReadReplay: publicReadReplay },
@@ -581,5 +654,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { readWithTransientRetry, SmokeFailure, humanDecisionMismatchDiagnostic, classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, validateExistingMetadata, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
+  module.exports = { assertSelectedExpectations, documentIndexTerminal, readWithTransientRetry, SmokeFailure, humanDecisionMismatchDiagnostic, classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, validateExistingMetadata, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
 }

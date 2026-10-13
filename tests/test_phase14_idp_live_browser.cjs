@@ -4,6 +4,8 @@ const assert = require("assert");
 const crypto = require("crypto");
 const fs = require("fs");
 const {
+  assertSelectedExpectations,
+  documentIndexTerminal,
   readWithTransientRetry,
   SmokeFailure,
   classifySelectedResponse,
@@ -93,3 +95,30 @@ assert.deepStrictEqual(humanDecisionMismatchDiagnostic({ error: "invalid_request
 assert.deepStrictEqual(humanDecisionMismatchDiagnostic({ error: "Free text with secrets", reviewTaskId: "review-x" }), { humanDecisionPayloadKind: "object", humanDecisionError: null, humanDecisionTaskIdPresent: true });
 assert.deepStrictEqual(humanDecisionMismatchDiagnostic(null), { humanDecisionPayloadKind: "null", humanDecisionError: null, humanDecisionTaskIdPresent: false });
 assert.deepStrictEqual(humanDecisionMismatchDiagnostic(["x"]), { humanDecisionPayloadKind: "object", humanDecisionError: null, humanDecisionTaskIdPresent: false });
+
+// Scenario expectations: provisional labelling and evidence status.
+const provisionalResponse = { idp: { field: "operative_ruling", acceptance: "REVIEW_REQUIRED", presence: "PRESENT", origin: "INTERPRETIVE", provisional: true } };
+assertSelectedExpectations(provisionalResponse, { source: "IDP", evidenceStatus: "ambiguous" }, { expectProvisional: true });
+assert.throws(() => assertSelectedExpectations({ idp: { ...provisionalResponse.idp, acceptance: "AUTO_ACCEPTED", provisional: false } }, { source: "IDP", evidenceStatus: "answerable" }, { expectProvisional: true }), /selected_not_labelled_provisional/);
+assert.throws(() => assertSelectedExpectations({ idp: { ...provisionalResponse.idp, acceptance: "HUMAN_CONFIRMED" } }, { source: "IDP", evidenceStatus: "ambiguous" }, { expectProvisional: true }), /selected_not_labelled_provisional/);
+assert.throws(() => assertSelectedExpectations({ citations: [{}] }, { source: "RAG", evidenceStatus: "answerable" }, { expectProvisional: true }), /selected_not_labelled_provisional/);
+assertSelectedExpectations({}, { source: "NONE", evidenceStatus: "insufficient_evidence" }, { expectedEvidenceStatus: "insufficient_evidence" });
+assert.throws(() => assertSelectedExpectations({}, { source: "NONE", evidenceStatus: "answerable" }, { expectedEvidenceStatus: "insufficient_evidence" }), /selected_evidence_status_mismatch/);
+assertSelectedExpectations({}, { source: "RAG", evidenceStatus: "answerable" }, {});
+assert.strictEqual(documentIndexTerminal("INDEXED"), true);
+assert.strictEqual(documentIndexTerminal("FAILED"), true);
+assert.strictEqual(documentIndexTerminal("PENDING_INGESTION"), false);
+assert.strictEqual(documentIndexTerminal(null), false);
+
+// Resume of a failed projection binds the hash through server run history.
+const failedExpected = { ...resumeExpected, documentType: "UNKNOWN", expectedStatus: "IDP_FAILED" };
+const failedMetadata = { document: { documentId: "doc-existing", matterId: "matter-synthetic" }, idp: { status: "IDP_FAILED", documentSha256: null, documentType: null, history: [{ documentSha256: "c".repeat(64) }] } };
+assert.strictEqual(validateExistingMetadata(failedMetadata, failedExpected).status, "IDP_FAILED");
+assert.throws(() => validateExistingMetadata({ ...failedMetadata, idp: { ...failedMetadata.idp, history: [] } }, failedExpected), /resume_source_hash_mismatch/);
+assert.throws(() => validateExistingMetadata({ ...failedMetadata, idp: { ...failedMetadata.idp, history: [{ documentSha256: "c".repeat(64) }, { documentSha256: "e".repeat(64) }] } }, failedExpected), /resume_source_hash_mismatch/);
+// Without an explicit failure expectation the null hash is still rejected.
+assert.throws(() => validateExistingMetadata(failedMetadata, { ...failedExpected, expectedStatus: "" }), /resume_source_hash_mismatch/);
+assert.throws(() => validateExistingMetadata({ ...failedMetadata, idp: { ...failedMetadata.idp, status: "IDP_COMPLETED" } }, failedExpected), /resume_source_hash_mismatch/);
+assert(browserSource.indexOf('setPhase("rag_index_wait")') < browserSource.indexOf('setPhase("idp_metadata")'), "free RAG index wait must precede Gateway metadata polling");
+assert(browserSource.includes('SKIP_REPLAY_READ ? metadata : await loadMetadata(documentId)'), "replay read may only be skipped explicitly");
+assert(browserSource.includes('"SKIPPED_TO_CONSERVE_GATEWAY_QUOTA"'), "a skipped replay must be reported, not claimed as executed");

@@ -117,6 +117,12 @@ class IDPLiveSmokeConfig:
     # through the authorized metadata surface before it can do any work; an
     # ID here is never treated as proof of ownership or source bytes.
     existing_document_id: str = ""
+    # Optional harness-only scenario expectations (empty/False = unasserted).
+    question: str = ""
+    expected_evidence_status: str = ""
+    expect_provisional: bool = False
+    skip_replay_read: bool = False
+    poll_seconds: int = 15
 
 
 def _safe_id(value: object, label: str) -> str:
@@ -425,6 +431,14 @@ def preflight(config: IDPLiveSmokeConfig) -> dict[str, object]:
         raise LiveIDPPreflightError("expected_status_invalid")
     if config.review_action not in {"none", "approve", "correct"}:
         raise LiveIDPPreflightError("review_action_invalid")
+    if config.expected_evidence_status not in {"", "answerable", "ambiguous", "insufficient_evidence"}:
+        raise LiveIDPPreflightError("expected_evidence_status_invalid")
+    if config.question and (len(config.question) > 500 or not config.question.strip() or any(ord(ch) < 32 for ch in config.question)):
+        raise LiveIDPPreflightError("question_invalid")
+    if type(config.poll_seconds) is not int or not 5 <= config.poll_seconds <= 60:
+        raise LiveIDPPreflightError("poll_seconds_invalid")
+    if config.expect_provisional and expected_source != "IDP":
+        raise LiveIDPPreflightError("provisional_expectation_requires_idp_source")
     if field_name and not _SAFE_ID.fullmatch(field_name):
         raise LiveIDPPreflightError("field_name_invalid")
     if config.review_field_name and not _SAFE_ID.fullmatch(config.review_field_name):
@@ -479,6 +493,9 @@ def preflight(config: IDPLiveSmokeConfig) -> dict[str, object]:
         "cases": evaluation_cases,
         "expectedStatus": expected_status or None,
         "expectedSource": expected_source,
+        "expectedEvidenceStatus": config.expected_evidence_status or None,
+        "expectProvisional": config.expect_provisional,
+        "questionOverride": bool(config.question),
         "resume": {
             "mode": "existing_document" if config.existing_document_id else "upload_new_document",
             "documentIdConfigured": bool(config.existing_document_id),
@@ -516,7 +533,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
     expected_source = fixture.get("expected_source") or config.expected_source
     expected_status = config.expected_status or str(fixture.get("expected_status") or "")
     field_name = config.field_name or str(fixture.get("field_name") or "")
-    question = str(fixture.get("question") or "")
+    question = config.question or str(fixture.get("question") or "")
     try:
         import boto3
         from botocore.config import Config
@@ -610,7 +627,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
         child_timeout = max(1, min(900, int(child_remaining)))
         child_deadline_epoch_ms = int(time.time() * 1000 + child_remaining * 1000)
         child_env = {key: value for key, value in os.environ.items() if not key.startswith("AWS_") and "SECRET" not in key.upper() and "TOKEN" not in key.upper()}
-        child_env.update({"LEGALDESK_P14_BASE_URL": config.base_url.rstrip("/"), "LEGALDESK_P14_IDP_HOST": config.idp_host, "LEGALDESK_P14_USERNAME": username, "LEGALDESK_P14_PASSWORD": password, "LEGALDESK_P14_MATTER_ID": config.matter_id, "LEGALDESK_P14_CROSS_MATTER_ID": config.cross_matter_id, "LEGALDESK_IDP_FIXTURE_PATH": fixture["path"], "LEGALDESK_IDP_FIXTURE_ID": fixture["id"], "LEGALDESK_IDP_EXPECTED_SOURCE": expected_source, "LEGALDESK_IDP_FIELD_NAME": field_name, "LEGALDESK_IDP_REVIEW_FIELD": config.review_field_name, "LEGALDESK_IDP_QUESTION": question, "LEGALDESK_IDP_EXPECTED_STATUS": expected_status, "LEGALDESK_IDP_EXPECTED_SKIP_REASON": str(fixture.get("skip_reason") or ""), "LEGALDESK_IDP_EXPECTED_DOCUMENT_TYPE": str(fixture["expected_type"] or ""), "LEGALDESK_IDP_REVIEW_ACTION": config.review_action, "LEGALDESK_IDP_EXISTING_DOCUMENT_ID": config.existing_document_id, "LEGALDESK_IDP_DEADLINE_EPOCH_MS": str(child_deadline_epoch_ms)})
+        child_env.update({"LEGALDESK_P14_BASE_URL": config.base_url.rstrip("/"), "LEGALDESK_P14_IDP_HOST": config.idp_host, "LEGALDESK_P14_USERNAME": username, "LEGALDESK_P14_PASSWORD": password, "LEGALDESK_P14_MATTER_ID": config.matter_id, "LEGALDESK_P14_CROSS_MATTER_ID": config.cross_matter_id, "LEGALDESK_IDP_FIXTURE_PATH": fixture["path"], "LEGALDESK_IDP_FIXTURE_ID": fixture["id"], "LEGALDESK_IDP_EXPECTED_SOURCE": expected_source, "LEGALDESK_IDP_FIELD_NAME": field_name, "LEGALDESK_IDP_REVIEW_FIELD": config.review_field_name, "LEGALDESK_IDP_QUESTION": question, "LEGALDESK_IDP_EXPECTED_STATUS": expected_status, "LEGALDESK_IDP_EXPECTED_SKIP_REASON": str(fixture.get("skip_reason") or ""), "LEGALDESK_IDP_EXPECTED_DOCUMENT_TYPE": str(fixture["expected_type"] or ""), "LEGALDESK_IDP_REVIEW_ACTION": config.review_action, "LEGALDESK_IDP_EXISTING_DOCUMENT_ID": config.existing_document_id, "LEGALDESK_IDP_EXPECTED_EVIDENCE_STATUS": config.expected_evidence_status, "LEGALDESK_IDP_EXPECT_PROVISIONAL": "1" if config.expect_provisional else "", "LEGALDESK_IDP_SKIP_REPLAY_READ": "1" if config.skip_replay_read else "", "LEGALDESK_IDP_POLL_MS": str(config.poll_seconds * 1000), "LEGALDESK_IDP_DEADLINE_EPOCH_MS": str(child_deadline_epoch_ms)})
         try:
             child = subprocess.run(["node", str(BROWSER_RUNNER)], cwd=ROOT, env=child_env, capture_output=True, text=True, timeout=child_timeout)
             report = parse_child(child.stdout, returncode=child.returncode, stderr=child.stderr)
@@ -729,6 +746,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-action", choices=("none", "approve", "correct"), default="none")
     parser.add_argument("--expected-status", choices=("", "IDP_SKIPPED", "IDP_FAILED"), default="")
     parser.add_argument("--existing-document-id", default="", help="resume an already-authorized document; never uploads in this mode")
+    parser.add_argument("--question", default="", help="synthetic selected-document question override (never logged)")
+    parser.add_argument("--expected-evidence-status", choices=("", "answerable", "ambiguous", "insufficient_evidence"), default="")
+    parser.add_argument("--skip-replay-read", action="store_true", help="omit the second metadata read (conserves the monthly Gateway quota)")
+    parser.add_argument("--poll-seconds", type=int, default=15)
+    parser.add_argument("--expect-provisional", action="store_true", help="require the IDP answer to be labelled provisional")
     parser.add_argument("--region", default=REGION)
     parser.add_argument("--attempt-id", default="local-preflight")
     parser.add_argument("--report-path", type=Path)
@@ -745,6 +767,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         report_path=args.report_path, execute=args.execute_approved_once,
         expected_source=args.expected_source, field_name=args.field_name, review_field_name=args.review_field_name, review_action=args.review_action, expected_status=args.expected_status,
         existing_document_id=args.existing_document_id,
+        question=args.question, expected_evidence_status=args.expected_evidence_status, expect_provisional=args.expect_provisional,
+        skip_replay_read=args.skip_replay_read, poll_seconds=args.poll_seconds,
     )
     try:
         report = run_live(config) if config.execute else preflight(config)

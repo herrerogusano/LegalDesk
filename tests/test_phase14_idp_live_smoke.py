@@ -96,6 +96,26 @@ class Phase14IDPLiveSmokeTests(unittest.TestCase):
         self.assertTrue(resumed["resume"]["documentIdConfigured"])
         self.assertEqual(resumed["awsCalls"], 0)
 
+    def test_scenario_expectations_are_validated_offline(self) -> None:
+        report = preflight(config(question="What reference number is shown?", expected_evidence_status="insufficient_evidence", expected_source="NONE"))
+        self.assertEqual(report["awsCalls"], 0)
+        self.assertEqual(report["expectedEvidenceStatus"], "insufficient_evidence")
+        self.assertTrue(report["questionOverride"])
+        self.assertNotIn("What reference", json.dumps(report))
+        for bad, reason in (
+            ({"expected_evidence_status": "maybe"}, "expected_evidence_status_invalid"),
+            ({"question": "x" * 501}, "question_invalid"),
+            ({"question": "line" + chr(10) + "break"}, "question_invalid"),
+            ({"expect_provisional": True, "expected_source": "RAG"}, "provisional_expectation_requires_idp_source"),
+            ({"poll_seconds": 1}, "poll_seconds_invalid"),
+            ({"poll_seconds": 61}, "poll_seconds_invalid"),
+        ):
+            with self.subTest(reason=reason):
+                with self.assertRaises(LiveIDPPreflightError) as raised:
+                    preflight(config(**bad))
+                self.assertEqual(str(raised.exception), reason)
+        self.assertTrue(preflight(config(expect_provisional=True))["expectProvisional"])
+
     def test_main_returns_failure_for_failed_live_report(self) -> None:
         with patch("phase14_idp_live_smoke.run_live", return_value={"result": "FAIL", "category": "cleanup_failed"}):
             from phase14_idp_live_smoke import main

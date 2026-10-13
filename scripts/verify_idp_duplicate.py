@@ -106,13 +106,18 @@ def _point(table: Any, key: Mapping[str, str]) -> dict[str, object]:
     return dict(item)
 
 
-def read_snapshot(table: Any, target: Target) -> dict[str, object]:
-    """Read only the document pointer, its job, run, and two paid stages."""
+def read_snapshot(table: Any, target: Target, *, job_from_run: bool = False) -> dict[str, object]:
+    """Read only the document pointer, its job, run, and two paid stages.
+
+    ``job_from_run`` resolves the job from the pointer's current run ID (run
+    IDs equal job IDs by construction) instead of ``idpJobId``, which can
+    still name an older exhausted job after a reprocess generation.
+    """
 
     document = _point(table, _document_key(target.tenant_id, target.matter_id, target.document_id))
     if any(document.get(name) != expected for name, expected in (("tenantId", target.tenant_id), ("matterId", target.matter_id), ("documentId", target.document_id), ("idpRunId", target.run_id), ("idpDocumentSha256", target.document_sha256))):
         raise DuplicateProofError("document_pointer_scope_or_hash_mismatch")
-    job_id = _safe_id(document.get("idpJobId"), "job_id")
+    job_id = _safe_id(target.run_id if job_from_run else document.get("idpJobId"), "job_id")
     job = _point(table, _job_key(target.tenant_id, target.matter_id, job_id))
     if any(job.get(name) != expected for name, expected in (("tenantId", target.tenant_id), ("matterId", target.matter_id), ("documentId", target.document_id), ("documentSha256", target.document_sha256), ("jobId", job_id))):
         raise DuplicateProofError("job_scope_or_hash_mismatch")
@@ -188,7 +193,7 @@ def _not_executed(reason: str) -> dict[str, object]:
     return {"result": "NOT_EXECUTED", "reason": reason}
 
 
-def execute(*, report_path: Path, tenant_id: str, matter_id: str, table_name: str, queue_url: str, log_group: str, wait_seconds: int = 60, poll_seconds: int = 10) -> dict[str, object]:
+def execute(*, report_path: Path, tenant_id: str, matter_id: str, table_name: str, queue_url: str, log_group: str, wait_seconds: int = 60, poll_seconds: int = 10, job_from_run: bool = False) -> dict[str, object]:
     if not 1 <= wait_seconds <= MAX_WAIT_SECONDS or not 1 <= poll_seconds <= MAX_POLL_SECONDS:
         raise DuplicateProofError("observation_bounds_invalid")
     target = load_target(report_path, tenant_id=tenant_id, matter_id=matter_id)
@@ -198,7 +203,7 @@ def execute(*, report_path: Path, tenant_id: str, matter_id: str, table_name: st
     config = Config(retries={"total_max_attempts": 1, "mode": "standard"}, connect_timeout=10, read_timeout=20)
     session = boto3.Session(region_name=os.environ.get("AWS_REGION", "eu-west-1"))
     table = session.resource("dynamodb", config=config).Table(table_name)
-    before = read_snapshot(table, target)
+    before = read_snapshot(table, target, job_from_run=job_from_run)
     started_ms = int(time.time() * 1000)
     sqs = session.client("sqs", config=config)
     # Use the production adapter so the queue body remains exactly {jobId}.
@@ -217,7 +222,7 @@ def execute(*, report_path: Path, tenant_id: str, matter_id: str, table_name: st
             time.sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
     if not consumed:
         return {"result": "NOT_EXECUTED", "reason": "worker_consumed_telemetry_contract_unavailable", "messageSent": True, "messageId": message_id, "jobId": before["jobId"]}
-    after = read_snapshot(table, target)
+    after = read_snapshot(table, target, job_from_run=job_from_run)
     validate_unchanged(before, after)
     return {"result": "PASS", "jobId": before["jobId"], "messageId": message_id, "consumedEvidence": {"count": len(consumed), "timestamps": [item["timestamp"] for item in consumed], "workerTimestamps": [item["workerTimestamp"] for item in consumed]}}
 
@@ -233,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-group", default=os.environ.get("LEGALDESK_IDP_WORKER_LOG_GROUP", ""))
     parser.add_argument("--wait-seconds", type=int, default=60)
     parser.add_argument("--poll-seconds", type=int, default=10)
+    parser.add_argument("--job-from-run", action="store_true", help="target the pointer's current run job (run ID == job ID) instead of idpJobId")
     args = parser.parse_args(argv)
     if not args.execute:
         print(json.dumps(_not_executed("explicit --execute is required; no AWS call was made"), sort_keys=True))
@@ -249,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         for value, label in ((args.tenant_id, "tenant_id"), (args.matter_id, "matter_id"), (args.table_name, "table_name"), (args.queue_url, "queue_url"), (args.log_group, "log_group")):
             if not isinstance(value, str) or not value.strip():
                 raise DuplicateProofError(f"{label}_required")
-        report = execute(report_path=args.report, tenant_id=args.tenant_id, matter_id=args.matter_id, table_name=args.table_name, queue_url=args.queue_url, log_group=args.log_group, wait_seconds=args.wait_seconds, poll_seconds=args.poll_seconds)
+        report = execute(report_path=args.report, tenant_id=args.tenant_id, matter_id=args.matter_id, table_name=args.table_name, queue_url=args.queue_url, log_group=args.log_group, wait_seconds=args.wait_seconds, poll_seconds=args.poll_seconds, job_from_run=args.job_from_run)
         print(json.dumps(report, sort_keys=True))
         return 0 if report.get("result") == "PASS" else 3
     except DuplicateProofError as exc:
