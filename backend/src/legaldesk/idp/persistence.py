@@ -55,6 +55,24 @@ def _dynamo_safe(value: Any) -> Any:
     return value
 
 
+def _from_dynamo(value: Any) -> Any:
+    """Return DynamoDB ``Decimal`` numbers as JSON-native int/float values.
+
+    boto3 deserializes every stored number as ``Decimal``; run fields leave
+    this module through JSON responses, which cannot encode ``Decimal``.
+    """
+
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise IDPContractError("non-finite IDP numeric value")
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, Mapping):
+        return {key: _from_dynamo(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_from_dynamo(item) for item in value]
+    return value
+
+
 def matter_partition_key(tenant_id: str, matter_id: str) -> str:
     return f"TENANT#{tenant_id}#MATTER#{matter_id}"
 
@@ -1188,11 +1206,11 @@ def _run_from_item(item: Mapping[str, Any]) -> IDPExtractionRun:
             for anchor in raw.get("evidence", ())
         )
         fields[str(field_name)] = IDPFieldResult(
-            field=str(raw.get("field", field_name)), value=raw.get("value"),
+            field=str(raw.get("field", field_name)), value=_from_dynamo(raw.get("value")),
             presence=FieldPresence(raw["presence"]), origin=FieldOrigin(raw["origin"]),
             acceptance=FieldAcceptance(raw["acceptance"]), evidence=evidence,
-            validation=dict(raw.get("validation", {})), schema_version=str(raw.get("schemaVersion", item["schemaVersion"])),
-            reason=raw.get("reason") if isinstance(raw.get("reason"), str) else None, provenance=dict(raw.get("provenance", {})) if isinstance(raw.get("provenance", {}), Mapping) else {},
+            validation=_from_dynamo(dict(raw.get("validation", {}))), schema_version=str(raw.get("schemaVersion", item["schemaVersion"])),
+            reason=raw.get("reason") if isinstance(raw.get("reason"), str) else None, provenance=_from_dynamo(dict(raw.get("provenance", {}))) if isinstance(raw.get("provenance", {}), Mapping) else {},
         )
     return IDPExtractionRun(run_id=str(item["runId"]), tenant_id=str(item["tenantId"]), matter_id=str(item["matterId"]), document_id=str(item["documentId"]), document_sha256=str(item["documentSha256"]), document_type=DocumentType(item["documentType"]), schema_version=str(item["schemaVersion"]), model_id=str(item.get("modelId", "")), prompt_version=str(item.get("promptVersion", "")), status=IDPJobStatus(item["status"]), fields=fields, created_at=datetime.fromisoformat(str(item["createdAt"])), source_key=item.get("sourceKey") if isinstance(item.get("sourceKey"), str) else None, page_text_artifact_key=item.get("pageTextArtifactKey") if isinstance(item.get("pageTextArtifactKey"), str) else None)
 
