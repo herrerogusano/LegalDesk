@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
@@ -151,6 +152,50 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual(field.acceptance, FieldAcceptance.PROVISIONAL)
         self.assertEqual(field.origin.value, "INTERPRETIVE")
         self.assertFalse(field.validation["lexical_support"])
+
+    def test_real_model_duration_unit_spellings_canonicalize_to_fixture_oracle(self) -> None:
+        # Regression for the 2026-10-09 real-model exports: these spellings
+        # were AUTO_ACCEPTED raw (digests below are the exported valueDigest)
+        # and therefore mismatched the fixture's canonical unit digest.
+        manifest = json.loads((Path(__file__).parent / "fixtures" / "idp" / "manifest.json").read_text(encoding="utf-8"))
+        fixtures = {item["id"]: item for item in manifest["fixtures"]}
+        schema = IDPSchemaRegistry().get(DocumentType.CONTRACT)
+        cases = (
+            ("contract-01-en-digital-monthend", "month", "181d90829828f91d8d92fb4b3fbd0dcdfeb130d6a1982eb05253810d07d802c9"),
+            ("contract-03-en-mixed-nda", "years", "a45cc62d46b1"),
+            ("contract-05-en-mixed-explicit-conflict", "year", "2992f9abc1d6"),
+        )
+        for fixture_id, spelling, exported_prefix in cases:
+            with self.subTest(fixture=fixture_id):
+                fixture = fixtures[fixture_id]
+                expected = fixture["expected"]["fields"]["initial_duration_unit"]
+                self.assertTrue(hashlib.sha256(json.dumps(spelling).encode()).hexdigest().startswith(exported_prefix))
+                pages = {index: page["text"] for index, page in enumerate(fixture["source_pages"], start=1)}
+                evidence = [{"page": anchor["page"], "quote": anchor["quote"]} for anchor in expected["evidence"]]
+                field = parse_extractor_output(
+                    json.dumps({"fields": {"initial_duration_unit": {"presence": "PRESENT", "value": spelling, "evidence": evidence}}}),
+                    schema=schema,
+                    page_text=pages,
+                    content_sha256=fixture["sha256"],
+                ).fields["initial_duration_unit"]
+                self.assertEqual(field.value, expected["value"])
+                self.assertEqual(field.acceptance, FieldAcceptance.AUTO_ACCEPTED)
+                self.assertEqual(field.origin.value, "LITERAL")
+
+    def test_canonical_duration_unit_contradicting_its_quote_is_not_auto_accepted(self) -> None:
+        schema = IDPSchemaRegistry().get(DocumentType.CONTRACT)
+        quote = "The initial term is one (1) calendar month."
+        for value in ("year", "DAY", "años"):
+            with self.subTest(value=value):
+                field = parse_extractor_output(
+                    json.dumps({"fields": {"initial_duration_unit": {"presence": "PRESENT", "value": value, "evidence": [{"page": 1, "quote": quote}]}}}),
+                    schema=schema,
+                    page_text={1: quote},
+                    content_sha256="a" * 64,
+                ).fields["initial_duration_unit"]
+                self.assertNotEqual(field.acceptance, FieldAcceptance.AUTO_ACCEPTED)
+                self.assertEqual(field.origin.value, "INTERPRETIVE")
+                self.assertFalse(field.validation["lexical_support"])
 
     def test_stage_ledger_has_distinct_atomic_paid_stages(self) -> None:
         ledger = StageCallLedger()

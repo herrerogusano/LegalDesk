@@ -168,6 +168,29 @@ class Phase14IDPEvaluationTests(unittest.TestCase):
         self.assertEqual(report["classification_confusion"], {})
         self.assertEqual(report["provenance"]["observed_real_results"], 0)
 
+    def test_value_mismatch_triage_leaves_no_unresolved_auto_acceptance(self) -> None:
+        from triage_idp_value_mismatches import triage
+
+        report = triage(ROOT / "tests" / "fixtures" / "idp" / "manifest.json", ROOT / "evals" / "results")
+        self.assertEqual(report["summary"]["present_value_mismatches"], 20)
+        self.assertEqual(report["summary"]["observed_auto_accepted_value_mismatches"], 3)
+        self.assertEqual(report["summary"]["unresolved_auto_accepted"], 0)
+        self.assertFalse(report["summary"]["auto_acceptance_blocker"])
+        auto = {(item["fixture_id"], item["field"]): item for item in report["items"] if item["observed_acceptance"] == "AUTO_ACCEPTED"}
+        self.assertEqual(set(auto), {(fixture, "initial_duration_unit") for fixture in ("contract-01-en-digital-monthend", "contract-03-en-mixed-nda", "contract-05-en-mixed-explicit-conflict")})
+        for item in auto.values():
+            self.assertEqual(item["outcome"], "RESOLVED_BY_CANONICALIZATION")
+            self.assertEqual(item["replay"]["acceptance"], "AUTO_ACCEPTED")
+            self.assertTrue(item["replay"]["value_digest_matches_fixture"])
+        # Every unresolved mismatch is routed away from auto-acceptance.
+        for item in report["items"]:
+            if item["outcome"].startswith("UNRESOLVED"):
+                self.assertNotEqual(item["observed_acceptance"], "AUTO_ACCEPTED")
+        manifest = json.loads((ROOT / "tests" / "fixtures" / "idp" / "manifest.json").read_text(encoding="utf-8"))
+        serialized = json.dumps(report, ensure_ascii=False)
+        quotes = {anchor["quote"] for fixture in manifest["fixtures"] for field in fixture["expected"]["fields"].values() for anchor in field.get("evidence", ()) if anchor.get("quote")}
+        self.assertFalse([quote for quote in quotes if quote in serialized])
+
 
 if __name__ == "__main__":
     unittest.main()

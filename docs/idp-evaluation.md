@@ -180,7 +180,38 @@ non-hex/invalid supplied digest. Separately, 20 present fields have a valid
 64-hex digest that differs from the fixture value digest; three of those are
 `AUTO_ACCEPTED` `initial_duration_unit` fields (contract fixtures 01, 03, and
 05). Their semantic correctness cannot be established from digest-only
-exports, so those three are material blockers for auto-acceptance.
+exports, so those three were material blockers for auto-acceptance.
+
+**Resolution (2026-10-13, offline).** `scripts/triage_idp_value_mismatches.py`
+re-runs the evaluator over the same immutable exports (not rewritten; their
+SHA-256 values are recorded) and writes the derived metadata-only report
+`evals/results/idp-offline-triage-20261013.json`. Unit fields have a closed
+registry vocabulary, so the raw value can be recovered by digest lookup:
+the exported digests are `json("month")` (01), `json("years")` (03) and
+`json("year")` (05), versus fixture `MONTH`/`YEAR`/`YEAR`. These exports were
+produced about 20 minutes before `840b8c0` (canonicalize grounded duration
+units). Before that fix the raw spelling went through the generic substring
+check and was stored uncanonicalized. Every exported anchor matched the
+fixture oracle `(page, quoteDigest)`. The values were semantically correct
+and grounded. Root cause: a canonicalization gap, with no wrong auto-acceptance
+and no oracle error. Replaying the recovered spelling through the current
+parser on the fixture page text gives the fixture value digest, `LITERAL`,
+`AUTO_ACCEPTED`. Live smoke `idp-live-digital-20261013-h` (Lambda code
+`a52508a`, which contains `840b8c0`) independently exported `digest("MONTH")`
+for contract 01. No fixture expectation, anchor or evidence check was changed.
+
+The same replay resolves three non-auto mismatches. Contracts 02 and 04 had
+`months`/`month` against Spanish quotes and were previously `PROVISIONAL`; they
+now replay as `AUTO_ACCEPTED`, matching the fixture. Contract 04
+`termination_notice_unit` stays `REVIEW_REQUIRED` because it is
+review-sensitive. Three unit fields (01 renewal/termination, 04 renewal) now
+canonicalize correctly, but their anchors are not the oracle anchors, so they
+are not replayed and remain `REVIEW_REQUIRED`. The other 11 mismatches are
+non-unit, digest-only and all routed (`REVIEW_REQUIRED` or `PROVISIONAL`).
+Summary: 20 mismatches, 3 observed auto, 0 unresolved auto. Regression tests
+(`tests/test_phase14_idp_processing.py`, `tests/test_phase14_idp_evaluation.py`)
+replay the exact spellings and fixture quotes. A canonical unit that
+contradicts its quote cannot be auto-accepted.
 
 Acceptance mismatches are mostly conservative policy differences: expected
 `AUTO_ACCEPTED` became `REVIEW_REQUIRED` (35) or `PROVISIONAL` (9). Four
