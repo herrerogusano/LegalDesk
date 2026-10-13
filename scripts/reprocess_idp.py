@@ -191,7 +191,9 @@ def request_reprocess(
         head = storage.head_object(key=source_key)
         if not isinstance(head, Mapping) or head.get("ContentLength") != document.file_size_bytes:
             raise ReprocessError("canonical_size_changed")
-        body = storage.read_object_bytes(key=source_key, max_bytes=MAX_BYTES)
+        # Read exactly the validated canonical size; the production S3 adapter
+        # rejects read limits above its own document maximum.
+        body = storage.read_object_bytes(key=source_key, max_bytes=document.file_size_bytes)
     except ReprocessError:
         raise
     except Exception as exc:
@@ -213,6 +215,7 @@ def request_reprocess(
     # dispatch is still pending/ambiguous: that could result in duplicate paid
     # stages.  An identical idempotency identity is a safe replay and returns
     # the existing conditional winner.
+    verified_intent_job_id: str | None = None
     list_intents = getattr(repository, "list_clean_intents", None)
     if callable(list_intents):
         try:
@@ -229,9 +232,13 @@ def request_reprocess(
                 return existing
             if existing.status.value not in TERMINAL_JOB_STATUSES:
                 raise ReprocessError("reprocess_generation_already_active")
+            # Only a hint: the repository re-checks this job is terminal inside
+            # the same atomic reservation (the snapshot on the document row may
+            # be stale, e.g. still ENQUEUE_PENDING after the job FAILED).
+            verified_intent_job_id = existing.job_id
     reserve = getattr(repository, "reserve_reprocess_job", None)
     if callable(reserve):
-        durable = reserve(job=job, expected_run_id=getattr(document, "idp_run_id", None), expected_source_key=source_key)
+        durable = reserve(job=job, expected_run_id=getattr(document, "idp_run_id", None), expected_source_key=source_key, verified_intent_job_id=verified_intent_job_id)
     else:
         record_intent = getattr(repository, "record_clean_intent", None)
         if callable(record_intent):

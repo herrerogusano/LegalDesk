@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from legaldesk.domain.models import DocumentStatus, MalwareScanStatus  # noqa: E402
-from legaldesk.idp.models import IDPJob  # noqa: E402
+from legaldesk.idp.models import IDPJob, IDPJobStatus  # noqa: E402
 from legaldesk.idp.persistence import Boto3DynamoIDPRepository, IDPConcurrencyError, InMemoryIDPRepository  # noqa: E402
 from reprocess_idp import (  # noqa: E402
     ReprocessError,
@@ -63,6 +63,9 @@ class _Storage:
         return {"ContentLength": len(self.body), "Metadata": {}}
 
     def read_object_bytes(self, *, key: str, max_bytes: int) -> bytes:
+        # Mirror Boto3S3ObjectStorage: limits above 10 MiB are rejected.
+        if not 0 < max_bytes <= 10 * 1024 * 1024:
+            raise ValueError("object read limit is invalid")
         if key != self.key or len(self.body) > max_bytes:
             raise KeyError(key)
         return self.body
@@ -179,6 +182,91 @@ class ReprocessOperatorTests(unittest.TestCase):
                 tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
                 fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "second-op",
             )
+
+    def _stale_intent(self, status: IDPJobStatus):
+        """Initial generation whose document intent snapshot stays ENQUEUE_PENDING."""
+
+        fixture, metadata, storage, document = _fixture_and_dependencies()
+        repository = InMemoryIDPRepository()
+        initial = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=_Queue(),
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "initial-op",
+        )
+        # The live job moves on; the document pointer stays NULL (legacy run
+        # never promoted) and the intent snapshot is not rewritten.
+        repository._jobs[initial.job_id] = replace(repository._jobs[initial.job_id], status=status)
+        self.assertEqual(repository._clean_intents[(TENANT, MATTER, DOCUMENT)].job_id, initial.job_id)
+        return fixture, metadata, storage, document, repository, initial
+
+    def test_stale_intent_snapshot_with_failed_job_allows_one_new_generation(self) -> None:
+        fixture, metadata, storage, _, repository, initial = self._stale_intent(IDPJobStatus.FAILED)
+        queue = _Queue()
+        second = request_reprocess(
+            repository=repository, metadata=metadata, storage=storage, queue=queue,
+            tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+            fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "second-op",
+        )
+        self.assertNotEqual(second.job_id, initial.job_id)
+        self.assertEqual(queue.job_ids, [second.job_id])
+
+    def test_stale_intent_snapshot_with_active_job_is_rejected_atomically(self) -> None:
+        fixture, metadata, storage, _, repository, initial = self._stale_intent(IDPJobStatus.PROCESSING)
+        with self.assertRaisesRegex(ReprocessError, "reprocess_generation_already_active"):
+            request_reprocess(
+                repository=repository, metadata=metadata, storage=storage, queue=_Queue(),
+                tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT,
+                fixture=fixture, model_id="m", prompt_version="p", generation_factory=lambda: "second-op",
+            )
+        # The repository does not trust the caller's earlier read either.
+        job = IDPJob(job_id="second-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="second-idem", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id=initial.job_id)
+
+    def test_stale_intent_snapshot_with_mismatched_verified_job_is_rejected(self) -> None:
+        fixture, _, _, _, repository, _ = self._stale_intent(IDPJobStatus.FAILED)
+        job = IDPJob(job_id="second-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="second-idem", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id="other-job")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf")
+
+    def test_boto_reservation_rechecks_verified_intent_job_in_same_transaction(self) -> None:
+        import boto3
+
+        fixture, _, _, _ = _fixture_and_dependencies()
+        resource = boto3.resource("dynamodb", region_name="eu-west-1", endpoint_url="http://127.0.0.1:9", aws_access_key_id="offline", aws_secret_access_key="offline")
+        table = resource.Table("table")
+        table.get_item = Mock(return_value={})
+        table.query = Mock(return_value={"Items": []})
+        captured: dict[str, object] = {}
+
+        class AbortBeforeNetwork(Exception):
+            pass
+
+        def before_call(model, params, **kwargs):
+            captured.update(params)
+            raise AbortBeforeNetwork()
+
+        table.meta.client.meta.events.register("before-call.dynamodb.TransactWriteItems", before_call)
+        repository = Boto3DynamoIDPRepository("table", table=table)
+        job = IDPJob(job_id="reprocess-job", tenant_id=TENANT, matter_id=MATTER, document_id=DOCUMENT, document_sha256=fixture.sha256, idempotency_key="reprocess-idempotency", model_id="m", prompt_version="p")
+        with self.assertRaises(IDPConcurrencyError):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id="stale-intent-job")
+        body = __import__("json").loads(captured["body"])
+        self.assertEqual(len(body["TransactItems"]), 5)
+        update = body["TransactItems"][3]["Update"]
+        self.assertIn("OR #intent.#job = :verified_terminal_job)", update["ConditionExpression"])
+        self.assertEqual(update["ExpressionAttributeValues"][":verified_terminal_job"], {"S": "stale-intent-job"})
+        check = body["TransactItems"][4]["ConditionCheck"]
+        self.assertEqual(check["Key"], {"pk": {"S": f"TENANT#{TENANT}#MATTER#{MATTER}"}, "sk": {"S": "IDP#JOB#stale-intent-job"}})
+        self.assertIn("#status IN (", check["ConditionExpression"])
+        self.assertNotIn("NOT IN", check["ConditionExpression"] + update["ConditionExpression"])
+        statuses = {value["S"] for key, value in check["ExpressionAttributeValues"].items() if key.startswith(":terminal")}
+        self.assertEqual(statuses, {status.value for status in (IDPJobStatus.FAILED, IDPJobStatus.COMPLETED, IDPJobStatus.REVIEW_REQUIRED, IDPJobStatus.SKIPPED)})
+        self.assertEqual(check["ExpressionAttributeValues"][":hash"], {"S": fixture.sha256})
+        with self.assertRaises(Exception):
+            repository.reserve_reprocess_job(job=job, expected_run_id=None, expected_source_key="tenants/synthetic/document.pdf", verified_intent_job_id=job.job_id)
 
     def test_real_boto_resource_serializes_atomic_reprocess_reservation(self) -> None:
         import boto3

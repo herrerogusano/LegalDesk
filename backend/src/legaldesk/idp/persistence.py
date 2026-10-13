@@ -159,7 +159,7 @@ class DeliveryCandidatePage:
 
 class IDPRepository(Protocol):
     def create_job(self, job: IDPJob) -> IDPJob: ...
-    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str) -> IDPJob: ...
+    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str, verified_intent_job_id: str | None = None) -> IDPJob: ...
     def record_clean_intent(self, *, job: IDPJob) -> None: ...
     def list_clean_intents(self, *, tenant_id: str, matter_id: str, limit: int) -> tuple[IDPJob, ...]: ...
     def get_clean_recovery_cursor(self, *, tenant_id: str, matter_id: str) -> str | None: ...
@@ -218,8 +218,13 @@ class InMemoryIDPRepository:
             self._idempotency[idempotency_scope] = job.job_id
             return job
 
-    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str) -> IDPJob:
-        """Atomically reserve one reprocess intent under the repository lock."""
+    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str, verified_intent_job_id: str | None = None) -> IDPJob:
+        """Atomically reserve one reprocess intent under the repository lock.
+
+        ``verified_intent_job_id`` mirrors the DynamoDB branch for a stale
+        clean-intent snapshot: it is accepted only when it names the existing
+        intent job and that job is terminal at reservation time.
+        """
 
         with self._lock:
             existing_intent = self._clean_intents.get((job.tenant_id, job.matter_id, job.document_id))
@@ -231,7 +236,7 @@ class InMemoryIDPRepository:
                     raise IDPConcurrencyError("pending reprocess intent has no job")
                 if existing_job.status not in IDP_TERMINAL_JOB_STATUSES:
                     raise IDPConcurrencyError("reprocess generation is already active")
-                if expected_run_id != existing_job.job_id:
+                if expected_run_id != existing_job.job_id and verified_intent_job_id != existing_job.job_id:
                     raise IDPConcurrencyError("reprocess generation pointer is stale")
             existing_id = self._idempotency.get((job.tenant_id, job.matter_id, job.idempotency_key))
             if existing_id is not None:
@@ -578,8 +583,13 @@ class Boto3DynamoIDPRepository:
             raise IDPContractError("atomic DynamoDB transaction client is required")
         return job
 
-    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str) -> IDPJob:
+    def reserve_reprocess_job(self, *, job: IDPJob, expected_run_id: str | None, expected_source_key: str, verified_intent_job_id: str | None = None) -> IDPJob:
         """Atomically put a reprocess job and claim the document clean intent.
+
+        ``verified_intent_job_id`` covers a stale clean-intent snapshot (for
+        example still ``ENQUEUE_PENDING`` after its job failed).  The caller's
+        earlier read is not trusted: the same transaction re-checks that job
+        item is terminal before the document intent may be replaced.
 
         The document row is the existing single-table lease seam.  Its
         conditional intent check prevents two operator processes from creating
@@ -604,8 +614,14 @@ class Boto3DynamoIDPRepository:
             "#document = :document AND #canonical = :source AND "
             "(attribute_not_exists(#hash) OR attribute_type(#hash, :null) OR #hash = :hash) AND "
             "(attribute_not_exists(#run) OR attribute_type(#run, :null) OR #run = :expected_run) AND "
-            "(attribute_not_exists(#intent) OR attribute_type(#intent, :null) OR #intent.#status IN (:terminal_statuses) OR #intent.#job = :expected_run)"
+            "(attribute_not_exists(#intent) OR attribute_type(#intent, :null) OR #intent.#status IN (:terminal_statuses) OR #intent.#job = :expected_run"
+            + (" OR #intent.#job = :verified_terminal_job" if verified_intent_job_id else "")
+            + ")"
         )
+        if verified_intent_job_id is not None and (not isinstance(verified_intent_job_id, str) or not verified_intent_job_id.strip() or verified_intent_job_id == job.job_id):
+            raise IDPContractError("verified intent job id is invalid")
+        if verified_intent_job_id:
+            values[":verified_terminal_job"] = verified_intent_job_id
         # DynamoDB's IN operator requires individual placeholders, not a list.
         names = {"#document": "documentId", "#canonical": "s3Key", "#hash": "idpDocumentSha256", "#run": "idpRunId", "#intent": "idpCleanIntent", "#status": "status", "#idpstatus": "idpStatus", "#job": "jobId"}
         del values[":terminal_statuses"]
@@ -625,13 +641,26 @@ class Boto3DynamoIDPRepository:
         transact = getattr(self._transaction_client, "transact_write_items", None)
         if not callable(transact):
             raise IDPContractError("atomic DynamoDB transaction client is required")
+        items: list[dict[str, Any]] = [
+            {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(job_item), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
+            {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(locator), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
+            {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(idem), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
+            {"Update": {**update, "Key": _serialize_transaction_item(document_key), "ExpressionAttributeValues": _serialize_transaction_item(values)}},
+        ]
+        if verified_intent_job_id:
+            # Atomic re-check of the authoritative job named by the stale
+            # snapshot: same scope/document/hash and a terminal status.
+            check_values = {f":terminal{index}": status for index, status in enumerate(intent_statuses)}
+            check_values.update({":document": job.document_id, ":hash": job.document_sha256})
+            items.append({"ConditionCheck": {
+                "TableName": self.table_name,
+                "Key": _serialize_transaction_item({"pk": matter_partition_key(job.tenant_id, job.matter_id), "sk": job_sort_key(verified_intent_job_id)}),
+                "ConditionExpression": "attribute_exists(pk) AND #document = :document AND #hash = :hash AND #status IN (" + ", ".join(f":terminal{index}" for index in range(len(intent_statuses))) + ")",
+                "ExpressionAttributeNames": {"#document": "documentId", "#hash": "documentSha256", "#status": "status"},
+                "ExpressionAttributeValues": _serialize_transaction_item(check_values),
+            }})
         try:
-            transact(TransactItems=[
-                {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(job_item), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
-                {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(locator), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
-                {"Put": {"TableName": self.table_name, "Item": _serialize_transaction_item(idem), "ConditionExpression": "attribute_not_exists(pk) AND attribute_not_exists(sk)"}},
-                {"Update": {**update, "Key": _serialize_transaction_item(document_key), "ExpressionAttributeValues": _serialize_transaction_item(values)}},
-            ])
+            transact(TransactItems=items)
         except Exception as exc:
             existing = self._get_by_locator(job.job_id) or self._query_idempotency(job)
             if existing is not None:
