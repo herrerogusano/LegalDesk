@@ -223,6 +223,85 @@ class Phase14IDPLiveSmokeTests(unittest.TestCase):
         finally:
             temporary_reports.cleanup()
 
+    def test_cleanup_budget_covers_many_polling_audit_rows(self) -> None:
+        # Run c stranded audit rows when a fixed 40-call cleanup budget ran
+        # out (one get + one delete per row).  Every owned row must be removed.
+        rows = [{"pk": f"LEGALDESK#P14#STATE#{index:064x}", "sk": f"EVENT#{index}"} for index in range(30)]
+
+        class FakeTable:
+            def __init__(self) -> None:
+                self.scans = 0
+                self.deleted: list[tuple[str, str]] = []
+
+            def get_item(self, *, Key: dict[str, str], **_: object) -> dict[str, object]:
+                if Key == {"pk": "AUTH#MATTER#matter-synthetic", "sk": "PROFILE"}:
+                    return {"Item": {"matterId": "matter-synthetic", "tenantId": "tenant-synthetic", "authorizedUserIds": ["existing-user"]}}
+                if Key in rows:
+                    return {"Item": {**Key, "subject": "subject-many"}}
+                return {}
+
+            def put_item(self, **_: object) -> dict[str, object]:
+                return {}
+
+            def update_item(self, **_: object) -> dict[str, object]:
+                return {}
+
+            def scan(self, **_: object) -> dict[str, object]:
+                self.scans += 1
+                return {"Items": [] if self.scans == 1 else list(rows), "ScannedCount": len(rows)}
+
+            def query(self, **_: object) -> dict[str, object]:
+                return {"Items": []}
+
+            def delete_item(self, *, Key: dict[str, str], **_: object) -> dict[str, object]:
+                self.deleted.append((Key["pk"], Key["sk"]))
+                return {}
+
+        class FakeCognito:
+            def admin_create_user(self, **_: object) -> dict[str, object]:
+                return {"User": {"Attributes": [{"Name": "sub", "Value": "subject-many"}]}}
+
+            def admin_set_user_password(self, **_: object) -> dict[str, object]:
+                return {}
+
+            def admin_delete_user(self, **_: object) -> dict[str, object]:
+                return {}
+
+        class FakeCore:
+            def list_events(self, **_: object) -> dict[str, object]:
+                return {"events": [{"eventId": f"event-{index}"} for index in range(5)]}
+
+            def delete_event(self, **_: object) -> dict[str, object]:
+                return {}
+
+        table, cognito, core = FakeTable(), FakeCognito(), FakeCore()
+        session = type("Session", (), {
+            "client": lambda _self, name, **_: {"cognito-idp": cognito, "bedrock-agentcore": core}[name],
+            "resource": lambda _self, name, **_: type("DynamoResource", (), {"Table": lambda _r, _n: table})(),
+        })()
+        progress = json.dumps({"smoke": "phase14-idp-browser-progress", "phase": "conversation_ready", "scopes": [{"conversationId": "conversation-1", "sessionId": "session-1"}]}).encode()
+
+        def timeout(*_: object, **__: object) -> object:
+            raise subprocess.TimeoutExpired(["node"], 1, output=progress)
+
+        result_root = ROOT / "evals" / "results"
+        result_root.mkdir(parents=True, exist_ok=True)
+        temporary_reports = tempfile.TemporaryDirectory(prefix="unit-idp-", dir=result_root)
+        from phase14_idp_live_smoke import run_live
+        live_config = config(
+            execute=True, base_url="https://legaldesk.example", idp_host="auth.example",
+            user_pool_id="pool", table_name="table", memory_id="memory", field_name="effective_date",
+            report_path=Path(temporary_reports.name) / "many-rows.json",
+        )
+        try:
+            with patch("boto3.Session", return_value=session), patch("phase14_idp_live_smoke.subprocess.run", side_effect=timeout):
+                report = run_live(live_config)
+            self.assertEqual(report["cleanupErrors"], [])
+            self.assertEqual(sorted(table.deleted[1:]), sorted((row["pk"], row["sk"]) for row in rows))
+            self.assertGreater(report["cleanupProviderRequestCount"], 40)
+        finally:
+            temporary_reports.cleanup()
+
     def test_paid_budget_rejects_ambiguous_replay_and_inflight_completion(self) -> None:
         validate_limits({
             "modelCalls": 2, "inputTokens": 100, "outputTokens": 200,

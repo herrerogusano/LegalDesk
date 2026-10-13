@@ -40,6 +40,13 @@ MAX_BROWSER_API_CALLS = 120
 MAX_WALL_SECONDS = 30 * 60
 MAX_OUTPUT_TOKENS = 10_240
 MAX_INPUT_TOKENS = 80_000
+# Cleanup must be able to finish inside its own bounds.  Each owned state row
+# costs a scoped get plus a conditional delete; every authorized metadata poll
+# writes an audit row, so a fixed 40-call budget could strand rows (run c).
+MAX_CLEANUP_SCOPES = 2
+MAX_CLEANUP_STATE_ROWS = 200  # discover_subject_state(limit=100) + query_history_state(limit=100)
+MAX_CLEANUP_MEMORY_EVENTS = 100  # list_events(maxResults=100) per scope, no pagination
+MAX_CLEANUP_CALLS = 3 + 10 + 1 + 2 * MAX_CLEANUP_STATE_ROWS + MAX_CLEANUP_SCOPES * (1 + MAX_CLEANUP_MEMORY_EVENTS)
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ATTEMPT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -640,7 +647,7 @@ def run_live(config: IDPLiveSmokeConfig) -> dict[str, object]:
         # synthetic user and its scoped state. Cleanup has its own small,
         # independent budget and is reported explicitly if it cannot finish.
         work_budget = budget
-        budget = _DeadlineBudget(CallBudget(maximum=40), time.monotonic() + 120)
+        budget = _DeadlineBudget(CallBudget(maximum=MAX_CLEANUP_CALLS), time.monotonic() + 120)
         # Credential revocation and matter authorization restoration come first;
         # unbounded user-generated memory/state rows must never consume the
         # cleanup budget needed to remove access.
