@@ -13,6 +13,13 @@ ROOT = Path(__file__).parents[1]
 
 
 class ReleasePackagingTests(unittest.TestCase):
+    def test_lambda_constraints_pin_runtime_pdf_dependency(self) -> None:
+        constraints = (ROOT / "packaging" / "constraints-python312-manylinux-x86_64.txt").read_text(encoding="utf-8")
+        self.assertIn("pypdf==6.20.0", constraints.splitlines())
+        self.assertIn('"pypdf>=6.20,<7"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        workflow = (ROOT / ".github" / "workflows" / "production-cd.yml").read_text(encoding="utf-8")
+        self.assertIn('"pypdf": "6.20.0"', workflow)
+
     def test_lambda_and_frontend_contents_are_bounded_and_manifested(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             dependency_root = Path(temp) / "deps"
@@ -37,6 +44,17 @@ class ReleasePackagingTests(unittest.TestCase):
             self.assertIn("prompts/legaldesk-system.md", names)
             self.assertIn("boto3/__init__.py", names)
             self.assertIn("legaldesk/malware_scan_lambda.py", names)
+            self.assertIn("legaldesk/idp_lambda.py", names)
+            self.assertIn("legaldesk/idp_ocr_lambda.py", names)
+            self.assertIn("legaldesk/idp/runtime.py", names)
+            self.assertIn("prompts/idp-classifier.md", names)
+            self.assertIn("prompts/idp-extractor.md", names)
+            with zipfile.ZipFile(release_dir / "legaldesk-lambda.zip") as archive:
+                for prompt in ("idp-classifier.md", "idp-extractor.md"):
+                    self.assertEqual(
+                        archive.read(f"prompts/{prompt}"),
+                        (ROOT / "prompts" / prompt).read_bytes(),
+                    )
             self.assertNotIn("tests/must-not-ship.py", names)
             self.assertNotIn(".env.production", names)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))

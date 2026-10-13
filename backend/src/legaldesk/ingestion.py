@@ -3,7 +3,10 @@
 This is an operator workflow, not an HTTP endpoint. Callers select documents
 from one stored tenant/matter scope before starting a data-source-wide sync.
 Documents become INDEXED only after Bedrock reports COMPLETE with no failed
-documents. Partial or timed-out jobs remain PENDING_INGESTION for reconciliation.
+documents. When the (data-source-wide) job reports failures, the async service
+resolves each selected document via GetKnowledgeBaseDocuments: INDEXED stays
+INDEXED, FAILED/NOT_FOUND becomes FAILED, anything unproven stays PENDING_INGESTION.
+Timed-out jobs remain PENDING_INGESTION for reconciliation.
 """
 
 from __future__ import annotations
@@ -60,6 +63,16 @@ class KnowledgeBaseSyncResult:
 INGESTION_OPERATION_TTL_SECONDS = 2 * 60 * 60
 _TERMINAL_PROVIDER_STATUSES = {"COMPLETE", "FAILED", "STOPPED"}
 _PENDING_PROVIDER_STATUSES = {"STARTING", "IN_PROGRESS", "RUNNING", "STOPPING"}
+# Per-document Bedrock statuses that prove a terminal outcome. A document whose
+# parsing failed (for example an image-only PDF: "no text content") is reported
+# FAILED or, in practice, NOT_FOUND (never added to the index); NOT_FOUND is only
+# accepted when the job itself reported failures. Metadata-failure states must
+# not be served because the tenant/matter metadata filter would be incomplete.
+_KB_DOCUMENT_INDEXED = {"INDEXED"}
+_KB_DOCUMENT_NOT_INDEXED = {"FAILED", "METADATA_UPDATE_FAILED", "METADATA_PARTIALLY_INDEXED"}
+_KB_DOCUMENT_BATCH = 10  # GetKnowledgeBaseDocuments documentIdentifiers max
+_MAX_DOCUMENTS_PER_OPERATION = 20
+_MAX_RECONCILED_DOCUMENTS = 100
 
 
 class IngestionConflictError(ValueError):
@@ -244,6 +257,7 @@ class AsyncKnowledgeBaseIngestionService:
         data_source_id: str,
         clock: Callable[[], float] = time,
         operation_ttl_seconds: int = INGESTION_OPERATION_TTL_SECONDS,
+        source_bucket: str | None = None,
     ) -> None:
         if not knowledge_base_id or not data_source_id:
             raise ValueError("knowledge base and data source IDs are required")
@@ -257,6 +271,8 @@ class AsyncKnowledgeBaseIngestionService:
         self.data_source_id = data_source_id
         self.clock = clock
         self.operation_ttl_seconds = operation_ttl_seconds
+        bucket = source_bucket if source_bucket is not None else getattr(object_verifier, "bucket_name", None)
+        self.source_bucket = bucket if isinstance(bucket, str) and bucket else None
 
     @staticmethod
     def _operation_id() -> str:
@@ -412,27 +428,37 @@ class AsyncKnowledgeBaseIngestionService:
             updated = replace(operation, provider_status=provider_status, updated_at=self.clock())
             self.state_store.update_ingestion_operation(updated)
             return updated
+        per_document: dict[str, DocumentStatus] | None = None
         if provider_status in {"FAILED", "STOPPED"}:
             target_status, documents_updated = "FAILED", len(operation.document_ids)
         elif provider_status == "COMPLETE" and failed_count == 0:
             target_status, documents_updated = "INDEXED", len(operation.document_ids)
         else:
-            # A complete job with partial/unknown failures does not identify
-            # which selected documents failed; keep the lifecycle pending.
-            updated = replace(operation, provider_status=provider_status, failed_document_count=failed_count, updated_at=self.clock())
-            self.state_store.update_ingestion_operation(updated)
-            return updated
+            # The job-level counter covers the whole data source, so it cannot
+            # say which selected documents failed (an unrelated bad file would
+            # otherwise block every later upload). Ask Bedrock per document and
+            # fail closed: any unresolved document keeps the operation pending.
+            per_document = self._resolve_document_statuses(operation, failed_count) if provider_status == "COMPLETE" else None
+            if per_document is None:
+                updated = replace(operation, provider_status=provider_status, failed_document_count=failed_count, updated_at=self.clock())
+                self.state_store.update_ingestion_operation(updated)
+                return updated
+            failed_documents = sum(1 for value in per_document.values() if value is DocumentStatus.FAILED)
+            failed_count = failed_documents
+            target_status = "FAILED" if failed_documents else "INDEXED"
+            documents_updated = len(operation.document_ids)
         recovery = replace(
             operation, status="RECOVERY_PENDING", provider_status=provider_status,
             failed_document_count=failed_count, updated_at=self.clock(),
         )
         self.state_store.update_ingestion_operation(recovery)
         document_status = DocumentStatus.INDEXED if target_status == "INDEXED" else DocumentStatus.FAILED
-        self._normalize_documents(recovery, target_status=document_status)
+        self._normalize_documents(recovery, target_status=document_status if per_document is None else None)
         for document_id in recovery.document_ids:
             self.metadata_repository.update_status(
                 tenant_id=recovery.tenant_id, matter_id=recovery.matter_id,
-                document_id=document_id, status=document_status,
+                document_id=document_id,
+                status=document_status if per_document is None else per_document[document_id],
             )
         updated = replace(
             recovery, status=target_status, provider_status=provider_status,
@@ -441,6 +467,115 @@ class AsyncKnowledgeBaseIngestionService:
         )
         self.state_store.update_ingestion_operation(updated)
         return updated
+
+    def _resolve_document_statuses(
+        self, operation: IngestionOperationRecord, failed_count: int | None,
+    ) -> dict[str, DocumentStatus] | None:
+        """Return INDEXED/FAILED per selected document, or None when unproven.
+
+        Uses bedrock-agent GetKnowledgeBaseDocuments with at most 10 explicit
+        S3 identifiers per call (service limit), so the call count is bounded
+        by the 20-document operation cap. Statuses other than INDEXED/FAILED,
+        missing, duplicate or unexpected details, and any client error return
+        None (the lifecycle stays PENDING_INGESTION).
+        """
+
+        getter = getattr(self.client, "get_knowledge_base_documents", None)
+        bucket = self.source_bucket
+        if getter is None or not bucket or not 0 < len(operation.document_ids) <= _MAX_DOCUMENTS_PER_OPERATION:
+            return None
+        uris: dict[str, str] = {}
+        for document_id in operation.document_ids:
+            document = self.metadata_repository.get_for_scope(
+                tenant_id=operation.tenant_id, matter_id=operation.matter_id, document_id=document_id,
+            )
+            if document is None or not document.s3_key:
+                return None
+            uris[f"s3://{bucket}/{document.s3_key}"] = document_id
+        found: dict[str, DocumentStatus] = {}
+        pending = list(uris)
+        try:
+            for index in range(0, len(pending), _KB_DOCUMENT_BATCH):
+                batch = pending[index:index + _KB_DOCUMENT_BATCH]
+                response = getter(
+                    knowledgeBaseId=self.knowledge_base_id, dataSourceId=self.data_source_id,
+                    documentIdentifiers=[{"dataSourceType": "S3", "s3": {"uri": uri}} for uri in batch],
+                )
+                details = response.get("documentDetails") if isinstance(response, Mapping) else None
+                if not isinstance(details, list) or len(details) > len(batch):
+                    return None
+                for detail in details:
+                    identifier = detail.get("identifier") if isinstance(detail, Mapping) else None
+                    s3 = identifier.get("s3") if isinstance(identifier, Mapping) else None
+                    uri = s3.get("uri") if isinstance(s3, Mapping) else None
+                    state = detail.get("status")
+                    document_id = uris.get(uri) if isinstance(uri, str) and uri in batch else None
+                    if document_id is None or document_id in found or not isinstance(state, str):
+                        return None
+                    if state in _KB_DOCUMENT_INDEXED:
+                        found[document_id] = DocumentStatus.INDEXED
+                    elif state in _KB_DOCUMENT_NOT_INDEXED or (state == "NOT_FOUND" and failed_count):
+                        found[document_id] = DocumentStatus.FAILED
+                    else:
+                        return None
+        except Exception:
+            return None
+        return found if len(found) == len(uris) else None
+
+    def resolve_documents_independently(
+        self, *, tenant_id: str, matter_id: str, documents: Sequence[Document],
+    ) -> dict[str, DocumentStatus]:
+        """Resolve documents one by one without an ingestion operation record.
+
+        Used by reconciliation for documents whose operation row is gone or
+        belongs to another subject. Only an explicit per-document INDEXED
+        (-> INDEXED) or FAILED-class status (-> FAILED) is returned. NOT_FOUND
+        is never terminal here: without a job there is no proof that the
+        document was ever submitted, so it stays pending (fail closed). Errors,
+        malformed or foreign details only omit the affected batch/document.
+        """
+
+        getter = getattr(self.client, "get_knowledge_base_documents", None)
+        bucket = self.source_bucket
+        if getter is None or not bucket or not tenant_id or not matter_id:
+            return {}
+        uris: dict[str, str] = {}
+        for document in documents[:_MAX_RECONCILED_DOCUMENTS]:
+            if document.tenant_id != tenant_id or document.matter_id != matter_id or not document.s3_key:
+                continue
+            uris[f"s3://{bucket}/{document.s3_key}"] = document.document_id
+        found: dict[str, DocumentStatus] = {}
+        pending = list(uris)
+        for index in range(0, len(pending), _KB_DOCUMENT_BATCH):
+            batch = pending[index:index + _KB_DOCUMENT_BATCH]
+            try:
+                response = getter(
+                    knowledgeBaseId=self.knowledge_base_id, dataSourceId=self.data_source_id,
+                    documentIdentifiers=[{"dataSourceType": "S3", "s3": {"uri": uri}} for uri in batch],
+                )
+            except Exception:
+                continue
+            details = response.get("documentDetails") if isinstance(response, Mapping) else None
+            if not isinstance(details, list) or len(details) > len(batch):
+                continue
+            batch_found: dict[str, DocumentStatus] = {}
+            valid = True
+            for detail in details:
+                identifier = detail.get("identifier") if isinstance(detail, Mapping) else None
+                s3 = identifier.get("s3") if isinstance(identifier, Mapping) else None
+                uri = s3.get("uri") if isinstance(s3, Mapping) else None
+                state = detail.get("status") if isinstance(detail, Mapping) else None
+                document_id = uris.get(uri) if isinstance(uri, str) and uri in batch else None
+                if document_id is None or document_id in batch_found or not isinstance(state, str):
+                    valid = False
+                    break
+                if state in _KB_DOCUMENT_INDEXED:
+                    batch_found[document_id] = DocumentStatus.INDEXED
+                elif state in _KB_DOCUMENT_NOT_INDEXED:
+                    batch_found[document_id] = DocumentStatus.FAILED
+            if valid:
+                found.update(batch_found)
+        return found
 
     def _normalize_documents(
         self, operation: IngestionOperationRecord, *, target_status: DocumentStatus | None = None,

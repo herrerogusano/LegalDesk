@@ -1,0 +1,36 @@
+{
+ "accountMetricsSince14:30Z": {
+  "sonnetInvocations": 0,
+  "textractStart": 0
+ },
+ "attempt": "b (single diagnostic rerun of a)",
+ "executedAtUtc": "2026-10-13T14:39:15Z",
+ "paidCallsObserved": 0,
+ "proof": "One duplicate {jobId} message was published to the production idp-work queue through the production adapter; the deployed worker emitted the structured idp_worker_consumed event for that exact SQS MessageId and acknowledged it; the exact point-read snapshot (document pointer, job, run, CLASSIFIER and EXTRACTOR committed stages) was byte-identical before and after.",
+ "relatedAttempt": "evals/results/idp-live-duplicate-20261013-a.json (stale pointer job also acknowledged with no paid call)",
+ "result": "PASS",
+ "runner": "scripts/verify_idp_duplicate.py --job-from-run",
+ "scenario": "duplicate-clean-event-replay",
+ "target": {
+  "documentId": "81b1f440-c628-4137-911f-8113d0247a2d",
+  "jobId": "68b64b47-5dd8-4a40-adde-7eb52a13aa51",
+  "matterId": "mat_phase14_a_20260928",
+  "runId": "68b64b47-5dd8-4a40-adde-7eb52a13aa51",
+  "sourceReport": "evals/results/idp-live-digital-20261013-h.json",
+  "tenantId": "tnt_phase14_20260928"
+ },
+ "verifierOutput": {
+  "consumedEvidence": {
+   "count": 1,
+   "timestamps": [
+    1791902357355
+   ],
+   "workerTimestamps": [
+    1791902357355
+   ]
+  },
+  "jobId": "68b64b47-5dd8-4a40-adde-7eb52a13aa51",
+  "messageId": "6384cc81-d63e-46e5-a3da-e46fe1a0ccb4",
+  "result": "PASS"
+ }
+}

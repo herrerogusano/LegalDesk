@@ -1,0 +1,26 @@
+{
+ "attempt": "a",
+ "documentId": "9e236538-90ec-414e-b860-af5069b123f7",
+ "fixtureId": "demand-05-en-scanned",
+ "harnessNote": "The browser exhausted 20 metadata polls (Gateway quota) while the job stayed WAITING_FOR_OCR; cleanup failed due to credential expiry and was completed manually (see -cleanup.json).",
+ "jobId": "76a148db-ef08-422b-ba21-f8d44ff6d704",
+ "kind": "runtime-bug-diagnosis",
+ "observed": {
+  "bedrockCallsForThisRun": 0,
+  "documentIdpStatusRaw": "ENQUEUE_PENDING",
+  "jobStatus": "WAITING_FOR_OCR",
+  "ocrCompletionQueue": "message in flight (VisibilityTimeout 2160 s, maxReceiveCount 3 -> idp-ocr-dlq)",
+  "ocrContinuationLambda": "1 invocation, OCRContractError 'atomic OCR completion transition failed' at idp/ocr.py put() via accept_completion (ocr.py:338)",
+  "ocrRecordStatus": "WAITING_FOR_OCR",
+  "ragStatusAtRunEnd": "PENDING_INGESTION",
+  "textractGetDocumentTextDetection": 0,
+  "textractPagesExpected": 1,
+  "textractStartDocumentTextDetection": 1,
+  "upload": "OK (malware NO_THREATS_FOUND)"
+ },
+ "proposedFix": "In the completion branch, build update values without ':pending' (e.g. {k: v for k, v in values.items() if k != ':pending'}), and add a unit test with a fake table that rejects unused ExpressionAttributeValues/Names, as DynamoDB does. After deploy, the in-flight completion can be redriven from idp-ocr-dlq or the job reprocessed.",
+ "reproduction": "Safe DynamoDB probe on a nonexistent diagnostic key with the identical update/condition expressions: with ':pending' -> ValidationException (unused :pending); without it -> ConditionalCheckFailedException (no item written).",
+ "result": "BLOCKED_BY_RUNTIME_BUG",
+ "rootCause": "backend/src/legaldesk/idp/ocr.py:228 builds ExpressionAttributeValues with ':pending'; the completion branch (ocr.py:245-251) reuses them in update_item whose expressions never reference ':pending'. DynamoDB rejects the request with ValidationException 'Value provided in ExpressionAttributeValues unused in expressions: keys: {:pending}', which put() wraps as OCRContractError. Every Textract completion callback therefore fails deterministically; production OCR continuation cannot complete.",
+ "scenario": "scanned-demand"
+}

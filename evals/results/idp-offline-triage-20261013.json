@@ -1,0 +1,410 @@
+{
+  "evaluator": "scripts/evaluate_idp.py",
+  "generated_from": [
+    {
+      "file": "idp-canary-contract-20261009-compact-e.json",
+      "sha256": "3278d99c5b1403d567185a2c1df9d478aeceea66b86b2cc69408645420e0a55b"
+    },
+    {
+      "file": "idp-digital-corpus-20261009-f.json",
+      "sha256": "e8c636edffb6c7e7df3bb261c402b812b2544aa6661aa5da1c2a5cb6e8fa78bc"
+    },
+    {
+      "file": "idp-ocr-corpus-20261009-h.json",
+      "sha256": "0d0d34e1ee8efc439f7666c4895b2f92099c9883c1ff4e69db9222dd000163f7"
+    },
+    {
+      "file": "idp-ocr-targeted-20261009-i.json",
+      "sha256": "b0e5fb6850fa85ec354484d8487d91045dc1e3e11bcff044e959cdea74546ec2"
+    },
+    {
+      "file": "idp-ocr-targeted-20261009-j.json",
+      "sha256": "714ec4529c8df07089ab4a731e0ee8bd536e5f200f996231fd9e91a931381f91"
+    }
+  ],
+  "items": [
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "general_document_evidence",
+      "fixture_id": "adversarial-01-injection",
+      "lexical_kind": "literal",
+      "observed_acceptance": "PROVISIONAL",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "3fa22778a340bea9eeb4e3164eec0800e7bc73eeee06e11b52003c71037c37d9",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "MONTH",
+      "evaluator_errors": [],
+      "field": "initial_duration_unit",
+      "fixture_id": "contract-01-en-digital-monthend",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "AUTO_ACCEPTED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "181d90829828f91d8d92fb4b3fbd0dcdfeb130d6a1982eb05253810d07d802c9",
+      "outcome": "RESOLVED_BY_CANONICALIZATION",
+      "recovered_unit_spelling": "month",
+      "replay": {
+        "acceptance": "AUTO_ACCEPTED",
+        "anchor_found": true,
+        "lexical_support": true,
+        "origin": "LITERAL",
+        "status": "RUN",
+        "value_digest_matches_fixture": true
+      },
+      "source": "idp-canary-contract-20261009-compact-e.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "MONTH",
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH"
+      ],
+      "field": "renewal_period_unit",
+      "fixture_id": "contract-01-en-digital-monthend",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "181d90829828f91d8d92fb4b3fbd0dcdfeb130d6a1982eb05253810d07d802c9",
+      "outcome": "VALUE_CANONICALIZED_ANCHOR_UNVERIFIED_ROUTED",
+      "recovered_unit_spelling": "month",
+      "replay": {
+        "reason": "exported anchor is not the fixture oracle; quote cannot be recovered from digests",
+        "status": "NOT_RUN"
+      },
+      "source": "idp-canary-contract-20261009-compact-e.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "DAY",
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH"
+      ],
+      "field": "termination_notice_unit",
+      "fixture_id": "contract-01-en-digital-monthend",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "051a9620d1bd5b81584d838db0e0e86acd8f28cc1ecd613d1b60af27b953dd37",
+      "outcome": "VALUE_CANONICALIZED_ANCHOR_UNVERIFIED_ROUTED",
+      "recovered_unit_spelling": "day",
+      "replay": {
+        "reason": "exported anchor is not the fixture oracle; quote cannot be recovered from digests",
+        "status": "NOT_RUN"
+      },
+      "source": "idp-canary-contract-20261009-compact-e.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "MONTH",
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "initial_duration_unit",
+      "fixture_id": "contract-02-es-scanned-leapday",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "PROVISIONAL",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "6e29411cd9c5d2a13d3890fc5cd015494cb61263eb25f431baaf8f4980b09765",
+      "outcome": "RESOLVED_BY_CANONICALIZATION",
+      "recovered_unit_spelling": "months",
+      "replay": {
+        "acceptance": "AUTO_ACCEPTED",
+        "anchor_found": true,
+        "lexical_support": true,
+        "origin": "LITERAL",
+        "status": "RUN",
+        "value_digest_matches_fixture": true
+      },
+      "source": "idp-ocr-targeted-20261009-i.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "YEAR",
+      "evaluator_errors": [],
+      "field": "initial_duration_unit",
+      "fixture_id": "contract-03-en-mixed-nda",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "AUTO_ACCEPTED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "a45cc62d46b178904e3e6932fa974aa398f561e8ef99bc34c26d099ca7ab68ad",
+      "outcome": "RESOLVED_BY_CANONICALIZATION",
+      "recovered_unit_spelling": "years",
+      "replay": {
+        "acceptance": "AUTO_ACCEPTED",
+        "anchor_found": true,
+        "lexical_support": true,
+        "origin": "LITERAL",
+        "status": "RUN",
+        "value_digest_matches_fixture": true
+      },
+      "source": "idp-ocr-corpus-20261009-h.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "MONTH",
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "initial_duration_unit",
+      "fixture_id": "contract-04-es-digital-amount",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "PROVISIONAL",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "181d90829828f91d8d92fb4b3fbd0dcdfeb130d6a1982eb05253810d07d802c9",
+      "outcome": "RESOLVED_BY_CANONICALIZATION",
+      "recovered_unit_spelling": "month",
+      "replay": {
+        "acceptance": "AUTO_ACCEPTED",
+        "anchor_found": true,
+        "lexical_support": true,
+        "origin": "LITERAL",
+        "status": "RUN",
+        "value_digest_matches_fixture": true
+      },
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "MONTH",
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "renewal_period_unit",
+      "fixture_id": "contract-04-es-digital-amount",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "181d90829828f91d8d92fb4b3fbd0dcdfeb130d6a1982eb05253810d07d802c9",
+      "outcome": "VALUE_CANONICALIZED_ANCHOR_UNVERIFIED_ROUTED",
+      "recovered_unit_spelling": "month",
+      "replay": {
+        "reason": "exported anchor is not the fixture oracle; quote cannot be recovered from digests",
+        "status": "NOT_RUN"
+      },
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "DAY",
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "termination_notice_unit",
+      "fixture_id": "contract-04-es-digital-amount",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "051a9620d1bd5b81584d838db0e0e86acd8f28cc1ecd613d1b60af27b953dd37",
+      "outcome": "RESOLVED_BY_CANONICALIZATION",
+      "recovered_unit_spelling": "day",
+      "replay": {
+        "acceptance": "REVIEW_REQUIRED",
+        "anchor_found": true,
+        "lexical_support": true,
+        "origin": "LITERAL",
+        "status": "RUN",
+        "value_digest_matches_fixture": true
+      },
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "canonical_digest_matches_fixture": true,
+      "current_canonical_unit": "YEAR",
+      "evaluator_errors": [],
+      "field": "initial_duration_unit",
+      "fixture_id": "contract-05-en-mixed-explicit-conflict",
+      "lexical_kind": "duration_unit",
+      "observed_acceptance": "AUTO_ACCEPTED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "2992f9abc1d6e757b4b15fafa0b37e9d753f9d0d34e72b9b643e4fae8cf4a098",
+      "outcome": "RESOLVED_BY_CANONICALIZATION",
+      "recovered_unit_spelling": "year",
+      "replay": {
+        "acceptance": "AUTO_ACCEPTED",
+        "anchor_found": true,
+        "lexical_support": true,
+        "origin": "LITERAL",
+        "status": "RUN",
+        "value_digest_matches_fixture": true
+      },
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH"
+      ],
+      "field": "claims",
+      "fixture_id": "demand-03-en-mixed",
+      "lexical_kind": "literal",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "149596bb40846f23e6d4764dda7204dca6ad5bb2130a0023ec6762faed81eeb1",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-ocr-corpus-20261009-h.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "operative_ruling",
+      "fixture_id": "judgment-02-es-scanned",
+      "lexical_kind": "interpretive",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "2db54b3e125de96b64801effcef3259d1ae3bc6af86b64bcd574e946a9b1a24a",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-ocr-corpus-20261009-h.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "costs_statement",
+      "fixture_id": "judgment-02-es-scanned",
+      "lexical_kind": "interpretive",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "56a2ef0f1f266a6d94cded98a3278adf16fea80baa03b37d1d9c9cb8cf1eed2b",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-ocr-corpus-20261009-h.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "appeal_information",
+      "fixture_id": "judgment-02-es-scanned",
+      "lexical_kind": "interpretive",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "42a66c96432c0b2eb05394c30a08657e9724c9aecbb7029fd079779e9cf4cd3b",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-ocr-corpus-20261009-h.json"
+    },
+    {
+      "evaluator_errors": [
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "operative_ruling",
+      "fixture_id": "judgment-03-en-mixed-interpretive",
+      "lexical_kind": "interpretive",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "b186555b7d242111c9042fe7969de8b938477de8243b7317b16dfdac3b0d0b0f",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-ocr-targeted-20261009-j.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "costs_statement",
+      "fixture_id": "judgment-04-es-digital",
+      "lexical_kind": "interpretive",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "67d7fbad097126d40461f5da14d518c9c7da1fd8175466397229fe210434e16e",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "appeal_information",
+      "fixture_id": "judgment-04-es-digital",
+      "lexical_kind": "interpretive",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "bc0d71dfe8d22cd58d0e6451422991207b1d3a53d643cb2c02f3b479bfb07508",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "general_document_evidence",
+      "fixture_id": "negative-01-ambiguous-notice",
+      "lexical_kind": "literal",
+      "observed_acceptance": "PROVISIONAL",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "cd4c37b941651c8cb7d03922e278e385f51e54afaab653c1fa51a16fb26581c8",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH"
+      ],
+      "field": "document_type",
+      "fixture_id": "unknown-01-invoice",
+      "lexical_kind": "interpretive",
+      "observed_acceptance": "REVIEW_REQUIRED",
+      "observed_origin": "LITERAL",
+      "observed_value_digest": "565ce70d72244209e4c15433ea6af414a1808cd158b7e026adaf7bbc255f88d6",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-digital-corpus-20261009-f.json"
+    },
+    {
+      "evaluator_errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH",
+        "ORIGIN_MISMATCH"
+      ],
+      "field": "general_document_evidence",
+      "fixture_id": "unknown-01-invoice",
+      "lexical_kind": "literal",
+      "observed_acceptance": "PROVISIONAL",
+      "observed_origin": "INTERPRETIVE",
+      "observed_value_digest": "423350d2a7c9416c9ba037374ddb974372c0187b3162713f18258de25c8cdf88",
+      "outcome": "UNRESOLVED_DIGEST_ONLY_ROUTED",
+      "source": "idp-digital-corpus-20261009-f.json"
+    }
+  ],
+  "limitations": [
+    "Metadata-only: no document text, quotes, prompts, or free-form values are emitted; unit labels come from the closed registry vocabulary.",
+    "Replays use the current canonicalizer and parser on fixture page text; they do not re-call any model and do not rewrite the immutable exports.",
+    "Non-unit mismatches remain digest-only; they are routed (not AUTO_ACCEPTED) and still require source-backed field review."
+  ],
+  "manifest": {
+    "dataset_id": "legaldesk-phase14-idp-groundtruth-v1",
+    "fixture_count": 18,
+    "path": "tests/fixtures/idp/manifest.json"
+  },
+  "report_schema_version": "1.0-value-mismatch-triage",
+  "selection_policy": "later export in generated_from supersedes an earlier one for the same fixture (consolidated-j policy)",
+  "summary": {
+    "auto_acceptance_blocker": false,
+    "observed_auto_accepted_value_mismatches": 3,
+    "present_value_mismatches": 20,
+    "resolved_by_canonicalization": 6,
+    "unresolved_auto_accepted": 0,
+    "unresolved_routed": 11,
+    "value_canonicalized_anchor_unverified_routed": 3
+  },
+  "triage_tool": "scripts/triage_idp_value_mismatches.py"
+}

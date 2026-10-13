@@ -46,12 +46,54 @@ Parameters:
     Default: ""
     AllowedPattern: "^$|^[A-Za-z0-9]+$"
     Description: Optional public Cognito client; M2M client remains required
+  GatewayJwtIDPClientId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9]+$"
+    Description: >-
+      Optional dedicated Phase 14 IDP client. Leave empty to preserve the
+      existing human-only Gateway authorization contract.
   GatewayJwtScope:
     Type: String
     MinLength: 1
+  GatewayJwtIDPScope:
+    Type: String
+    Default: legaldesk-idp/review-create
+    AllowedValues: [legaldesk-idp/review-create]
+  IDPReviewTenantId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+  IDPReviewMatterIds:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}(,[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127})?$"
+  IDPSourceBucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  IDPArtifactBucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
 
 Conditions:
   HasAdditionalGatewayClient: !Not [!Equals [!Ref GatewayJwtAdditionalClientId, ""]]
+  HasSecondIDPMatter: !Not
+    - !Equals
+      - !Ref IDPReviewMatterIds
+      - !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+  HasIDPGatewayConfiguration: !And
+    - !Not [!Equals [!Ref GatewayJwtIDPClientId, ""]]
+    - !Not [!Equals [!Ref IDPReviewTenantId, ""]]
+    - !Not [!Equals [!Ref IDPReviewMatterIds, ""]]
+    - !Not [!Equals [!Ref IDPSourceBucketName, ""]]
+
+  HasIDPMetadataStorage: !And
+    - !Not [!Equals [!Ref IDPReviewTenantId, ""]]
+    - !Not [!Equals [!Ref IDPReviewMatterIds, ""]]
+    - !Not [!Equals [!Ref IDPSourceBucketName, ""]]
+    - !Not [!Equals [!Ref IDPArtifactBucketName, ""]]
 
 Resources:
   MetadataMcpLogGroup:
@@ -83,6 +125,51 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:Query
                 Resource: !Ref ExistingMetadataTableArn
+              - !If
+                - HasIDPMetadataStorage
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource:
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !Sub
+                      - "${BucketArn}/idp-artifacts/tenant=${TenantId}/matter=${MatterId}/document=*/run=*/pages-*"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPArtifactBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/idp-artifacts/tenant=${TenantId}/matter=${MatterId}/document=*/run=*/pages-*"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPArtifactBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -123,7 +210,40 @@ Resources:
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
                       - GATEWAY#GRANT#*
+                      - GATEWAY#IDP-REVIEW#*
                       - GATEWAY#EXPIRY#*
+              - !If
+                - HasIDPGatewayConfiguration
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource:
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !Sub
+                      - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                      - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                        TenantId: !Ref IDPReviewTenantId
+                        MatterId: !Select [0, !Split [",", !Ref IDPReviewMatterIds]]
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.pdf"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                    - !If
+                      - HasSecondIDPMatter
+                      - !Sub
+                        - "${BucketArn}/tenants/${TenantId}/matters/${MatterId}/documents/*/original.txt"
+                        - BucketArn: !Sub "arn:${AWS::Partition}:s3:::${IDPSourceBucketName}"
+                          TenantId: !Ref IDPReviewTenantId
+                          MatterId: !Select [1, !Split [",", !Ref IDPReviewMatterIds]]
+                      - !Ref AWS::NoValue
+                - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -141,13 +261,19 @@ Resources:
         S3Bucket: !Ref InterceptorCodeBucket
         S3Key: !Ref InterceptorCodeKey
         S3ObjectVersion: !Ref InterceptorCodeVersion
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
           AWS_MAX_ATTEMPTS: "1"
           AWS_RETRY_MODE: standard
           REVIEW_TASK_TABLE_NAME: !Ref ExistingMetadataTableName
+          IDP_TABLE_NAME: !Ref ExistingMetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref IDPSourceBucketName
+          LEGALDESK_IDP_REVIEW_TENANT_ID: !Ref IDPReviewTenantId
+          LEGALDESK_IDP_REVIEW_MATTER_IDS: !Ref IDPReviewMatterIds
+          LEGALDESK_IDP_M2M_CLIENT_ID: !Ref GatewayJwtIDPClientId
+          LEGALDESK_IDP_REVIEW_SCOPE: !Ref GatewayJwtIDPScope
           INTERCEPTOR_SCHEMA_VERSION: "1"
 
   MetadataMcpFunction:
@@ -161,13 +287,16 @@ Resources:
         S3Bucket: !Ref MetadataMcpCodeBucket
         S3Key: !Ref MetadataMcpCodeKey
         S3ObjectVersion: !Ref MetadataMcpCodeVersion
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
           AWS_MAX_ATTEMPTS: "1"
           AWS_RETRY_MODE: standard
           DOCUMENT_METADATA_TABLE_NAME: !Ref ExistingMetadataTableName
+          IDP_TABLE_NAME: !Ref ExistingMetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref IDPSourceBucketName
+          LEGALDESK_IDP_ARTIFACT_BUCKET: !Ref IDPArtifactBucketName
           MCP_SCHEMA_VERSION: "1"
 
   MetadataMcpFunctionUrl:
@@ -230,12 +359,22 @@ Resources:
         CustomJWTAuthorizer:
           DiscoveryUrl: !Ref GatewayJwtDiscoveryUrl
           AllowedClients: !If
-            - HasAdditionalGatewayClient
-            - - !Ref GatewayJwtClientId
-              - !Ref GatewayJwtAdditionalClientId
-            - - !Ref GatewayJwtClientId
+            - HasIDPGatewayConfiguration
+            - !If
+              - HasAdditionalGatewayClient
+              - - !Ref GatewayJwtClientId
+                - !Ref GatewayJwtAdditionalClientId
+                - !Ref GatewayJwtIDPClientId
+              - - !Ref GatewayJwtClientId
+                - !Ref GatewayJwtIDPClientId
+            - !If
+              - HasAdditionalGatewayClient
+              - - !Ref GatewayJwtClientId
+                - !Ref GatewayJwtAdditionalClientId
+              - - !Ref GatewayJwtClientId
           AllowedScopes:
             - !Ref GatewayJwtScope
+            - !If [HasIDPGatewayConfiguration, !Ref GatewayJwtIDPScope, !Ref AWS::NoValue]
       ProtocolType: MCP
       RoleArn: !GetAtt GatewayExecutionRole.Arn
       InterceptorConfigurations:
@@ -265,14 +404,14 @@ Resources:
             ToolSchema:
               InlinePayload:
                 - Name: create_review_task
-                  Description: Create an OPEN review task with the server-derived accepted answer snapshot.
+                  Description: >-
+                    Create an OPEN review task. Human callers provide the
+                    accepted-answer fields; the dedicated IDP machine variant
+                    provides only matterId and invocationId.
                   InputSchema:
                     Type: object
                     Required:
-                      - reasonCode
                       - matterId
-                      - dueAt
-                      - snapshot
                     Properties:
                       reasonCode:
                         Type: string
@@ -289,6 +428,9 @@ Resources:
                       matterId:
                         Type: string
                         Description: "Matter containing the review request."
+                      invocationId:
+                        Type: string
+                        Description: "Reserved IDP machine invocation; accepted only with the dedicated client and scope."
                       _legaldeskGrantId:
                         Type: string
                         Description: Reserved server-injected opaque authorization grant; client values are rejected.
@@ -351,6 +493,44 @@ Resources:
                         Type: string
                       _legaldeskGrantId:
                         Type: string
+                      idpDecision:
+                        Type: object
+                        Description: "Optional human IDP field decision; the target derives actor, origin, presence, acceptance and audit metadata."
+                        Required:
+                          - fieldName
+                          - action
+                          - reason
+                          - evidence
+                        Properties:
+                          fieldName:
+                            Type: string
+                          action:
+                            Type: string
+                            Description: "One of APPROVE, CORRECT, or REJECT; the target validates the bounded action set."
+                          reason:
+                            Type: string
+                          proposedValueJson:
+                            Type: string
+                            Description: "Internal Gateway transport for the raw replacement value on CORRECT; the target strictly parses and validates it."
+                          evidence:
+                            Type: array
+                            Items:
+                              Type: object
+                              Required:
+                                - page
+                                - quote
+                                - contentSha256
+                              Properties:
+                                page:
+                                  Type: integer
+                                quote:
+                                  Type: string
+                                contentSha256:
+                                  Type: string
+                                start:
+                                  Type: integer
+                                end:
+                                  Type: integer
 
   MetadataMcpGatewayTarget:
     Type: AWS::BedrockAgentCore::GatewayTarget

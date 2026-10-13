@@ -1,0 +1,34 @@
+{
+ "attempt": "a",
+ "diagnosis": "The document pointer's idpJobId/idpReason still name the exhausted run-c job (FAILED) after the reprocess run 68b64b47 was promoted; the verifier resolves the job from idpJobId, so it replayed the stale FAILED job (acknowledged, no paid call, state unchanged) and then refused it as not a successful terminal job. Run IDs equal job IDs by construction, so the correct target job is 68b64b47.",
+ "executedAtUtc": "2026-10-13T14:37:54Z",
+ "note": "Immutable diagnostic attempt; a single diagnostic rerun targets the run's own job.",
+ "observed": {
+  "documentPointer": {
+   "idpJobId": "14513697-3888-43d5-8688-0d06bd919995",
+   "idpReason": "MAX_ATTEMPTS_EXHAUSTED",
+   "idpRunId": "68b64b47-5dd8-4a40-adde-7eb52a13aa51",
+   "idpStatus": "IDP_REVIEW_REQUIRED"
+  },
+  "messageId": "8b88d310-23e8-4161-92b7-889614fa105c",
+  "messageSent": true,
+  "paidCalls": 0,
+  "snapshotBeforeEqualsAfter": true,
+  "workerConsumedEvent": {
+   "jobId": "14513697-3888-43d5-8688-0d06bd919995",
+   "outcome": "acknowledged",
+   "status": "FAILED"
+  }
+ },
+ "reason": "duplicate_target_is_not_a_successful_terminal_job",
+ "result": "BLOCKED",
+ "runner": "scripts/verify_idp_duplicate.py",
+ "scenario": "duplicate-clean-event-replay",
+ "target": {
+  "documentId": "81b1f440-c628-4137-911f-8113d0247a2d",
+  "matterId": "mat_phase14_a_20260928",
+  "runId": "68b64b47-5dd8-4a40-adde-7eb52a13aa51",
+  "sourceReport": "evals/results/idp-live-digital-20261013-h.json",
+  "tenantId": "tnt_phase14_20260928"
+ }
+}

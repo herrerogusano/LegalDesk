@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Demostrar que LegalDesk cumple el brief mediante una suite repetible de evaluación, documentación de portfolio y una demo corta.
+Demostrar que LegalDesk cumple el alcance definido mediante una suite repetible de evaluación, documentación de portfolio y una demo corta.
 
 ## Conceptos a demostrar
 
@@ -55,7 +55,7 @@ Demostrar que LegalDesk cumple el brief mediante una suite repetible de evaluaci
    `upload → ask → cite → MCP → review task → trace`.
 10. Escribir:
    `What I would change before real legal data entered this system`.
-11. Revisar todas las preguntas de entrevista del ejercicio.
+11. Revisar todas las preguntas de entrevista preparadas para explicar el proyecto.
 12. Verificar acceptance criteria global.
 
 ## Criterios de aceptación

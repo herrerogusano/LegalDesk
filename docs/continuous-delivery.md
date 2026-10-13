@@ -10,11 +10,31 @@ may contain only `ApplicationFunction` code and the dependent
 The separately reviewed IAM bootstrap has been applied as stack
 `LegalDeskProductionCD`; its change set contained only the OIDC deployment role
 and the constrained CloudFormation execution role. No application, data-plane,
-frontend, or production code mutation was part of that bootstrap. The first
-real CD release remains a separate supervisor-approved operation.
+frontend, or production code mutation was part of that bootstrap.
+
+## Verified release — 2026-10-05
+
+Promotion PR #49 triggered [production run 37310326393](https://github.com/herrerogusano/LegalDesk/actions/runs/37310326393)
+for commit `4c0b6dbb5ce51cc00a937e8fd4ac6f3b90875d03`. All quality gates
+and deployment jobs succeeded. The metadata artifact
+`legaldesk-release-37310326393-1` contains a `PASS` release record, immutable
+Lambda/frontend versions and their pre-release rollback references. The stack
+finished `UPDATE_COMPLETE`; Lambda is active with a successful update and the
+expected code SHA-256. All eight bounded HTTP checks and the five served asset
+hashes passed, after CloudFront invalidation completed.
+
+The first two runs (37306453976 and 37308886816) remain failed evidence, not
+successful releases. CloudFormation rolled back their changes because its
+resource/output read handlers needed narrowly scoped IAM-role and CloudFront
+metadata permissions. Those reads were added without application IAM writes
+or data-plane access before the successful retry. This release did not run
+provider inference or renew the application's semantic/holdout attestation.
+
+## Deployment boundary
 
 `.github/workflows/production-cd.yml` runs reusable offline CI and pinned
-release tooling/lint before the only job with `id-token: write`. Production
+release tooling/lint (`cfn-lint==1.57.2`) before the only job with
+`id-token: write`. Production
 deployments are serialized with `cancel-in-progress: false`; pushes to `prod`
 are the normal trigger, while manual dispatch fails closed unless its input is
 exactly `DEPLOY_PROD`.
@@ -43,11 +63,19 @@ DynamoDB/Bedrock/Gateway/Memory, mutate application IAM policies, create or
 delete stacks, or modify business resources. `ValidateTemplate` is the only
 intentionally unscoped action because CloudFormation does not support a
 resource scope for that API. The bootstrap is now complete; do not repeat it or
-broaden its roles without a new inventory and supervisor review. The current
-operational gap is GitHub branch protection: the repository plan cannot enforce
-required PR checks against a direct push, so the `developer`→`prod` PR procedure
-and the workflow's exact prod/SHA guards remain procedural controls rather than
-a claim of platform enforcement.
+broaden its roles without a new inventory and supervisor review.
+
+On 2026-10-05 the owner authorized making the repository public, after a
+full Git-history secret scan and review of its synthetic fixtures. GitHub now
+enforces protection on `developer` and `prod`: pull requests, an up-to-date
+branch and the successful `verify` check from GitHub Actions are required;
+conversations must be resolved, force pushes and deletion are prohibited, and
+administrators are subject to the rules. The sole-owner workflow does not
+require an independent approving review. External contributors' workflow runs
+require approval; fork PR CI has no deployment credentials or OIDC permission.
+Public read/fork access does not grant merge or deployment authority. The exact
+prod/SHA and OIDC guards remain additional controls, not substitutes for branch
+protection. `main` remains the unused legacy branch.
 
 The local `scripts/deploy_release.py` command is dry-run by default. Production
 execution requires `--execute` plus

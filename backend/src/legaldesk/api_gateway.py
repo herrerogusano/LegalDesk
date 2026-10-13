@@ -12,6 +12,7 @@ import base64
 import binascii
 import hmac
 import json
+import os
 import re
 from io import BytesIO
 from threading import Lock
@@ -257,6 +258,24 @@ def _application(config: AWSResourceConfig | None = None) -> Callable[..., Any]:
                     raise RuntimeError("public composition is not configured")
                 _app = create_http_app(composition)
     return _app
+
+
+def _prewarm_application() -> None:
+    """Build the immutable composition in the boosted-CPU init phase (Lambda only).
+
+    The per-request trusted-edge check and authorization are unchanged; any
+    failure here is swallowed and the lazy first-request path rebuilds it.
+    """
+
+    if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("LEGALDESK_DISABLE_PREWARM"):
+        return
+    try:
+        _application()
+    except Exception:  # pragma: no cover - lazy path reports configuration errors
+        pass
+
+
+_prewarm_application()
 
 
 def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict[str, object]:

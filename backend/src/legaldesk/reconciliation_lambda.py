@@ -27,6 +27,11 @@ from .reconciliation import (
     ReconciliationReport,
 )
 from .state import DynamoDBEphemeralStateStore
+from .idp.models import IDPConfig, IDPJobStatus
+from .idp.persistence import Boto3DynamoIDPRepository
+from .idp.trigger import VerifiedCleanIDPTrigger
+from .idp.providers import idp_prompt_identity
+from .idp_lambda import Boto3IDPSQSQueue
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
@@ -36,6 +41,58 @@ _MAX_LIMIT = 100
 _logger = logging.getLogger(__name__)
 _service: ReconciliationService | None = None
 _service_lock = Lock()
+# A cold Gateway -> interceptor -> Review Lambda chain measured ~16 s live, so
+# the machine review call needs more than the 15 s used for token fetches.
+# Each dispatch must also fit inside this Lambda's remaining invocation time.
+MACHINE_REVIEW_TIMEOUT_SECONDS = 40.0
+_REVIEW_DISPATCH_MARGIN_SECONDS = 10.0
+_INGESTION_DOCUMENT_MARGIN_SECONDS = 60.0
+_remaining_time_ms: Any = None
+
+
+def _review_dispatch_has_budget() -> bool:
+    """Return whether one more machine review call fits in this invocation."""
+
+    if _remaining_time_ms is None:
+        return True
+    try:
+        remaining = float(_remaining_time_ms()) / 1000.0
+    except Exception:
+        return False
+    return remaining >= MACHINE_REVIEW_TIMEOUT_SECONDS + _REVIEW_DISPATCH_MARGIN_SECONDS
+
+
+def _ingestion_has_budget() -> bool:
+    """Return whether another per-document ingestion resolution fits."""
+
+    if _remaining_time_ms is None:
+        return True
+    try:
+        return float(_remaining_time_ms()) / 1000.0 >= _INGESTION_DOCUMENT_MARGIN_SECONDS
+    except Exception:
+        return False
+
+
+def _review_run_is_current(*, document: object, run: object) -> bool:
+    """Only a REVIEW_REQUIRED run that is the document's current pointer.
+
+    A superseded generation must not create a review task; redispatching it
+    every schedule only leaves orphan PENDING invocation records.  A missing
+    pointer (projection not yet written) stays eligible.
+    """
+    if getattr(run, "status", None) is not IDPJobStatus.REVIEW_REQUIRED:
+        return False
+    current_run_id = getattr(document, "idp_run_id", None)
+    return not (isinstance(current_run_id, str) and current_run_id and getattr(run, "run_id", None) != current_run_id)
+
+
+def _review_job_needs_dispatch(job: object) -> bool:
+    """The delivery projection requires a REVIEW_REQUIRED job.
+
+    A terminal-FAILED (or otherwise non-review) job can never be marked, so
+    it is skipped before any invocation record is written; SENT is done.
+    """
+    return job is not None and getattr(job, "status", None) is IDPJobStatus.REVIEW_REQUIRED and getattr(job, "review_delivery_state", None) != "SENT"
 
 
 class ReconciliationLambdaError(RuntimeError):
@@ -54,6 +111,8 @@ class ReconciliationConfig:
     ingestion_stale_seconds: float
     limit_per_scope: int
     max_batch: int = _MAX_LIMIT
+    idp_enabled: bool = False
+    idp_recovery_limit_per_scope: int = 25
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "ReconciliationConfig":
@@ -100,6 +159,10 @@ class ReconciliationConfig:
         )
         if not upload_scopes and not ingestion_scopes:
             raise ReconciliationLambdaError("reconciliation configuration is invalid")
+        raw_idp = values.get("LEGALDESK_IDP_ENABLED", "false").strip().lower()
+        if raw_idp not in {"true", "false"}:
+            raise ReconciliationLambdaError("reconciliation configuration is invalid")
+        idp_enabled = raw_idp == "true"
         return cls(
             region=required("AWS_REGION", re.compile(r"^[a-z0-9-]{1,32}$")),
             table_name=required("LEGALDESK_METADATA_TABLE_NAME"),
@@ -114,6 +177,8 @@ class ReconciliationConfig:
                 "LEGALDESK_RECONCILIATION_INGESTION_STALE_SECONDS", minimum=60, maximum=24 * 60 * 60
             ),
             limit_per_scope=bounded_int("LEGALDESK_RECONCILIATION_LIMIT_PER_SCOPE", minimum=1, maximum=_MAX_LIMIT, default=25),
+            idp_enabled=idp_enabled,
+            idp_recovery_limit_per_scope=bounded_int("LEGALDESK_IDP_RECOVERY_LIMIT_PER_SCOPE", minimum=1, maximum=_MAX_LIMIT, default=25),
         )
 
 
@@ -166,6 +231,7 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
         table = boto3.resource("dynamodb", region_name=config.region, config=sdk_config).Table(config.table_name)
         s3 = boto3.client("s3", region_name=config.region, config=sdk_config)
         bedrock_agent = boto3.client("bedrock-agent", region_name=config.region, config=sdk_config)
+        sqs = boto3.client("sqs", region_name=config.region, config=sdk_config) if config.idp_enabled else None
     except ReconciliationLambdaError:
         raise
     except Exception:
@@ -181,12 +247,130 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
         knowledge_base_id=_required_env("LEGALDESK_KNOWLEDGE_BASE_ID"),
         data_source_id=_required_env("LEGALDESK_DATA_SOURCE_ID"),
     )
+    idp_recovery = None
+    if config.idp_enabled:
+        queue_url = _required_env("LEGALDESK_IDP_QUEUE_URL")
+        queue_arn = _required_env("LEGALDESK_IDP_QUEUE_ARN")
+        model_id = _required_env("LEGALDESK_IDP_MODEL_ID")
+        idp_repository = Boto3DynamoIDPRepository(config.table_name, table=table)
+        review_recovery = None
+        if os.environ.get("LEGALDESK_IDP_REVIEW_ENABLED", "false").strip().lower() == "true":
+            from .idp.review import CognitoM2MTokenProvider, IDPMachineGatewayClient, dispatch_review_after_persist
+            review_url = os.environ.get("LEGALDESK_IDP_GATEWAY_URL", "").strip()
+            token_endpoint = os.environ.get("LEGALDESK_IDP_TOKEN_ENDPOINT", "").strip()
+            client_id = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID", "").strip()
+            secret_name = os.environ.get("LEGALDESK_IDP_M2M_SECRET_PARAMETER_NAME", "").strip()
+            review_scope = os.environ.get("LEGALDESK_IDP_REVIEW_SCOPE", "legaldesk-idp/review-create").strip()
+            if not all((review_url, token_endpoint, client_id, secret_name)):
+                raise ReconciliationLambdaError("review recovery configuration is invalid")
+            ssm = boto3.client("ssm", region_name=config.region, config=sdk_config)
+            token_provider = CognitoM2MTokenProvider(ssm_client=ssm, parameter_name=secret_name, token_endpoint=token_endpoint, client_id=client_id, scope=review_scope, timeout_seconds=15.0)
+            gateway = IDPMachineGatewayClient(gateway_url=review_url, token_provider=token_provider, timeout_seconds=MACHINE_REVIEW_TIMEOUT_SECONDS)
+            invocation_repository = Boto3DynamoGatewayGrantRepository(config.table_name, table=table)
+
+            def recover_review_dispatch(*, tenant_id: str, matter_id: str, limit: int, _page: tuple[tuple[object, ...], str | None] | None = None) -> tuple[object, ...]:
+                recovered: list[object] = []
+                cursor = idp_repository.get_review_recovery_cursor(tenant_id=tenant_id, matter_id=matter_id)
+                if _page is not None:
+                    documents, next_cursor = _page
+                elif callable(getattr(metadata, "list_for_scope_page", None)):
+                    documents, next_cursor = metadata.list_for_scope_page(tenant_id=tenant_id, matter_id=matter_id, limit=min(limit, 100), cursor=cursor)
+                else:
+                    documents, next_cursor = metadata.list_for_scope(tenant_id=tenant_id, matter_id=matter_id, limit=min(limit, 100)), None
+                try:
+                    for document in documents:
+                        if len(recovered) >= limit:
+                            break
+                        # Review recovery must inspect the chronological
+                        # history page, not an arbitrary UUID-key prefix
+                        # limited to the first two runs.  The repository
+                        # marker cursor keeps this bounded and recoverable;
+                        # pending runs in the same document are therefore not
+                        # starved behind newer terminal rows.
+                        # Dispatch work remains capped by ``limit``; history
+                        # inspection has its own small bounded page so a
+                        # pending older run cannot be hidden behind several
+                        # already-SENT generations of the same document.
+                        runs = idp_repository.list_run_history(
+                            tenant_id=tenant_id, matter_id=matter_id,
+                            document_id=document.document_id, limit=20,
+                        ).runs
+                        for run in runs:
+                            if len(recovered) >= limit or not _review_run_is_current(document=document, run=run):
+                                continue
+                            job = idp_repository.get_job(run.run_id)
+                            # A run ID normally equals the producer job ID,
+                            # but the durable contracts do not require that
+                            # identity.  Resolve the review job by the same
+                            # scoped document/hash when a restart finds a
+                            # separately named job; this remains a bounded
+                            # partition query, never a table scan.
+                            if job is None:
+                                list_jobs = getattr(idp_repository, "list_review_jobs", None)
+                                candidates = list_jobs(
+                                    tenant_id=tenant_id,
+                                    matter_id=matter_id,
+                                    document_id=document.document_id,
+                                    limit=20,
+                                ) if callable(list_jobs) else ()
+                                matching = tuple(
+                                    candidate for candidate in candidates
+                                    if candidate.document_sha256 == run.document_sha256
+                                    and candidate.created_at == run.created_at
+                                )
+                                job = matching[0] if len(matching) == 1 else None
+                            if not _review_job_needs_dispatch(job):
+                                continue
+                            if not _review_dispatch_has_budget():
+                                # Leave the remaining runs for the next tick
+                                # rather than letting the Lambda time out with
+                                # a delivery left IN_FLIGHT.
+                                break
+                            try:
+                                dispatch_review_after_persist(run=run, job=job, invocation_repository=invocation_repository, gateway=gateway, machine_client_id=client_id, scope=review_scope, job_repository=idp_repository)
+                                recovered.append(job)
+                            except Exception:
+                                # Leave the run REVIEW_REQUIRED; the next bounded
+                                # schedule retries the Gateway capability only.
+                                continue
+                finally:
+                    # Advance past terminal/non-review rows even when one
+                    # malformed candidate fails; no page can starve later docs.
+                    idp_repository.set_review_recovery_cursor(tenant_id=tenant_id, matter_id=matter_id, cursor=next_cursor)
+                return tuple(recovered)
+
+            review_recovery = recover_review_dispatch
+        idp_config = IDPConfig.from_mapping({
+            "max_bytes": os.environ.get("LEGALDESK_IDP_MAX_BYTES", str(20 * 1024 * 1024)),
+            "max_pages": os.environ.get("LEGALDESK_IDP_MAX_PAGES", "100"),
+            "visibility_timeout_seconds": os.environ.get("LEGALDESK_IDP_CLAIM_LEASE_SECONDS", "480"),
+            "max_attempts": os.environ.get("LEGALDESK_IDP_MAX_ATTEMPTS", "3"),
+            "max_calls_per_run": os.environ.get("LEGALDESK_IDP_MAX_CALLS_PER_RUN", "2"),
+            "global_deadline_seconds": os.environ.get("LEGALDESK_IDP_GLOBAL_DEADLINE_SECONDS", "330"),
+        })
+        trigger = VerifiedCleanIDPTrigger(
+            repository=idp_repository,
+            queue=Boto3IDPSQSQueue(sqs, queue_url=queue_url),
+            config=idp_config,
+            enabled=True,
+            model_id=model_id,
+            prompt_version=idp_prompt_identity(os.environ.get("LEGALDESK_IDP_PROMPT_VERSION", "1.0.0")),
+            review_recovery=review_recovery,
+        )
+        if not queue_arn.startswith("arn:"):
+            raise ReconciliationLambdaError("reconciliation configuration is invalid")
+        idp_recovery = lambda **scope: trigger.recover_delivery(
+            **scope,
+            metadata_repository=metadata,
+            object_storage=storage,
+        )
     return ReconciliationService(
         metadata_repository=metadata,
         object_storage=storage,
         state_store=state_store,
         ingestion_service=ingestion,
         gateway_repository=Boto3DynamoGatewayGrantRepository(config.table_name, table=table),
+        idp_recovery=idp_recovery,
         max_batch=config.max_batch,
     )
 
@@ -220,6 +404,9 @@ def _get_service(config: ReconciliationConfig) -> ReconciliationService:
 def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict[str, object]:
     """Run one bounded scheduled pass and return only aggregate evidence."""
 
+    global _remaining_time_ms
+    remaining = getattr(_lambda_context, "get_remaining_time_in_millis", None)
+    _remaining_time_ms = remaining if callable(remaining) else None
     if not isinstance(event, Mapping):
         raise ReconciliationLambdaError("reconciliation event is invalid")
     try:
@@ -235,6 +422,22 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
             stale_after_seconds=config.ingestion_stale_seconds,
             limit_per_scope=config.limit_per_scope,
         ) if config.ingestion_scopes else ReconciliationReport()
+        # Subject-independent fallback: stale PENDING_INGESTION documents of the
+        # allowed tenant/matters, resolved per document through the KB status API.
+        pending_scopes = tuple(dict.fromkeys(
+            (*config.upload_scopes, *(ReconciliationScope(s.tenant_id, s.matter_id) for s in config.ingestion_scopes))
+        ))
+        pending_documents = service.reconcile_pending_ingestion_documents(
+            scopes=pending_scopes,
+            stale_after_seconds=config.ingestion_stale_seconds,
+            limit_per_scope=config.limit_per_scope,
+            has_budget=_ingestion_has_budget,
+        ) if pending_scopes and callable(getattr(service, "reconcile_pending_ingestion_documents", None)) else ReconciliationReport()
+        ingestion.examined += pending_documents.examined
+        ingestion.changed += pending_documents.changed
+        ingestion.skipped += pending_documents.skipped
+        ingestion.ambiguous += pending_documents.ambiguous
+        ingestion.failed += pending_documents.failed
         allowed_matters = tuple(sorted({
             *(scope.matter_id for scope in config.upload_scopes),
             *(scope.matter_id for scope in config.ingestion_scopes),
@@ -250,6 +453,12 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
         _logger.error("reconciliation_failed", extra={"error_code": "processing_failed"})
         raise ReconciliationLambdaError("reconciliation failed") from None
     result = {"status": "completed", "uploads": _report(upload), "ingestion": _report(ingestion), "gateway": _report(gateway)}
+    if config.idp_enabled:
+        recover = getattr(service, "reconcile_idp_scopes", None)
+        if not callable(recover):
+            raise ReconciliationLambdaError("IDP reconciliation composition is unavailable")
+        idp = recover(scopes=config.upload_scopes, limit_per_scope=config.idp_recovery_limit_per_scope)
+        result["idp"] = _report(idp)
     _logger.info(
         "reconciliation_completed",
         extra={"upload_changed": upload.changed, "ingestion_changed": ingestion.changed, "gateway_changed": gateway.changed},

@@ -172,6 +172,8 @@ def build_release(*, repo_root: Path, dependency_root: Path, output_dir: Path) -
             *_collect_tree(repo_root / "backend" / "src" / "legaldesk", "legaldesk"),
             *_collect_tree(repo_root / "agent" / "src" / "legaldesk_agent", "legaldesk_agent"),
             *_collect_file(repo_root / "prompts" / "legaldesk-system.md", "prompts/legaldesk-system.md"),
+            *_collect_file(repo_root / "prompts" / "idp-classifier.md", "prompts/idp-classifier.md"),
+            *_collect_file(repo_root / "prompts" / "idp-extractor.md", "prompts/idp-extractor.md"),
             *_collect_tree(dependency_root, ""),
         ]
     )

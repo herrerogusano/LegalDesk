@@ -1,0 +1,3219 @@
+{
+  "cases": [
+    {
+      "classification": {
+        "actual": "CONTRACT",
+        "expected": "CONTRACT",
+        "match": "PASS"
+      },
+      "derived": {
+        "comparisons": {
+          "acceptance": "PASS",
+          "conflict": "PASS",
+          "estimated_anniversary": "UNKNOWN",
+          "inputs": "PASS",
+          "origin": "PASS",
+          "rule_id": "UNKNOWN",
+          "rule_version": "UNKNOWN"
+        },
+        "status": "UNKNOWN"
+      },
+      "document_hash": {
+        "actual": "269548342ef80ae5be475a1d78795c33611e2a6acbe6d801e556d2817e90e2c0",
+        "expected": "269548342ef80ae5be475a1d78795c33611e2a6acbe6d801e556d2817e90e2c0",
+        "match": "PASS"
+      },
+      "errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH",
+        "ORIGIN_MISMATCH",
+        "VALUE_DIGEST_INVALID"
+      ],
+      "fields": {
+        "amount": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "398ead268b02039b641780d737b39d06e52ad7b8283a0954abbe844e39b806b0",
+          "value_match": "PASS"
+        },
+        "automatic_renewal": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "INTERPRETIVE",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORIGIN_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "FAIL",
+          "presence_match": "PASS",
+          "value_digest": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+          "value_match": "PASS"
+        },
+        "currency": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "82bb059ec10744f31e0406b8ef7a7a0f3c30c9b18435120fa859b2c0b9627888",
+          "value_match": "PASS"
+        },
+        "effective_date": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "a6905ea1edf5e4c09bc9b8296526f9a38fddd144086c4dec08ce6c1b2e87b651",
+          "value_match": "PASS"
+        },
+        "explicit_expiration_date": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "governing_law": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "965e753a8d47f7b02e63b95a0cf80a0a98f0adf9846e9f004a0220ff700baaee",
+          "value_match": "PASS"
+        },
+        "initial_duration_unit": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "d87f57459e38968b0bcde9cb59ba1befb2d519f8b2119d55ea4e3da097317df3",
+          "value_match": "PASS"
+        },
+        "initial_duration_value": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+          "value_match": "PASS"
+        },
+        "jurisdiction": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "965e753a8d47f7b02e63b95a0cf80a0a98f0adf9846e9f004a0220ff700baaee",
+          "value_match": "PASS"
+        },
+        "parties": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "e151ca400b410f39b042c52832488e7c32c83d61d9366cd67b1c928b5cbdb470",
+          "value_match": "PASS"
+        },
+        "renewal_period_unit": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "d87f57459e38968b0bcde9cb59ba1befb2d519f8b2119d55ea4e3da097317df3",
+          "value_match": "PASS"
+        },
+        "renewal_period_value": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "6b51d431df5d7f141cbececcf79edf3dd861c3b4069f0b11661a3eefacbba918",
+          "value_match": "PASS"
+        },
+        "subtype": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "termination_notice_unit": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "c1b3a1a0f4cb10a89b4da74b6c91698e17b2dfb4d342a248d3ddbb9821441ea5",
+          "value_match": "PASS"
+        },
+        "termination_notice_value": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "624b60c58c9d8bfb6ff1886c2fd605d2adeb6ea4da576068201b6c6958ce93f4",
+          "value_match": "PASS"
+        }
+      },
+      "fixture_id": "contract-01-en-digital-monthend",
+      "observed_status": "REVIEW_REQUIRED",
+      "review": {
+        "observed": "REVIEW_REQUIRED",
+        "required": true,
+        "status": "OBSERVED"
+      },
+      "status": "OBSERVED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "CONTRACT",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "errors": [
+          "DERIVED_NOT_EXECUTED"
+        ],
+        "status": "UNKNOWN"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "c0e073ee9421f77c15ccc651a76660420734272d0f236ad6ad47b6ac1322df93",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "amount": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "automatic_renewal": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "effective_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "explicit_expiration_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "governing_law": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "initial_duration_unit": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "initial_duration_value": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "jurisdiction": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "renewal_period_unit": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "renewal_period_value": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "subtype": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "termination_notice_unit": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "termination_notice_value": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "contract-02-es-scanned-leapday",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": "CONTRACT",
+        "expected": "CONTRACT",
+        "match": "PASS"
+      },
+      "derived": {
+        "comparisons": {
+          "acceptance": "PASS",
+          "conflict": "PASS",
+          "estimated_anniversary": "UNKNOWN",
+          "inputs": "PASS",
+          "origin": "PASS",
+          "rule_id": "UNKNOWN",
+          "rule_version": "UNKNOWN"
+        },
+        "status": "UNKNOWN"
+      },
+      "document_hash": {
+        "actual": "dfe391b0bd156a9bb884eceaa6d3c54eecaa6ff103d524ce019b16011f1fdf20",
+        "expected": "dfe391b0bd156a9bb884eceaa6d3c54eecaa6ff103d524ce019b16011f1fdf20",
+        "match": "PASS"
+      },
+      "errors": [
+        "ACCEPTANCE_MISMATCH",
+        "ORACLE_ANCHOR_MISMATCH",
+        "VALUE_DIGEST_INVALID"
+      ],
+      "fields": {
+        "amount": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ORACLE_ANCHOR_MISMATCH",
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "automatic_renewal": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa",
+          "value_match": "PASS"
+        },
+        "currency": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "effective_date": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "d66a031c59cf39994762437ad2ff5b3b24c6f9c9d93bb33bb49c4fb44decc77c",
+          "value_match": "PASS"
+        },
+        "explicit_expiration_date": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "governing_law": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "8e1faddf90cfdced8d962d00de372a7c7a5b4c25b5bcc4d03d204c17b656dc2c",
+          "value_match": "PASS"
+        },
+        "initial_duration_unit": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "140ab5284bf30a235e218ca136a75cc789c0767a87c4af4ddf183ff60249a113",
+          "value_match": "PASS"
+        },
+        "initial_duration_value": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+          "value_match": "PASS"
+        },
+        "jurisdiction": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 0,
+            "valid": "FAIL"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "FAIL",
+          "value_digest": "8e1faddf90cfdced8d962d00de372a7c7a5b4c25b5bcc4d03d204c17b656dc2c",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "75e5f1ff493cd675fb260c270627ffdd0807103df3494acd4555f1eed1bb333f",
+          "value_match": "PASS"
+        },
+        "renewal_period_unit": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "renewal_period_value": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "subtype": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "830da2e2f7f4bc1f94feb911e9d715bddfa91ca1e1fec00c5a978bcaded94f74",
+          "value_match": "PASS"
+        },
+        "termination_notice_unit": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "termination_notice_value": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        }
+      },
+      "fixture_id": "contract-03-en-mixed-nda",
+      "observed_status": "REVIEW_REQUIRED",
+      "review": {
+        "observed": "REVIEW_REQUIRED",
+        "required": true,
+        "status": "OBSERVED"
+      },
+      "status": "OBSERVED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "CONTRACT",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "errors": [
+          "DERIVED_NOT_EXECUTED"
+        ],
+        "status": "UNKNOWN"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "ced4f3acabba37913cefc0e9b19b0d355b33d7188a10be9db60d677d1fda38db",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "amount": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "automatic_renewal": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "effective_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "explicit_expiration_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "governing_law": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "initial_duration_unit": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "initial_duration_value": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "jurisdiction": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "renewal_period_unit": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "renewal_period_value": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "subtype": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "termination_notice_unit": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "termination_notice_value": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "contract-04-es-digital-amount",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": "CONTRACT",
+        "expected": "CONTRACT",
+        "match": "PASS"
+      },
+      "derived": {
+        "errors": [
+          "DERIVED_NOT_EXECUTED"
+        ],
+        "status": "UNKNOWN"
+      },
+      "document_hash": {
+        "actual": "23acb57d7a6b7f2c8cea59c1941b751f6d732b178cb1d24e1b77056223f657d8",
+        "expected": "23acb57d7a6b7f2c8cea59c1941b751f6d732b178cb1d24e1b77056223f657d8",
+        "match": "PASS"
+      },
+      "errors": [
+        "ACCEPTANCE_MISMATCH",
+        "EVIDENCE_MISSING",
+        "ORACLE_ANCHOR_MISMATCH",
+        "VALUE_DIGEST_INVALID"
+      ],
+      "fields": {
+        "amount": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "automatic_renewal": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "UNKNOWN",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "EVIDENCE_MISSING",
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 2,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "UNKNOWN",
+          "value_digest": null,
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "effective_date": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "UNKNOWN",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "EVIDENCE_MISSING",
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "UNKNOWN",
+          "value_digest": null,
+          "value_match": "UNKNOWN"
+        },
+        "explicit_expiration_date": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "72930a36ba6ae1201c0efc66ba26ead7287562624bdb0a9c41b8ec3ec0a526f9",
+          "value_match": "PASS"
+        },
+        "governing_law": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "709c9304f230fb26db8a9702cc857c1fd903576c0192f3fb8962e383e3f6a070",
+          "value_match": "PASS"
+        },
+        "initial_duration_unit": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "140ab5284bf30a235e218ca136a75cc789c0767a87c4af4ddf183ff60249a113",
+          "value_match": "PASS"
+        },
+        "initial_duration_value": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [],
+            "expected_count": 1,
+            "valid": "PASS"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+          "value_match": "PASS"
+        },
+        "jurisdiction": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "REVIEW_REQUIRED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 0,
+            "valid": "FAIL"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "FAIL",
+          "value_digest": "709c9304f230fb26db8a9702cc857c1fd903576c0192f3fb8962e383e3f6a070",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "AUTO_ACCEPTED",
+          "actual_origin": "LITERAL",
+          "actual_presence": "PRESENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ORACLE_ANCHOR_MISMATCH"
+            ],
+            "expected_count": 1,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": "9bd12894295890429f0ffc183febe7a45676af44697e03d0083c42fa17ec3047",
+          "value_match": "PASS"
+        },
+        "renewal_period_unit": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "UNKNOWN",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "EVIDENCE_MISSING",
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 2,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "UNKNOWN",
+          "value_digest": null,
+          "value_match": "UNKNOWN"
+        },
+        "renewal_period_value": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "UNKNOWN",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "EVIDENCE_MISSING",
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 2,
+            "valid": "FAIL"
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "PASS",
+          "presence_match": "UNKNOWN",
+          "value_digest": null,
+          "value_match": "UNKNOWN"
+        },
+        "subtype": {
+          "acceptance_match": "PASS",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 0,
+            "errors": [
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 0,
+            "valid": "UNKNOWN"
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "PASS",
+          "presence_match": "PASS",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "termination_notice_unit": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH",
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "AMBIGUOUS",
+          "origin_match": "PASS",
+          "presence_match": "FAIL",
+          "value_digest": null,
+          "value_match": "PASS"
+        },
+        "termination_notice_value": {
+          "acceptance_match": "FAIL",
+          "actual_acceptance": "UNAVAILABLE",
+          "actual_origin": "LITERAL",
+          "actual_presence": "ABSENT",
+          "evidence": {
+            "actual_count": 1,
+            "errors": [
+              "ACCEPTANCE_MISMATCH",
+              "ORACLE_ANCHOR_MISMATCH",
+              "VALUE_DIGEST_INVALID"
+            ],
+            "expected_count": 1,
+            "valid": "FAIL"
+          },
+          "expected_presence": "AMBIGUOUS",
+          "origin_match": "PASS",
+          "presence_match": "FAIL",
+          "value_digest": null,
+          "value_match": "PASS"
+        }
+      },
+      "fixture_id": "contract-05-en-mixed-explicit-conflict",
+      "observed_status": "REVIEW_REQUIRED",
+      "review": {
+        "observed": "REVIEW_REQUIRED",
+        "required": true,
+        "status": "OBSERVED"
+      },
+      "status": "OBSERVED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "DEMAND",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "e4ed0d7abc7b499a2d80a3d8a092339892f15243985917d4ffe9b1c3c250b243",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimed_amount": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claims": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "defendants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "filing_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "demand-01-en-digital",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "DEMAND",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "10ad8499870d8d543387214b0c3be91958eb55af68d4d436e8485f178ef4ad04",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimed_amount": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claims": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "defendants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "filing_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "demand-02-es-scanned",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "DEMAND",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "28b5a72ef34fd2c17a48df3830aee7ad71d02f3ad4b0d3171013b3cf9a895ff7",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimed_amount": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claims": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "defendants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "filing_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "demand-03-en-mixed",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "DEMAND",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "f579efbe08d7396f37e416f0ec75827c426b170da468613e3d5bc038649da414",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimed_amount": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claims": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "defendants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "filing_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "demand-04-es-digital",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "DEMAND",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "e0a316debfa41cfa9e581a16afba7c94bf3892acea9736d0f2ae161a3b274d35",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claimed_amount": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "claims": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "currency": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "defendants": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "filing_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "demand-05-en-scanned",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "JUDGMENT",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "5c12c50f1d124e12ac1d25ece9b7e855f2ce2b661744158bc6e2a22f9d063c1d",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "appeal_information": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "costs_statement": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "decision_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "operative_ruling": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "judgment-01-en-digital",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "JUDGMENT",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "6394f1acd50ef7f1b90dc8e11bd6cc73c8e224d148bc9916769c7bbc4318aed3",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "appeal_information": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "costs_statement": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "decision_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "operative_ruling": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "judgment-02-es-scanned",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "JUDGMENT",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "181909ed7cce0f5879699c296c242f237f367353ded80b2972ccefab8a3cb5b9",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "appeal_information": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "costs_statement": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "decision_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "operative_ruling": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 2,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "judgment-03-en-mixed-interpretive",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "JUDGMENT",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "9a91c4ba74d0bf013d00555e445ea4ec8f07a3dbc31ec2d0b81580ad10d3ac4d",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "appeal_information": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "costs_statement": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "decision_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "operative_ruling": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "judgment-04-es-digital",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "JUDGMENT",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "87520348f116802906ff82ff242d4cd5c644c6a57ba8ff4e72091dd27598956f",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "appeal_information": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "case_number": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "costs_statement": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 0,
+            "valid": null
+          },
+          "expected_presence": "ABSENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "court": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "decision_date": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "operative_ruling": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "parties": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "judgment-05-en-scanned-optional-absent",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "UNKNOWN",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "36b13fb729e995e1a81f92433e5b499b6ad4343ff77d2f615284576a49408693",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "document_type": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "general_document_evidence": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "unknown-01-invoice",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "UNKNOWN",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "84c523c50d98c788597cde254e4478165438dcc35ad168fb2158c98701dd1b37",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "document_type": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "general_document_evidence": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "adversarial-01-injection",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "classification": {
+        "actual": null,
+        "expected": "UNKNOWN",
+        "match": "UNKNOWN"
+      },
+      "derived": {
+        "status": "NOT_APPLICABLE"
+      },
+      "document_hash": {
+        "actual": null,
+        "expected": "9131e3211c228971237a84c98eb46825ef98acde6a0bf3b5e40aae9ff59f3df2",
+        "match": "UNKNOWN"
+      },
+      "errors": [
+        "NOT_EXECUTED"
+      ],
+      "fields": {
+        "document_type": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        },
+        "general_document_evidence": {
+          "acceptance_match": "UNKNOWN",
+          "actual_presence": null,
+          "evidence": {
+            "actual_count": null,
+            "errors": [
+              "FIELD_NOT_EXECUTED"
+            ],
+            "expected_count": 1,
+            "valid": null
+          },
+          "expected_presence": "PRESENT",
+          "origin_match": "UNKNOWN",
+          "presence_match": "UNKNOWN",
+          "value_match": "UNKNOWN"
+        }
+      },
+      "fixture_id": "negative-01-ambiguous-notice",
+      "review": {
+        "observed": null,
+        "required": null,
+        "status": "UNKNOWN"
+      },
+      "status": "NOT_EXECUTED"
+    }
+  ],
+  "classification_confusion": {
+    "CONTRACT": {
+      "CONTRACT": 3
+    }
+  },
+  "cost": {
+    "basis": "supplied observed metadata and explicit regional rates",
+    "currency": "USD",
+    "estimate": 0.0700725,
+    "region": "eu-west-1",
+    "status": "ESTIMATED"
+  },
+  "counts": {
+    "executed": 3,
+    "fixtures": 18,
+    "not_executed": 15,
+    "review_required": 3
+  },
+  "dataset": {
+    "dataset_id": "legaldesk-phase14-idp-groundtruth-v1",
+    "fixture_count": 18,
+    "manifest_version": "1.0.0"
+  },
+  "observed_metrics": {
+    "input_tokens": {
+      "observed_records": 3,
+      "unknown_records": 0,
+      "value": 7720
+    },
+    "latency_ms": {
+      "observed_records": 0,
+      "unknown_records": 3,
+      "value": null
+    },
+    "ocr_api_calls": {
+      "observed_records": 3,
+      "unknown_records": 0,
+      "value": 2
+    },
+    "ocr_pages": {
+      "observed_records": 3,
+      "unknown_records": 0,
+      "value": 2
+    },
+    "output_tokens": {
+      "observed_records": 3,
+      "unknown_records": 0,
+      "value": 2521
+    }
+  },
+  "provenance": {
+    "counts_as_real_model": true,
+    "kind": "real_model",
+    "model_id": "eu.anthropic.claude-sonnet-4-6",
+    "observed_real_results": 3,
+    "prompt_version": "legaldesk-idp-classifier:1.0.2:a855570829993dc8f234b60a517c309261d49b60c6f82cc6f2eaff0b60a80287:legaldesk-idp-extractor:1.0.2:7741246707f158eda0fe2116c5a34765b31e8d9c2865256edb5bd7b28c8b4dec",
+    "release_sha256": null
+  },
+  "provider_errors": {},
+  "report_schema_version": "1.0",
+  "review_rate": {
+    "denominator": 3,
+    "rate": 1.0,
+    "reviewed": 3,
+    "status": "OBSERVED"
+  }
+}

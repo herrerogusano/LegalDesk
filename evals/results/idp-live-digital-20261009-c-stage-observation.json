@@ -1,0 +1,27 @@
+{
+  "kind": "aws_partial_e2e_observation",
+  "region": "eu-west-1",
+  "fixtureId": "contract-01-en-digital-monthend",
+  "documentId": "81b1f440-c628-4137-911f-8113d0247a2d",
+  "jobId": "14513697-3888-43d5-8688-0d06bd919995",
+  "releaseSha256": "eb35a2b958c0489ef56f19c44ea581a859700678a3977ba7db9b58bcfd75ca9a",
+  "uploadStatus": "INDEXED",
+  "malwareScanStatus": "NO_THREATS_FOUND",
+  "jobStatus": "PROCESSING",
+  "checkpoint": "VALIDATED",
+  "immutableRunSaved": true,
+  "historyMarkers": 1,
+  "runStatus": "IDP_REVIEW_REQUIRED",
+  "publicPointerPromoted": false,
+  "diagnosis": "LEGACY_DYNAMODB_NULL_GENERATION_REJECTED_BY_PROJECTION_CONDITION",
+  "stages": [
+    {"stage": "CLASSIFIER", "state": "COMMITTED", "inputTokens": 855, "outputTokens": 98, "latencyMs": 1603},
+    {"stage": "EXTRACTOR", "state": "COMMITTED", "inputTokens": 1670, "outputTokens": 694, "latencyMs": 5659}
+  ],
+  "bedrockCalls": 2,
+  "inputTokens": 2525,
+  "outputTokens": 792,
+  "ocrPages": 0,
+  "recovery": "PENDING_SAME_JOB_COMMITTED_STAGE_REUSE",
+  "fullE2EAcceptance": false
+}

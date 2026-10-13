@@ -1,7 +1,8 @@
 # LegalDesk
 
-LegalDesk is a portfolio project for a grounded, tenant-safe legal-document
-assistant built on Amazon Bedrock AgentCore. It demonstrates how retrieval,
+I conceived LegalDesk as a personal engineering project to explore grounded legal-document
+assistance, tenant isolation, and secure AWS agent orchestration. It is a
+portfolio MVP built on Amazon Bedrock AgentCore that demonstrates how retrieval,
 authorization, citations, tool calls and bounded agentic workflows can be
 composed without allowing the browser or the model to define access scope.
 

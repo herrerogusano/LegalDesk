@@ -2,7 +2,8 @@
 
 ## Propósito
 
-LegalDesk es un ejercicio final de portfolio de AWS AI Engineering.
+LegalDesk es una iniciativa personal de portfolio y aprendizaje en AWS AI
+Engineering.
 
 Debe demostrar que sabemos construir un agente útil sin perder el control sobre:
 - fuentes;

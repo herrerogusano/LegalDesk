@@ -1,6 +1,7 @@
 # AGENTS.md — LegalDesk
 
-Estas instrucciones gobiernan el trabajo de Codex en este repositorio.
+Estas instrucciones gobiernan el trabajo de cualquier agente (Codex, Claude Code u
+otros) en este repositorio.
 
 # 1. Objetivo
 
@@ -17,17 +18,17 @@ Reutilizar lecciones documentadas sin sustituir el plan/ADR ni ampliar permisos.
 Si el vault no está disponible, indicarlo y no inventar su contenido. Guardar
 aprendizajes generales en las guías existentes y contexto específico en el repo.
 
-# 2. Roles de modelos
+# 2. Roles
+
+Este repositorio no fija proveedores ni modelos. Se usa la selección actual de
+proveedor y modelo del usuario; los roles, responsabilidades y límites de esta
+sección se mantienen con cualquier herramienta. Política común:
+`C:\Users\herre\OneDrive\Desktop\herrerogusano's vault\03 Personal\Admin\Agent Workflows\Agent Policy.md`.
 
 ## Supervisor / orchestrator
 
-Configuración obligatoria si el cliente Codex permite seleccionar este modelo:
-- **GPT-5.6 Sol**
-- reasoning: **Medium**
-
-El supervisor debe crearse o seleccionarse explícitamente con esta
-configuración. Si una tarea ya iniciada no permite cambiar su modelo, debe
-informarse al usuario y aplicar la configuración en la siguiente tarea.
+Mayor capacidad disponible en la herramienta actual, esfuerzo de razonamiento
+medio por defecto.
 
 Responsabilidades:
 - leer el plan activo;
@@ -51,14 +52,9 @@ Usar razonamiento superior solo para:
 
 ## Worker
 
-Configuración obligatoria:
-- **GPT-5.6 Luna**
-- reasoning: **High**
-
-Todo subagente nuevo debe crearse pasando explícitamente el modelo y el nivel
-de razonamiento, aunque el cliente permita heredar la configuración. No
-reutilizar un subagente existente si no se puede verificar que usa GPT-5.6
-Luna con reasoning High; crear uno nuevo para el siguiente bloque concreto.
+Capacidad suficiente para la tarea, esfuerzo de razonamiento alto. Si la
+herramienta permite indicar modelo y esfuerzo al crear un subagente, indicarlos
+explícitamente en lugar de heredarlos sin comprobar.
 
 Responsabilidades:
 - implementar la tarea asignada;
@@ -67,14 +63,12 @@ Responsabilidades:
 - devolver un resumen compacto;
 - no ampliar alcance.
 
-Si esos nombres/modelos no están disponibles en el cliente Codex actual:
-- detener la delegación;
-- informar al usuario antes de usar una configuración alternativa;
-- mantener la separación de roles solo tras recibir su indicación.
+Si la herramienta actual no permite subagentes, aplicar los roles de forma
+secuencial sin fingir delegación.
 
 # 3. Política de eficiencia de límites
 
-El usuario usa Codex con una suscripción de ChatGPT, **no con API**.
+El usuario usa sus herramientas de agentes con suscripción, **no con API**.
 
 Optimizar para que los límites duren lo máximo posible.
 

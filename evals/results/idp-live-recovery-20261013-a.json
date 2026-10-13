@@ -1,0 +1,21 @@
+{
+ "scenario": "recovery-of-stuck-state",
+ "executedAtUtc": "2026-10-13T16:10Z-16:35Z",
+ "ocrRecovery": {
+  "documentId": "9e236538-90ec-414e-b860-af5069b123f7",
+  "jobId": "76a148db-ef08-422b-ba21-f8d44ff6d704",
+  "finding": "completion message had been received 3x with the pre-fix code (15:16, 15:52 failed) and moved to idp-ocr-dlq at ~16:28 (maxReceiveCount 3); fix 30adeac deployed 16:07",
+  "action": "exactly one message in idp-ocr-dlq; body verified to carry the Textract JobId of this job; sent to idp-ocr-completion and deleted from the DLQ (no Textract call repeated)",
+  "observed": "OCR record WAITING_FOR_OCR -> SUCCEEDED; job CLAIMED 16:33:57 -> IDP_REVIEW_REQUIRED 16:34:20; document pointer IDP_REVIEW_REQUIRED",
+  "textract": {"StartDocumentTextDetection": 0, "GetDocumentTextDetection": 1, "pages": 1},
+  "bedrockCalls": 2,
+  "result": "PASS (production Textract continuation -> classifier/extractor -> promotion)"
+ },
+ "kbPerDocumentResolution": {
+  "operatorRead": "bedrock-agent GetKnowledgeBaseDocuments: 1d44967f INDEXED, 6602b12d INDEXED, a0210f8d INDEXED, 9e236538 NOT_FOUND (image-only, no text)",
+  "reconciliationTickAfterDeploy": "16:20 tick completed, but did NOT change the documents",
+  "rootCause": "reconcile_ingestion_scopes (reconciliation.py:321-354, reconciliation_lambda.py env LEGALDESK_RECONCILIATION_INGESTION_SCOPES) only visits ingestion operations of the single configured subject 52a5f474-...; operations of ephemeral smoke users are bound to their own subject, have a 2 h TTL (ingestion.py:63) and their state is deleted by runner cleanup, so no reconciler can ever resolve those documents",
+  "operatorSubstitute": "documents set via the repository update_status to the KB-proven state: 1d44967f, 6602b12d, a0210f8d -> INDEXED; 9e236538 -> FAILED (KB NOT_FOUND after a job with failures, same rule as ingestion.py _resolve_document_statuses)",
+  "result": "PARTIAL: per-document KB truth confirmed by authorized read; automatic reconciliation resolution NOT demonstrated (design limit above)"
+ }
+}

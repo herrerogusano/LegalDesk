@@ -91,6 +91,17 @@ class Document:
     malware_scan_status: MalwareScanStatus = MalwareScanStatus.PENDING
     malware_scan_etag: str | None = None
     malware_scan_version_id: str | None = None
+    # Additive IDP projection.  These values are a server-owned pointer to
+    # the current IDP generation; they are not part of the canonical/RAG
+    # lifecycle and remain absent for documents without an IDP run.
+    idp_status: str | None = None
+    idp_reason: str | None = None
+    idp_attempt: int | None = None
+    idp_job_id: str | None = None
+    idp_run_id: str | None = None
+    idp_document_sha256: str | None = None
+    idp_generation_at: str | None = None
+    idp_source_key: str | None = None
 
     @property
     def ingestion_status(self) -> DocumentStatus:
@@ -133,6 +144,13 @@ class ReviewTask:
     # Operator retention may strip workflow/user text while retaining a
     # bounded metadata record for auditability.
     archived_at: datetime | None = None
+    # Optional additive source reference for IDP-created review tasks.  Human
+    # chat tasks leave these unset and retain their existing contract.
+    source: str | None = None
+    idp_run_id: str | None = None
+    idp_document_id: str | None = None
+    idp_document_sha256: str | None = None
+    idp_field_names: tuple[str, ...] = ()
 
     @property
     def reason_code(self) -> str:

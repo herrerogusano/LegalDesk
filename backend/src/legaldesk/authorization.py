@@ -191,9 +191,9 @@ class Boto3DynamoAuthorizationStore:
             raise ValueError("table_name is required")
         self.table_name = table_name
         if table is None:
-            import boto3
+            from .aws_cache import dynamodb_table
 
-            table = boto3.resource("dynamodb").Table(table_name)
+            table = dynamodb_table(table_name)
         self.table = table
 
     def _get(self, key: Mapping[str, str]) -> Mapping[str, object] | None:

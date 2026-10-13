@@ -38,6 +38,8 @@ class CitationHandle:
     document_id: str | None
     passage: str
     expires_at: float
+    # IDP citations remain usable while RAG indexing is still independent.
+    is_idp: bool = False
 
 
 ConversationRecord = tuple[str, str, str, str]
@@ -505,9 +507,9 @@ class DynamoDBEphemeralStateStore:
         self.table_name = table_name
         self.clock = clock
         if table is None:
-            import boto3
+            from .aws_cache import dynamodb_table
 
-            table = boto3.resource("dynamodb").Table(table_name)
+            table = dynamodb_table(table_name)
         self.table = table
 
     @classmethod
@@ -601,6 +603,7 @@ class DynamoDBEphemeralStateStore:
                 "conversationId": handle.conversation_id,
                 "documentId": handle.document_id,
                 "passage": handle.passage,
+                "isIdp": handle.is_idp,
                 "expiresAt": _dynamodb_number(handle.expires_at),
                 "ttl": max(1, int(handle.expires_at)),
             },
@@ -639,7 +642,10 @@ class DynamoDBEphemeralStateStore:
         document_id = item.get("documentId")
         if document_id is not None and not isinstance(document_id, str):
             return None
-        record = CitationHandle(values[0], values[1], values[2], values[3], values[4], document_id, values[5], self._expires(item))
+        is_idp = item.get("isIdp", False)
+        if not isinstance(is_idp, bool):
+            return None
+        record = CitationHandle(values[0], values[1], values[2], values[3], values[4], document_id, values[5], self._expires(item), is_idp)
         if any(
             expected is not None and expected != actual
             for expected, actual in (

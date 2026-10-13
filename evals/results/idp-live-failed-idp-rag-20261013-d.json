@@ -1,0 +1,9 @@
+{
+ "scenario": "deliberately-failed-IDP-with-working-RAG",
+ "documentId": "a0210f8d-0d98-44fd-b064-46ac13b19732",
+ "mechanism": "scripts/reprocess_idp.py --execute --fixture-id judgment-04-es-digital --prompt-version mismatch (job prompt label differs from deployed identity)",
+ "jobId": "4a76373d-9a59-4868-a191-f3e4b05a97b1",
+ "idpFailClosed": {"jobStatus": "FAILED within ~2 s (runtime.py:218-219 _fail_ambiguous)", "documentIdpStatus": "IDP_FAILED", "authorizedReadViaGateway": "IDP_FAILED projection read in reports b and c (resume validation passed)", "paidCalls": 0},
+ "ragFallback": "BLOCKED by runtime bug, see idp-live-rag-writer-diagnosis-20261013-a.json (reports -b and -c: selected_source_mismatch, operationStatus=error)",
+ "result": "PARTIAL"
+}
