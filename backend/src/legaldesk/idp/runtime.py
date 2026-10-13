@@ -488,7 +488,8 @@ def build_runtime(*, require_worker: bool = True) -> IDPRuntime:
             raise IDPRuntimeConfigurationError("IDP review Gateway configuration is required when review is enabled")
         ssm = boto3.client("ssm", region_name=config.region, config=sdk_config)
         token_provider = CognitoM2MTokenProvider(ssm_client=ssm, parameter_name=secret_name, token_endpoint=token_endpoint, client_id=client_id, scope=review_scope, timeout_seconds=15.0)
-        gateway = IDPMachineGatewayClient(gateway_url=gateway_url, token_provider=token_provider, timeout_seconds=15.0)
+        # A cold Gateway -> interceptor -> Review Lambda chain measured ~16 s live.
+        gateway = IDPMachineGatewayClient(gateway_url=gateway_url, token_provider=token_provider, timeout_seconds=40.0)
         invocation_repository = Boto3DynamoGatewayGrantRepository(config.table_name, table=table)
         review_dispatcher = lambda *, run, job: dispatch_review_after_persist(run=run, job=job, invocation_repository=invocation_repository, gateway=gateway, machine_client_id=client_id, scope=review_scope, job_repository=repository)
     processor = ProductionIDPProcessor(repository=repository, reader=reader, artifacts=artifacts, model_config=model_config, bedrock=bedrock, textract=textract, config=config, dynamo_table=table, review_dispatcher=review_dispatcher)

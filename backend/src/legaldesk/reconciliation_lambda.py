@@ -41,6 +41,24 @@ _MAX_LIMIT = 100
 _logger = logging.getLogger(__name__)
 _service: ReconciliationService | None = None
 _service_lock = Lock()
+# A cold Gateway -> interceptor -> Review Lambda chain measured ~16 s live, so
+# the machine review call needs more than the 15 s used for token fetches.
+# Each dispatch must also fit inside this Lambda's remaining invocation time.
+MACHINE_REVIEW_TIMEOUT_SECONDS = 40.0
+_REVIEW_DISPATCH_MARGIN_SECONDS = 10.0
+_remaining_time_ms: Any = None
+
+
+def _review_dispatch_has_budget() -> bool:
+    """Return whether one more machine review call fits in this invocation."""
+
+    if _remaining_time_ms is None:
+        return True
+    try:
+        remaining = float(_remaining_time_ms()) / 1000.0
+    except Exception:
+        return False
+    return remaining >= MACHINE_REVIEW_TIMEOUT_SECONDS + _REVIEW_DISPATCH_MARGIN_SECONDS
 
 
 def _review_run_is_current(*, document: object, run: object) -> bool:
@@ -235,7 +253,7 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
                 raise ReconciliationLambdaError("review recovery configuration is invalid")
             ssm = boto3.client("ssm", region_name=config.region, config=sdk_config)
             token_provider = CognitoM2MTokenProvider(ssm_client=ssm, parameter_name=secret_name, token_endpoint=token_endpoint, client_id=client_id, scope=review_scope, timeout_seconds=15.0)
-            gateway = IDPMachineGatewayClient(gateway_url=review_url, token_provider=token_provider, timeout_seconds=15.0)
+            gateway = IDPMachineGatewayClient(gateway_url=review_url, token_provider=token_provider, timeout_seconds=MACHINE_REVIEW_TIMEOUT_SECONDS)
             invocation_repository = Boto3DynamoGatewayGrantRepository(config.table_name, table=table)
 
             def recover_review_dispatch(*, tenant_id: str, matter_id: str, limit: int, _page: tuple[tuple[object, ...], str | None] | None = None) -> tuple[object, ...]:
@@ -291,6 +309,11 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
                                 job = matching[0] if len(matching) == 1 else None
                             if not _review_job_needs_dispatch(job):
                                 continue
+                            if not _review_dispatch_has_budget():
+                                # Leave the remaining runs for the next tick
+                                # rather than letting the Lambda time out with
+                                # a delivery left IN_FLIGHT.
+                                break
                             try:
                                 dispatch_review_after_persist(run=run, job=job, invocation_repository=invocation_repository, gateway=gateway, machine_client_id=client_id, scope=review_scope, job_repository=idp_repository)
                                 recovered.append(job)
@@ -369,6 +392,9 @@ def _get_service(config: ReconciliationConfig) -> ReconciliationService:
 def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict[str, object]:
     """Run one bounded scheduled pass and return only aggregate evidence."""
 
+    global _remaining_time_ms
+    remaining = getattr(_lambda_context, "get_remaining_time_in_millis", None)
+    _remaining_time_ms = remaining if callable(remaining) else None
     if not isinstance(event, Mapping):
         raise ReconciliationLambdaError("reconciliation event is invalid")
     try:
