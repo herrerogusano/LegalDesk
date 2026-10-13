@@ -359,16 +359,24 @@ class ProductionIDPProcessor(IDPProcessor):
         project = getattr(self.repository, "project_document_status", None)
         if callable(project):
             project(run=run)
-        if self.review_dispatcher is not None and run.status is IDPJobStatus.REVIEW_REQUIRED:
+        self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.PERSISTED)
+        done = self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.DONE, status=run.status)
+        # Review dispatch happens only after the claim-fenced (CAS) terminal
+        # checkpoint has made the job durably REVIEW_REQUIRED.  The delivery
+        # projection is conditioned on that status, so dispatching earlier
+        # always failed after writing an orphan invocation record.  A crash
+        # between DONE and dispatch leaves a REVIEW_REQUIRED job without a
+        # delivery state, which bounded reconciliation recovers; task
+        # creation is idempotent per run/field set.
+        if self.review_dispatcher is not None and run.status is IDPJobStatus.REVIEW_REQUIRED and done.status is IDPJobStatus.REVIEW_REQUIRED:
             try:
-                self.review_dispatcher(run=run, job=job)
+                self.review_dispatcher(run=run, job=done)
             except Exception:
                 # The invocation record is durable and recoverable; review
                 # dispatch ambiguity must not roll back the immutable run or
                 # alter the RAG lifecycle.
                 pass
-        self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.PERSISTED)
-        return self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.DONE, status=run.status)
+        return done
 
     def _fail_ambiguous(self, *, job: IDPJob, claim: IDPClaim) -> IDPJob:
         failed = self.repository.checkpoint_job(claim=claim, checkpoint=IDPCheckpoint.AMBIGUOUS, status=IDPJobStatus.FAILED)

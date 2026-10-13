@@ -32,6 +32,7 @@ from .models import (
     FieldPresence,
     IDPExtractionRun,
     IDPFieldResult,
+    IDPJobStatus,
 )
 
 
@@ -270,6 +271,55 @@ class Boto3DynamoIDPDecisionRepository:
         return tuple(values[:limit])
 
 
+_DISPATCH_FAILURE_REASONS = frozenset({
+    "token_unavailable", "transport_timeout", "transport_error", "http_status",
+    "response_too_large", "invalid_response", "jsonrpc_error", "tool_error",
+    "invalid_result", "target_error", "unexpected",
+})
+_TARGET_ERROR_CODES = frozenset({"access_denied", "invalid_request", "service_unavailable"})
+_GATEWAY_ERROR_CODES = frozenset({
+    "gateway_transport", "gateway_redirect", "gateway_response_too_large",
+    "gateway_invalid_response", "gateway_invalid_result", "gateway_tool_error",
+    "gateway_unavailable",
+})
+_ERROR_CLASS_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+class IDPReviewDispatchError(IDPReviewError):
+    """Closed-vocabulary machine dispatch failure; carries no payload text."""
+
+    def __init__(self, reason: str, *, http_status: object = None, rpc_error_code: object = None, target_error: object = None, error_class: object = None, gateway_code: object = None) -> None:
+        self.reason = reason if reason in _DISPATCH_FAILURE_REASONS else "unexpected"
+        self.http_status = http_status if isinstance(http_status, int) and not isinstance(http_status, bool) and 100 <= http_status <= 599 else None
+        self.rpc_error_code = rpc_error_code if isinstance(rpc_error_code, int) and not isinstance(rpc_error_code, bool) and -99999 <= rpc_error_code <= 99999 else None
+        self.target_error = target_error if target_error in _TARGET_ERROR_CODES else ("other" if target_error is not None else None)
+        self.error_class = error_class if isinstance(error_class, str) and _ERROR_CLASS_PATTERN.fullmatch(error_class) else None
+        self.gateway_code = gateway_code if gateway_code in _GATEWAY_ERROR_CODES else None
+        super().__init__("machine Gateway dispatch failed")
+
+    def log_fields(self) -> dict[str, object]:
+        return {"reason": self.reason, "httpStatus": self.http_status, "rpcErrorCode": self.rpc_error_code, "targetError": self.target_error, "errorClass": self.error_class, "gatewayCode": self.gateway_code}
+
+
+def _emit_dispatch_failure(*, job_id: object, invocation_id: str, exc: BaseException) -> None:
+    """Emit one bounded stdout line where AMBIGUOUS is decided.
+
+    Lambda keeps stdout regardless of the logger level.  Only closed codes,
+    numeric statuses and opaque server IDs are written: never tokens, request
+    or response bodies, document text or tenant/matter identifiers.
+    """
+    if isinstance(exc, IDPReviewDispatchError):
+        fields = exc.log_fields()
+    else:
+        cause = exc.__cause__
+        timed_out = isinstance(exc, TimeoutError) or isinstance(cause, TimeoutError) or isinstance(getattr(cause, "reason", None), TimeoutError)
+        code = getattr(exc, "code", None)
+        transport = timed_out or isinstance(exc, OSError) or code in _GATEWAY_ERROR_CODES
+        reason = "transport_timeout" if timed_out else "transport_error" if transport else "unexpected"
+        fields = IDPReviewDispatchError(reason, error_class=type(cause if transport and cause is not None else exc).__name__, gateway_code=code).log_fields()
+    print(json.dumps({"event": "idp_review_dispatch_failed", "jobId": job_id if isinstance(job_id, str) and len(job_id) <= 128 else None, "invocationId": invocation_id, "deliveryState": "AMBIGUOUS", **fields, "timestamp": int(time.time() * 1000)}, separators=(",", ":"), sort_keys=True), flush=True)
+
+
 class IDPReviewGateway(Protocol):
     """Gateway client boundary; implementations must use M2M, never a user JWT."""
 
@@ -341,25 +391,49 @@ class IDPMachineGatewayClient:
         self.tokens, self.transport, self.timeout = token_provider, transport or UrllibGatewayTransport(), timeout_seconds
 
     def dispatch(self, record: Any) -> Mapping[str, object]:
-        from ..gateway_client import GatewayHttpResponse, MCP_PROTOCOL_VERSION, _json_response, _payload_from_result
+        from ..gateway_client import GatewayHttpResponse, GatewayInvocationError, MCP_PROTOCOL_VERSION, _json_response, _payload_from_result
         invocation_id = getattr(record, "invocation_id", None)
         matter_id = getattr(record, "requested_matter_id", None)
         if not isinstance(invocation_id, str) or not isinstance(matter_id, str):
             raise IDPReviewError("machine invocation is invalid")
         request_id = str(uuid4())
         body = json.dumps({"jsonrpc": "2.0", "id": request_id, "method": "tools/call", "params": {"name": "review-task-lambda___create_review_task", "arguments": {"matterId": matter_id, "invocationId": invocation_id}}}, separators=(",", ":")).encode()
-        response = self.transport.post(self.url, body, {"Authorization": f"Bearer {self.tokens.token()}", "Content-Type": "application/json", "Accept": "application/json", "MCP-Protocol-Version": MCP_PROTOCOL_VERSION}, self.timeout)
-        if not isinstance(response, GatewayHttpResponse) or response.status < 200 or response.status >= 300:
-            raise IDPReviewError("machine Gateway dispatch failed")
+        try:
+            token = self.tokens.token()
+        except Exception as exc:
+            raise IDPReviewDispatchError("token_unavailable", error_class=type(exc).__name__) from exc
+        # Transport failures keep their original type for callers; the
+        # AMBIGUOUS log classifies them from the class/cause only.
+        response = self.transport.post(self.url, body, {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json", "MCP-Protocol-Version": MCP_PROTOCOL_VERSION}, self.timeout)
+        if not isinstance(response, GatewayHttpResponse):
+            raise IDPReviewDispatchError("invalid_response")
+        status = response.status if isinstance(response.status, int) and not isinstance(response.status, bool) else None
         if not isinstance(response.body, bytes) or len(response.body) > 64 * 1024:
-            raise IDPReviewError("machine Gateway response is too large")
+            raise IDPReviewDispatchError("response_too_large", http_status=status)
         try:
             payload = _json_response(response)
-            result = _payload_from_result(payload.get("result"))
         except Exception as exc:
-            raise IDPReviewError("machine Gateway response is invalid") from exc
-        if not isinstance(payload, Mapping) or payload.get("jsonrpc") != "2.0" or payload.get("id") != request_id or payload.get("error") is not None:
-            raise IDPReviewError("machine Gateway response is invalid")
+            ok_status = status is not None and 200 <= status < 300
+            raise IDPReviewDispatchError("invalid_response" if ok_status else "http_status", http_status=status, error_class=type(exc).__name__) from exc
+        rpc_error = payload.get("error")
+        if rpc_error is not None:
+            rpc_code = rpc_error.get("code") if isinstance(rpc_error, Mapping) else None
+            raise IDPReviewDispatchError("jsonrpc_error", http_status=status, rpc_error_code=rpc_code)
+        if status is None or not 200 <= status < 300:
+            raise IDPReviewDispatchError("http_status", http_status=status)
+        if payload.get("jsonrpc") != "2.0" or payload.get("id") != request_id:
+            raise IDPReviewDispatchError("invalid_response", http_status=status)
+        try:
+            result = _payload_from_result(payload.get("result"))
+        except GatewayInvocationError as exc:
+            raise IDPReviewDispatchError("tool_error" if exc.code == "gateway_tool_error" else "invalid_result", http_status=status, gateway_code=exc.code) from exc
+        # The Review target reports denials as a successful MCP result with a
+        # closed ``error`` code; that is not a delivered review task.
+        if result.get("error") is not None:
+            raise IDPReviewDispatchError("target_error", http_status=status, target_error=result.get("error"))
+        task_id = result.get("reviewTaskId")
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise IDPReviewDispatchError("invalid_result", http_status=status)
         return result
 
 
@@ -368,6 +442,21 @@ def dispatch_review_after_persist(*, run: IDPExtractionRun, job: Any, invocation
     review_fields = tuple(sorted(name for name, field_result in run.fields.items() if field_result.acceptance is FieldAcceptance.REVIEW_REQUIRED))
     if not review_fields:
         return None
+    if run.status is not IDPJobStatus.REVIEW_REQUIRED:
+        raise IDPReviewError("review dispatch run is not review-required")
+    # Check the durable job before writing any invocation record.  The
+    # delivery projection is conditioned on REVIEW_REQUIRED, so a job that is
+    # still in progress or terminal-FAILED could never be marked and would
+    # leave an orphan PENDING record behind.  The conditional projection
+    # writes below remain the authoritative race guard.
+    get_job = getattr(job_repository, "get_job", None)
+    if callable(get_job):
+        current = get_job(job.job_id)
+        if current is None or current.status is not IDPJobStatus.REVIEW_REQUIRED or (current.tenant_id, current.matter_id, current.document_id, current.document_sha256) != (run.tenant_id, run.matter_id, run.document_id, run.document_sha256):
+            raise IDPReviewError("review dispatch job is not review-required")
+        if current.review_delivery_state == "SENT":
+            return None
+        job = current
     from ..gateway_interceptor import IDPReviewInvocationRecord
     invocation_id = str(uuid4())
     record = IDPReviewInvocationRecord(invocation_id, machine_client_id, scope, IDP_REVIEW_PURPOSE, IDP_REVIEW_CREATE_TOOL, run.matter_id, run.document_id, run.run_id, run.document_sha256, job.correlation_id, review_fields, int(time.time()) + ttl_seconds, "PENDING")
@@ -381,7 +470,8 @@ def dispatch_review_after_persist(*, run: IDPExtractionRun, job: Any, invocation
         mark_delivery(job_id=job.job_id, state="IN_FLIGHT", invocation_id=record.invocation_id)
     try:
         result = gateway.dispatch(in_flight)
-    except Exception:
+    except Exception as exc:
+        _emit_dispatch_failure(job_id=getattr(job, "job_id", None), invocation_id=record.invocation_id, exc=exc)
         failed = IDPReviewInvocationRecord(record.invocation_id, record.machine_client_id, record.scope, record.purpose, record.tool_name, record.requested_matter_id, record.document_id, record.run_id, record.document_sha256, record.correlation_id, record.field_names, record.expires_at, "AMBIGUOUS")
         invocation_repository.update_idp_review_invocation(failed)
         if callable(mark_delivery):

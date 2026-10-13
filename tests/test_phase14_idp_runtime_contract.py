@@ -472,6 +472,62 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(duplicate.status, IDPJobStatus.REVIEW_REQUIRED)
         self.assertEqual(len(bedrock.calls), 2)
 
+    def _attach_real_review_dispatch(self, processor, repository, *, gateway_error: Exception | None = None):
+        """Wire the production dispatcher exactly as ``build_runtime`` does.
+
+        Only the Gateway transport is replaced.  The real in-memory job
+        repository enforces the REVIEW_REQUIRED precondition of
+        ``record_review_delivery``; a fake that skipped it hid the live bug.
+        """
+        from legaldesk.gateway_interceptor import InMemoryGatewayGrantRepository
+        from legaldesk.idp.review import dispatch_review_after_persist
+
+        invocations = InMemoryGatewayGrantRepository()
+        observed: list[tuple[str, str | None]] = []
+
+        class _Gateway:
+            def dispatch(inner, record):
+                durable = repository.get_job(record.run_id)
+                observed.append((durable.status.value, durable.checkpoint.value if durable.checkpoint else None))
+                if gateway_error is not None:
+                    raise gateway_error
+                return {"reviewTaskId": "review-idp-synthetic", "status": "OPEN"}
+
+        processor.review_dispatcher = lambda *, run, job: dispatch_review_after_persist(
+            run=run, job=job, invocation_repository=invocations, gateway=_Gateway(),
+            machine_client_id="synthetic-idp-machine", job_repository=repository,
+        )
+        return invocations, observed
+
+    def test_inline_review_dispatch_runs_after_durable_review_required_checkpoint(self) -> None:
+        repository, _metadata, _reader, processor, worker, _bedrock, _textract, _table, job = self._context(
+            "contract-01-en-digital-monthend.pdf", review_conflict=True
+        )
+        invocations, observed = self._attach_real_review_dispatch(processor, repository)
+        result = worker.process_message({"jobId": job.job_id})
+        self.assertEqual(result.status, IDPJobStatus.REVIEW_REQUIRED)
+        self.assertEqual(observed, [(IDPJobStatus.REVIEW_REQUIRED.value, "DONE")])
+        durable = repository.get_job(job.job_id)
+        self.assertEqual(durable.review_delivery_state, "SENT")
+        self.assertEqual(durable.review_task_id, "review-idp-synthetic")
+        states = [item["deliveryState"] for item in invocations.idp_invocations.values()]
+        self.assertEqual(states, ["SENT"])
+        self.assertEqual(durable.review_invocation_id, next(iter(invocations.idp_invocations.values()))["invocationId"])
+
+    def test_inline_review_dispatch_failure_is_recoverable_without_orphan_pending_record(self) -> None:
+        repository, _metadata, _reader, processor, worker, _bedrock, _textract, _table, job = self._context(
+            "contract-01-en-digital-monthend.pdf", review_conflict=True
+        )
+        invocations, observed = self._attach_real_review_dispatch(processor, repository, gateway_error=TimeoutError("synthetic"))
+        with mock.patch("sys.stdout", io.StringIO()):
+            result = worker.process_message({"jobId": job.job_id})
+        self.assertEqual(result.status, IDPJobStatus.REVIEW_REQUIRED)
+        self.assertEqual(len(observed), 1)
+        durable = repository.get_job(job.job_id)
+        self.assertEqual(durable.status, IDPJobStatus.REVIEW_REQUIRED)
+        self.assertEqual(durable.review_delivery_state, "AMBIGUOUS")
+        self.assertEqual([item["deliveryState"] for item in invocations.idp_invocations.values()], ["AMBIGUOUS"])
+
     def test_source_mutation_after_paid_extraction_never_promotes_run(self) -> None:
         for mutation in ("content", "deletion"):
             with self.subTest(mutation=mutation):
