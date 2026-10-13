@@ -962,7 +962,7 @@ class Boto3DynamoIDPRepository:
                 UpdateExpression="SET #status = :failed, #checkpoint = :ambiguous, #error = :error, #updated = :updated REMOVE #claim, #until",
                 ExpressionAttributeNames={"#status": "status", "#checkpoint": "checkpoint", "#error": "errorCode", "#updated": "updatedAt", "#claim": "claimToken", "#until": "claimedUntil", "#attempt": "attempt"},
                 ExpressionAttributeValues={":failed": IDPJobStatus.FAILED.value, ":ambiguous": IDPCheckpoint.AMBIGUOUS.value, ":error": "MAX_ATTEMPTS_EXHAUSTED", ":updated": now.isoformat(), ":expected_attempt": job.attempt, ":max": job.max_attempts, ":completed": IDPJobStatus.COMPLETED.value, ":review": IDPJobStatus.REVIEW_REQUIRED.value, ":skipped": IDPJobStatus.SKIPPED.value},
-                ConditionExpression="#attempt = :expected_attempt AND #attempt >= :max AND #status NOT IN (:completed, :review, :failed, :skipped)",
+                ConditionExpression="#attempt = :expected_attempt AND #attempt >= :max AND NOT (#status IN (:completed, :review, :failed, :skipped))",
             )
         except Exception as exc:
             raise IDPConcurrencyError("IDP attempt exhaustion transition lost its race") from exc
