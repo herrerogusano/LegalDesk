@@ -225,7 +225,11 @@ Resources:
                   - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt.metadata.json"
               - Sid: ReadOnlyIngestionStatus
                 Effect: Allow
-                Action: bedrock:GetIngestionJob
+                # Per-document status isolates one unparseable document
+                # (e.g. image-only PDF) instead of blocking the whole sync.
+                Action:
+                  - bedrock:GetIngestionJob
+                  - bedrock:GetKnowledgeBaseDocuments
                 Resource: !Ref KnowledgeBaseArn
               - !If
                 - IDPEnabled

@@ -301,5 +301,146 @@ class Phase14IngestionTests(unittest.TestCase):
         self.assertEqual(service.statuses[0]["operation_id"], "ing_opaque")
 
 
+BUCKET = "bucket-a"
+
+
+def _uri(document_id: str) -> str:
+    return f"s3://{BUCKET}/{_document(document_id).s3_key}"
+
+
+class _PerDocumentClient(_Client):
+    """Job is COMPLETE with an unrelated data-source failure; per-document statuses vary."""
+
+    def __init__(self, states: dict[str, str], *, failed: int = 1) -> None:
+        super().__init__(["COMPLETE"])
+        self.states = states
+        self.failed = failed
+        self.doc_calls: list[dict[str, Any]] = []
+
+    def get_ingestion_job(self, **kwargs: Any) -> Mapping[str, Any]:
+        return {"ingestionJob": {"status": "COMPLETE", "statistics": {"numberOfDocumentsFailed": self.failed}}}
+
+    def get_knowledge_base_documents(self, **kwargs: Any) -> Mapping[str, Any]:
+        self.doc_calls.append(kwargs)
+        details = []
+        for identifier in kwargs["documentIdentifiers"]:
+            uri = identifier["s3"]["uri"]
+            if uri in self.states:
+                details.append({"identifier": identifier, "status": self.states[uri]})
+        return {"documentDetails": details}
+
+
+class Phase14PerDocumentIngestionTests(unittest.TestCase):
+    def _run(self, client: Any, document_ids: tuple[str, ...]) -> tuple[Any, InMemoryDocumentMetadataRepository, Any]:
+        metadata = InMemoryDocumentMetadataRepository()
+        for document_id in document_ids:
+            metadata.save(_document(document_id))
+        service = AsyncKnowledgeBaseIngestionService(
+            client=client, object_verifier=_Objects(), metadata_repository=metadata,
+            state_store=InMemoryEphemeralStateStore(clock=lambda: 100.0),
+            knowledge_base_id="kb-a", data_source_id="ds-a", clock=lambda: 100.0, source_bucket=BUCKET,
+        )
+        operation = service.start(
+            subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=document_ids,
+            correlation_id="corr-a", idempotency_key="retry-a",
+        )
+        return service, metadata, operation
+
+    def _status(self, service: Any, operation: Any) -> Any:
+        return service.status(operation_id=operation.operation_id, subject="alice", tenant_id=TENANT, matter_id=MATTER)
+
+    def _doc_status(self, metadata: Any, document_id: str) -> DocumentStatus:
+        return metadata.get_for_scope(tenant_id=TENANT, matter_id=MATTER, document_id=document_id).status
+
+    def test_unrelated_data_source_failure_does_not_block_a_good_document(self) -> None:
+        client = _PerDocumentClient({_uri("doc-a"): "INDEXED"})
+        service, metadata, operation = self._run(client, ("doc-a",))
+        result = self._status(service, operation)
+        self.assertEqual(result.status, "INDEXED")
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.INDEXED)
+        self.assertEqual(client.doc_calls[0]["documentIdentifiers"], [{"dataSourceType": "S3", "s3": {"uri": _uri("doc-a")}}])
+
+    def test_failed_document_is_isolated_from_indexed_sibling(self) -> None:
+        client = _PerDocumentClient({_uri("doc-a"): "INDEXED", _uri("doc-b"): "FAILED"})
+        service, metadata, operation = self._run(client, ("doc-a", "doc-b"))
+        result = self._status(service, operation)
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.failed_document_count, 1)
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.INDEXED)
+        self.assertEqual(self._doc_status(metadata, "doc-b"), DocumentStatus.FAILED)
+
+    def test_unknown_or_missing_per_document_status_stays_pending(self) -> None:
+        for states in ({_uri("doc-a"): "IN_PROGRESS"}, {_uri("doc-a"): "SOMETHING_NEW"}, {}):
+            with self.subTest(states=states):
+                client = _PerDocumentClient(states)
+                service, metadata, operation = self._run(client, ("doc-a",))
+                result = self._status(service, operation)
+                self.assertEqual(result.status, "PENDING")
+                self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.PENDING_INGESTION)
+
+    def test_not_found_after_a_job_with_failures_is_a_terminal_failure(self) -> None:
+        # Image-only PDFs that fail KB parsing are never indexed: Bedrock reports NOT_FOUND.
+        client = _PerDocumentClient({_uri("doc-a"): "INDEXED", _uri("doc-b"): "NOT_FOUND"})
+        service, metadata, operation = self._run(client, ("doc-a", "doc-b"))
+        self.assertEqual(self._status(service, operation).status, "FAILED")
+        self.assertEqual(self._doc_status(metadata, "doc-b"), DocumentStatus.FAILED)
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.INDEXED)
+
+    def test_not_found_with_unknown_failure_count_stays_pending(self) -> None:
+        client = _PerDocumentClient({_uri("doc-a"): "NOT_FOUND"})
+        client.get_ingestion_job = lambda **kw: {"ingestionJob": {"status": "COMPLETE"}}  # type: ignore[method-assign]
+        service, metadata, operation = self._run(client, ("doc-a",))
+        self.assertEqual(self._status(service, operation).status, "PENDING")
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.PENDING_INGESTION)
+
+    def test_metadata_failure_states_are_not_served_as_indexed(self) -> None:
+        client = _PerDocumentClient({_uri("doc-a"): "METADATA_PARTIALLY_INDEXED"})
+        service, metadata, operation = self._run(client, ("doc-a",))
+        self.assertEqual(self._status(service, operation).status, "FAILED")
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.FAILED)
+
+    def test_mixed_unknown_leaves_every_document_pending(self) -> None:
+        client = _PerDocumentClient({_uri("doc-a"): "INDEXED", _uri("doc-b"): "PENDING"})
+        service, metadata, operation = self._run(client, ("doc-a", "doc-b"))
+        self.assertEqual(self._status(service, operation).status, "PENDING")
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.PENDING_INGESTION)
+
+    def test_provider_error_or_missing_api_fails_closed(self) -> None:
+        class _Raises(_PerDocumentClient):
+            def get_knowledge_base_documents(self, **kwargs: Any) -> Mapping[str, Any]:
+                raise RuntimeError("AccessDenied")
+
+        service, metadata, operation = self._run(_Raises({}), ("doc-a",))
+        self.assertEqual(self._status(service, operation).status, "PENDING")
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.PENDING_INGESTION)
+        legacy = _Client(["COMPLETE"])
+        legacy.get_ingestion_job = lambda **kw: {"ingestionJob": {"status": "COMPLETE", "statistics": {"numberOfDocumentsFailed": 1}}}  # type: ignore[method-assign]
+        service, metadata, operation = self._run(legacy, ("doc-a",))
+        self.assertEqual(self._status(service, operation).status, "PENDING")
+
+    def test_lookup_is_batched_by_ten_and_bounded(self) -> None:
+        ids = tuple(f"doc-{index:02d}" for index in range(20))
+        client = _PerDocumentClient({_uri(document_id): "INDEXED" for document_id in ids})
+        service, metadata, operation = self._run(client, ids)
+        self.assertEqual(self._status(service, operation).status, "INDEXED")
+        self.assertEqual([len(call["documentIdentifiers"]) for call in client.doc_calls], [10, 10])
+
+    def test_unexpected_extra_or_duplicate_details_fail_closed(self) -> None:
+        class _Extra(_PerDocumentClient):
+            def get_knowledge_base_documents(self, **kwargs: Any) -> Mapping[str, Any]:
+                identifier = kwargs["documentIdentifiers"][0]
+                detail = {"identifier": identifier, "status": "INDEXED"}
+                return {"documentDetails": [detail, dict(detail)]}
+
+        service, metadata, operation = self._run(_Extra({}), ("doc-a",))
+        self.assertEqual(self._status(service, operation).status, "PENDING")
+
+    def test_job_without_failures_does_not_call_per_document_api(self) -> None:
+        client = _PerDocumentClient({_uri("doc-a"): "INDEXED"}, failed=0)
+        service, metadata, operation = self._run(client, ("doc-a",))
+        self.assertEqual(self._status(service, operation).status, "INDEXED")
+        self.assertEqual(client.doc_calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
