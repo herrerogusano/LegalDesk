@@ -158,6 +158,16 @@ function selectBoundReviewField(reviewTask, requestedField = REVIEW_FIELD) {
   return fields.find(field => field && field.name === fieldName) || null;
 }
 
+function humanDecisionMismatchDiagnostic(payload) {
+  const isMapping = Boolean(payload) && typeof payload === "object" && !Array.isArray(payload);
+  const error = isMapping && typeof payload.error === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(payload.error) ? payload.error : null;
+  return {
+    humanDecisionPayloadKind: isMapping ? "object" : payload === null ? "null" : typeof payload,
+    humanDecisionError: error,
+    humanDecisionTaskIdPresent: isMapping && typeof payload.reviewTaskId === "string" && payload.reviewTaskId.length > 0,
+  };
+}
+
 function safeHash(value) { return typeof value === "string" && SHA256.test(value) ? value : null; }
 
 function assertDeadline() {
@@ -523,7 +533,12 @@ async function run() {
       const decision = await decisionResponse;
       assertResponseOk(decision, "human_decision_response", diagnostics);
       const decisionPayload = await decision.json();
-      if (!decisionPayload || decisionPayload.reviewTaskId !== reviewTask.reviewTaskId) throw new SmokeFailure("human_decision_binding_mismatch");
+      if (!decisionPayload || decisionPayload.reviewTaskId !== reviewTask.reviewTaskId) {
+        // The review target reports closed denials as a 200 body with a
+        // closed-vocabulary ``error`` code; record only that code.
+        Object.assign(diagnostics, humanDecisionMismatchDiagnostic(decisionPayload));
+        throw new SmokeFailure("human_decision_binding_mismatch");
+      }
       review = { status: "EXECUTED", action: REVIEW_ACTION, fieldName: reviewFieldName, taskId: reviewTask.reviewTaskId, documentId, runId: idp.runId };
     }
 
@@ -566,5 +581,5 @@ if (require.main === module) {
     catch (error) { process.stdout.write(`${JSON.stringify(closedFailure(error))}\n`); process.exitCode = 1; }
   })();
 } else {
-  module.exports = { readWithTransientRetry, SmokeFailure, classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, validateExistingMetadata, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
+  module.exports = { readWithTransientRetry, SmokeFailure, humanDecisionMismatchDiagnostic, classifySelectedResponse, parseMcpMetadata, quoteDigest, selectBoundReviewTask, selectBoundReviewField, validateExistingMetadata, safeResponseWait, responseJson, assertResponseOk, pageErrorDiagnostic };
 }

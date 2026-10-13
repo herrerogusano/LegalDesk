@@ -15,6 +15,7 @@ const {
   safeResponseWait,
   responseJson,
   pageErrorDiagnostic,
+  humanDecisionMismatchDiagnostic,
 } = require("./phase14_idp_live_browser.cjs");
 
 assert.deepStrictEqual(
@@ -86,3 +87,9 @@ responseJson({ ok: () => false, status: () => 403 }, "upload_authorization", sta
   await assert.rejects(readWithTransientRetry(async () => { calls += 1; throw new SmokeFailure("metadata_shape"); }, noSleep), /metadata_shape/);
   assert.strictEqual(calls, 1);
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+// Human-decision mismatch diagnostics keep only closed-vocabulary codes.
+assert.deepStrictEqual(humanDecisionMismatchDiagnostic({ error: "invalid_request" }), { humanDecisionPayloadKind: "object", humanDecisionError: "invalid_request", humanDecisionTaskIdPresent: false });
+assert.deepStrictEqual(humanDecisionMismatchDiagnostic({ error: "Free text with secrets", reviewTaskId: "review-x" }), { humanDecisionPayloadKind: "object", humanDecisionError: null, humanDecisionTaskIdPresent: true });
+assert.deepStrictEqual(humanDecisionMismatchDiagnostic(null), { humanDecisionPayloadKind: "null", humanDecisionError: null, humanDecisionTaskIdPresent: false });
+assert.deepStrictEqual(humanDecisionMismatchDiagnostic(["x"]), { humanDecisionPayloadKind: "object", humanDecisionError: null, humanDecisionTaskIdPresent: false });
