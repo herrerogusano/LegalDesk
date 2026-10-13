@@ -75,6 +75,29 @@ _APPLICATION_ALLOWED_TOOL_NAMES = frozenset(
 MAX_RAW_GATEWAY_BODY_BYTES = 64 * 1024
 _LOGGER = logging.getLogger(__name__)
 
+_IDP_MACHINE_DENY_STAGES = frozenset({
+    "configuration", "request_shape", "claims", "tool", "arguments",
+    "matter_selector", "invocation_id", "invocation_lookup",
+    "invocation_missing", "invocation_mismatch", "resolver",
+    "resolver_job", "resolver_deployment_scope", "resolver_run",
+    "resolver_source_metadata", "resolver_source_read", "resolver_fields",
+    "resolver_mismatch", "fields", "correlation", "grant",
+})
+
+
+class _IDPMachineDenied(AuthorizationDenied):
+    """Machine-path denial with a closed, non-sensitive diagnostic stage.
+
+    The client-visible error stays the generic ``access denied``; the stage
+    is written only to the interceptor's own log so an operator can tell a
+    claims/selector/invocation/resolver denial apart without tokens, bodies
+    or document data.
+    """
+
+    def __init__(self, stage: str) -> None:
+        self.stage = stage if stage in _IDP_MACHINE_DENY_STAGES else "resolver"
+        super().__init__("access denied")
+
 
 def _target_for_gateway_tool(tool_name: object) -> GatewayTarget:
     """Resolve only the exact Gateway and target-local tool names."""
@@ -627,11 +650,11 @@ def transform_idp_review_gateway_request(
     resolves all references against the durable run.
     """
     if not isinstance(machine_client_id, str) or not machine_client_id.strip():
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("configuration")
     mcp = event.get("mcp") if isinstance(event, Mapping) else None
     request = mcp.get("gatewayRequest") if isinstance(mcp, Mapping) else None
     if not isinstance(request, Mapping) or not isinstance(request.get("headers"), Mapping) or not isinstance(request.get("body"), Mapping):
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("request_shape")
     headers = request["headers"]
     claims = _decode_verified_claims(_header_selector(headers, "authorization"))
     client = claims.get("client_id") or claims.get("clientId")
@@ -639,55 +662,55 @@ def transform_idp_review_gateway_request(
     raw_scope = claims.get("scope", "")
     scopes = frozenset(raw_scope.split()) if isinstance(raw_scope, str) else frozenset(raw_scope) if isinstance(raw_scope, (list, tuple, set)) else frozenset()
     if client != machine_client_id or token_use != "access" or scope not in scopes:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("claims")
     body = request["body"]
     params = body.get("params")
     if not isinstance(params, Mapping) or params.get("name") not in {IDP_REVIEW_CREATE_TOOL, f"{GatewayTarget.REVIEW_LAMBDA.value}{GATEWAY_TOOL_DELIMITER}{IDP_REVIEW_CREATE_TOOL}", f"@legaldesk_gateway/{GatewayTarget.REVIEW_LAMBDA.value}{GATEWAY_TOOL_DELIMITER}{IDP_REVIEW_CREATE_TOOL}"}:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("tool")
     arguments = _normalize_arguments(params.get("arguments"))
     if set(arguments) - {"matterId", "invocationId"} or "invocationId" not in arguments:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("arguments")
     raw_request = mcp.get("rawGatewayRequest") if isinstance(mcp, Mapping) else None
     matter_id = _raw_matter_selector(raw_request)
     if arguments.get("matterId") not in {None, matter_id}:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("matter_selector")
     invocation_id = arguments.get("invocationId")
     try:
         invocation_id = str(UUID(invocation_id))
     except (ValueError, TypeError, AttributeError) as exc:
-        raise AuthorizationDenied("access denied") from exc
+        raise _IDPMachineDenied("invocation_id") from exc
     record_get = getattr(grant_repository, "get_idp_review_invocation", None)
     if not callable(record_get) or invocation_resolver is None:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("configuration")
     try:
         invocation = record_get(invocation_id)
     except Exception as exc:
-        raise AuthorizationDenied("access denied") from exc
+        raise _IDPMachineDenied("invocation_lookup") from exc
     required = {"pk", "sk", "entityType", "invocationId", "machineClientId", "scope", "purpose", "toolName", "requestedMatterId", "documentId", "runId", "documentSha256", "correlationId", "fieldNames", "expiresAt", "deliveryState", "ttl"}
     if not isinstance(invocation, Mapping) or set(invocation) != required or invocation.get("entityType") != IDP_REVIEW_INVOCATION_ENTITY or invocation.get("pk") != idp_review_invocation_partition_key(invocation_id) or invocation.get("sk") != GATEWAY_GRANT_SORT_KEY:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("invocation_missing")
     expires = invocation.get("expiresAt")
     if invocation.get("machineClientId") != machine_client_id or invocation.get("scope") != scope or invocation.get("purpose") != IDP_REVIEW_PURPOSE or invocation.get("toolName") != IDP_REVIEW_CREATE_TOOL or invocation.get("requestedMatterId") != matter_id or invocation.get("deliveryState") not in {"PENDING", "IN_FLIGHT", "AMBIGUOUS"} or isinstance(expires, bool) or not isinstance(expires, (int, float, Decimal)) or not math.isfinite(float(expires)) or float(expires) <= time.time():
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("invocation_mismatch")
     try:
         auth = invocation_resolver(invocation, machine_client_id)
     except Exception as exc:
-        raise AuthorizationDenied("access denied") from exc
+        raise _IDPMachineDenied(exc.stage if isinstance(exc, _IDPMachineDenied) else "resolver") from exc
     if not isinstance(auth, Mapping) or any(auth.get(key) != invocation.get(source) for key, source in (("matter_id", "requestedMatterId"), ("document_id", "documentId"), ("run_id", "runId"), ("document_sha256", "documentSha256"))):
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_mismatch")
     field_names = tuple(invocation.get("fieldNames", ()))
     if len(field_names) > 64 or any(not isinstance(item, str) or not item.strip() for item in field_names):
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("fields")
     correlation = invocation.get("correlationId")
     try:
         correlation = str(UUID(correlation))
     except (ValueError, TypeError, AttributeError) as exc:
-        raise AuthorizationDenied("access denied") from exc
+        raise _IDPMachineDenied("correlation") from exc
     grant_id = str(grant_id_factory())
     try:
         UUID(grant_id)
     except (ValueError, TypeError, AttributeError) as exc:
-        raise AuthorizationDenied("access denied") from exc
+        raise _IDPMachineDenied("grant") from exc
     grant = IDPReviewInvocationGrant(
         grant_id=grant_id, machine_client_id=machine_client_id, scope=scope,
         purpose=IDP_REVIEW_PURPOSE, requested_matter_id=matter_id,
@@ -698,7 +721,13 @@ def transform_idp_review_gateway_request(
     grant_repository.put_idp_review(grant)
     transformed_body = dict(body)
     transformed_params = dict(params)
-    transformed_arguments = {"_legaldeskGrantId": grant_id}
+    # The Review Lambda target schema declares ``matterId`` as required and
+    # AgentCore validates the transformed arguments after this interceptor.
+    # Dropping it made Gateway reject every machine call before the target
+    # ran.  Reinsert only the already-compared raw selector, which equals the
+    # durable invocation's requestedMatterId; the target ignores it and
+    # authorizes solely from the server-held grant.
+    transformed_arguments = {"matterId": matter_id, "_legaldeskGrantId": grant_id}
     transformed_params["arguments"] = transformed_arguments
     transformed_body["params"] = transformed_params
     return {"interceptorOutputVersion": "1.0", "mcp": {"transformedGatewayRequest": {"body": transformed_body}}}
@@ -754,28 +783,28 @@ def _idp_review_invocation_resolver(record: Mapping[str, object], machine_client
     """Resolve a machine request from the durable job locator/run, no Scan."""
     table_name = os.environ.get("IDP_TABLE_NAME") or os.environ.get("REVIEW_TASK_TABLE_NAME")
     if not table_name:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("configuration")
     from .idp.persistence import Boto3DynamoIDPRepository
     from .idp.models import FieldAcceptance, IDPJobStatus
     repository = Boto3DynamoIDPRepository(table_name)
     run_id, matter_id, document_id = record.get("runId"), record.get("requestedMatterId"), record.get("documentId")
     if not all(isinstance(value, str) and value.strip() for value in (run_id, matter_id, document_id)):
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_job")
     job = repository.get_job(run_id)
     if job is None or job.matter_id != matter_id or job.document_id != document_id:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_job")
     if not _idp_deployment_scope_allows(tenant_id=job.tenant_id, matter_id=matter_id):
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_deployment_scope")
     run = repository.get_run(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id, run_id=run_id)
     if run is None or run.status is not IDPJobStatus.REVIEW_REQUIRED or run.document_sha256 != record.get("documentSha256"):
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_run")
     if not run.source_key:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_run")
     from .documents import Boto3DynamoDocumentMetadataRepository
     metadata_repository = Boto3DynamoDocumentMetadataRepository(table_name)
     metadata = metadata_repository.get_for_scope(tenant_id=job.tenant_id, matter_id=job.matter_id, document_id=job.document_id)
     if metadata is None or metadata.s3_key != run.source_key:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_source_metadata")
     # Canonical uploads do not require custom S3 metadata.  Re-read the
     # authoritative bounded bytes and hash them at the authorization boundary;
     # a same-key/size mutation therefore cannot reuse a durable run.
@@ -793,10 +822,10 @@ def _idp_review_invocation_resolver(record: Mapping[str, object], machine_client
     try:
         Boto3IDPDocumentReader(metadata_repository, boto3.client("s3"), bucket_name=bucket, max_bytes=20 * 1024 * 1024).read(job=job, document=source_document)
     except Exception as exc:
-        raise AuthorizationDenied("access denied") from exc
+        raise _IDPMachineDenied("resolver_source_read") from exc
     fields = tuple(sorted(name for name, value in run.fields.items() if value.acceptance is FieldAcceptance.REVIEW_REQUIRED))
     if not fields:
-        raise AuthorizationDenied("access denied")
+        raise _IDPMachineDenied("resolver_fields")
     return {
         "tenant_id": run.tenant_id, "matter_id": run.matter_id, "document_id": run.document_id,
         "run_id": run.run_id, "document_sha256": run.document_sha256,
@@ -1499,12 +1528,18 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         # the presented client/scope/token_use does not match it.
         if _idp_scoped_client_claims(authorization) and (not machine_client_id or not _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope)):
             audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
+            audit["machineDenyStage"] = "configuration" if not machine_client_id else "claims"
+            _LOGGER.warning("gateway IDP machine authorization denied %s", json.dumps(audit, sort_keys=True))
             return _safe_error(event, authorization_code="ACCESS_DENIED")
         if machine_client_id and _configured_machine_client(authorization, machine_client_id=machine_client_id) and not _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope):
             audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
+            audit["machineDenyStage"] = "claims"
+            _LOGGER.warning("gateway IDP machine authorization denied %s", json.dumps(audit, sort_keys=True))
             return _safe_error(event, authorization_code="ACCESS_DENIED")
         if machine_client_id and _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope) and _local_gateway_tool_name(tool_name) != IDP_REVIEW_CREATE_TOOL:
             audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
+            audit["machineDenyStage"] = "tool"
+            _LOGGER.warning("gateway IDP machine authorization denied %s", json.dumps(audit, sort_keys=True))
             return _safe_error(event, authorization_code="ACCESS_DENIED")
         if _local_gateway_tool_name(tool_name) == IDP_REVIEW_CREATE_TOOL and machine_client_id and _idp_machine_claims(authorization, machine_client_id=machine_client_id, scope=machine_scope):
             response = transform_gateway_request(
@@ -1514,7 +1549,9 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
                 grant_repository=grants,
             )
             audit.update(_safe_decision_metadata(decision="ALLOW", code="ALLOW", target_invoked=False, tool_name=tool_name))
-            _LOGGER.info("gateway IDP machine authorization allowed %s", json.dumps(audit, sort_keys=True))
+            # Machine decisions are rare audit events; the Lambda runtime drops
+            # INFO by default, which hid every machine ALLOW in live logs.
+            _LOGGER.warning("gateway IDP machine authorization allowed %s", json.dumps(audit, sort_keys=True))
             return response
         store = _authorization_store_from_environment()
         if store is None:
@@ -1530,13 +1567,15 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         audit.update(_safe_decision_metadata(decision="ALLOW", code="ALLOW", target_invoked=False, tool_name=tool_name))
         _LOGGER.info("gateway authorization allowed %s", json.dumps(audit, sort_keys=True))
         return response
-    except AuthorizationDenied:
+    except AuthorizationDenied as exc:
         code = (
             "CROSS_MATTER"
             if audit["authorizationParsable"] and audit["matterSelectorPresent"] and audit["selectorConsistent"]
             else "ACCESS_DENIED"
         )
         audit.update(_safe_decision_metadata(decision="DENY", code=code, target_invoked=False, tool_name=tool_name))
+        if isinstance(exc, _IDPMachineDenied):
+            audit["machineDenyStage"] = exc.stage
         _LOGGER.warning("gateway authorization denied %s", json.dumps(audit, sort_keys=True))
         return _safe_error(event, authorization_code=code)
     except Exception:

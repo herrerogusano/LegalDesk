@@ -43,6 +43,28 @@ _service: ReconciliationService | None = None
 _service_lock = Lock()
 
 
+def _review_run_is_current(*, document: object, run: object) -> bool:
+    """Only a REVIEW_REQUIRED run that is the document's current pointer.
+
+    A superseded generation must not create a review task; redispatching it
+    every schedule only leaves orphan PENDING invocation records.  A missing
+    pointer (projection not yet written) stays eligible.
+    """
+    if getattr(run, "status", None) is not IDPJobStatus.REVIEW_REQUIRED:
+        return False
+    current_run_id = getattr(document, "idp_run_id", None)
+    return not (isinstance(current_run_id, str) and current_run_id and getattr(run, "run_id", None) != current_run_id)
+
+
+def _review_job_needs_dispatch(job: object) -> bool:
+    """The delivery projection requires a REVIEW_REQUIRED job.
+
+    A terminal-FAILED (or otherwise non-review) job can never be marked, so
+    it is skipped before any invocation record is written; SENT is done.
+    """
+    return job is not None and getattr(job, "status", None) is IDPJobStatus.REVIEW_REQUIRED and getattr(job, "review_delivery_state", None) != "SENT"
+
+
 class ReconciliationLambdaError(RuntimeError):
     """Closed boundary error; details never contain provider/config values."""
 
@@ -244,7 +266,7 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
                             document_id=document.document_id, limit=20,
                         ).runs
                         for run in runs:
-                            if run.status is not IDPJobStatus.REVIEW_REQUIRED or len(recovered) >= limit:
+                            if len(recovered) >= limit or not _review_run_is_current(document=document, run=run):
                                 continue
                             job = idp_repository.get_job(run.run_id)
                             # A run ID normally equals the producer job ID,
@@ -267,7 +289,7 @@ def _build_service(config: ReconciliationConfig) -> ReconciliationService:
                                     and candidate.created_at == run.created_at
                                 )
                                 job = matching[0] if len(matching) == 1 else None
-                            if job is None or job.review_delivery_state == "SENT":
+                            if not _review_job_needs_dispatch(job):
                                 continue
                             try:
                                 dispatch_review_after_persist(run=run, job=job, invocation_repository=invocation_repository, gateway=gateway, machine_client_id=client_id, scope=review_scope, job_repository=idp_repository)

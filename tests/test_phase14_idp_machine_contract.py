@@ -242,12 +242,14 @@ class MachineReviewContractTests(unittest.TestCase):
     def test_valid_machine_grant_reaches_real_review_repository_with_exact_actor_and_correlation(self) -> None:
         transformed = self._invoke(_event())
         grant_id = self._grant_id(transformed)
-        self.assertEqual(
-            set(transformed["mcp"]["transformedGatewayRequest"]["body"]["params"]["arguments"]),
-            {"_legaldeskGrantId"},
-        )
+        arguments = transformed["mcp"]["transformedGatewayRequest"]["body"]["params"]["arguments"]
+        # AgentCore validates the transformed arguments against the target
+        # schema (``matterId`` required) after the interceptor; dropping it
+        # rejected every live machine call before the Review Lambda ran.
+        self.assertEqual(set(arguments), {"matterId", "_legaldeskGrantId"})
+        self.assertEqual(arguments["matterId"], MATTER)
         with self._patches()[0], self._patches()[3], self._patches()[4], self._patches()[5], self._patches()[6], self._patches()[7]:
-            result = gateway_lambda_handler({"_legaldeskGrantId": grant_id}, None)
+            result = gateway_lambda_handler(dict(arguments), None)
         self.assertEqual(result.get("runId"), RUN, result)
         self.assertEqual(result.get("correlationId"), CORRELATION, result)
         self.assertEqual(len(self.review_table.items), 1)
@@ -610,6 +612,120 @@ class MachineReviewContractTests(unittest.TestCase):
         states = [item.get("deliveryState") for item in self.grants.idp_invocations.values()]
         self.assertEqual(states.count("AMBIGUOUS"), 1)
         self.assertNotIn("SENT", states)
+
+    def test_reconciliation_review_recovery_skips_superseded_runs_and_terminal_failed_jobs(self) -> None:
+        from legaldesk.reconciliation_lambda import _review_job_needs_dispatch, _review_run_is_current
+        document = _Metadata().document
+        run, job = self.locator.run, self.locator.job
+        self.assertTrue(_review_run_is_current(document=replace(document, idp_run_id=RUN), run=run))
+        # A projection that has not been written yet must not starve recovery.
+        self.assertTrue(_review_run_is_current(document=replace(document, idp_run_id=None), run=run))
+        self.assertFalse(_review_run_is_current(document=replace(document, idp_run_id="run-newer"), run=run))
+        self.assertFalse(_review_run_is_current(document=replace(document, idp_run_id=RUN), run=replace(run, status=IDPJobStatus.COMPLETED)))
+        self.assertTrue(_review_job_needs_dispatch(job))
+        self.assertTrue(_review_job_needs_dispatch(replace(job, review_delivery_state="AMBIGUOUS")))
+        self.assertFalse(_review_job_needs_dispatch(None))
+        self.assertFalse(_review_job_needs_dispatch(replace(job, review_delivery_state="SENT")))
+        self.assertFalse(_review_job_needs_dispatch(replace(job, status=IDPJobStatus.FAILED, checkpoint=IDPCheckpoint.AMBIGUOUS)))
+
+    def test_dispatch_for_non_review_job_writes_no_invocation_record_or_gateway_call(self) -> None:
+        class _Gateway:
+            calls = 0
+
+            def dispatch(inner, record):
+                inner.calls += 1
+                return {"reviewTaskId": "review-idp-synthetic"}
+
+        before = dict(self.grants.idp_invocations)
+        for status in (IDPJobStatus.FAILED, IDPJobStatus.PROCESSING):
+            repository = InMemoryIDPRepository()
+            repository.create_job(replace(self.locator.job, status=status, checkpoint=IDPCheckpoint.AMBIGUOUS if status is IDPJobStatus.FAILED else IDPCheckpoint.PERSISTED))
+            gateway = _Gateway()
+            with self.subTest(status=status.value), self.assertRaises(IDPReviewError):
+                dispatch_review_after_persist(run=self.locator.run, job=self.locator.job, invocation_repository=self.grants, gateway=gateway, machine_client_id=MACHINE_CLIENT, job_repository=repository)
+            self.assertEqual(gateway.calls, 0)
+            self.assertEqual(self.grants.idp_invocations, before)
+            self.assertIsNone(repository.get_job(RUN).review_delivery_state)
+
+    def test_machine_transformed_arguments_satisfy_deployed_review_tool_schema(self) -> None:
+        # AgentCore validates the interceptor output against the Lambda
+        # target InputSchema before invoking the target.  Bind the machine
+        # output to the deployed template, not to a hand-written expectation.
+        import re
+        template = (Path(__file__).parents[1] / "infra" / "cloudformation" / "phase-08-gateway-mcp.yaml").read_text(encoding="utf-8")
+        block = template.split("- Name: create_review_task", 1)[1].split("OutputSchema:", 1)[0]
+        required = set(re.findall(r"^\s+- (\w+)\s*$", block.split("Required:", 1)[1].split("Properties:", 1)[0], re.MULTILINE))
+        properties = set(re.findall(r"^ {22}(\w+):\s*$", block.split("Properties:", 1)[1], re.MULTILINE))
+        self.assertIn("matterId", required)
+        self.assertIn("_legaldeskGrantId", properties)
+        transformed = self._invoke(_event())
+        arguments = transformed["mcp"]["transformedGatewayRequest"]["body"]["params"]["arguments"]
+        self.assertLessEqual(required, set(arguments))
+        self.assertLessEqual(set(arguments), properties)
+
+    def test_machine_denial_logs_closed_stage_without_token_or_body(self) -> None:
+        token = _machine_token()
+        with self.assertLogs("legaldesk.gateway_interceptor", level="WARNING") as captured:
+            transformed = self._invoke(_event(matter="matter-b", token=token))
+        self.assertEqual(transformed["mcp"]["transformedGatewayResponse"]["statusCode"], 403)
+        line = "\n".join(captured.output)
+        self.assertIn('"machineDenyStage": "invocation_mismatch"', line)
+        self.assertNotIn(token, line)
+        self.assertNotIn(INVOCATION, line)
+        with self.assertLogs("legaldesk.gateway_interceptor", level="WARNING") as captured:
+            transformed = self._invoke(_event(token=_machine_token(scope="legaldesk/use")))
+        self.assertIn('"machineDenyStage": "claims"', "\n".join(captured.output))
+
+    def test_machine_allow_is_logged_at_a_level_lambda_keeps(self) -> None:
+        with self.assertLogs("legaldesk.gateway_interceptor", level="WARNING") as captured:
+            self._grant_id(self._invoke(_event()))
+        self.assertIn("gateway IDP machine authorization allowed", "\n".join(captured.output))
+
+    def test_dispatch_failure_log_is_closed_vocabulary_and_never_marks_target_denial_sent(self) -> None:
+        from legaldesk.gateway_client import GatewayHttpResponse
+
+        class _Token:
+            @staticmethod
+            def token() -> str:
+                return "synthetic-machine-token"
+
+        responses: list[tuple[int, dict[str, object] | None]] = []
+
+        class _Transport:
+            def post(inner, url, body, headers, timeout):
+                request = json.loads(body.decode("utf-8"))
+                status, result = responses.pop(0)
+                if result is None:
+                    payload: dict[str, object] = {"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32602, "message": "secret detail text"}}
+                else:
+                    payload = {"jsonrpc": "2.0", "id": request["id"], "result": {"content": [{"type": "text", "text": json.dumps(result)}]}}
+                return GatewayHttpResponse(status, "application/json", json.dumps(payload).encode("utf-8"))
+
+        gateway = IDPMachineGatewayClient(gateway_url="https://gateway.example.com", token_provider=_Token(), transport=_Transport())
+        cases = (
+            ((200, None), {"reason": "jsonrpc_error", "httpStatus": 200, "rpcErrorCode": -32602}),
+            ((400, None), {"reason": "jsonrpc_error", "httpStatus": 400, "rpcErrorCode": -32602}),
+            ((200, {"error": "access_denied"}), {"reason": "target_error", "targetError": "access_denied"}),
+            ((200, {"error": "free text from a target"}), {"reason": "target_error", "targetError": "other"}),
+            ((200, {"status": "OPEN"}), {"reason": "invalid_result"}),
+        )
+        for response, expected in cases:
+            responses.append(response)
+            stdout = io.StringIO()
+            with self.subTest(expected=expected), patch("sys.stdout", stdout):
+                with self.assertRaises(IDPReviewError):
+                    dispatch_review_after_persist(run=self.locator.run, job=self.locator.job, invocation_repository=self.grants, gateway=gateway, machine_client_id=MACHINE_CLIENT)
+                record = json.loads(stdout.getvalue().strip().splitlines()[-1])
+                self.assertEqual(record["event"], "idp_review_dispatch_failed")
+                self.assertEqual(record["deliveryState"], "AMBIGUOUS")
+                for key, value in expected.items():
+                    self.assertEqual(record[key], value)
+                self.assertNotIn("synthetic-machine-token", stdout.getvalue())
+                self.assertNotIn("secret detail", stdout.getvalue())
+                self.assertNotIn("free text", stdout.getvalue())
+                self.assertNotIn(MATTER, stdout.getvalue())
+        self.assertNotIn("SENT", [item.get("deliveryState") for item in self.grants.idp_invocations.values()])
+        self.assertEqual(len(self.review_table.items), 0)
 
 
 if __name__ == "__main__":
