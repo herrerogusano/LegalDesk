@@ -1002,9 +1002,9 @@ class Boto3DynamoDocumentMetadataRepository:
         # assertions while production callers can select boto3 conditions.
         self._boto3_backed = table is None or boto3_backed
         if table is None:
-            import boto3
+            from .aws_cache import dynamodb_table
 
-            table = boto3.resource("dynamodb").Table(table_name)
+            table = dynamodb_table(table_name)
         self.table = table
 
     @staticmethod

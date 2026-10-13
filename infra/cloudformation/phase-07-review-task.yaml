@@ -171,7 +171,7 @@ Resources:
         S3Bucket: !Ref ReviewTaskCodeBucket
         S3Key: !Ref ReviewTaskCodeKey
         S3ObjectVersion: !Ref ReviewTaskCodeVersion
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:

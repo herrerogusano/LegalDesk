@@ -46,6 +46,7 @@ _service_lock = Lock()
 # Each dispatch must also fit inside this Lambda's remaining invocation time.
 MACHINE_REVIEW_TIMEOUT_SECONDS = 40.0
 _REVIEW_DISPATCH_MARGIN_SECONDS = 10.0
+_INGESTION_DOCUMENT_MARGIN_SECONDS = 60.0
 _remaining_time_ms: Any = None
 
 
@@ -59,6 +60,17 @@ def _review_dispatch_has_budget() -> bool:
     except Exception:
         return False
     return remaining >= MACHINE_REVIEW_TIMEOUT_SECONDS + _REVIEW_DISPATCH_MARGIN_SECONDS
+
+
+def _ingestion_has_budget() -> bool:
+    """Return whether another per-document ingestion resolution fits."""
+
+    if _remaining_time_ms is None:
+        return True
+    try:
+        return float(_remaining_time_ms()) / 1000.0 >= _INGESTION_DOCUMENT_MARGIN_SECONDS
+    except Exception:
+        return False
 
 
 def _review_run_is_current(*, document: object, run: object) -> bool:
@@ -410,6 +422,22 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
             stale_after_seconds=config.ingestion_stale_seconds,
             limit_per_scope=config.limit_per_scope,
         ) if config.ingestion_scopes else ReconciliationReport()
+        # Subject-independent fallback: stale PENDING_INGESTION documents of the
+        # allowed tenant/matters, resolved per document through the KB status API.
+        pending_scopes = tuple(dict.fromkeys(
+            (*config.upload_scopes, *(ReconciliationScope(s.tenant_id, s.matter_id) for s in config.ingestion_scopes))
+        ))
+        pending_documents = service.reconcile_pending_ingestion_documents(
+            scopes=pending_scopes,
+            stale_after_seconds=config.ingestion_stale_seconds,
+            limit_per_scope=config.limit_per_scope,
+            has_budget=_ingestion_has_budget,
+        ) if pending_scopes and callable(getattr(service, "reconcile_pending_ingestion_documents", None)) else ReconciliationReport()
+        ingestion.examined += pending_documents.examined
+        ingestion.changed += pending_documents.changed
+        ingestion.skipped += pending_documents.skipped
+        ingestion.ambiguous += pending_documents.ambiguous
+        ingestion.failed += pending_documents.failed
         allowed_matters = tuple(sorted({
             *(scope.matter_id for scope in config.upload_scopes),
             *(scope.matter_id for scope in config.ingestion_scopes),

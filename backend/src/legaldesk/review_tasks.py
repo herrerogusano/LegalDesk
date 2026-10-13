@@ -1307,9 +1307,9 @@ def _repositories_from_environment() -> tuple[ReviewTaskRepository, Authorizatio
         != REVIEW_TASK_SCHEMA_VERSION
     ):
         return None
-    import boto3
+    from .aws_cache import dynamodb_table
 
-    table = boto3.resource("dynamodb").Table(table_name)
+    table = dynamodb_table(table_name)
     return (
         Boto3DynamoReviewTaskRepository(table_name, table=table),
         Boto3DynamoAuthorizationStore(table_name, table=table),
@@ -1321,16 +1321,11 @@ def _idp_artifact_store_from_environment(*, table: Any | None = None) -> tuple[A
     bucket = (os.environ.get("LEGALDESK_IDP_ARTIFACT_BUCKET") or os.environ.get("LEGALDESK_SOURCE_BUCKET") or "").strip()
     if not bucket:
         return None, None
-    import boto3
-    from botocore.config import Config
+    from .aws_cache import default_s3_config, s3_client
     from .documents import Boto3DynamoDocumentMetadataRepository
     from .idp.artifacts import Boto3S3IDPArtifactStore
     from .idp.runtime import Boto3IDPDocumentReader
-    s3 = boto3.client(
-        "s3",
-        region_name=os.environ.get("AWS_REGION"),
-        config=Config(connect_timeout=5, read_timeout=15, retries={"total_max_attempts": 1, "mode": "standard"}),
-    )
+    s3 = s3_client(region_name=os.environ.get("AWS_REGION"), config_factory=default_s3_config)
     artifact_store = Boto3S3IDPArtifactStore(bucket, client=s3)
     metadata = Boto3DynamoDocumentMetadataRepository(os.environ["REVIEW_TASK_TABLE_NAME"], table=table, boto3_backed=True)
     reader = Boto3IDPDocumentReader(metadata, s3, bucket_name=os.environ.get("LEGALDESK_SOURCE_BUCKET") or bucket, max_bytes=20 * 1024 * 1024)
@@ -1564,7 +1559,7 @@ def _handle_idp_machine_review_grant(grants: Any, grant_id: str, raw_grant: Mapp
         # result to the immutable job SHA.
         from .idp.runtime import Boto3IDPDocumentReader
         from .idp.models import DocumentForIDP
-        import boto3
+        from .aws_cache import s3_client
         metadata_document = getattr(metadata, "document", metadata)
         source_document = DocumentForIDP(
             tenant_id=getattr(metadata_document, "tenant_id", job.tenant_id), matter_id=getattr(metadata_document, "matter_id", job.matter_id),
@@ -1574,7 +1569,7 @@ def _handle_idp_machine_review_grant(grants: Any, grant_id: str, raw_grant: Mapp
         )
         try:
             Boto3IDPDocumentReader(
-                metadata_repository, boto3.client("s3"),
+                metadata_repository, s3_client(),
                 bucket_name=os.environ.get("LEGALDESK_SOURCE_BUCKET") or "__configured_source_bucket__",
                 max_bytes=20 * 1024 * 1024,
             ).read(job=job, document=source_document)
@@ -1594,9 +1589,9 @@ class Boto3DynamoReviewTaskRepository:
             raise ValueError("table_name is required")
         self.table_name = table_name
         if table is None:
-            import boto3
+            from .aws_cache import dynamodb_table
 
-            table = boto3.resource("dynamodb").Table(table_name)
+            table = dynamodb_table(table_name)
         self.table = table
 
     @staticmethod
@@ -1930,6 +1925,20 @@ class Boto3DynamoReviewTaskRepository:
                 raise ReviewTaskPersistenceError("review task archival failed") from exc
             archived.append(updated)
         return tuple(archived)
+
+
+def _prewarm_container() -> None:
+    """Build immutable AWS handles in the boosted-CPU init phase (Lambda only)."""
+
+    from .aws_cache import prewarm
+
+    prewarm(
+        tables=(os.environ.get("REVIEW_TASK_TABLE_NAME"),),
+        s3=bool(os.environ.get("LEGALDESK_IDP_ARTIFACT_BUCKET") or os.environ.get("LEGALDESK_SOURCE_BUCKET")),
+    )
+
+
+_prewarm_container()
 
 
 __all__ = [

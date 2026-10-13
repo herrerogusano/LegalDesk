@@ -391,9 +391,9 @@ class Boto3DynamoGatewayGrantRepository:
             raise ValueError("table_name is required")
         self.table_name = table_name
         if table is None:
-            import boto3
+            from .aws_cache import dynamodb_table
 
-            table = boto3.resource("dynamodb").Table(table_name)
+            table = dynamodb_table(table_name)
         self.table = table
 
     def put(self, grant: GatewayAuthorizationGrant) -> None:
@@ -808,7 +808,7 @@ def _idp_review_invocation_resolver(record: Mapping[str, object], machine_client
     # Canonical uploads do not require custom S3 metadata.  Re-read the
     # authoritative bounded bytes and hash them at the authorization boundary;
     # a same-key/size mutation therefore cannot reuse a durable run.
-    import boto3
+    from .aws_cache import s3_client
     from .idp.runtime import Boto3IDPDocumentReader
     from .idp.models import DocumentForIDP
     bucket = os.environ.get("LEGALDESK_SOURCE_BUCKET") or "__configured_source_bucket__"
@@ -820,7 +820,7 @@ def _idp_review_invocation_resolver(record: Mapping[str, object], machine_client
         malware_scan_clean=True, source_key=metadata.s3_key,
     )
     try:
-        Boto3IDPDocumentReader(metadata_repository, boto3.client("s3"), bucket_name=bucket, max_bytes=20 * 1024 * 1024).read(job=job, document=source_document)
+        Boto3IDPDocumentReader(metadata_repository, s3_client(), bucket_name=bucket, max_bytes=20 * 1024 * 1024).read(job=job, document=source_document)
     except Exception as exc:
         raise _IDPMachineDenied("resolver_source_read") from exc
     fields = tuple(sorted(name for name, value in run.fields.items() if value.acceptance is FieldAcceptance.REVIEW_REQUIRED))
@@ -1582,6 +1582,20 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         audit.update(_safe_decision_metadata(decision="DENY", code="ACCESS_DENIED", target_invoked=False, tool_name=tool_name))
         _LOGGER.exception("gateway authorization failed %s", json.dumps(audit, sort_keys=True))
         return _safe_error(event)
+
+
+def _prewarm_container() -> None:
+    """Build immutable AWS handles in the boosted-CPU init phase (Lambda only)."""
+
+    from .aws_cache import prewarm
+
+    prewarm(
+        tables=(os.environ.get("REVIEW_TASK_TABLE_NAME") or os.environ.get("DOCUMENT_METADATA_TABLE_NAME"),),
+        s3=bool(os.environ.get("LEGALDESK_SOURCE_BUCKET")),
+    )
+
+
+_prewarm_container()
 
 
 __all__ = [

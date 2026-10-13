@@ -72,6 +72,7 @@ _KB_DOCUMENT_INDEXED = {"INDEXED"}
 _KB_DOCUMENT_NOT_INDEXED = {"FAILED", "METADATA_UPDATE_FAILED", "METADATA_PARTIALLY_INDEXED"}
 _KB_DOCUMENT_BATCH = 10  # GetKnowledgeBaseDocuments documentIdentifiers max
 _MAX_DOCUMENTS_PER_OPERATION = 20
+_MAX_RECONCILED_DOCUMENTS = 100
 
 
 class IngestionConflictError(ValueError):
@@ -520,6 +521,61 @@ class AsyncKnowledgeBaseIngestionService:
         except Exception:
             return None
         return found if len(found) == len(uris) else None
+
+    def resolve_documents_independently(
+        self, *, tenant_id: str, matter_id: str, documents: Sequence[Document],
+    ) -> dict[str, DocumentStatus]:
+        """Resolve documents one by one without an ingestion operation record.
+
+        Used by reconciliation for documents whose operation row is gone or
+        belongs to another subject. Only an explicit per-document INDEXED
+        (-> INDEXED) or FAILED-class status (-> FAILED) is returned. NOT_FOUND
+        is never terminal here: without a job there is no proof that the
+        document was ever submitted, so it stays pending (fail closed). Errors,
+        malformed or foreign details only omit the affected batch/document.
+        """
+
+        getter = getattr(self.client, "get_knowledge_base_documents", None)
+        bucket = self.source_bucket
+        if getter is None or not bucket or not tenant_id or not matter_id:
+            return {}
+        uris: dict[str, str] = {}
+        for document in documents[:_MAX_RECONCILED_DOCUMENTS]:
+            if document.tenant_id != tenant_id or document.matter_id != matter_id or not document.s3_key:
+                continue
+            uris[f"s3://{bucket}/{document.s3_key}"] = document.document_id
+        found: dict[str, DocumentStatus] = {}
+        pending = list(uris)
+        for index in range(0, len(pending), _KB_DOCUMENT_BATCH):
+            batch = pending[index:index + _KB_DOCUMENT_BATCH]
+            try:
+                response = getter(
+                    knowledgeBaseId=self.knowledge_base_id, dataSourceId=self.data_source_id,
+                    documentIdentifiers=[{"dataSourceType": "S3", "s3": {"uri": uri}} for uri in batch],
+                )
+            except Exception:
+                continue
+            details = response.get("documentDetails") if isinstance(response, Mapping) else None
+            if not isinstance(details, list) or len(details) > len(batch):
+                continue
+            batch_found: dict[str, DocumentStatus] = {}
+            valid = True
+            for detail in details:
+                identifier = detail.get("identifier") if isinstance(detail, Mapping) else None
+                s3 = identifier.get("s3") if isinstance(identifier, Mapping) else None
+                uri = s3.get("uri") if isinstance(s3, Mapping) else None
+                state = detail.get("status") if isinstance(detail, Mapping) else None
+                document_id = uris.get(uri) if isinstance(uri, str) and uri in batch else None
+                if document_id is None or document_id in batch_found or not isinstance(state, str):
+                    valid = False
+                    break
+                if state in _KB_DOCUMENT_INDEXED:
+                    batch_found[document_id] = DocumentStatus.INDEXED
+                elif state in _KB_DOCUMENT_NOT_INDEXED:
+                    batch_found[document_id] = DocumentStatus.FAILED
+            if valid:
+                found.update(batch_found)
+        return found
 
     def _normalize_documents(
         self, operation: IngestionOperationRecord, *, target_status: DocumentStatus | None = None,

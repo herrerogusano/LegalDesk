@@ -562,8 +562,9 @@ class Boto3DynamoIDPRepository:
     def __init__(self, table_name: str, *, table: Any | None = None, transaction_client: Any | None = None, allow_non_atomic_test_adapter: bool = False) -> None:
         self.table_name = table_name
         if table is None:
-            import boto3
-            table = boto3.resource("dynamodb").Table(table_name)
+            from ..aws_cache import dynamodb_table
+
+            table = dynamodb_table(table_name)
         self.table = table
         # Use the resource's client by default: its before-call hook performs
         # exactly one native-value serialization.  Keep explicit injection
