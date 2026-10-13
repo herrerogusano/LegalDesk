@@ -2,5 +2,7 @@
   {"ParameterKey": "ExistingApplicationRoleArn", "ParameterValue": "arn:aws:iam::344774635844:role/LegalDeskPhase14PublicEdge-ApplicationExecutionRole-X3hgVtmlHWXr"},
   {"ParameterKey": "ApplicationFunctionArn", "ParameterValue": "arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskPhase14PublicEdge-application"},
   {"ParameterKey": "CloudFrontDistributionArn", "ParameterValue": "arn:aws:cloudfront::344774635844:distribution/E7WKOUXC5SCOX"},
-  {"ParameterKey": "PublicApiIntegrationArn", "ParameterValue": "arn:aws:apigateway:eu-west-1::/apis/k7z9nuofg4/integrations/gs2d6w4"}
+  {"ParameterKey": "PublicApiIntegrationArn", "ParameterValue": "arn:aws:apigateway:eu-west-1::/apis/k7z9nuofg4/integrations/gs2d6w4"},
+  {"ParameterKey": "OriginAccessControlArn", "ParameterValue": "arn:aws:cloudfront::344774635844:origin-access-control/E1V3HWAMJJ437C"},
+  {"ParameterKey": "ResponseHeadersPolicyArn", "ParameterValue": "arn:aws:cloudfront::344774635844:response-headers-policy/449093f1-2ce6-45e7-a9a1-f97a0d731fdc"}
 ]

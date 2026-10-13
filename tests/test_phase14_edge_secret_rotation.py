@@ -124,8 +124,8 @@ class RotationTests(unittest.TestCase):
         _run(cfn, "review-only")
         self.assertEqual([kind for kind, _ in cfn.writes], ["create", "delete"])
 
-    def test_preflight_requires_update_complete(self) -> None:
-        cfn = FakeCfn(GOOD, status="UPDATE_ROLLBACK_COMPLETE")
+    def test_preflight_requires_a_stable_stack(self) -> None:
+        cfn = FakeCfn(GOOD, status="UPDATE_IN_PROGRESS")
         _, _, error = _run(cfn, "execute")
         self.assertIsInstance(error, rot.RotationError)
         self.assertEqual(cfn.writes, [])

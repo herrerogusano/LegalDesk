@@ -72,6 +72,10 @@ class Phase14EdgeRotationBootstrapTests(unittest.TestCase):
                 {"Ref": "CloudFrontDistributionArn"},
             ),
             "ReadAndPatchOnlyExistingApiIntegration": ({"apigateway:GET", "apigateway:PATCH"}, {"Ref": "PublicApiIntegrationArn"}),
+            "ReadOnlyDistributionDependencies": (
+                {"cloudfront:GetOriginAccessControl", "cloudfront:GetResponseHeadersPolicy"},
+                [{"Ref": "OriginAccessControlArn"}, {"Ref": "ResponseHeadersPolicyArn"}],
+            ),
             "DescribeRegionalLogGroupMetadataOnly": ({"logs:DescribeLogGroups"}, "*"),
         }
         self.assertEqual(set(self.by_sid), set(expected))
@@ -100,7 +104,7 @@ class Phase14EdgeRotationBootstrapTests(unittest.TestCase):
 
     def test_parameters_are_exact_patterns_and_params_file_matches(self) -> None:
         parameters = self.template["Parameters"]
-        self.assertEqual(set(parameters), {"ExistingApplicationRoleArn", "ApplicationFunctionArn", "CloudFrontDistributionArn", "PublicApiIntegrationArn"})
+        self.assertEqual(set(parameters), {"ExistingApplicationRoleArn", "ApplicationFunctionArn", "CloudFrontDistributionArn", "PublicApiIntegrationArn", "OriginAccessControlArn", "ResponseHeadersPolicyArn"})
         import re
 
         values = {item["ParameterKey"]: item["ParameterValue"] for item in json.loads(PARAMS.read_text(encoding="utf-8"))}

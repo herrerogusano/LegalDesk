@@ -62,7 +62,8 @@ def build_parameters(keys: Sequence[str], secret: str | None, quota: int) -> lis
 
 def preflight(cfn: Any, cloudfront: Any, distribution_id: str) -> tuple[list[str], list[str]]:
     stack = cfn.describe_stacks(StackName=STACK_NAME)["Stacks"][0]
-    if stack["StackStatus"] != "UPDATE_COMPLETE":
+    # A completed rollback is also a stable, updatable state.
+    if stack["StackStatus"] not in ("UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"):
         raise RotationError("stack_not_update_complete")
     status = cloudfront.get_distribution(Id=distribution_id)["Distribution"]["Status"]
     if status != "Deployed":
@@ -143,7 +144,7 @@ def rotate(*, cfn: Any, cloudfront: Any, lambda_client: Any, distribution_id: st
            generate: Callable[[], str] | None = None) -> int:
     """mode: dry-run | review-only | execute."""
     keys, capabilities = preflight(cfn, cloudfront, distribution_id)
-    _log(f"preflight ok: stack UPDATE_COMPLETE, distribution Deployed, {len(keys)} parameters")
+    _log(f"preflight ok: stack stable, distribution Deployed, {len(keys)} parameters")
     _log(f"plan: rotate {SECRET_PARAMETER}, set {QUOTA_PARAMETER}={quota}, others UsePreviousValue, RoleARN supplied")
     if mode == "dry-run":
         _log("dry-run: no change set created")

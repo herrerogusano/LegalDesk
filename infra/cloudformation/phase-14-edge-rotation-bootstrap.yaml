@@ -26,6 +26,14 @@ Parameters:
     Type: String
     AllowedPattern: "^arn:aws:apigateway:eu-west-1::/apis/k7z9nuofg4/integrations/gs2d6w4$"
     Description: Exact existing API integration dependency; no other API resource is in scope
+  OriginAccessControlArn:
+    Type: String
+    AllowedPattern: "^arn:aws:cloudfront::344774635844:origin-access-control/[A-Z0-9]+$"
+    Description: Exact existing frontend origin access control (read-only dependency)
+  ResponseHeadersPolicyArn:
+    Type: String
+    AllowedPattern: "^arn:aws:cloudfront::344774635844:response-headers-policy/[a-f0-9-]+$"
+    Description: Exact existing edge response headers policy (read-only dependency)
 
 Resources:
   EdgeRotationCloudFormationRole:
@@ -78,6 +86,16 @@ Resources:
                   - cloudfront:ListTagsForResource
                   - cloudfront:UpdateDistribution
                 Resource: !Ref CloudFrontDistributionArn
+              - Sid: ReadOnlyDistributionDependencies
+                Effect: Allow
+                # CloudFormation resolves these GetAtt/Ref dependencies while
+                # updating the distribution; read-only, exact resources.
+                Action:
+                  - cloudfront:GetOriginAccessControl
+                  - cloudfront:GetResponseHeadersPolicy
+                Resource:
+                  - !Ref OriginAccessControlArn
+                  - !Ref ResponseHeadersPolicyArn
               - Sid: ReadAndPatchOnlyExistingApiIntegration
                 Effect: Allow
                 Action:
