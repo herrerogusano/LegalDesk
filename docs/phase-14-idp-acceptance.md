@@ -289,19 +289,27 @@ Cited from `docs/idp-live-validation-plan.md` section 7 and
 - CloudFront default certificate fixes the viewer TLS policy at legacy
   `TLSv1`; accepted as a beta-level residual risk by the owner
   (`docs/phase-14-production-approval.md`); not strict-TLS production readiness.
-- Cold start takes about 7 s per Gateway hop; the machine dispatch timeout was
-  widened (`a52508a`), but the API latency alarm (3 s) flapped during smokes.
-  Improvement follow-up, not a blocker.
+- Cold start (resolved in the hardening release): first requests took about
+  6 s per Gateway hop because boto3 handles were built per request at 256 MB.
+  Handles are now cached per container and prewarmed at init, and the
+  interceptor, metadata MCP and review task run at 512 MB. Measured after
+  deploy: ~1.9 s init plus ~120 ms first request (was ~1 s + ~6 s).
 - RAG answers for the skip and failed-IDP documents: routing to RAG is proven
   (retrieval and writer ran after `89b84ca`), but the contextual-grounding
   guardrail fails the short synthetic answers closed (grounding 0.12 vs 0.75;
   `-skip-h`, `-failed-idp-rag-e`). RAG guardrail thresholds were intentionally
   not changed: accepted RAG behavior from earlier phases, and the plan forbids
-  changing RAG regression behavior. Not an IDP defect.
-- KB per-document reconciliation covers only the configured beta subject;
-  documents of ephemeral smoke users were resolved by the operator
-  (`-recovery-a`).
-- The `scripts/reprocess_idp.py` operator ARN is the IAM user, not a role.
+  changing RAG regression behavior. Not an IDP defect. Controlled guardrail
+  variants showed the block is on RELEVANCE for short questions whose answer
+  does not restate the subject; a writer prompt 1.5.0 asking for that
+  restatement was deployed, did not unblock these documents, and was reverted
+  to the holdout-approved 1.4.0 (`-skip-i`, `-failed-idp-rag-f`).
+- KB per-document reconciliation (resolved in the hardening release): stale
+  `PENDING_INGESTION` documents of any uploader in the allowed matters are now
+  resolved through a bounded keyed matter query (no scan); `NOT_FOUND` without
+  a failed job stays pending (fail closed).
+- The `scripts/reprocess_idp.py` operator ARN is the IAM user (now `aws login`
+  temporary credentials with MFA; the permanent access key was deleted).
 - One legacy document row keeps a stale `idpReason` (not exposed by the API).
 - One unexplained 15 s `internal_error` during concurrent smoke traffic
   (untraced).
