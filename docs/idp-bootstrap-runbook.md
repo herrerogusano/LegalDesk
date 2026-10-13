@@ -97,8 +97,21 @@ metadata permission. No log content or write permission was added. Document
 Security and Reconciliation are `UPDATE_COMPLETE`, Review Task and Gateway
 are `UPDATE_COMPLETE`, and the corrected Public Edge update reached
 `UPDATE_COMPLETE`. The original code-only production role is restored and
-confirmed; temporary bootstrap-stack deletion remains pending. These statuses
-do not authorize enablement.
+confirmed; the temporary bootstrap stack was deleted and is absent from
+`DescribeStacks`. These statuses do not authorize enablement.
+
+The subsequent first-smoke updates `idp-enable-6b16c17`,
+`idp-producer-6b16c17`, and `idp-recovery-6b16c17` reached `UPDATE_COMPLETE`.
+Both IDP event-source mappings are enabled with batch size 1 and maximum
+concurrency 2; processing and machine review are enabled for this bounded
+smoke. The classifier and extractor prompt labels are both `1.0.2`. The beta
+inventory contains five documents, including two clean canonical TXT documents;
+no PDF backfill was performed. The first live digital smoke did not PASS; its
+outcome and retained resume state are recorded in
+`docs/idp-deployment-evidence-2026-10-09.md`. CI `37958343470` at commit `6b16c17` passed the immutable
+artifact gate; the retained artifact SHA-256 is
+`eb35a2b958c0489ef56f19c44ea581a859700678a3977ba7db9b58bcfd75ca9a`, with S3
+version `9rqKn7qLwtoTwhQDyASCz1O4euI0xZfj`.
 
 ### Evaluation and collector checkpoint (2026-10-09)
 

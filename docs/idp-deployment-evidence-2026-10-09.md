@@ -25,6 +25,10 @@ to finish the phase. No real legal documents or personal passwords are used.
 - Approved EU Sonnet 4.6 profile is `ACTIVE` with six EU model destinations.
   Public regional Textract price list was rechecked: SKU `HV3WZRSJSH5TPZZ6`,
   first-million async text-detection pages USD 0.0015/page.
+- CI `37958343470` at commit `6b16c17` passed the immutable artifact gate.
+  The retained artifact SHA-256 is
+  `eb35a2b958c0489ef56f19c44ea581a859700678a3977ba7db9b58bcfd75ca9a`, S3
+  version `9rqKn7qLwtoTwhQDyASCz1O4euI0xZfj`.
 
 ## Disabled-first infrastructure
 
@@ -37,10 +41,12 @@ bucket, KMS key, fixed-capacity service or enabled event-source mapping.
 `EnableIDPProcessing=false` and `EnableIDPReviewDispatch=false`.
 The stack reached `CREATE_COMPLETE`. Read-back confirmed both IDP Lambda
 functions have reserved concurrency `0` and no event-source mapping. The
-disabled-first rollout is therefore deployed without an active worker or OCR
-consumer.
+disabled-first rollout was therefore initially deployed without an active
+worker or OCR consumer. The later bounded enablement is recorded in the first
+enabled smoke checkpoint below.
 
-The same consolidated rollout read back `UPDATE_COMPLETE` for
+At this historical disabled-first checkpoint, the same consolidated rollout
+read back `UPDATE_COMPLETE` for
 `LegalDeskPhase14DocumentSecurity`, `LegalDeskPhase14Reconciliation`, and
 `LegalDeskPhase07ReviewTask`. `LegalDeskPhase08Gateway` is `UPDATE_COMPLETE`.
 The first `LegalDeskPhase14PublicEdge` update rolled back safely to
@@ -48,14 +54,46 @@ The first `LegalDeskPhase14PublicEdge` update rolled back safely to
 `logs:DescribeLogGroups` to resolve the existing `LogsLogGroupArn` dependency,
 but the temporary role did not yet have that regional metadata permission.
 No log content or write permission was involved. The corrected Public Edge
-update then reached `UPDATE_COMPLETE`; the temporary role remains bound and
-still requires restoration to the original code-only role. These are
-control-plane statuses, not evidence that processing or machine review is
-enabled.
+update then reached `UPDATE_COMPLETE`; the original code-only role was
+subsequently restored and the temporary bootstrap stack was deleted after
+proof. These are control-plane statuses, not evidence that processing or
+machine review is enabled.
 
 The exact Cognito client was validated before the secret transfer. The helper
 passed and wrote Standard `SecureString` parameter version 1 without logging
-or outputting the secret. Review dispatch remains disabled.
+or outputting the secret. Review dispatch was disabled at this historical
+checkpoint; the first enabled smoke is recorded below.
+
+## First enabled smoke checkpoint
+
+The reviewed first-smoke updates reached `UPDATE_COMPLETE`:
+`idp-enable-6b16c17` for `LegalDeskPhase14IDP`,
+`idp-producer-6b16c17` for Document Security, and
+`idp-recovery-6b16c17` for Reconciliation. Both IDP event-source mappings are
+enabled with batch size 1 and maximum concurrency 2. Processing and machine
+review are enabled for this bounded first smoke. The classifier and extractor
+prompt labels are both `1.0.2`.
+
+The beta inventory contains five documents, including two clean canonical TXT
+documents; no PDF backfill was performed. The first live digital smoke is
+running and is not yet PASS. This checkpoint does not claim full evaluation,
+OCR production continuation, or AWS E2E acceptance.
+
+## First live digital smoke outcome
+
+Immutable reports `evals/results/idp-live-digital-20261009-{a,b,c}.json` and
+`...-c-stage-observation.json` record the attempts. Runs `a` and `b` stopped
+before upload (harness navigation/diagnostics; temporary identities and grants
+were cleaned up). Run `c` uploaded the synthetic contract, which reached
+`INDEXED` with `NO_THREATS_FOUND`; classifier and extractor stages committed
+(two Bedrock calls, 2,525 input / 792 output tokens, no OCR). The run was
+saved as `IDP_REVIEW_REQUIRED` but the public pointer was not promoted:
+diagnosis `LEGACY_DYNAMODB_NULL_GENERATION_REJECTED_BY_PROJECTION_CONDITION`.
+The runner then failed on the decoded Gateway metadata shape. Fixes
+`4556bb6`, `840b8c0` and `10f8c01` are committed but not deployed. The
+synthetic document, its IDP artifacts and one `idp-work-dlq` message are
+retained so the same job can resume with committed-stage reuse instead of
+repeating inference. Smoke `c` is not PASS.
 
 ## Public-edge service-role constraint
 
@@ -70,8 +108,9 @@ safely because CloudFormation also required regional `logs:DescribeLogGroups`
 metadata access to resolve `LogsLogGroupArn`; no log content or write access
 was granted. The corrected Public Edge update reached `UPDATE_COMPLETE`, and
 the reviewed integration URI has no intended semantic change. The original
-code-only role is restored and confirmed; temporary bootstrap-stack deletion is
-pending. No account-wide IAM grant is authorized or needed.
+code-only role is restored and confirmed. The temporary bootstrap stack was
+then deleted; `DescribeStacks` reports it does not exist. No account-wide IAM
+grant is authorized or needed.
 
 ## Canary result (not acceptance)
 
@@ -99,8 +138,8 @@ as real-model acceptance, or as zero cost.
   for the public path and HTTP 403 for the protected path; this is not an AWS
   E2E acceptance run. The original
   `LegalDeskProductionCloudFormation` service role was restored and the stack
-  returned `UPDATE_COMPLETE`; deletion of the temporary bootstrap stack is
-  still pending.
+  returned `UPDATE_COMPLETE`; the temporary bootstrap stack was then deleted
+  and `DescribeStacks` confirms that it does not exist.
 - Four immutable contract reports (`a`, `diagnostic-b`, `schema-fixed-c`,
   `nullable-d`) preserve failed/unknown attempts rather than overwriting them.
   The diagnostic identifies extractor provider validation. Isolated synthetic
@@ -120,7 +159,8 @@ as real-model acceptance, or as zero cost.
 - The targeted canonical-normalization report
   `evals/results/idp-ocr-targeted-20261009-j.json` completed
   `judgment-03-en-mixed-interpretive` with `REVIEW_REQUIRED` after the earlier
-  H/I anchor failures. All IDP consumers remain disabled.
+  H/I anchor failures. IDP consumers are enabled only for the bounded first
+  smoke, which is not yet PASS.
 - The compact internal array schema is decoded into the unchanged persisted
   mapping, with duplicate/name/coverage and existing typed/evidence validation.
   Extractor prompt is now `1.0.2`. An isolated synthetic schema check succeeded
@@ -135,16 +175,17 @@ as real-model acceptance, or as zero cost.
 - The OCR collector artifact `idp-ocr-collection-20261009-g.json` is complete
   for eight synthetic PDFs as whole PDFs (11 pages, bounded at 22 pages); this
   is not production Textract continuation evidence. New worker duplicate-proof
-  telemetry is pending the next CI release.
+  telemetry is pending the next CI release. The first live digital smoke is
+  running and is not yet PASS.
 
 ## Validation still outstanding
 
-Machine Gateway acceptance, processing enablement, real-model/OCR acceptance,
-real AWS E2E, temporary-stack cleanup, and worker duplicate telemetry remain
-open. Failed canaries and review-required canaries are not phase acceptance.
-The OCR collector is not production continuation proof, and IDP consumers
-remain disabled. No production Textract continuation has been accepted at this
-checkpoint.
+Machine Gateway acceptance, first-smoke completion, real-model/OCR acceptance,
+real AWS E2E, and worker duplicate telemetry remain open. Failed canaries and
+review-required canaries are not phase acceptance. The OCR collector is not
+production continuation proof. IDP consumers are enabled only for the bounded
+first smoke, which is not yet PASS; no production Textract continuation has
+been accepted at this checkpoint.
 Storage/deployment/control-plane activity is not asserted free. A successful
 offline gate or `CREATE_COMPLETE`/`UPDATE_COMPLETE` status is not phase
 acceptance.
@@ -157,8 +198,8 @@ acceptance.
 - The existing Public Edge service role
   `arn:aws:iam::344774635844:role/LegalDeskProductionCloudFormation` was
   restored through a reviewed successful stack update and confirmed by the
-  original `RoleARN`; delete the temporary bootstrap stack only after its
-  cleanup is separately confirmed.
+  original `RoleARN`; temporary bootstrap stack deletion was subsequently
+  confirmed because `DescribeStacks` reports that the stack does not exist.
 - For the new IDP stack and disabled existing-stack updates, use the reviewed
   CloudFormation change-set/template history and the pre-update immutable code
   versions captured by the operator; no unrecorded rollback identifier is

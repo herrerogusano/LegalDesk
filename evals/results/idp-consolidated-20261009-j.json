@@ -125,7 +125,7 @@
     "case_errors": {
       "ACCEPTANCE_MISMATCH": 17,
       "EVIDENCE_MISSING": 3,
-      "FIELD_MISSING": 1,
+      "FIELD_MISSING": 0,
       "ORACLE_ANCHOR_MISMATCH": 15,
       "ORIGIN_MISMATCH": 11,
       "VALUE_DIGEST_INVALID": 10
@@ -133,7 +133,7 @@
     "field_evidence_errors": {
       "ACCEPTANCE_MISMATCH": 59,
       "EVIDENCE_MISSING": 6,
-      "FIELD_MISSING": 7,
+      "FIELD_MISSING": 0,
       "ORACLE_ANCHOR_MISMATCH": 35,
       "ORIGIN_MISMATCH": 21,
       "VALUE_DIGEST_INVALID": 31
@@ -164,10 +164,16 @@
       "textract_pages": 11
     },
     "unknown_failed_attempts": {
-      "prior_contract_canary_a_bedrock_calls": 2,
+      "prior_contract_canaries": {
+        "a": 2,
+        "b": 2,
+        "c": 2,
+        "d": 2
+      },
+      "prior_contract_canary_bedrock_calls": 8,
       "h_failed_records": 2,
       "i_failed_records": 1,
-      "note": "failed-record token allocation is unknown; the estimate uses only supplied observed token totals and is not a billing statement"
+      "note": "failed-canary token usage and failed-record allocation are unknown; the estimate uses only supplied observed token totals and is not a billing statement"
     },
     "effective_fixture_usage": {
       "bedrock_calls": 36,
@@ -178,7 +184,7 @@
   },
   "limitations": [
     "This is a metadata-only consolidated evaluation; raw document text, values, quotes, and prompts are excluded.",
-    "The 1.0.1 and 1.0.2 classifier prompts cover only three targeted follow-up records; this is not full new-prompt coverage.",
+    "Classifier coverage is 1.0.0 on 15 records, 1.0.1 on 2 targeted records, and 1.0.2 on 1 targeted record; this is not full new-prompt coverage.",
     "Classification matches and review-required statuses do not establish field accuracy, accepted anchors, or phase acceptance.",
     "Effective fixture totals exclude superseded failed attempts; cost totals separately count all source Bedrock calls and count the OCR collector artifacts once."
   ]

@@ -110,21 +110,25 @@ queries and UI now have local coverage. GitHub Actions run `37950049115`
 passed 770 Python tests, browser behavior gates, strict IaC lint and the
 extracted Lambda artifact checks on Linux/Python 3.12. Real evaluation and
 AWS E2E remain in progress.
-IDP infrastructure is deployed disabled; the machine Gateway configuration is
-updated and Public Edge is `UPDATE_COMPLETE` after the log-group dependency
-fix. The temporary bootstrap role remains bound pending restoration to the
-code-only production role. Real provider schema diagnostics required a compact
-internal wire adapter. The immutable compact canary and nine-document corpus
-reports are recorded, while OCR collection and worker duplicate telemetry
-remain in progress. Full evaluation/AWS E2E and phase acceptance remain
-pending; see `docs/idp-deployment-evidence-2026-10-09.md`.
+IDP infrastructure is in the bounded first smoke: both event-source mappings
+are enabled with batch size 1 and maximum concurrency 2, while processing and
+machine review use prompt labels `1.0.2`. The machine Gateway configuration and
+Public Edge are updated; the original code-only role was restored and the
+temporary bootstrap stack was deleted after proof. Real provider schema
+diagnostics required a compact internal wire adapter. The first live digital
+smoke (report `c`) uploaded and committed both model stages but did not
+publish: legacy DynamoDB `NULL` fields and the decoded Gateway metadata
+envelope were fixed afterwards in `4556bb6`…`10f8c01`, which are not yet
+deployed. The smoke is not PASS; full evaluation/AWS E2E and phase
+acceptance remain pending. See `docs/idp-deployment-evidence-2026-10-09.md`.
 
 Auditoría: `CONSTRAINED_PROD_BETA_DEPLOYED` (ver
 `docs/production-readiness.md`). Fases 00–13 conservan su aceptación acotada.
 La infraestructura de beta autenticada de Fase 14 está desplegada y la
-evidencia final de smoke, holdout y operaciones está registrada. El TLS por
-defecto de CloudFront queda documentado como riesgo residual aceptado; no se
-afirma strict TLS ni certificación para datos legales reales.
+evidencia final de smoke, holdout y operaciones está registrada; la extensión
+IDP descrita arriba sigue en su propio smoke acotado y no altera esa evidencia.
+El TLS por defecto de CloudFront queda documentado como riesgo residual aceptado; no
+se afirma strict TLS ni certificación para datos legales reales.
 
 - [x] Phase 13 integration, bounded live smoke and local release hardening (413 tests; 24/24 deterministic evaluations; local HTTP/browser E2E; final AWS browser smoke PASS through Cognito, upload/ingestion, RAG, direct Gateway→MCP/Lambda tools, cross-matter denial, audit and logout; verified teardown; fail-closed endpoint/retrieval hardening; Phase 14 promotion evidence follows the constrained-beta scope)
 

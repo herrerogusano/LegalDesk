@@ -156,9 +156,9 @@ tokens, and the OCR collector's 16 Get calls over 11 pages. Using the
 owner-reviewed `eu-west-1` assumptions of $3.30 per million input tokens,
 $16.50 per million output tokens, and $0.0015 per Textract page gives an
 explicit observed-usage estimate of **$0.3226476 USD before tax**. This is an
-estimate, not a bill. Prior failed canary A adds two calls with unknown token
-usage; failed H/I record-level allocations are also unknown and are not
-silently priced.
+estimate, not a bill. Prior failed canaries A, B, C, and D each add two calls
+with unknown token usage (eight calls total); failed H/I record-level
+allocations are also unknown and are not silently priced.
 
 The same evaluator found these metadata-level errors (not silently converted
 into accuracy claims): case-level `ACCEPTANCE_MISMATCH` 17,
@@ -168,9 +168,44 @@ counts were respectively 59, 6, 0, 35, 21, and 31. These counters include
 known contract/export mismatches and require review; they do not authorize
 accepting weak anchors.
 
-The extractor `1.0.2` is present across all 18 records, but classifier `1.0.1`
-and `1.0.2` cover only three targeted follow-ups. This is not full new-prompt
-coverage. The historical `COMPLETED` label on review fields in
+### Offline error triage before acceptance
+
+This triage was reproduced offline from the manifest and immutable compact-e,
+F, H, I, and J exports using the documented supersession order. It emits no
+source text and does not rewrite any raw digest. The 31 field-level
+`VALUE_DIGEST_INVALID` findings are not malformed present-value hashes: every
+one has an explicit null `valueDigest` with observed presence `ABSENT`,
+`UNKNOWN`, or `NOT_APPLICABLE`. There are zero present fields with a
+non-hex/invalid supplied digest. Separately, 20 present fields have a valid
+64-hex digest that differs from the fixture value digest; three of those are
+`AUTO_ACCEPTED` `initial_duration_unit` fields (contract fixtures 01, 03, and
+05). Their semantic correctness cannot be established from digest-only
+exports, so those three are material blockers for auto-acceptance.
+
+Acceptance mismatches are mostly conservative policy differences: expected
+`AUTO_ACCEPTED` became `REVIEW_REQUIRED` (35) or `PROVISIONAL` (9). Four
+expected-auto fields became `UNAVAILABLE`, while five expected-review fields
+became unavailable. Conversely, six expected-unavailable fields produced a
+value (two each observed as auto, provisional, and review); these require
+field-level review and must not be treated as successful extraction. No
+expected-review field was downgraded to `AUTO_ACCEPTED`.
+
+The 21 origin mismatches are 20 expected `LITERAL` versus observed
+`INTERPRETIVE` (11 provisional, 9 review) and one expected `INTERPRETIVE`
+versus observed `LITERAL` (review). These affect policy routing but none is an
+observed auto-accepted origin mismatch. The 35 oracle-anchor mismatches have
+valid page bounds and content hashes matching both the observed and fixture
+document hashes; only the `(page, quoteDigest)` pair differs from the fixture
+oracle. A digest-only export cannot prove that an alternate quote is valid or
+fabricated, so no oracle relaxation is justified; source-backed revalidation
+remains required.
+
+The extractor `1.0.2` is present across all 18 records, but classifier
+`1.0.0` covers 15 records, `1.0.1` covers 2 targeted records, and `1.0.2`
+covers 1 targeted record. The
+first-smoke deployment now pins classifier and extractor `1.0.2`; this
+historical export is not full new-prompt coverage. The historical `COMPLETED`
+label on review fields in
 the digital corpus is preserved as an export-enum erratum and is interpreted
 under the corrected review-required contract. The earlier failed exports and
 the collection-only OCR metadata remain immutable; the OCR collector is counted
