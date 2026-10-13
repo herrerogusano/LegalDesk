@@ -278,3 +278,44 @@ requests, and—only after processing is enabled—Bedrock/Textract usage. No ne
 fixed-charge service, alarm topic, bucket, table, KMS key, Step Functions
 state machine, or Gateway target is introduced. No deployment or paid call
 has been made by this plan.
+
+## Trusted-edge secret rotation
+
+Rotates `TrustedEdgeSecret` (Lambda `LEGALDESK_TRUSTED_EDGE_VALUE` and the
+CloudFront origin header `X-LegalDesk-Trusted-Edge`) and sets
+`QuotaGatewayPerMonth=300` in one parameter-only Public Edge update. The
+code-only `LegalDeskProductionCloudFormation` role cannot update Lambda
+configuration or the distribution and must not be widened, so a temporary role
+is used for this one update (`infra/cloudformation/phase-14-edge-rotation-bootstrap.yaml`;
+exact ARNs in its `.params.json`). It has no `iam:PutRolePolicy`, no S3, and no
+Lambda code update.
+
+1. Deploy the temporary role stack `LegalDeskPhase14EdgeRotationBootstrap`
+   (review the change set, then execute it; `CAPABILITY_IAM`).
+2. Run `scripts/rotate_public_edge_secret.py` without flags (dry run, read-only
+   AWS calls), then with `--review-only` plus the approval string (creates,
+   validates and deletes a change set), then with `--execute`. The script
+   refuses any change other than `Modify` with no replacement on
+   `ApplicationFunction`, `PublicDistribution` and optionally
+   `PublicApiIntegration`. The secret is generated in memory, never printed or
+   written, and it reports only booleans (sha256 matches, quota, `Deployed`).
+3. Verify: log in through the CloudFront URL, `/api` returns 200 for an
+   authenticated call, and the direct API Gateway URL without the header
+   returns 403.
+4. Expect a 5-15 minute window in which API calls through CloudFront return 403:
+   Lambda switches to the new value immediately while CloudFront keeps the old
+   header until the distribution is `Deployed`. Do not retry the rotation during
+   the window.
+5. The stack's `RoleARN` now records the temporary role. Restore it with the next
+   code deploy: `scripts/deploy_release.py ... --execution-role-arn
+   arn:aws:iam::344774635844:role/LegalDeskProductionCloudFormation`, and confirm
+   with `DescribeStacks` that `RoleARN` is the original before the next step.
+6. Only after that proof delete the temporary stack
+   `LegalDeskPhase14EdgeRotationBootstrap`.
+
+Rollback: the old secret is not recoverable by design. If verification fails,
+re-run the script (it generates a fresh secret) while the temporary role is still
+in place; do not delete the temporary stack until the stack is `UPDATE_COMPLETE`
+and all verification booleans are true. If the stack ends in
+`UPDATE_ROLLBACK_COMPLETE`, CloudFormation restores the previous parameter values
+(the exposed secret), so rotate again after fixing the cause.
