@@ -96,6 +96,8 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
       }],
     },
   };
+  // Mirrors the backend: each conversation owns its latest chat correlation.
+  const conversationCorrelation = new Map();
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");
     const chunks = [];
@@ -112,6 +114,7 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
         else if (url.pathname === "/api/conversations" && request.method === "POST") {
           const matterId = parsed && parsed.matterId;
           payload = matterId === "matter-2" ? { conversationId: "conversation-2", sessionId: "session-2", correlationId: "corr-2" } : { conversationId: "conversation-1", sessionId: "session-1", correlationId: "corr-1" };
+          conversationCorrelation.set(payload.conversationId, payload.correlationId);
         }
         else if (url.pathname === "/api/matters/matter-1/documents") payload = { documents: [
           { documentId: "doc-1", matterId: "matter-1", name: "contrato.pdf", status: "INDEXED", fileSizeBytes: 10, uploadedAt: "2026-10-01T00:00:00Z" },
@@ -128,7 +131,8 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
           const isSecond = args.documentId === "doc-2" || args.documentId === "doc-3";
           const matterId = args.documentId === "doc-3" ? "matter-2" : "matter-1";
           const older = Boolean(args.historyCursor);
-          payload = { status: "SUCCESS", tool: "@legaldesk_gateway/metadata-mcp___get_document_metadata", result: {
+          // The backend binds the envelope to the conversation-owned correlation.
+          payload = { status: "SUCCESS", tool: "@legaldesk_gateway/metadata-mcp___get_document_metadata", correlationId: conversationCorrelation.get(parsed.conversationId), result: {
             document: { documentId: args.documentId, matterId, name: args.documentId === "doc-3" ? "segundo.pdf" : isSecond ? "anexo.pdf" : "contrato.pdf", status: "INDEXED" },
             ...(isSecond ? {} : { idp: { status: "IDP_COMPLETED", runId: "run-1", documentSha256: "a".repeat(64), documentType: "CONTRACT", fields: [{ name: "amount", valueType: "number" }], history: older ? [{ runId: "run-0", status: "IDP_FAILED", createdAt: "2026-09-01T00:00:00Z" }] : [{ runId: "run-1", status: "IDP_COMPLETED", createdAt: "2026-10-01T00:00:00Z" }], nextCursor: older ? null : "older-1" } }),
           }};
@@ -136,6 +140,7 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
           if (chatFailures) { chatFailures -= 1; status = 500; payload = { error: "failed" }; }
           else if (parsed && (parsed.selectedDocumentId === "doc-2" || parsed.selectedDocumentId === "doc-3")) payload = { answer: "La respuesta canónica sigue disponible desde las fuentes autorizadas.", citations: [], evidenceStatus: "answerable", operationStatus: "ok", correlationId: "corr-fallback" };
           else payload = { answer: "Importe: 1250 EUR. Origen: LITERAL. requiere revisión humana.", idpMetadata: { field: "amount", value: 1250, presence: "PRESENT", origin: "LITERAL", acceptance: "REVIEW_REQUIRED", evidence: [{ page: 2, quote: "1.250 EUR", contentSha256: "b".repeat(64) }] }, citations: [{ citationId: "citation-1", documentId: "doc-1", documentName: "contrato.pdf", pageNumber: 2 }], evidenceStatus: "ambiguous", disclaimerRequired: true, operationStatus: "ok", correlationId: "corr-2" };
+          if (status === 200 && parsed) conversationCorrelation.set(parsed.conversationId, payload.correlationId);
         }
         const finish = () => { if (!response.headersSent) { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(payload)); } };
         if (url.pathname === "/api/chat" && delayNextChat) { delayNextChat = false; setTimeout(finish, 120); } else finish();
