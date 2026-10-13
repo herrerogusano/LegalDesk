@@ -1534,7 +1534,9 @@
       const idpDecision = idpDecisionPayload(field, action, reasonValue, proposedValue, evidenceOverride);
       await api(`/api/matters/${encodeURIComponent(state.matterId)}/reviews/${encodeURIComponent(task.reviewTaskId)}`, {
         method: "PATCH",
-        body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, status, resolutionNote: String(reasonValue).trim(), originCorrelationId: state.correlationId, idpDecision }),
+        // The decision carries its own reason; the backend accepts a task-level
+        // resolutionNote only on the closing transition.
+        body: JSON.stringify({ conversationId: state.conversationId, sessionId: state.sessionId, status, ...(status === "closed" ? { resolutionNote: String(reasonValue).trim() } : {}), originCorrelationId: state.correlationId, idpDecision }),
         signal: state.controller.signal,
       });
       if (!isCurrent(generation)) return;

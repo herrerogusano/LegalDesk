@@ -93,6 +93,19 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
           evidence: [{ page: 2, quote: "1.250 EUR", contentSha256: "b".repeat(64) }],
         },
         applicableDecisions: [],
+      }, {
+        // A second undecided field makes the first decision an in_review
+        // transition, the case the live AWS smoke rejected on 2026-10-13.
+        name: "effective_date",
+        valueType: "date",
+        result: {
+          value: "2024-01-31",
+          presence: "PRESENT",
+          origin: "LITERAL",
+          acceptance: "REVIEW_REQUIRED",
+          evidence: [{ page: 1, quote: "31 January 2024", contentSha256: "c".repeat(64) }],
+        },
+        applicableDecisions: [],
       }],
     },
   };
@@ -125,7 +138,12 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
         else if (url.pathname === "/api/matters/matter-1/reviews" && request.method === "GET") payload = { tasks: [idpReviewTask] };
         else if (url.pathname === "/api/matters/matter-2/reviews" && request.method === "GET") payload = { tasks: [] };
         else if (url.pathname === "/api/matters/matter-1/reviews" && request.method === "POST") { reviewPostBody = parsed; payload = { reviewTaskId: "created-review" }; }
-        else if (url.pathname === "/api/matters/matter-1/reviews/idp-review-1" && request.method === "PATCH") { reviewPatchBody = parsed; payload = { ...idpReviewTask, status: "in_review" }; }
+        else if (url.pathname === "/api/matters/matter-1/reviews/idp-review-1" && request.method === "PATCH") {
+          // Mirrors review_tasks._transition_task: a task-level note is only
+          // valid on the closing transition.
+          if (parsed && parsed.status !== "closed" && parsed.resolutionNote) { status = 400; payload = { error: "invalid_request" }; }
+          else { reviewPatchBody = parsed; payload = { ...idpReviewTask, status: "in_review" }; }
+        }
         else if (url.pathname === "/api/mcp" && parsed && parsed.params && parsed.params.name === "get_document_metadata") {
           const args = parsed.params.arguments || {};
           const isSecond = args.documentId === "doc-2" || args.documentId === "doc-3";
@@ -221,8 +239,8 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
     await page.locator("#workspace-tab-reviews").click();
     const review = page.locator('details[data-review-id="idp-review-1"]');
     await review.locator("summary").click();
-    const correct = review.locator('button[data-idp-action="CORRECT"]');
-    assert.equal(await review.locator("button").count(), 3, await review.innerText());
+    const correct = review.locator('button[data-idp-action="CORRECT"][data-idp-field="amount"]');
+    assert.equal(await review.locator('button[data-idp-field="amount"]').count(), 3, await review.innerText());
     await correct.click();
     const reviewReason = review.locator('textarea[data-idp-reason="amount"]');
     const correction = review.locator('[data-idp-correction="amount"]');
@@ -251,6 +269,9 @@ console.log(JSON.stringify({ result: "PASS", test: "phase14-idp-frontend" }));
     assert.match(await page.locator("#app-status").innerText(), /Decisión de campo guardada|Todos los campos han quedado resueltos/, `unexpected app status: ${await page.locator("#app-status").innerText()} / error: ${await page.locator("#app-error").innerText()}`);
     assert.equal(reviewPatchBody.idpDecision.fieldName, "amount");
     assert.equal(reviewPatchBody.idpDecision.action, "CORRECT");
+    assert.equal(reviewPatchBody.status, "in_review");
+    assert.equal(Object.hasOwn(reviewPatchBody, "resolutionNote"), false, "in_review decisions carry their reason inside idpDecision");
+    assert.equal(reviewPatchBody.idpDecision.reason.length > 0, true);
     assert.equal(reviewPatchBody.idpDecision.proposedValue, 1300);
     assert.equal(reviewPatchBody.idpDecision.evidence[0].page, 4);
     assert.equal(reviewPatchBody.idpDecision.evidence[0].quote, "Total revisado: 1.300 EUR");
