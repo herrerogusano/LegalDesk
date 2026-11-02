@@ -94,8 +94,10 @@ de pruebas en vivo.
 3. Fiabilidad: como máximo 1 reintento y solo ante errores transitorios;
    estado, intento y plazo del job con escrituras condicionales (idempotencia
    frente a reintentos y entregas duplicadas de SQS); DLQ con alarma; un job
-   que supera su plazo total se da por fallido al consultarlo y libera la
-   reserva.
+   que supera su plazo total (5 minutos) se da por fallido al consultarlo y
+   libera la reserva. Ante un error transitorio capturado, visibilidad del
+   mensaje a 30 s para que el reintento quepa en el plazo; la reentrega tras
+   una muerte no capturada (900 s) se ignora por idempotencia.
 4. `GET` del job: vuelve a autorizar contra sujeto y matter del job.
 5. Memoria: el backend sigue siendo el único propietario (pregunta y respuesta
    final, escritas una sola vez; nunca resultados intermedios de tools).

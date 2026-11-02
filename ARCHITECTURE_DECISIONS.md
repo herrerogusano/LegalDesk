@@ -496,6 +496,13 @@ Tools visibles para el agente, todas por Gateway:
     (al menos 6 veces el timeout de la Lambda, recomendación de AWS) y
     `maxReceiveCount` 2, coherente con el reintento único. Métrica de espera
     en cola para ajustar la concurrencia con datos.
+  - **Plazo total del job: 5 minutos.** Para que el reintento quepa en ese
+    plazo, ante un error transitorio capturado el worker reduce la
+    visibilidad del mensaje a 30 s (`ChangeMessageVisibility`) antes de
+    devolverlo a la cola. Si la Lambda muere sin capturar el error (por
+    ejemplo, por timeout), el mensaje no reaparece hasta pasados los 900 s:
+    para entonces el job ya se ha dado por fallido y la reentrega se ignora
+    por idempotencia. Es un caso raro y se acepta.
 
 #### D5. Fallback determinista
 
