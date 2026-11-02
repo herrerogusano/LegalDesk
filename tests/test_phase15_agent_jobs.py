@@ -36,9 +36,11 @@ class _Conditional(Exception):
 class FakeJobTable:
     """Evaluates the exact condition and update expressions the store sends."""
 
-    def __init__(self) -> None:
+    def __init__(self, page_size: int = 1000) -> None:
         self.items: dict[tuple[str, str], dict[str, object]] = {}
         self.requests: list[dict[str, object]] = []
+        self.page_size = page_size  # DynamoDB ends a page at 1 MB of evaluated data, not at the Limit
+        self.queries = 0
 
     @staticmethod
     def _condition(expression: str, item: dict, names: dict, values: dict) -> bool:
@@ -92,9 +94,16 @@ class FakeJobTable:
         self.items.pop((Key["pk"], Key["sk"]), None)
 
     def query(self, **kwargs):
+        self.queries += 1
         pk = kwargs["KeyConditionExpression"].get_expression()["values"][0].get_expression()["values"][1]
-        found = [{"pk": k[0], "sk": k[1]} for k in self.items if k[0] == pk]
-        return {"Items": found[: kwargs["Limit"]]}
+        found = sorted(({"pk": k[0], "sk": k[1]} for k in self.items if k[0] == pk), key=lambda item: item["sk"])
+        start = kwargs.get("ExclusiveStartKey")
+        offset = next((i + 1 for i, item in enumerate(found) if start and item["sk"] == start["sk"]), 0)
+        page = found[offset: offset + self.page_size]
+        response = {"Items": page}
+        if offset + self.page_size < len(found):
+            response["LastEvaluatedKey"] = dict(page[-1])
+        return response
 
     def scan(self, **_):
         raise AssertionError("job store must never scan")
@@ -103,7 +112,7 @@ class FakeJobTable:
 def make_job(job_id="job-1", *, tenant="tenant-a", matter="matter-a", subject="alice", now=T0) -> ChatJob:
     return new_job(
         job_id=job_id, subject=subject, tenant_id=tenant, matter_id=matter, conversation_id="conv-1",
-        session_selector="sel-1", correlation_id="corr-1", question="¿Qué documentos hay?", session_key="session-key", now=now,
+        session_selector="sel-1", correlation_id="corr-1", question="¿Qué documentos hay?", session_ref="a" * 64, now=now,
     )
 
 
@@ -175,7 +184,7 @@ class JobStoreContract:
         self.assertTrue(self.store.complete(self.key, attempt=1, result={"answer": "ok", "n": 2}))
         done = self.store.get(self.key)
         self.assertEqual((done.status, dict(done.result)), (JobStatus.SUCCEEDED, {"answer": "ok", "n": 2}))
-        self.assertEqual((done.question, done.session_key), (None, None))  # nothing sensitive is kept once done
+        self.assertEqual((done.question, done.session_ref), (None, None))  # nothing sensitive is kept once done
         self.assertFalse(self.store.fail(self.key, FailureCode.INTERNAL_ERROR))
         self.assertFalse(self.store.retry_later(self.key, attempt=1))
 
@@ -188,7 +197,7 @@ class JobStoreContract:
         self.assertTrue(self.store.fail(self.key, FailureCode.SESSION_CLOSED))
         self.assertFalse(self.store.fail(self.key, FailureCode.AGENT_FAILED))  # the first writer owns the quota release
         failed = self.store.get(self.key)
-        self.assertEqual((failed.status, failed.failure_code, failed.question, failed.session_key),
+        self.assertEqual((failed.status, failed.failure_code, failed.question, failed.session_ref),
                          (JobStatus.FAILED, FailureCode.SESSION_CLOSED, None, None))
         self.assertFalse(self.store.finalize(self.key, attempt=1, now=T0 + 2))
         self.assertFalse(self.store.complete(self.key, attempt=1, result={}))
@@ -284,6 +293,28 @@ class DynamoDBJobStoreTests(JobStoreContract, unittest.TestCase):
         self.assertIn("tenant-a#MATTER#matter-a", pk)
         self.assertEqual(sk, "JOB#job-1")
         self.assertEqual(int(item["ttl"]), T0 + JOB_TTL_SECONDS)
+
+    def test_matter_delete_reads_every_page_before_deleting_anything(self) -> None:
+        self.table.page_size = 2  # a page can end long before the limit when jobs hold big results
+        for index in range(4):
+            self.store.create(make_job(f"extra-{index}"))  # 5 jobs of matter-a in total
+        self.store.create(make_job("keep", matter="matter-b"))
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), 5)
+        self.assertGreaterEqual(self.table.queries, 3)
+        self.assertEqual([k for k in self.table.items if "matter-a" in k[0]], [])
+        self.assertIsNotNone(self.store.get(JobKey("tenant-a", "matter-b", "keep")))
+
+    def test_matter_delete_over_the_limit_across_pages_deletes_nothing(self) -> None:
+        self.table.page_size = 2
+        for index in range(4):
+            self.store.create(make_job(f"extra-{index}"))
+        with self.assertRaises(ValueError):
+            self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=4)  # 5 > 4, only visible on page 3
+        self.assertEqual(len([k for k in self.table.items if "matter-a" in k[0]]), 5)
+
+    def test_an_empty_last_page_still_ends_the_scan(self) -> None:
+        self.table.page_size = 1
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), 1)
 
     def test_a_corrupt_record_is_not_served(self) -> None:
         (_pk, _sk), item = next(iter(self.table.items.items()))

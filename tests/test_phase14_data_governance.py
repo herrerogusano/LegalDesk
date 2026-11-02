@@ -177,7 +177,7 @@ class DataGovernanceTests(unittest.TestCase):
 
         def job(job_id: str, *, subject: str, tenant: str = TENANT, matter: str = MATTER):
             return new_job(job_id=job_id, subject=subject, tenant_id=tenant, matter_id=matter, conversation_id="c",
-                           session_selector="s", correlation_id="x", question="q", session_key="k", now=NOW.timestamp())
+                           session_selector="s", correlation_id="x", question="q", session_ref="k", now=NOW.timestamp())
 
         for item in (job("mine", subject=SUBJECT), job("colleague", subject="idp|someone-else"),
                      job("other-matter", subject=SUBJECT, matter="mat_other"),

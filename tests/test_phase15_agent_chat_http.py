@@ -126,7 +126,9 @@ class SubmitTests(unittest.TestCase):
         counters = h.counters()
         self.assertEqual((counters["chatCount"], counters["harnessCount"], counters["gatewayCount"]), (1, 1, 0))
         job = h.jobs.get(JobKey("tnt_a", "mat_1", body["jobId"]))
-        self.assertEqual((job.subject, job.question, job.session_key), (ALICE, QUESTION, "cookie-alice"))
+        self.assertEqual((job.subject, job.question, job.session_ref), (ALICE, QUESTION, h.state.session_reference("cookie-alice")))
+        self.assertNotEqual(job.session_ref, "cookie-alice")  # the raw cookie value never leaves the request
+        self.assertNotIn("cookie-alice", repr(job))
         self.assertEqual(h.published, [job.key])
         self.assertEqual(h.sync_calls, [])
         self.assertNotIn("cookie-alice", json.dumps(body))

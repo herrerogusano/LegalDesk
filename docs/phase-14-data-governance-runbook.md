@@ -60,9 +60,9 @@ also removes them. They live under one partition per tenant and matter
 removes the jobs of **every subject** of the matter, not only the operator's.
 Their count is added to `stateRecordsRemoved`; above the limit the operation
 refuses instead of deleting a partial set, and a provider error is reported as
-`job_cleanup`. The job record never stores a token: it keeps the server-side
-session key only until the job ends, and it is removed on success and on
-failure. Citation handles created for an agentic answer follow the existing
+`job_cleanup`. The job record never stores a token or the session cookie value: it keeps only
+a derived reference (the digest the durable store already keys sessions by)
+until the job ends, and it is removed on success and on failure. Citation handles created for an agentic answer follow the existing
 state deletion.
 
 The report sets `indexCleanupPending=true` when documents were deleted. This

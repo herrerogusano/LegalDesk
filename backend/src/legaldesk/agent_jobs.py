@@ -21,8 +21,9 @@ State machine (every arrow is one conditional write)::
 * ``fail`` and the expiry check are the only writers of ``failed``; the caller
   that wins the transition is the one that gives the quota back.
 
-The record keeps the question and the session key only while the job is not
-terminal; both are removed on success and on failure.
+The record keeps the question and a *derived reference* to the server-side session
+(never the cookie value) only while the job is not terminal; both are removed on
+success and on failure.
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ class ChatJob:
     created_at: int
     expires_at: int
     question: str | None = None
-    session_key: str | None = None
+    session_ref: str | None = None
     attempt_deadline: int | None = None
     result: Mapping[str, object] | None = None
     failure_code: FailureCode | None = None
@@ -135,14 +136,14 @@ class ChatJob:
 
 def new_job(
     *, job_id: str, subject: str, tenant_id: str, matter_id: str, conversation_id: str, session_selector: str,
-    correlation_id: str, question: str, session_key: str, now: float,
+    correlation_id: str, question: str, session_ref: str, now: float,
 ) -> ChatJob:
     created = int(now)
     return ChatJob(
         job_id=job_id, subject=subject, tenant_id=tenant_id, matter_id=matter_id,
         conversation_id=conversation_id, session_selector=session_selector, correlation_id=correlation_id,
         status=JobStatus.QUEUED, attempt=0, deadline=created + JOB_TOTAL_DEADLINE_SECONDS, created_at=created,
-        expires_at=created + JOB_TTL_SECONDS, question=question, session_key=session_key,
+        expires_at=created + JOB_TTL_SECONDS, question=question, session_ref=session_ref,
     )
 
 
@@ -218,7 +219,7 @@ class InMemoryChatJobStore:
         if job is None or job.status not in ACTIVE:
             return False
         self._jobs[key] = replace(job, status=JobStatus.FAILED, failure_code=code, question=None,
-                                  session_key=None, attempt_deadline=None)
+                                  session_ref=None, attempt_deadline=None)
         return True
 
     def claim(self, key: JobKey, *, now: float) -> tuple[ClaimOutcome, ChatJob | None]:
@@ -255,7 +256,7 @@ class InMemoryChatJobStore:
             if job is None or job.status is not JobStatus.FINALIZING or job.attempt != attempt:
                 return False
             self._jobs[key] = replace(job, status=JobStatus.SUCCEEDED, result=json.loads(encoded), question=None,
-                                      session_key=None, attempt_deadline=None)
+                                      session_ref=None, attempt_deadline=None)
             return True
 
     def retry_later(self, key: JobKey, *, attempt: int) -> bool:
@@ -359,7 +360,7 @@ class DynamoDBChatJobStore:
             failure = FailureCode(code) if code is not None else None
         except ValueError:
             failure = FailureCode.INTERNAL_ERROR
-        question, session_key = item.get("question"), item.get("sessionKey")
+        question, session_ref = item.get("question"), item.get("sessionRef")
         return ChatJob(
             job_id=strings["jobId"], subject=strings["subject"], tenant_id=strings["tenantId"],  # type: ignore[arg-type]
             matter_id=strings["matterId"], conversation_id=strings["conversationId"],  # type: ignore[arg-type]
@@ -367,7 +368,7 @@ class DynamoDBChatJobStore:
             status=status, attempt=numbers["attempt"], deadline=numbers["deadline"],  # type: ignore[arg-type]
             created_at=numbers["createdAt"], expires_at=numbers["expiresAt"],  # type: ignore[arg-type]
             question=question if isinstance(question, str) else None,
-            session_key=session_key if isinstance(session_key, str) else None,
+            session_ref=session_ref if isinstance(session_ref, str) else None,
             attempt_deadline=cls._int(item.get("attemptDeadline")), result=result, failure_code=failure,
         )
 
@@ -402,8 +403,8 @@ class DynamoDBChatJobStore:
         }
         if job.question is not None:
             item["question"] = job.question
-        if job.session_key is not None:
-            item["sessionKey"] = job.session_key
+        if job.session_ref is not None:
+            item["sessionRef"] = job.session_ref
         self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
 
     def get(self, key: JobKey, *, now: float | None = None) -> ChatJob | None:
@@ -414,7 +415,7 @@ class DynamoDBChatJobStore:
             return None
         return job
 
-    _TERMINAL_CLEANUP = "REMOVE #question, #sessionKey, #attemptDeadline"
+    _TERMINAL_CLEANUP = "REMOVE #question, #sessionRef, #attemptDeadline"
 
     def fail(self, key: JobKey, code: FailureCode) -> bool:
         return self._write(
@@ -422,7 +423,7 @@ class DynamoDBChatJobStore:
             update=f"SET #status = :failed, #failureCode = :code {self._TERMINAL_CLEANUP}",
             condition="#status IN (:queued, :running, :finalizing)",
             names={"#status": "status", "#failureCode": "failureCode", "#question": "question",
-                   "#sessionKey": "sessionKey", "#attemptDeadline": "attemptDeadline"},
+                   "#sessionRef": "sessionRef", "#attemptDeadline": "attemptDeadline"},
             values={":failed": JobStatus.FAILED.value, ":code": code.value, ":queued": JobStatus.QUEUED.value,
                     ":running": JobStatus.RUNNING.value, ":finalizing": JobStatus.FINALIZING.value},
         ) is not None
@@ -472,7 +473,7 @@ class DynamoDBChatJobStore:
             update=f"SET #status = :succeeded, #result = :result {self._TERMINAL_CLEANUP}",
             condition="#status = :finalizing AND #attempt = :attempt",
             names={"#status": "status", "#attempt": "attempt", "#result": "result", "#question": "question",
-                   "#sessionKey": "sessionKey", "#attemptDeadline": "attemptDeadline"},
+                   "#sessionRef": "sessionRef", "#attemptDeadline": "attemptDeadline"},
             values={":succeeded": JobStatus.SUCCEEDED.value, ":finalizing": JobStatus.FINALIZING.value,
                     ":attempt": attempt, ":result": _encode_result(result)},
         ) is not None
@@ -501,22 +502,34 @@ class DynamoDBChatJobStore:
         _check_limit(limit)
         from boto3.dynamodb.conditions import Key
 
-        response = self.table.query(
-            KeyConditionExpression=Key("pk").eq(self.partition(tenant_id, matter_id)) & Key("sk").begins_with("JOB#"),
-            ProjectionExpression="#pk, #sk",
-            ExpressionAttributeNames={"#pk": "pk", "#sk": "sk"},
-            Limit=limit + 1,
-            ConsistentRead=True,
-        )
-        items = response.get("Items", ()) if isinstance(response, Mapping) else ()
-        if len(items) > limit:
-            raise ValueError("job deletion limit exceeded")
-        removed = 0
-        for item in items:
-            if isinstance(item, Mapping) and isinstance(item.get("pk"), str) and isinstance(item.get("sk"), str):
-                self.table.delete_item(Key={"pk": item["pk"], "sk": item["sk"]})
-                removed += 1
-        return removed
+        # A page ends at 1 MB of *evaluated* data (a succeeded job can hold ~200 KB), so a
+        # short page proves nothing. Read every page and apply the limit to the accumulated
+        # total before deleting anything: either the whole matter is removed or nothing is.
+        keys: list[dict[str, str]] = []
+        start: dict[str, object] | None = None
+        while True:
+            request: dict[str, Any] = {
+                "KeyConditionExpression": Key("pk").eq(self.partition(tenant_id, matter_id)) & Key("sk").begins_with("JOB#"),
+                "ProjectionExpression": "#pk, #sk",
+                "ExpressionAttributeNames": {"#pk": "pk", "#sk": "sk"},
+                "ConsistentRead": True,
+            }
+            if start is not None:
+                request["ExclusiveStartKey"] = start
+            response = self.table.query(**request)
+            if not isinstance(response, Mapping):
+                raise RuntimeError("job query returned an invalid response")
+            for item in response.get("Items", ()):
+                if isinstance(item, Mapping) and isinstance(item.get("pk"), str) and isinstance(item.get("sk"), str):
+                    keys.append({"pk": item["pk"], "sk": item["sk"]})
+            if len(keys) > limit:
+                raise ValueError("job deletion limit exceeded")
+            start = response.get("LastEvaluatedKey")
+            if not start:
+                break
+        for key in keys:
+            self.table.delete_item(Key=key)
+        return len(keys)
 
 
 __all__ = [

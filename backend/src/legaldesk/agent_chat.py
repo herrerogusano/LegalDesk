@@ -155,7 +155,7 @@ def submit_agent_chat(
     session_selector: str,
     correlation_id: str,
     question: str,
-    session_key: str,
+    session_ref: str,
     now: float | None = None,
 ) -> ChatJob:
     """Reserve quota, create the job and queue it. Scope values must be server-derived."""
@@ -164,15 +164,20 @@ def submit_agent_chat(
     job = new_job(
         job_id=str(uuid4()), subject=subject, tenant_id=tenant_id, matter_id=matter_id,
         conversation_id=conversation_id, session_selector=session_selector, correlation_id=correlation_id,
-        question=question, session_key=session_key, now=moment,
+        question=question, session_ref=session_ref, now=moment,
     )
     reserve_job_quota(quota, tenant_id, job.job_id, now=moment)
     try:
         runtime.job_store.create(job)
         runtime.queue.publish(job.key)
     except Exception as exc:
-        runtime.job_store.fail(job.key, FailureCode.INTERNAL_ERROR)
-        release_job_quota(quota, job)
+        try:
+            # Best effort: mark the job dead so a stray message finds nothing to do.
+            runtime.job_store.fail(job.key, FailureCode.INTERNAL_ERROR)
+        except Exception:
+            pass
+        finally:
+            release_job_quota(quota, job)  # never leaves the reservation behind
         raise SubmissionError("chat job could not be queued") from exc
     return job
 
@@ -289,7 +294,7 @@ class AgentChatWorker:
 
     # -- compute -------------------------------------------------------
     def _session(self, job: ChatJob):
-        session = self.state_store.get_session(job.session_key) if job.session_key else None
+        session = self.state_store.get_session_by_reference(job.session_ref) if job.session_ref else None
         now = self.clock()
         if session is None or session.expires_at <= now or session.identity.subject != job.subject:
             raise PermanentAgentError(FailureCode.SESSION_CLOSED)

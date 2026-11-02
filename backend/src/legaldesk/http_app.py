@@ -1056,7 +1056,8 @@ class LoopbackLegalDeskApp:
             runtime, self.composition.quota, subject=identity.subject, tenant_id=context.tenant_id,
             matter_id=context.matter_id, conversation_id=conversation_id, session_selector=session_id,
             correlation_id=context.correlation_id, question=decision.question or question.strip(),
-            session_key=session_key,
+            # The raw cookie value stops here: the job only gets a derived reference.
+            session_ref=self.state_store.session_reference(session_key),
         )
         self._audit(identity, context.matter_id, context.correlation_id, "chat_agent_submitted")
         return HTTPStatus.ACCEPTED, job.public_dict(), []

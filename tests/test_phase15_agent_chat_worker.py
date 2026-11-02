@@ -134,7 +134,7 @@ class World:
         context = build_request_context(self.identity, MATTER, self.auth)
         values = dict(subject=SUBJECT, tenant_id=context.tenant_id, matter_id=MATTER, conversation_id="conv-1",
                       session_selector="sel-1", correlation_id=context.correlation_id, question=question,
-                      session_key=self.session_key, now=self.clock())
+                      session_ref=self.state.session_reference(self.session_key), now=self.clock())
         values.update(overrides)
         return submit_agent_chat(self.runtime, self.quota, **values)
 
@@ -182,6 +182,68 @@ class SubmissionTests(unittest.TestCase):
             self.world.submit()
         self.assertEqual(self.world.counters()["chatCount"], 0)
         self.assertEqual(self.world.counters()["harnessCount"], 0)
+
+
+class SubmissionFailureTests(unittest.TestCase):
+    """PB-002: a failed submission always frees the quota and always raises SubmissionError."""
+
+    class Failing:
+        def __init__(self, *, create=False, publish=False, fail=False):
+            self.flags = dict(create=create, publish=publish, fail=fail)
+
+        def create(self, job):
+            if self.flags["create"]:
+                raise RuntimeError("ddb down")
+
+        def fail(self, key, code):
+            if self.flags["fail"]:
+                raise RuntimeError("ddb still down")
+            return True
+
+    def attempt(self, **flags):
+        world = World(self)
+        store = self.Failing(**flags)
+
+        def publish(key):
+            if flags.get("publish"):
+                raise RuntimeError("sqs down")
+
+        world.runtime.job_store = store
+        world.runtime.queue = SimpleNamespace(publish=publish)
+        with self.assertRaises(SubmissionError) as caught:
+            world.submit()
+        self.assertIsInstance(caught.exception.__cause__, RuntimeError)
+        counters = world.counters()
+        self.assertEqual((counters["chatCount"], counters["harnessCount"]), (0, 0))
+
+    def test_create_fails_and_fail_also_raises(self) -> None:
+        self.attempt(create=True, fail=True)
+
+    def test_publish_fails_and_fail_also_raises(self) -> None:
+        self.attempt(publish=True, fail=True)
+
+    def test_each_single_failure_still_releases(self) -> None:
+        self.attempt(create=True)
+        self.attempt(publish=True)
+
+    def test_a_quota_release_that_raises_is_tolerated(self) -> None:
+        world = World(self)
+        world.runtime.queue = SimpleNamespace(publish=lambda key: (_ for _ in ()).throw(RuntimeError("sqs down")))
+
+        real = world.quota
+
+        class BrokenRelease:
+            limits = real.limits
+
+            def reserve(self, *a, **k):
+                return real.reserve(*a, **k)
+
+            def release(self, *a, **k):
+                raise RuntimeError("quota down")
+
+        world.quota = BrokenRelease()
+        with self.assertRaises(SubmissionError):
+            world.submit()
 
 
 class WorkerHappyPathTests(unittest.TestCase):
@@ -387,18 +449,18 @@ class WorkerReliabilityTests(unittest.TestCase):
         job = self.world.jobs.get(self.job.key)
         self.assertEqual((result.action, job.failure_code, self.world.agent_calls), ("failed", FailureCode.SESSION_CLOSED, []))
         self.assertEqual((self.world.counters()["chatCount"], self.world.counters()["harnessCount"]), (0, 0))
-        self.assertEqual((job.question, job.session_key), (None, None))
+        self.assertEqual((job.question, job.session_ref), (None, None))
         self.assertEqual(job.public_dict()["error"], "session_closed")
 
     def test_expired_or_foreign_session_fails_closed(self) -> None:
         self.world.clock.now = T0 + 3601  # session over; deadline would also be over, so use a fresh job
-        job = self.world.submit(session_key=self.world.session_key)
+        job = self.world.submit(session_ref=self.world.state.session_reference(self.world.session_key))
         result = self.world.worker.process(job.key)
         self.assertEqual(self.world.jobs.get(job.key).failure_code, FailureCode.SESSION_CLOSED)
         self.world.clock.now = T0
         other = SessionRecord(test_identity("idp|bob-fictional"), "tok", "csrf", T0 + 3600)
         self.world.state.put_session("bobs-key", other)
-        stolen = self.world.submit(session_key="bobs-key")  # a job that points at someone else's session
+        stolen = self.world.submit(session_ref=self.world.state.session_reference("bobs-key"))  # a job that points at someone else's session
         self.world.worker.process(stolen.key)
         self.assertEqual(self.world.jobs.get(stolen.key).failure_code, FailureCode.SESSION_CLOSED)
         self.assertEqual(self.world.agent_calls, [])
