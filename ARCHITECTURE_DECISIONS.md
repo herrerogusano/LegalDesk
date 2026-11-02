@@ -412,22 +412,30 @@ Tools visibles para el agente, todas por Gateway:
 
 - **Texto legal**: el backend devuelve tal cual el resultado estructurado de
   `search_documents`. El agente no reescribe interpretación legal.
-- **Datos estructurados (IDP)**: el agente puede encadenar tools y sintetizar,
-  pero **nunca escribe un dato**. Su salida final es JSON con texto y
-  marcadores (`{{<ref>.<campo>}}`) que apuntan a campos devueltos por
-  `get_extracted_fields` en ese mismo loop. El backend sustituye cada marcador
-  por el valor real y su cita. Para que el agente no pueda colar un dato en el
-  texto, el backend rechaza cifras, fechas e importes fuera de marcadores. Un
-  marcador desconocido, un dato fuera de marcador o un JSON inválido activan
-  el fallback.
+- **Datos estructurados (IDP): el agente razona, el backend redacta.** El
+  agente encadena tools, decide qué documentos y campos responden a la
+  pregunta, y cómo filtrarlos, agruparlos y ordenarlos. **No escribe texto
+  libre.** Su salida final es un plan de respuesta estructurado (JSON):
+  - referencias a campos devueltos por `get_extracted_fields` en ese mismo
+    loop;
+  - grupos con un criterio de una lista cerrada (por ejemplo "vence en el
+    periodo", "con renovación automática");
+  - orden;
+  - agregados pedidos por tipo (recuento, mínimo, máximo), que **calcula el
+    backend**, no el agente;
+  - una introducción y transiciones elegidas de una lista cerrada de frases.
+
+  El backend redacta cada línea con plantillas versionadas y pone el valor y
+  la cita de cada campo. Una referencia desconocida, un criterio o una frase
+  fuera de las listas o un JSON inválido activan el fallback. Así ninguna
+  afirmación factual sobre los datos sale de texto generado por el modelo,
+  tampoco las que no tienen cifras ("está vigente", "tres meses").
 - **Preguntas mixtas** (datos y texto, por ejemplo "¿cuándo vence el contrato
   X y qué dice sobre la rescisión?"): la respuesta se compone de **bloques
-  separados**. Un bloque de datos con los marcadores rellenados por el backend
-  y un bloque de texto con el resultado de `search_documents` tal cual. El
-  agente solo decide el orden y puede añadir frases de enlace. El backend las
-  valida de forma determinista: máximo 200 caracteres cada una y sin cifras,
-  fechas ni importes fuera de marcadores. Si una no pasa, se descarta y se
-  muestran solo los bloques. Cada bloque conserva sus propias citas. Si un bloque no valida, se
+  separados**. Un bloque de datos redactado por el backend según el plan del
+  agente y un bloque de texto con el resultado de `search_documents` tal cual.
+  El agente decide el orden y las transiciones, que salen de la misma lista
+  cerrada. Cada bloque conserva sus propias citas. Si un bloque no valida, se
   omite y se indica; si no queda ninguno, se aplica el fallback.
 - **Semántica de los campos IDP**: los campos aceptados y auto-aceptados se
   presentan como hechos. Los provisionales o pendientes de revisión se
@@ -481,8 +489,13 @@ Tools visibles para el agente, todas por Gateway:
   - **DLQ con alarma** para lo que falla dos veces. Un job que supera su
     plazo total se da por fallido al consultarlo y libera la reserva de cuota;
   - timeout de la Lambda worker 150 s (loop de 90 s + fallback + margen).
-    Concurrencia máxima 2, configurable, con métrica de espera en cola para
-    ajustarla con datos.
+    Concurrencia máxima 2, configurable, aplicada con el `MaximumConcurrency`
+    del event source mapping de SQS (como IDP) y **no** con concurrencia
+    reservada de Lambda: así el exceso espera en la cola sin consumir
+    recepciones ni acabar en la DLQ. Visibility timeout de la cola de 900 s
+    (al menos 6 veces el timeout de la Lambda, recomendación de AWS) y
+    `maxReceiveCount` 2, coherente con el reintento único. Métrica de espera
+    en cola para ajustar la concurrencia con datos.
 
 #### D5. Fallback determinista
 
@@ -541,6 +554,13 @@ contenido.
 
 - **Volver a meter los botones en el agente**: descartada (ADR-016 y el tercer
   smoke de la fase 13).
+- **Texto libre del agente en las respuestas de datos**: descartado tras la
+  revisión de PullBeacon (PB-001). Un filtro de cifras, fechas e importes no
+  impide afirmaciones factuales sin números ("está vigente", "tres meses"), y
+  comprobarlas con el Guardrail de grounding añadiría falsos bloqueos en
+  textos cortos. La capacidad del agente para preguntas complejas está en
+  planificar, filtrar y combinar fuentes, y eso se conserva. La redacción
+  libre y su evaluación se dejan para un proyecto diseñado para ello.
 - **Clasificador de intención + dispatch determinista**: más barato y fiable
   para una sola fuente, pero no encadena tools ni sintetiza. Se usa como
   referencia en la eval de routing.

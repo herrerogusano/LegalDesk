@@ -39,9 +39,15 @@ de pruebas en vivo.
 
 1. Schemas de `search_documents` y `get_extracted_fields` (en lote, máximo 20
    documentos, solo campos del registro IDP).
-2. Contrato de salida final del agente: JSON con bloques (`data`, `text`),
-   marcadores `{{<ref>.<campo>}}`, frases de enlace y `suggestReview` opcional.
-3. System prompt del agente versionado en `prompts/` y fijado por hash; tests
+2. Contrato de salida final del agente: plan de respuesta JSON con bloques
+   (`data`, `text`). Para `data`: referencias a campos, grupos con criterios
+   de una lista cerrada, orden y agregados pedidos por tipo. Además,
+   introducción y transiciones de una lista cerrada y `suggestReview`
+   opcional. Sin texto libre.
+3. Plantillas versionadas del backend para redactar líneas de datos,
+   agregados, introducciones y transiciones (en `prompts/` o junto al
+   validador, fijadas por hash).
+4. System prompt del agente versionado en `prompts/` y fijado por hash; tests
    de que el cliente no puede sobrescribir modelo, prompt, tools ni skills.
 
 ### T2. Tools nuevas (local)
@@ -59,11 +65,13 @@ de pruebas en vivo.
 
 ### T3. Validador de respuesta y fallback (local)
 
-1. Validador determinista: marcadores existentes y devueltos en ese loop;
-   ninguna cifra, fecha ni importe fuera de marcadores; frases de enlace de
-   200 caracteres como máximo; bloques de texto idénticos al resultado de
+1. Validador determinista del plan: referencias existentes y devueltas en
+   ese loop; criterios, tipos de agregado, introducciones y transiciones
+   dentro de sus listas cerradas; bloques de texto idénticos al resultado de
    `search_documents`; citas por bloque.
-2. Sustitución de marcadores por valor y cita.
+2. Renderizado del bloque de datos con las plantillas: valor y cita de cada
+   campo, agregados calculados por el backend y semántica de campos
+   provisionales de ADR-021 D3.
 3. Árbol de salida: grounded tal cual / síntesis de datos / mixto por bloques /
    aprovechar un resultado válido de tool si el loop se corta / fallback a RAG
    directo, con el motivo registrado.
@@ -76,7 +84,9 @@ de pruebas en vivo.
    la sesión le quedan al menos 5 minutos, reserva cuota una vez por job, crea
    el job (clave por tenant y matter; sujeto, conversación, correlación; TTL de
    1 hora) y devuelve `jobId`.
-2. Worker SQS → Lambda (timeout 150 s, concurrencia máxima 2 configurable):
+2. Worker SQS → Lambda (timeout 150 s; concurrencia máxima 2 configurable
+   mediante `MaximumConcurrency` del event source mapping, no concurrencia
+   reservada; visibility timeout de la cola de 900 s; `maxReceiveCount` 2):
    carga la sesión en servidor, construye el binding sellado `agent_chat`,
    invoca Harness (sin memoria; últimas 6 parejas de historial enviadas por el
    backend; `maxIterations` 3; `timeoutSeconds` 90), valida y guarda el
@@ -156,8 +166,9 @@ automáticos:
    el interceptor por el registro de invocación, con test y comprobación en
    vivo.
 3. Las respuestas de texto legal son idénticas al resultado de
-   `search_documents`; las de datos no contienen ningún dato fuera de
-   marcadores; las mixtas se presentan por bloques con sus citas.
+   `search_documents`; en las de datos todo el texto sale de plantillas del
+   backend y ninguna afirmación factual procede de texto del modelo; las
+   mixtas se presentan por bloques con sus citas.
 4. Fallback a RAG directo en los casos de ADR-021 D5, con motivo registrado.
 5. Chat asíncrono sin errores por el límite de 29 s; sesión cerrada → job
    cerrado y reserva de cuota liberada; un mensaje duplicado o reintentado no
@@ -169,7 +180,8 @@ automáticos:
    el Guardrail de entrada no invoca a Harness.
 8. Eval de routing: el acierto de la tool en modo real alcanza el umbral
    fijado en T8 antes de ejecutarla (propuesta: ≥ 90 %), con 0 violaciones de
-   allowlist y 0 datos fuera de marcadores.
+   allowlist y 0 planes fuera de las listas cerradas aceptados por el
+   validador.
 9. Observabilidad: trace o metadatos por pregunta con tools, iteraciones,
    camino de salida, latencia, tokens y coste; resultado de la prueba de ADOT
    documentado.
@@ -178,8 +190,9 @@ automáticos:
 
 ## Tests / verificación
 
-- unit: contratos, validador (cifras y fechas fuera de marcadores, marcadores
-  desconocidos, bloques mixtos), árbol de salida y aprovechamiento de
+- unit: contratos, validador del plan (referencias desconocidas, criterios y
+  frases fuera de lista, JSON inválido, bloques mixtos), renderizado con
+  plantillas y agregados, árbol de salida y aprovechamiento de
   resultados, cuota, TTL del job, sesión con menos de 5 minutos, Guardrail de
   entrada, handles de cita;
 - fiabilidad: entrega duplicada, reintento tras error transitorio, error
