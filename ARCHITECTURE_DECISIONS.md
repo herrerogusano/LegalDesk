@@ -353,3 +353,272 @@ and real smoke gates are reviewed. Existing code-only CD credentials must not
 gain infrastructure/IAM mutation privileges. M2M token requests, OCR, Bedrock,
 queue/compute/storage and monitoring usage are billable classes, not free.
 This ADR records approved design, not deployment or IDP acceptance evidence.
+
+## ADR-021 — Chat agentic de solo lectura con AgentCore Harness
+
+Estado: aprobado por el propietario el 2026-11-01. Complementa ADR-016 (las
+acciones explícitas de la UI siguen siendo deterministas) y ADR-011 (memoria).
+Plan de ejecución: `PLAN_15_AGENTIC_CHAT.md`.
+
+### Contexto
+
+- ADR-016 sacó del agente las acciones explícitas de la UI: un botón ya expresa
+  la intención y Harness no puede forzar un tool call (`allowedTools` es una
+  allowlist; `InvokeHarness` no tiene `toolChoice`). Esa decisión se mantiene.
+- Desde entonces ningún LLM decide nada en LegalDesk. El chat tiene dos caminos
+  que elige el usuario en la UI: RAG directo (sin Gateway) o un campo IDP
+  seleccionado (Gateway → MCP `get_document_metadata`). Harness está desplegado
+  pero no se usa.
+- ADR-016 reservó Harness para "flujos genuinamente agentic en los que la
+  decisión del modelo sea parte del producto". Una pregunta libre en el chat lo
+  es: elegir la fuente (texto, campo extraído, inventario) es justo la decisión
+  que el usuario no debería tener que tomar.
+
+### Decisión
+
+#### D1. Alcance
+
+La caja de chat la gestiona un agente de Harness, que decide qué tools usar.
+Los botones, la cola de revisión y el pipeline IDP no cambian (ADR-016 y
+ADR-020 siguen vigentes). Si el usuario ya ha seleccionado documento y campo,
+se mantiene el atajo determinista actual y no se invoca al agente: es la misma
+lógica de ADR-016, porque la intención ya está expresada.
+
+#### D2. El agente solo lee
+
+Tools visibles para el agente, todas por Gateway:
+
+| Tool | Target | Estado |
+|---|---|---|
+| `search_documents` | **target Lambda propio** `search-documents` | nueva |
+| `list_matter_documents` | MCP `metadata-mcp` | existente |
+| `get_extracted_fields` | MCP `metadata-mcp` | nueva, en lote (máximo 20 documentos por llamada; solo campos del registro IDP) |
+
+- `search_documents` ejecuta el pipeline grounded actual (KB Retrieve →
+  evidence resolver → answer writer → Guardrail → citas validadas) y devuelve
+  la respuesta estructurada. Tiene su propio target para que el IAM de KB,
+  modelo y Guardrail no se añada a la Lambda MCP.
+- Las tools de review no son visibles para el agente. Como mucho puede
+  *proponer* una revisión: su salida final incluye un campo opcional
+  `suggestReview` con un motivo de la lista cerrada de `create_review_task`.
+  La UI lo muestra como botón y, si el usuario lo pulsa, se usa el flujo
+  determinista actual de creación de revisión (ADR-016/ADR-017).
+- **Citas inspeccionables**: `search_documents` devuelve sus citas en el
+  resultado y el worker, que conoce sujeto, matter y conversación, crea los
+  handles de cita con el mismo mecanismo y TTL que hoy (`CitationHandle`). El
+  navegador sigue recibiendo solo handles opacos.
+
+#### D3. Dos modos de respuesta
+
+- **Texto legal**: el backend devuelve tal cual el resultado estructurado de
+  `search_documents`. El agente no reescribe interpretación legal.
+- **Datos estructurados (IDP)**: el agente puede encadenar tools y sintetizar,
+  pero **nunca escribe un dato**. Su salida final es JSON con texto y
+  marcadores (`{{<ref>.<campo>}}`) que apuntan a campos devueltos por
+  `get_extracted_fields` en ese mismo loop. El backend sustituye cada marcador
+  por el valor real y su cita. Para que el agente no pueda colar un dato en el
+  texto, el backend rechaza cifras, fechas e importes fuera de marcadores. Un
+  marcador desconocido, un dato fuera de marcador o un JSON inválido activan
+  el fallback.
+- **Preguntas mixtas** (datos y texto, por ejemplo "¿cuándo vence el contrato
+  X y qué dice sobre la rescisión?"): la respuesta se compone de **bloques
+  separados**. Un bloque de datos con los marcadores rellenados por el backend
+  y un bloque de texto con el resultado de `search_documents` tal cual. El
+  agente solo decide el orden y puede añadir frases de enlace. El backend las
+  valida de forma determinista: máximo 200 caracteres cada una y sin cifras,
+  fechas ni importes fuera de marcadores. Si una no pasa, se descarta y se
+  muestran solo los bloques. Cada bloque conserva sus propias citas. Si un bloque no valida, se
+  omite y se indica; si no queda ninguno, se aplica el fallback.
+- **Semántica de los campos IDP**: los campos aceptados y auto-aceptados se
+  presentan como hechos. Los provisionales o pendientes de revisión se
+  presentan marcados como "pendiente de revisión humana". Los ausentes o
+  rechazados no se rellenan.
+
+#### D4. Loop y ejecución asíncrona
+
+- **Guardrail de entrada antes del agente**: la pregunta pasa por el Guardrail
+  de entrada (como hoy en `chat.py`) antes de crear el job. Si se bloquea, no
+  se invoca a Harness ni se consume cuota del agente.
+- Loop gestionado por Harness (Strands sobre Runtime), con `maxIterations` 3,
+  `timeoutSeconds` 90 para el loop y un presupuesto de 25 s por tool. Como el
+  chat es asíncrono, el presupuesto se dimensiona para el peor caso razonable
+  (1–2 tools: unos 15–35 s) y no para el límite de 29 s de la API. El
+  system prompt del agente se versiona y se fija por hash como los prompts
+  existentes (`prompts/`), y el backend no acepta overrides de modelo, prompt,
+  tools ni skills desde el cliente.
+- **El chat agentic es asíncrono.** `POST /api/chat` autoriza, reserva cuota,
+  crea un job ligado a sujeto, tenant, matter, conversación y correlación, y
+  devuelve un `jobId`. Un worker (SQS → Lambda, el mismo patrón que IDP)
+  invoca Harness. La UI consulta el resultado con un endpoint que vuelve a
+  autorizar contra el job. Así se elimina la dependencia del límite de 29 s de
+  la API pública.
+- **Identidad del worker**: el worker carga la sesión que ya está guardada en
+  servidor (`state.py`, `SessionRecord`) para construir el binding sellado. El
+  token de acceso no viaja en el mensaje de la cola. Si el usuario cierra
+  sesión, el job falla cerrado a propósito, porque ya no hay autorización para
+  actuar en su nombre: se descarta sin respuesta, se libera la reserva de cuota
+  y la UI pide repetir la pregunta. Para que un job no empiece con una sesión a
+  punto de caducar, el backend solo lo crea si a la sesión le quedan al menos
+  5 minutos; si no, pide volver a iniciar sesión. Alternativa descartada: una
+  identidad de máquina (M2M, como IDP) que permita al job sobrevivir al cierre
+  de sesión. Cubre un caso muy raro y obliga al agente a actuar sin una sesión
+  viva del usuario.
+- **Jobs**: se guardan con clave por tenant y matter y TTL de 1 hora; solo los
+  pueden leer el sujeto y el matter que los crearon. Como el TTL de DynamoDB no
+  es un borrado exacto, el borrado de matter del runbook de data governance
+  (fase 14) incluye los jobs en su operación de scope.
+- **Fiabilidad del worker**:
+  - como máximo **1 reintento**, y solo ante errores transitorios
+    (throttling, 5xx del proveedor, muerte de la Lambda). Los errores
+    permanentes (validación, sesión cerrada, bug) marcan el job como fallido
+    sin reintentar. Sin reintento, el usuario repetiría la pregunta con el
+    mismo coste y peor experiencia;
+  - **idempotencia**: el job guarda estado, número de intento y plazo del
+    intento en curso, y cada transición es una escritura condicional. Un
+    mensaje duplicado durante un intento vivo se ignora; tras un plazo vencido
+    solo se retoma si quedan intentos. La cuota se reserva una vez por job y la
+    memoria se escribe una sola vez al final;
+  - **DLQ con alarma** para lo que falla dos veces. Un job que supera su
+    plazo total se da por fallido al consultarlo y libera la reserva de cuota;
+  - timeout de la Lambda worker 150 s (loop de 90 s + fallback + margen).
+    Concurrencia máxima 2, configurable, con métrica de espera en cola para
+    ajustarla con datos.
+
+#### D5. Fallback determinista
+
+Si el agente no llama a ninguna tool, falla, agota iteraciones o tiempo, o
+produce una síntesis que no valida, el worker **primero aprovecha lo que ya
+tiene**: si una tool devolvió un resultado válido (por ejemplo, la respuesta
+grounded de `search_documents`), lo devuelve. Solo si no hay nada aprovechable
+responde con el RAG directo actual. El motivo del fallback se registra como
+metadato.
+
+#### D6. Allowlist por acción, reutilizando el mecanismo existente
+
+Se añade la `application_action` `agent_chat` a `_APPLICATION_TOOL_ALLOWLISTS`
+(`backend/src/legaldesk/agent_integration.py`), solo con tools de lectura. El
+backend escribe el registro de invocación en servidor; su id viaja en
+`x-legaldesk-invocation-id`, una cabecera fija de la configuración MCP que el
+modelo no controla; el interceptor rechaza cualquier tool que no esté en
+`allowedTools` de ese registro (`gateway_interceptor.py`). El límite de
+privilegios del agente no depende del prompt. Las acciones `metadata` y
+`review` de la UI y el camino M2M de IDP no cambian.
+
+#### D7. Memoria
+
+El backend sigue siendo el único propietario de la memoria de conversación
+(ADR-011). Harness se invoca sin memoria adjunta y recibe el contexto de
+conversación que le pasa el backend: las últimas 6 parejas de pregunta y
+respuesta final, con límite de tamaño. Nunca resultados intermedios de tools.
+
+#### D8. Cuota
+
+Se reutilizan los contadores mensuales existentes de `quota.py`: cada pregunta
+agentic consume 1 de `chats` (que ya cuenta por pregunta) y 1 de `harness`. El
+límite por defecto de `harness` sube de 100 a 300 para igualarlo con `chats`.
+Las llamadas a Gateway que hace el agente dentro de un job **no** consumen el
+contador `gateway` de los botones. La reserva se hace una vez por job al
+crearlo y falla cerrada.
+
+#### D9. Observabilidad
+
+AgentCore Observability / CloudWatch. Primero, una prueba acotada que reactiva
+ADOT con el opt-out de contenido y repite la prueba del marcador único de la
+fase 11 (en esa fase el opt-out fue ineficaz y se desactivó ADOT,
+`docs/phase-11-acceptance.md`).
+
+- Si no filtra contenido, se mantiene así.
+- Si filtra, ADOT queda activo como **riesgo residual aceptado**: datos
+  sintéticos, retención de logs de 1–3 días, acceso IAM restringido y la regla
+  de `AGENTS.md` §7 matizada por escrito.
+
+En ambos casos, el worker emite atributos de metadatos propios: tools elegidas,
+iteraciones, camino de salida, motivo del fallback, latencia, tokens, coste,
+ids y hashes. Con datos reales: opt-out verificado o spans propios sin
+contenido.
+
+### Alternativas consideradas
+
+- **Volver a meter los botones en el agente**: descartada (ADR-016 y el tercer
+  smoke de la fase 13).
+- **Clasificador de intención + dispatch determinista**: más barato y fiable
+  para una sola fuente, pero no encadena tools ni sintetiza. Se usa como
+  referencia en la eval de routing.
+- **El agente redacta también las respuestas de texto legal**: aplazada como
+  alternativa condicionada. Abre el mayor riesgo de grounding, justo donde el
+  Guardrail ya bloquea respuestas cortas. Se revisará si la eval muestra que
+  las preguntas multifuente sobre texto son frecuentes.
+- **Chat síncrono con presupuesto interno de tiempo**: descartado. La cadena
+  completa puede superar los 29 s y el fallback se volvería el camino habitual.
+- **`search_documents` dentro de la Lambda MCP**: descartado por el IAM y el
+  timeout que añadiría.
+- **Sin reintentos automáticos**: descartado. El usuario repetiría la pregunta
+  con el mismo coste; con idempotencia, un reintento acotado es seguro.
+- **Checkpoints de resultados de tools para reanudar jobs**: descartado. El
+  loop de Harness no se puede reanudar, así que solo se ahorrarían las
+  llamadas internas de una tool en un fallo poco frecuente, a cambio de una
+  caché con contenido de documentos que habría que proteger y borrar. La
+  ejecución durable (Step Functions, Temporal, workflows reanudables) es el
+  patrón adecuado para agentes largos y queda fuera de este proyecto.
+- **Ampliar la cuota de Gateway compartida**: descartado. El chat podría dejar
+  sin cuota a los botones, y lo que cuesta dinero es la pregunta.
+- **Loop propio en el backend (Converse con tool use y `toolChoice`)**: da más
+  control entre iteraciones, pero deja Harness sin uso. La seguridad no depende
+  del loop, porque cada tool call se reautoriza en el interceptor. Sigue siendo
+  la salida prevista si Harness impide un control necesario (ADR-003).
+- **Reorganizar los targets en `matter-knowledge` (MCP, lectura) y
+  `review-queue` (Lambda, escritura)**: es el diseño de referencia, pero queda
+  fuera de esta fase.
+
+### Consecuencias
+
+- Una pregunta RAG cuesta **4 llamadas LLM** (turno del agente que elige la
+  tool, resolver, writer y el turno final que Harness ejecuta siempre tras
+  recibir el resultado, aunque el backend descarte su texto) más el Guardrail,
+  frente a las 2 de hoy.
+- Infraestructura nueva: Lambda y target `search-documents`, cola y worker del
+  chat, registros de job con TTL. La alarma de latencia de la API (p95 ≤ 3 s)
+  no aplica al job; el job tendrá su propia métrica.
+- La UI pasa a enviar y consultar el resultado, con estado "pensando…".
+- Harness vuelve a estar en el camino crítico del chat; el fallback evita que
+  sea un punto único de fallo.
+- Aparece una métrica de producto nueva: el acierto del routing.
+- **CD**: el CD automático actual solo actualiza el código de la Lambda de la
+  aplicación (D-029). Las Lambdas nuevas (`search-documents`, worker) y las
+  modificadas (MCP, interceptor) se despliegan como las otras 7 de fuera de la
+  app: con change sets revisados por un operador. Ampliar el CD code-only al
+  resto de Lambdas es una mejora transversal registrada aparte.
+
+### Riesgos y verificaciones previas
+
+- **Límites de AWS verificados en la documentación (2026-11-01)**:
+  - Gateway: "Timeout for a gateway invocation" 15 minutos por defecto,
+    ajustable (página de quotas de AgentCore). Basta con subir el timeout de
+    la Lambda `search-documents`, hoy en 10 s en los targets existentes. Hay
+    un informe de usuario (agentcore-cli #1388) con cortes de unos 40 s, así
+    que el plan fija un presupuesto de 25 s para la tool y lo mide en la
+    primera prueba en vivo.
+  - `InvokeHarness`: `messages` es una lista de `HarnessMessage` con rol
+    `user | assistant`, así que el backend puede enviar el historial. La
+    memoria de Harness se puede desactivar (`disabled`). Pendiente de la prueba
+    en vivo: confirmar que, sin memoria, el mismo `runtimeSessionId` no guarda
+    historial propio en el microVM; si lo guarda, se usará un
+    `runtimeSessionId` nuevo por job.
+  - La memoria gestionada de Harness guarda eventos en bruto (mensajes y tool
+    calls), incluidos resultados de tools con fragmentos de documentos. Eso
+    choca con ADR-011 y con la política del backend (`extractionMode=SKIP`,
+    expiración a 7 días, límite de tamaño, scope derivado en servidor y
+    borrado desde data governance). Es el motivo de D7.
+- **Limitación conocida, ajena a esta fase: sesión absoluta de 1 hora.** La
+  sesión dura 1 hora desde el login (`session_ttl_seconds`, `http_app.py`), no
+  se renueva con la actividad y no hay refresh token (el login PKCE solo
+  obtiene el access token). Un usuario activo es expulsado a los 60 minutos.
+  La solución (refresh token guardado en servidor, renovación silenciosa y
+  revocación al cerrar sesión) es una mejora de identidad independiente y
+  queda fuera de esta fase.
+- **El Guardrail de grounding** sigue bloqueando respuestas en documentos
+  sintéticos cortos (limitación conocida; esta fase no la corrige).
+- **Contenido en traces** si el opt-out sigue siendo ineficaz: aceptado según
+  D9.
+- **Prompt injection en resultados de tools**: el agente solo tiene tools de
+  lectura en el mismo matter y no escribe datos (D3), lo que limita el impacto.
