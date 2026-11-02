@@ -23,7 +23,9 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import UUID, uuid4
 
+from .agent_chat import AgentChatRuntime, input_not_allowed_response, release_job_quota, submit_agent_chat
 from .agent_integration import bind_harness_invocation
+from .agent_jobs import MIN_SESSION_REMAINING_SECONDS, JobKey
 from .authorization import AuthorizationDenied, AuthorizationStore, VerifiedIdentity, build_request_context
 from .documents import (
     DocumentError,
@@ -178,6 +180,8 @@ class ApplicationComposition:
     public_mode: bool = False
     trusted_edge_value: str | None = field(default=None, repr=False)
     quota: QuotaLedger | None = None
+    # ADR-021: asynchronous agentic chat. ``None`` keeps ``POST /api/chat`` fully synchronous.
+    agent_chat: AgentChatRuntime | None = None
 
     def __post_init__(self) -> None:
         if not self.matter_catalog or len(self.matter_catalog) > 64 or any(not isinstance(item, str) or not item or len(item) > 128 for item in self.matter_catalog):
@@ -629,6 +633,8 @@ class LoopbackLegalDeskApp:
                         "TIMED_OUT": "documents_processing",
                     }.get(result.status, "documents_processing")
                 return HTTPStatus.OK, {"operationStatus": operation_status, "result": safe_result}, []
+            if method == "GET" and len(parts) == 6 and parts[4] == "chat-jobs":
+                return self._chat_job(identity, matter_id, parts[5])
             if method == "POST" and len(parts) == 5 and parts[4] == "review":
                 return self._review(environ, identity, matter_id, session)
             if len(parts) == 5 and parts[4] == "reviews":
@@ -641,7 +647,7 @@ class LoopbackLegalDeskApp:
             if len(parts) == 6 and parts[4] == "reviews" and method in {"PATCH", "POST"}:
                 return self._review_update(environ, identity, matter_id, parts[5], session)
         if path == PurePosixPath("/api/chat") and method == "POST":
-            return self._chat(environ, identity, session)
+            return self._chat(environ, identity, session, key)
         if len(parts) == 4 and parts[1:3] == ("api", "conversations") and parts[3] and method == "GET":
             return self._history(environ, identity, parts[3])
         if path == PurePosixPath("/api/citations") and method == "GET":
@@ -909,7 +915,7 @@ class LoopbackLegalDeskApp:
             # selected-document RAG path.
             return None
 
-    def _chat(self, environ: Mapping[str, Any], identity: VerifiedIdentity, session: SessionRecord):
+    def _chat(self, environ: Mapping[str, Any], identity: VerifiedIdentity, session: SessionRecord, session_key: str = ""):
         data = self._body(environ)
         question, matter_id, conversation_id, session_id = data.get("question"), data.get("matterId"), data.get("conversationId"), data.get("sessionId")
         allowed_chat_fields = {"question", "matterId", "conversationId", "sessionId", "selectedDocumentId", "selectedFieldName"}
@@ -940,6 +946,13 @@ class LoopbackLegalDeskApp:
         if not self.composition.conversation_store.is_bound(context=context, conversation_id=conversation_id, session_selector=session_id):
             raise AuthorizationDenied("conversation access denied")
         self.state_store.set_conversation_correlation(conversation_id, context.correlation_id)
+        if selected_document_id is None and self.composition.agent_chat is not None and session_key:
+            # Open question: the agent decides the sources (ADR-021). A selected document and
+            # field already express the intent, so that shortcut below stays synchronous.
+            return self._submit_agent_chat(
+                identity=identity, session=session, session_key=session_key, context=context,
+                conversation_id=conversation_id, session_id=session_id, question=question,
+            )
         if self.composition.chat_service is None:
             raise RuntimeError("chat service is not configured")
         selected_document = None
@@ -1024,6 +1037,54 @@ class LoopbackLegalDeskApp:
             question=question, payload=payload,
             status=HTTPStatus.OK, extra=[],
         )
+
+    def _submit_agent_chat(
+        self, *, identity: VerifiedIdentity, session: SessionRecord, session_key: str, context: Any,
+        conversation_id: str, session_id: str, question: str,
+    ) -> tuple[HTTPStatus, Mapping[str, object], list[tuple[str, str]]]:
+        runtime = self.composition.agent_chat
+        assert runtime is not None
+        # The worker acts on the stored session, so it must still be alive when the job runs.
+        if session.expires_at - time.time() < MIN_SESSION_REMAINING_SECONDS:
+            return HTTPStatus.UNAUTHORIZED, {"error": "session_expiring"}, []
+        decision = runtime.input_check(question.strip(), context.correlation_id)
+        if decision.kind != "allowed":
+            # Blocked or unavailable input guardrail: no job, no quota, no Harness call.
+            self._audit(identity, context.matter_id, context.correlation_id, "chat")
+            return HTTPStatus.OK, input_not_allowed_response(decision.kind, context.correlation_id).to_dict(), []
+        job = submit_agent_chat(
+            runtime, self.composition.quota, subject=identity.subject, tenant_id=context.tenant_id,
+            matter_id=context.matter_id, conversation_id=conversation_id, session_selector=session_id,
+            correlation_id=context.correlation_id, question=decision.question or question.strip(),
+            session_key=session_key,
+        )
+        self._audit(identity, context.matter_id, context.correlation_id, "chat_agent_submitted")
+        return HTTPStatus.ACCEPTED, job.public_dict(), []
+
+    def _chat_job(self, identity: VerifiedIdentity, matter_id: str, job_id: str):
+        runtime = self.composition.agent_chat
+        if runtime is None:
+            raise KeyError("route")
+        if not job_id or len(job_id) > 64 or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-" for char in job_id):
+            raise ValueError("job ID is invalid")
+        # Reauthorize against the caller and the matter in the path; the job key is
+        # tenant + matter, so a job of another matter cannot even be addressed.
+        context = self._context(identity, matter_id)
+        key = JobKey(context.tenant_id, context.matter_id, job_id)
+        job = runtime.job_store.get(key)
+        if (
+            job is None
+            or job.subject != identity.subject
+            or not self.composition.conversation_store.is_bound(
+                context=context, conversation_id=job.conversation_id, session_selector=job.session_selector)
+        ):
+            raise AuthorizationDenied("job access denied")
+        job, failed_now = runtime.job_store.expire_if_due(key, now=time.time())
+        if job is None:
+            raise AuthorizationDenied("job access denied")
+        if failed_now:
+            release_job_quota(self.composition.quota, job)
+        return HTTPStatus.OK, job.public_dict(), []
 
     def _finalize_chat_response(
         self, *, identity: VerifiedIdentity, context: Any, matter_id: str,

@@ -49,6 +49,7 @@ from .agent_output import (
     resolve_output,
 )
 from .authorization import AuthorizationDenied
+from .chat import GUARDRAIL_INPUT_BLOCKED_ANSWER, TECHNICAL_ERROR_ANSWER, ChatResponse
 from .conversation_history import last_pairs, load_accepted_events
 from .memory import MAX_EVENT_TEXT_LENGTH
 from .quota import CHATS, HARNESS, QuotaLedger
@@ -87,7 +88,21 @@ class AgentChatRuntime:
     job_store: ChatJobStore
     queue: JobQueue
     input_check: Callable[[str, str], InputDecision]
-    prompt_artifact: Any = None  # the RAG prompt: only for the blocked/error envelope metadata
+
+
+def input_not_allowed_response(kind: str, correlation_id: str) -> ChatResponse:
+    """The same envelope the synchronous chat returns when the input Guardrail stops a question."""
+
+    if kind == "blocked":
+        return ChatResponse(
+            answer=GUARDRAIL_INPUT_BLOCKED_ANSWER, citations=(), evidence_status=None, disclaimer_required=True,
+            prompt_version=None, prompt_sha256=None, correlation_id=correlation_id, operation_status="blocked",
+        )
+    return ChatResponse(
+        answer=TECHNICAL_ERROR_ANSWER, citations=(), evidence_status=None, disclaimer_required=True,
+        prompt_version=None, prompt_sha256=None, correlation_id=correlation_id, error_code="guardrail_error",
+        operation_status="error",
+    )
 
 
 # ----------------------------------------------------------------- quota
@@ -405,7 +420,7 @@ class AgentChatWorker:
 
 
 __all__ = [
-    "AgentChatRuntime", "AgentChatWorker", "InputDecision", "JobQueue", "PermanentAgentError", "SubmissionError",
+    "AgentChatRuntime", "AgentChatWorker", "InputDecision", "input_not_allowed_response", "JobQueue", "PermanentAgentError", "SubmissionError",
     "TransientAgentError", "WorkerResult", "is_transient_error", "release_job_quota", "reserve_job_quota",
     "submit_agent_chat",
 ]
