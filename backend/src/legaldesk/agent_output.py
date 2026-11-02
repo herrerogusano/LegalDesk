@@ -657,14 +657,19 @@ def resolve_output(
 
 
 def _all_errors(plan: AnswerPlan, evidence: LoopEvidence) -> list[tuple[int, BlockError]]:
+    """Why each block was dropped, with the same uniqueness rules as :func:`render_plan`."""
+
     errors: list[tuple[int, BlockError]] = []
-    used: set[str] = set()
+    used_text: set[str] = set()
+    used_inventory: set[str] = set()
     for index, block in enumerate(plan.blocks):
         try:
             if isinstance(block, TextBlock):
-                render_text_block(block, evidence, used)
+                render_text_block(block, evidence, used_text)
+                used_text.add(block.tool_use_id)
             elif isinstance(block, InventoryBlock):
-                render_inventory_block(block, evidence, set())
+                render_inventory_block(block, evidence, used_inventory)
+                used_inventory.add(block.tool_use_id)
             else:
                 render_data_block(block, evidence)
         except _BlockInvalid as invalid:

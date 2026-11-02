@@ -508,8 +508,6 @@ def _structured_tool_results(
                 if type(block_index) is not int or block_index < 0 or block_index > 1024:
                     raise ValueError("Harness content block index is invalid")
                 fragments_delta = body.get("toolResult")
-                if not isinstance(fragments_delta, (list, tuple)) or not fragments_delta:
-                    raise ValueError("Harness tool result fragment is invalid")
                 # SDK deltas are bound to the content block.  Find only the
                 # result whose index matches; a single active match is not
                 # accepted for an ambiguous/missing index.
@@ -520,18 +518,30 @@ def _structured_tool_results(
                 result_record = matches[0]
                 fragments = result_record["fragments"]
                 assert isinstance(fragments, list)
-                for fragment_block in fragments_delta:
-                    if not isinstance(fragment_block, Mapping):
+                try:
+                    if not isinstance(fragments_delta, (list, tuple)) or not fragments_delta:
                         raise ValueError("Harness tool result fragment is invalid")
-                    fragment = fragment_block.get("text")
-                    if fragment is None and "json" in fragment_block:
-                        fragment = json.dumps(fragment_block.get("json"), separators=(",", ":"))
-                    limit = _MAX_AGENT_TOOL_RESULT if raw else _MAX_TOOL_FRAGMENT
-                    if not isinstance(fragment, str) or len(fragment) > limit:
-                        raise ValueError("Harness tool result fragment is invalid")
-                    if sum(len(item) for item in fragments) + len(fragment) > limit:
-                        raise ValueError("Harness tool result is too large")
-                    fragments.append(fragment)
+                    for fragment_block in fragments_delta:
+                        if result_record.get("bad"):
+                            break
+                        if not isinstance(fragment_block, Mapping):
+                            raise ValueError("Harness tool result fragment is invalid")
+                        fragment = fragment_block.get("text")
+                        if fragment is None and "json" in fragment_block:
+                            fragment = json.dumps(fragment_block.get("json"), separators=(",", ":"))
+                        limit = _MAX_AGENT_TOOL_RESULT if raw else _MAX_TOOL_FRAGMENT
+                        if not isinstance(fragment, str) or len(fragment) > limit:
+                            raise ValueError("Harness tool result fragment is invalid")
+                        if sum(len(item) for item in fragments) + len(fragment) > limit:
+                            raise ValueError("Harness tool result is too large")
+                        fragments.append(fragment)
+                except ValueError:
+                    if not raw:
+                        raise
+                    # Agentic chat: an oversized or non-text result spoils only its own
+                    # tool call. The other results of the loop stay usable (ADR-021 D5).
+                    result_record["bad"] = True
+                    fragments.clear()
     if len(uses) > _MAX_TOOL_RESULTS:
         raise ValueError("too many Harness tool results")
     if set(uses) != set(results) and not allow_incomplete:
@@ -541,6 +551,9 @@ def _structured_tool_results(
         record = results.get(tool_id)
         if record is None:
             continue  # the loop was cut before this call returned: nothing to reuse
+        if record.get("bad"):
+            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}))
+            continue
         fragments = record["fragments"]
         assert isinstance(fragments, list)
         try:

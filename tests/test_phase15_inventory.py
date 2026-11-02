@@ -86,6 +86,20 @@ class InventoryRenderTests(unittest.TestCase):
         self.assertIs(result.path, OutputPath.INVENTORY)
         self.assertEqual([item.error for item in result.omitted], [BlockError.DUPLICATE_INVENTORY_BLOCK])
 
+    def test_duplicate_inventory_blocks_are_omitted_with_a_closed_reason_even_between_other_blocks(self) -> None:
+        from legaldesk.agent_output import _all_errors, parse_answer_plan  # noqa: F401 - parse re-exported for clarity
+
+        evidence = LoopEvidence.from_results(inventories=[("tu-list", listing(*DOCS))])
+        block = {"type": "inventory", "source": {"toolUseId": "tu-list"}}
+        plan = {"version": 1, "blocks": [block, {**block, "statusIs": ["INDEXED"]}, {"type": "inventory", "source": {"toolUseId": "tu-nope"}}, block]}
+        result = resolve_output(loop=LoopOutcome.COMPLETED, plan=plan, evidence=evidence)
+        self.assertEqual(len(result.blocks) - len([b for b in result.blocks if b.kind == "notice"]), 1)  # printed once
+        self.assertEqual([(o.index, o.error) for o in result.omitted], [
+            (1, BlockError.DUPLICATE_INVENTORY_BLOCK), (2, BlockError.UNKNOWN_TOOL_USE_ID), (3, BlockError.DUPLICATE_INVENTORY_BLOCK)])
+        # The diagnostic walk reports the same reasons as the renderer.
+        self.assertEqual([(i, e) for i, e in _all_errors(contracts.parse_answer_plan(plan), evidence)],
+                         [(o.index, o.error) for o in result.omitted])
+
     def test_inventory_next_to_text_is_a_mixed_answer(self) -> None:
         search = contracts.parse_search_documents_result({
             "answer": "El plazo es de 30 días.", "evidenceStatus": "answerable", "operationStatus": "ok",

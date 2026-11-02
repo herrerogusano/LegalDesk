@@ -343,6 +343,62 @@ class WorkerHappyPathTests(unittest.TestCase):
         self.assertEqual(self.world.counters()["gatewayCount"], 0)
 
 
+class OversizedToolResultThroughTheRealAdapterTests(unittest.TestCase):
+    """PB-001: one unusable tool result must not cost the loop its valid ones (D5)."""
+
+    def setUp(self) -> None:
+        from test_phase15_agent_chat_client import SEARCH as FULL_SEARCH, StreamClient, final_message, tool_call as stream_call
+        from legaldesk_agent import HarnessInvocationScope, HarnessInvoker, invoke_agent_chat
+
+        self.world = World(self)
+        self.job = self.world.submit()
+        self.world.rag_response = rag_ok()
+        self.stream = lambda plan: (
+            stream_call("tu-big", FULL_SEARCH, "x" * 300_000)
+            + stream_call("tu-ok", FULL_SEARCH, search_payload())
+            + final_message(plan if isinstance(plan, str) else json.dumps(plan))
+        )
+
+        def invoke(binding, question, history):
+            client = StreamClient(self.events)
+            return invoke_agent_chat(HarnessInvoker(client, "arn:aws:bedrock-agentcore:eu-west-1:123456789012:harness/x"), question,
+                                     invocation_scope=HarnessInvocationScope.from_derived(binding),
+                                     system_prompt=({"text": "p"},), history=history)
+
+        self.world.worker.invoke_agent = invoke
+
+    def test_the_valid_result_is_used_by_the_plan(self) -> None:
+        self.events = self.stream({"version": 1, "blocks": [{"type": "text", "source": {"toolUseId": "tu-ok"}}]})
+        result = self.world.worker.process(self.job.key)
+        body = self.world.jobs.get(self.job.key).result
+        self.assertEqual((body["path"], body["blocks"][0]["text"]), ("grounded", "El plazo es de 30 días."))
+        self.assertEqual(self.world.rag_calls, [])
+        self.assertEqual(result.metadata["tools"], ["search_documents", "search_documents"])
+
+    def test_a_plan_pointing_at_the_oversized_call_is_dropped_and_the_valid_result_is_reused_without_rag(self) -> None:
+        self.events = self.stream({"version": 1, "blocks": [{"type": "text", "source": {"toolUseId": "tu-big"}}]})
+        result = self.world.worker.process(self.job.key)
+        body = self.world.jobs.get(self.job.key).result
+        self.assertEqual((body["path"], result.metadata["fallbackReason"]), ("tool_result", "no_valid_blocks"))
+        self.assertEqual(body["blocks"][0]["text"], "El plazo es de 30 días.")
+        self.assertEqual(self.world.rag_calls, [])
+
+    def test_an_unusable_plan_still_reuses_the_valid_result(self) -> None:
+        self.events = self.stream("not a plan")
+        self.world.worker.process(self.job.key)
+        body = self.world.jobs.get(self.job.key).result
+        self.assertEqual((body["path"], body["blocks"][0]["text"]), ("tool_result", "El plazo es de 30 días."))
+        self.assertEqual(self.world.rag_calls, [])
+
+    def test_when_every_result_is_unusable_the_direct_rag_path_runs(self) -> None:
+        from test_phase15_agent_chat_client import SEARCH as FULL_SEARCH, final_message, tool_call as stream_call
+
+        self.events = stream_call("tu-big", FULL_SEARCH, "x" * 300_000) + final_message("not a plan")
+        self.world.worker.process(self.job.key)
+        self.assertEqual(self.world.jobs.get(self.job.key).result["path"], "rag_fallback")
+        self.assertEqual(len(self.world.rag_calls), 1)
+
+
 class WorkerFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         self.world = World(self)

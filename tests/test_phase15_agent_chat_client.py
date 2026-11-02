@@ -208,6 +208,32 @@ class AgentChatInvocationTests(unittest.TestCase):
         self.assertEqual([(c.tool_use_id, c.status) for c in result.tool_calls],
                          [("tu-1", "SUCCESS"), ("tu-2", "ERROR"), ("tu-3", "ERROR")])
 
+    def test_an_oversized_or_non_text_result_spoils_only_its_own_tool_call(self) -> None:
+        huge = "x" * 300_000  # above the 256 KiB per-result bound, below the stream bound
+        non_text = tool_call("tu-3", FIELDS, None)
+        non_text.insert(-1, {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"toolResult": [{"image": {"format": "png"}}]}}})
+        two_chunks = tool_call("tu-4", FIELDS, None)
+        for _ in range(2):  # each chunk fits but together they exceed the bound
+            two_chunks.insert(-1, {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"toolResult": [{"text": "y" * 200_000}]}}})
+        events = (tool_call("tu-1", SEARCH, huge) + tool_call("tu-2", SEARCH, {"answer": "valida"})
+                  + non_text + two_chunks + final_message("{}"))
+        result = self.invoke(StreamClient(events))
+        self.assertEqual([(c.tool_use_id, c.status) for c in result.tool_calls],
+                         [("tu-1", "ERROR"), ("tu-2", "SUCCESS"), ("tu-3", "ERROR"), ("tu-4", "ERROR")])
+        self.assertEqual(result.tool_calls[1].payload["answer"], "valida")
+        self.assertEqual(result.tool_calls[0].payload, {})
+
+    def test_the_non_agentic_parser_stays_strict(self) -> None:
+        from legaldesk_agent.client import _structured_tool_results
+
+        for events in (tool_call("tu-1", FIELDS, "x" * 70_000), tool_call("tu-1", FIELDS, "x" * 70_000)[:-2]):
+            with self.assertRaises(ValueError):
+                _structured_tool_results(events, allowed_tools=None)
+        bad = tool_call("tu-1", FIELDS, None)
+        bad.insert(-1, {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"toolResult": [{"image": {}}]}}})
+        with self.assertRaises(ValueError):
+            _structured_tool_results(bad)
+
     def test_a_tool_outside_the_allowlist_fails_closed(self) -> None:
         events = tool_call("tu-1", REVIEW, {"reviewTaskId": "r"}) + final_message("{}")
         with self.assertRaises(HarnessInvocationError):
