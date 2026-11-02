@@ -165,8 +165,9 @@ automáticos:
    aprovechamiento de D5). Si no los conserva, el fallback va directamente a
    RAG.
 6. Smoke del navegador: pregunta de texto, de dato, mixta, de inventario,
-   fallback, cross-matter denegado, apertura de una cita, propuesta de
-   revisión y cierre de sesión con un job en curso.
+   fallback, cross-matter denegado, apertura de una cita, enlace "ver de
+   dónde sale este dato", **ausencia** de propuesta de revisión en el chat
+   agentic (ADR-021 D2) y cierre de sesión con un job en curso.
 
 ## Criterios de aceptación
 
