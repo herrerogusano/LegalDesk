@@ -19,6 +19,7 @@ from decimal import Decimal
 from typing import Any, Mapping
 from uuid import UUID
 
+from . import agent_contracts
 from .authorization import (
     AuthorizationDenied,
     AuthorizationStore,
@@ -57,6 +58,7 @@ MCP_SCHEMA_VERSION = "1"
 
 LIST_MATTER_DOCUMENTS = "list_matter_documents"
 GET_DOCUMENT_METADATA = "get_document_metadata"
+GET_EXTRACTED_FIELDS = agent_contracts.GET_EXTRACTED_FIELDS
 
 LIST_MATTER_DOCUMENTS_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -108,6 +110,14 @@ MCP_TOOL_DEFINITIONS: tuple[dict[str, object], ...] = (
         "name": GET_DOCUMENT_METADATA,
         "description": "Get non-content metadata for one document.",
         "inputSchema": GET_DOCUMENT_METADATA_SCHEMA,
+    },
+    {
+        "name": GET_EXTRACTED_FIELDS,
+        "description": (
+            "Get IDP fields for up to 20 documents of the current matter. Each field is "
+            "fact, pending_review or empty."
+        ),
+        "inputSchema": agent_contracts.GET_EXTRACTED_FIELDS_SCHEMA,
     },
 )
 
@@ -290,6 +300,9 @@ class MCPServer:
                     history_limit=arguments.get("historyLimit"),
                     history_cursor=arguments.get("historyCursor"),
                 )
+        elif name == GET_EXTRACTED_FIELDS:
+            self._strict_params(arguments, expected={"documentIds"}, optional={"fieldNames"})
+            payload = self._extracted_fields(context, arguments)
         else:
             raise MCPRequestError("tool not found")
         result = {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
@@ -303,6 +316,61 @@ class MCPServer:
             count=len(payload.get("documents", ())) if isinstance(payload.get("documents"), list) else None,
         )
         return result
+
+    def _extracted_fields(self, context: RequestContext, arguments: Mapping[str, object]) -> dict[str, object]:
+        """Batch IDP projection for the agent (ADR-021 D2/D3).
+
+        Scope comes only from ``context``. A document outside the matter is
+        reported as not found, exactly like a missing one. Accepted and
+        auto-accepted fields are facts, provisional ones are pending human
+        review, and absent or rejected ones come back empty with no value.
+        """
+
+        try:
+            document_ids, field_names = agent_contracts.parse_get_extracted_fields_arguments(arguments)
+        except agent_contracts.AgentContractError as exc:
+            raise MCPRequestError("parameters are invalid") from exc
+        if self.idp_repository is None:
+            raise RuntimeError("IDP is not configured")
+        documents: list[dict[str, object]] = []
+        not_found: list[str] = []
+        for document_id in document_ids:
+            document = self.metadata_repository.get_for_scope(
+                tenant_id=context.tenant_id, matter_id=context.matter_id, document_id=document_id,
+            )
+            if not isinstance(document, Document) or not self._in_scope(document, context):
+                not_found.append(document_id)
+                continue
+            projection = self._idp_projection(context=context, document_id=document_id, document=document)
+            by_name = {item["name"]: item for item in projection["fields"]}  # type: ignore[index]
+            names = field_names if field_names is not None else tuple(by_name)
+            documents.append({
+                "documentId": document.document_id,
+                "name": document.name,
+                "documentType": projection.get("documentType"),
+                "fields": [self._agent_field(name, by_name.get(name)) for name in names],
+            })
+        return {"documents": documents, "notFound": not_found}
+
+    @staticmethod
+    def _agent_field(name: str, item: Mapping[str, object] | None) -> dict[str, object]:
+        status = agent_contracts.classify_field(
+            presence=item.get("presence") if item else None,
+            acceptance=item.get("acceptance") if item else None,
+            has_value=bool(item) and item.get("value") is not None,
+        )
+        if status is agent_contracts.FieldStatus.EMPTY:
+            return {"name": name, "status": status.value, "value": None, "origin": None, "evidence": []}
+        anchors = [
+            {"page": anchor["page"], "quote": str(anchor["quote"])[: agent_contracts.MAX_EVIDENCE_QUOTE_CHARS]}
+            for anchor in (item.get("evidence") or [])  # type: ignore[union-attr]
+            if isinstance(anchor.get("page"), int) and not isinstance(anchor.get("page"), bool)
+            and anchor["page"] >= 1 and isinstance(anchor.get("quote"), str) and anchor["quote"].strip()
+        ][: agent_contracts.MAX_EVIDENCE_PER_FIELD]
+        return {
+            "name": name, "status": status.value, "value": item.get("value"),  # type: ignore[union-attr]
+            "origin": item.get("origin"), "evidence": anchors,  # type: ignore[union-attr]
+        }
 
     def _idp_projection(
         self,
@@ -594,7 +662,7 @@ def _validated_mcp_grant(
     correlation_id = item.get("correlationId")
     expires_at = item.get("expiresAt")
     if (
-        tool_name not in {LIST_MATTER_DOCUMENTS, GET_DOCUMENT_METADATA}
+        tool_name not in {LIST_MATTER_DOCUMENTS, GET_DOCUMENT_METADATA, GET_EXTRACTED_FIELDS}
         or not all(isinstance(value, str) and value for value in (subject, matter_id, correlation_id))
         or isinstance(expires_at, bool)
         or not isinstance(expires_at, (int, float, Decimal))
@@ -757,6 +825,7 @@ _prewarm_container()
 __all__ = [
     "GET_DOCUMENT_METADATA",
     "GET_DOCUMENT_METADATA_SCHEMA",
+    "GET_EXTRACTED_FIELDS",
     "LIST_MATTER_DOCUMENTS",
     "LIST_MATTER_DOCUMENTS_SCHEMA",
     "MCP_PROTOCOL_VERSION",

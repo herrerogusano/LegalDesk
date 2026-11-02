@@ -59,6 +59,8 @@ class TelemetryOperation(StrEnum):
     GATEWAY_REQUEST = "gateway_request"
     LIST_MATTER_DOCUMENTS = "list_matter_documents"
     GET_DOCUMENT_METADATA = "get_document_metadata"
+    GET_EXTRACTED_FIELDS = "get_extracted_fields"
+    SEARCH_DOCUMENTS = "search_documents"
     INPUT = "input"
     OUTPUT = "output"
 
