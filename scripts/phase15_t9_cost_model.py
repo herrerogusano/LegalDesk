@@ -84,14 +84,16 @@ BLOCK: Mapping[str, Mapping[str, int]] = {
 SMOKE_HISTORY_INPUT_FACTOR = 1.15  # up to 6 pairs of history on every Harness call
 SMOKE_FALLBACKS = 1
 SMOKE_WORKER_SECONDS = (35, 80)  # per job, worker Lambda at 1 GB
-# One-off checks: ADOT probe (1 Harness call), session check (2 calls, no tools), cut-loop check
+# One-off checks: ADOT probe (1 Harness call), then scripts/phase15_harness_checks.py: allowed-tools
+# pre-check (1 call, tools on, trivial reply), session check (2 calls, no tools) and cut-loop check
 # (2 calls, tools on, maxIterations=1 so the loop ends after the first completed tool).
 ADOT_CALLS = (H(1700, 150),)
+ALLOWED_TOOLS_CALLS = (H(2700, 30),)
 SESSION_CALLS = (H(1700, 100), H(1700, 100))
 CUT_CALLS = (H(2700, 120), R(3000, 150), W(3500, 250)) * 2
 
 HARD_CAP = {
-    "harness_invocations": 50,  # 30 eval + 10 smoke + 1 ADOT + 2 session + 2 cut-loop + 5 reserve
+    "harness_invocations": 50,  # 30 eval + 10 smoke + 1 ADOT + 1 allowed-tools + 2 session + 2 cut-loop + 4 reserve
     "invocation_retries": 0,
     "approved_ceiling_usd": 5.00,
     # The eval report sums `estimatedLoopCostUsd`, which covers the Harness iterations only
@@ -165,7 +167,7 @@ def estimate(upper: bool) -> dict[str, object]:
         add_calls("smoke", list(RAG_FALLBACK))
         kb_calls += 1
         guardrail_units += GUARDRAIL_UNITS["per_search"][key]
-    for calls, count_invocations, searches in ((ADOT_CALLS, 1, 0), (SESSION_CALLS, 2, 0), (CUT_CALLS, 2, 2)):
+    for calls, count_invocations, searches in ((ADOT_CALLS, 1, 0), (ALLOWED_TOOLS_CALLS, 1, 0), (SESSION_CALLS, 2, 0), (CUT_CALLS, 2, 2)):
         add_calls("checks", calls)
         invocations += count_invocations
         harness_runtime += count_invocations * _runtime_cost(40 if upper else 15, upper=upper)
