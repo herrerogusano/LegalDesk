@@ -20,15 +20,11 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .agent_chat_telemetry import sanitize_job_metadata
 from .agent_jobs import RETRY_VISIBILITY_SECONDS, JobKey
 
 MAX_MESSAGE_BYTES = 1024
 _MESSAGE_KEYS = frozenset({"jobId", "tenantId", "matterId"})
-_SAFE_META_KEYS = frozenset({
-    "claim", "failure", "quotaReleased", "attempt", "reason", "loopOutcome", "iterations", "tools",
-    "invalidToolResults", "tokens", "historyUnavailable", "historyTrimmed", "outputPath", "fallbackReason", "planError",
-    "omittedBlocks", "blockCount", "citationCount", "memoryWritten", "latencyMs",
-})
 AGENT_PROMPT_FILENAME = "legaldesk-agent.md"
 
 
@@ -82,7 +78,7 @@ def _enabled() -> bool:
 
 
 def _log(job_id: str, action: str, metadata: Mapping[str, object] | None) -> None:
-    safe = {key: value for key, value in (metadata or {}).items() if key in _SAFE_META_KEYS}
+    safe = sanitize_job_metadata(metadata)  # allowlisted keys with closed-shape values; no content, no nulls
     print(json.dumps({"event": "agent_chat_job", "jobId": job_id, "action": action, **safe}, separators=(",", ":"), sort_keys=True, default=str), flush=True)
 
 
@@ -171,6 +167,7 @@ def build_worker_from_environment() -> tuple[Any, str, Callable[[str, int], None
         grant_repository=composition.gateway_grant_repository, identity_verifier=composition.identity_verifier,
         gateway_url=composition.gateway_url, invoke_agent=invoke_agent,
         rag_chat=_rag_chat(composition), memory=composition.memory,
+        prompt_identity=(prompt.version, prompt.sha256),
     )
     sqs = boto3.client("sqs", region_name=config.region, config=Config(retries={"total_max_attempts": 1, "mode": "standard"}))
 
