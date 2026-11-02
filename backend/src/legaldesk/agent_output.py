@@ -43,6 +43,13 @@ from .agent_contracts import (
 )
 
 MAX_RENDERED_VALUE_CHARS = 500
+# One output can carry at most this many distinct citations. It is also the
+# number of citation handles the worker may create (``agent_citations``), so a
+# plan that validates here can always be turned into handles.
+MAX_OUTPUT_CITATIONS = 32
+# A data line cites the first evidence anchor of its field; a second anchor
+# would double the citations without adding a different fact.
+MAX_CITATIONS_PER_FIELD = 1
 
 
 class OutputPath(StrEnum):
@@ -82,6 +89,7 @@ class BlockError(StrEnum):
     CRITERION_NOT_MET = "criterion_not_met"
     ORDER_INVALID = "order_invalid"
     AGGREGATE_INVALID = "aggregate_invalid"
+    TOO_MANY_CITATIONS = "too_many_citations"
 
 
 _LOOP_REASON = {
@@ -333,7 +341,7 @@ def _idp_citations(document: DocumentFields, extracted: ExtractedField) -> tuple
             document_id=document.document_id, document_name=document.document_name,
             page_number=anchor.page, section=None, passage=anchor.quote, is_idp=True,
         )
-        for index, anchor in enumerate(extracted.evidence, start=1)
+        for index, anchor in enumerate(extracted.evidence[:MAX_CITATIONS_PER_FIELD], start=1)
     )
 
 
@@ -452,6 +460,8 @@ def render_data_block(block: DataBlock, evidence: LoopEvidence) -> tuple[OutputB
     aggregates = tuple(_aggregate_line(request, all_lines) for request in block.aggregates)
     if not citations:
         raise _BlockInvalid(BlockError.MISSING_CITATION)
+    if len(citations) > MAX_OUTPUT_CITATIONS:
+        raise _BlockInvalid(BlockError.TOO_MANY_CITATIONS)
     return (
         OutputBlock("data", groups=tuple(groups), aggregates=aggregates, citation_ids=tuple(citations)),
         list(citations.values()),
@@ -513,12 +523,18 @@ def render_plan(plan: AnswerPlan, evidence: LoopEvidence) -> AnswerOutput | None
         try:
             if isinstance(block, TextBlock):
                 output, block_citations = render_text_block(block, evidence, used_text)
-                used_text.add(block.tool_use_id)
             else:
                 output, block_citations = render_data_block(block, evidence)
+            # The whole output shares one citation budget; a block that would
+            # exceed it is omitted like any other invalid block, so a plan
+            # that validates can always be turned into citation handles.
+            if len(citations.keys() | {c.citation_id for c in block_citations}) > MAX_OUTPUT_CITATIONS:
+                raise _BlockInvalid(BlockError.TOO_MANY_CITATIONS)
         except _BlockInvalid as invalid:
             omitted.append(OmittedBlock(index, invalid.error))
             continue
+        if isinstance(block, TextBlock):
+            used_text.add(block.tool_use_id)
         rendered.append((block.transition_before, output))
         citations.update({c.citation_id: c for c in block_citations})
     if not rendered:

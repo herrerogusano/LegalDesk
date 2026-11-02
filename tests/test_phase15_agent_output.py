@@ -389,6 +389,89 @@ class OutputTreeTests(unittest.TestCase):
         self.assertEqual(set(templates.FIELD_LABELS), set(contracts.IDP_FIELD_NAMES))
 
 
+class CitationBudgetTests(unittest.TestCase):
+    """PB-001: a plan that validates must always be convertible into citation handles."""
+
+    def evidence(self, documents=20):
+        def two_anchor_field(name, value):
+            item = field(name, value)
+            item["evidence"] = [{"page": 1, "quote": "primera ancla"}, {"page": 2, "quote": "segunda ancla"}]
+            return item
+
+        return LoopEvidence.from_results(
+            extracted=[fields_result(*(
+                document(f"doc-{index}", f"Doc {index:02d}.pdf", [
+                    two_anchor_field("amount", index + 1), two_anchor_field("effective_date", "2026-01-01")])
+                for index in range(documents)
+            ))],
+            search_results=[("tooluse_search", search_result())],
+        )
+
+    def block(self, documents, fields=("amount", "effective_date")):
+        refs = [ref(f"doc-{index}", name) for index in range(documents) for name in fields]
+        return data_block({"criterion": {"id": "all_documents"}, "refs": refs})
+
+    def assert_convertible_to_handles(self, result):
+        self.assertLessEqual(len(result.citations), output.MAX_OUTPUT_CITATIONS)
+        handles = build_citation_handles(
+            subject="idp|alice", tenant_id="tnt_a", matter_id="mat_a", conversation_id="conv-1",
+            correlation_id="8ec5d1c5-7b58-4bc2-a183-8fd48a3bd279", citations=result.citations,
+        )
+        self.assertEqual(len(handles), len(result.citations))
+
+    def test_the_budget_is_one_constant_shared_by_validation_handles_and_search_results(self) -> None:
+        from legaldesk import agent_citations
+        self.assertEqual(
+            output.MAX_OUTPUT_CITATIONS,
+            agent_citations.MAX_CITATION_HANDLES,
+        )
+        self.assertEqual(output.MAX_OUTPUT_CITATIONS, contracts.MAX_RESULT_CITATIONS)
+
+    def test_a_field_is_cited_once_even_when_the_tool_returned_two_anchors(self) -> None:
+        result = render(plan(self.block(16)), self.evidence())
+        self.assertIs(result.path, OutputPath.DATA)
+        self.assertEqual(len(result.citations), 32)
+        self.assertEqual(result.citations[0].passage, "primera ancla")
+        self.assertTrue(all(len(line.citation_ids) == 1 for line in result.blocks[0].groups[0].lines))
+        self.assert_convertible_to_handles(result)
+
+    def test_a_valid_plan_that_would_exceed_the_budget_is_omitted_with_a_closed_reason_not_failed_late(self) -> None:
+        # 20 documents x 2 fields x 2 anchors = 80 evidence anchors; 34 cited fields > 32.
+        result = render(plan(self.block(17)), self.evidence())
+        self.assertEqual(result.omitted[0].error, BlockError.TOO_MANY_CITATIONS)
+        self.assertEqual((result.path, result.fallback_reason), (OutputPath.TOOL_RESULT, FallbackReason.NO_VALID_BLOCKS))
+        self.assert_convertible_to_handles(result)
+        no_search = LoopEvidence(documents=self.evidence().documents)
+        fallback = render(plan(self.block(20)), no_search)
+        self.assertEqual((fallback.path, fallback.fallback_reason), (OutputPath.RAG_FALLBACK, FallbackReason.NO_VALID_BLOCKS))
+        self.assertEqual([item.error for item in fallback.omitted], [BlockError.TOO_MANY_CITATIONS])
+
+    def test_blocks_share_one_budget_and_the_overflowing_block_is_the_one_omitted(self) -> None:
+        text = {"type": "text", "source": {"toolUseId": "tooluse_search"}}
+        for blocks, kept in (([text, self.block(16)], "text"), ([self.block(16), text], "data")):
+            with self.subTest(first=kept):
+                result = render(plan(*blocks), self.evidence())
+                self.assertEqual([item.error for item in result.omitted], [BlockError.TOO_MANY_CITATIONS])
+                self.assertEqual(result.blocks[0].kind, kept)
+                self.assertEqual(result.blocks[-1].kind, "notice")
+                self.assert_convertible_to_handles(result)
+
+    def test_a_citation_shown_in_two_blocks_counts_once(self) -> None:
+        result = render(plan(self.block(16), self.block(16)), self.evidence())
+        self.assertEqual(result.omitted, ())
+        self.assertEqual(len(result.citations), 32)
+        self.assert_convertible_to_handles(result)
+
+    def test_no_resolved_output_ever_exceeds_the_budget(self) -> None:
+        text = {"type": "text", "source": {"toolUseId": "tooluse_search"}}
+        for count in (1, 8, 15, 16, 17, 20):
+            for blocks in ([self.block(count)], [self.block(count), text], [text, self.block(count)],
+                           [self.block(count, ("amount",)), self.block(count, ("effective_date",))]):
+                with self.subTest(count=count, blocks=len(blocks)):
+                    result = render(plan(*blocks), self.evidence())
+                    self.assert_convertible_to_handles(result)
+
+
 class CitationHandleTests(unittest.TestCase):
     def citations(self):
         return render(plan(

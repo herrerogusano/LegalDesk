@@ -16,11 +16,13 @@ import secrets
 import time
 from typing import Callable, Iterable
 
-from .agent_output import RenderedCitation
+from .agent_output import MAX_OUTPUT_CITATIONS, RenderedCitation
 from .state import CitationHandle
 
 CITATION_HANDLE_TTL_SECONDS = 300
-MAX_CITATION_HANDLES = 32
+# Same budget the output tree enforces while validating, so this never fires
+# for an output that ``agent_output.resolve_output`` produced.
+MAX_CITATION_HANDLES = MAX_OUTPUT_CITATIONS
 MAX_HANDLE_PASSAGE_CHARS = 8_000
 
 CitationKey = tuple[str, str, str, str]
