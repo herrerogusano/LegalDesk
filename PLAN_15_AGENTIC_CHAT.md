@@ -114,7 +114,9 @@ botones.
 
 ### T6. Frontend
 
-Envío y sondeo, estado "pensando…", render de bloques `data` y `text` con sus
+Envío y sondeo, estado "pensando…" y, pasados unos 45 s, "está tardando más de
+lo habitual…" (tiempos esperados: 15–35 s típicos, 40–60 s en frío; el plazo
+de 5 minutos es solo el corte de seguridad), render de bloques `data` y `text` con sus
 citas, botón de `suggestReview` que usa el flujo de revisión existente y
 mensaje de "vuelve a enviar la pregunta" cuando un job falla por sesión.
 
