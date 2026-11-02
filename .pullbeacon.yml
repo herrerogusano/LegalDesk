@@ -14,7 +14,7 @@ model:
 limits:
   # Phase PRs in this repository are usually large.
   max_changed_files: 60
-  max_changed_lines: 3000
+  max_changed_lines: 5000
   # Smaller batches so each review answer fits in the output budget.
   max_context_chars: 80000
   max_file_bytes: 200000
