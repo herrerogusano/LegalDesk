@@ -228,6 +228,19 @@ class AnswerOutput:
             "suggestReview": {"reasonCode": self.suggest_review} if self.suggest_review else None,
         }
 
+    def plain_text(self) -> str:
+        """The answer as the user reads it, for conversation memory (final answer only)."""
+
+        parts: list[str] = []
+        for block in self.blocks:
+            if block.text:
+                parts.append(block.text)
+            for group in block.groups:
+                parts.append(group.title)
+                parts.extend(line.text for line in group.lines)
+            parts.extend(line.text for line in block.aggregates)
+        return "\n".join(parts)
+
     def metadata(self) -> dict[str, object]:
         """Content-free facts for telemetry (ADR-021 D9)."""
 

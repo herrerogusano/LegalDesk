@@ -41,6 +41,7 @@ from .identity import (
     create_pkce_authorization_request,
 )
 from .chat import ChatRequest
+from .conversation_history import parse_provider_event
 from .ingestion import IngestionConflictError, KnowledgeBaseSyncResult, run_knowledge_base_sync
 from .mcp_server import GET_DOCUMENT_METADATA, LIST_MATTER_DOCUMENTS, MCPServer
 from .memory import ConversationBindingStore, MemoryScope, derive_memory_scope_for_identity
@@ -1186,33 +1187,9 @@ class LoopbackLegalDeskApp:
             provider_events = raw.get("events", ()) if isinstance(raw, Mapping) else ()
             if isinstance(provider_events, Sequence):
                 for item in provider_events:
-                    if not isinstance(item, Mapping):
-                        continue
-                    event_id = item.get("eventId")
-                    if not isinstance(event_id, str) and isinstance(item.get("event"), Mapping):
-                        event_id = item["event"].get("eventId")
-                    if not isinstance(event_id, str) or event_id not in accepted_ids:
-                        continue
-                    source = item.get("event") if isinstance(item.get("event"), Mapping) else item
-                    role, text = source.get("role"), source.get("text")
-                    # AgentCore Memory returns nested conversational payloads;
-                    # never treat arbitrary provider metadata as history text.
-                    payload = source.get("payload")
-                    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
-                        for block in payload:
-                            if not isinstance(block, Mapping):
-                                continue
-                            conversational = block.get("conversational")
-                            if not isinstance(conversational, Mapping):
-                                continue
-                            candidate_role = conversational.get("role")
-                            content = conversational.get("content")
-                            candidate_text = content.get("text") if isinstance(content, Mapping) else None
-                            if isinstance(candidate_role, str) and isinstance(candidate_text, str):
-                                role, text = candidate_role, candidate_text
-                                break
-                    if isinstance(role, str) and isinstance(text, str) and len(text) <= 8_000:
-                        events.append({"eventId": event_id, "role": role, "text": text})
+                    parsed = parse_provider_event(item)
+                    if parsed is not None and parsed.event_id in accepted_ids:
+                        events.append({"eventId": parsed.event_id, "role": parsed.role, "text": parsed.text})
         return HTTPStatus.OK, {"events": events[:100]}, []
 
     def _review_binding(
