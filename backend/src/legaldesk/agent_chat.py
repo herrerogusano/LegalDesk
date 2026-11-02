@@ -65,6 +65,11 @@ TRANSIENT_ERROR_CLASSES = frozenset({
 })
 
 
+# The direct RAG path (resolver, writer, Guardrails) needs about this long; with less Lambda
+# time left the job fails cleanly instead of being killed half way.
+MIN_FALLBACK_SECONDS = 40
+
+
 class SubmissionError(RuntimeError):
     """The job could not be created or queued; the quota has been given back."""
 
@@ -232,11 +237,13 @@ class AgentChatWorker:
         rag_chat: Callable[..., Any],
         memory: Any = None,
         clock: Callable[[], float] = time.time,
+        time_left: Callable[[], float] | None = None,
     ) -> None:
         self.job_store, self.state_store, self.quota = job_store, state_store, quota
         self.authorization_store, self.conversation_store = authorization_store, conversation_store
         self.grant_repository, self.identity_verifier, self.gateway_url = grant_repository, identity_verifier, gateway_url
         self.invoke_agent, self.rag_chat, self.memory, self.clock = invoke_agent, rag_chat, memory, clock
+        self.time_left = time_left  # seconds of Lambda time left; set per invocation by the handler
 
     # -- public --------------------------------------------------------
     def process(self, key: JobKey) -> WorkerResult:
@@ -348,6 +355,8 @@ class AgentChatWorker:
     def _rag_fallback(self, job: ChatJob, binding: Any, reasoned: AnswerOutput) -> tuple[AnswerOutput, str]:
         """D5: nothing in the loop was usable; answer with the direct RAG path."""
 
+        if self.time_left is not None and self.time_left() < MIN_FALLBACK_SECONDS:
+            raise PermanentAgentError(FailureCode.DEADLINE_EXCEEDED)
         passages: list[Any] = []
 
         def collect(_identity: Any, _context: Any, _request: Any, _response: Any, selected: tuple[Any, ...]) -> None:
