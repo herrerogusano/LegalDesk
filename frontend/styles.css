@@ -195,6 +195,25 @@ textarea { resize: vertical; margin-top: 8px; min-height: 92px; font: 19px/1.45 
 .inline-citation:hover, .inline-citation:focus-visible { background: var(--oxblood); color: white; outline: 2px solid transparent; }
 .inline-citation:focus-visible { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--oxblood); }
 
+/* Agent chat answers (ADR-021): blocks of text, data and inventory. */
+.agent-block { margin: 0 0 22px; padding: 0 0 4px; }
+.agent-block + .agent-block, .agent-block-lead + .agent-block { padding-top: 14px; border-top: 1px solid var(--line); }
+.agent-block-lead { color: var(--navy); font-style: italic; }
+.agent-block-body { overflow-wrap: anywhere; }
+.agent-block-status { margin: 0 0 8px; color: var(--green); font: 700 10px/1.4 var(--body); letter-spacing: .08em; }
+.agent-block-status[data-status="ambiguous"] { color: var(--oxblood); }
+.agent-block-status[data-status="insufficient_evidence"] { color: var(--muted); }
+.agent-group-title { margin: 0 0 8px; font: 700 12px/1.4 var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--navy); }
+.agent-lines { display: grid; gap: 8px; margin: 0 0 14px; padding: 0; list-style: none; }
+.agent-line { padding: 8px 0 8px 12px; border-left: 3px solid var(--green); font-size: .86em; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-line[data-pending="true"] { border-left-color: var(--oxblood); background: rgb(241 225 221 / 45%); }
+.agent-line-text { margin-right: 4px; }
+.agent-aggregate { margin: 0 0 10px; font-weight: 600; font-size: .86em; }
+.agent-field-action { margin-top: 8px; }
+.agent-field-action { display: inline-flex; margin-left: 6px; font-size: 12px; }
+.agent-block-inventory .agent-line { border-left-color: var(--navy); }
+.status[data-status="data"], .status[data-status="inventory"] { color: var(--navy); }
+
 .disclaimer { display: flex; gap: 10px; margin-top: 28px; padding: 12px 14px; background: #eae4d9; color: #555b5b; }
 .disclaimer-mark { flex: 0 0 17px; display: grid; place-items: center; height: 17px; border: 1px solid #8c8173; border-radius: 50%; font: italic 12px/1 var(--display); }
 .disclaimer p { margin: 0; font-size: 12px; line-height: 1.5; }
@@ -419,6 +438,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .question-card { padding-right: 0; }
   .answer-layout { grid-template-columns: 1fr; gap: 20px; }
   .answer-copy { font-size: 19px; }
+  .agent-field-action { width: 100%; justify-content: center; margin-left: 0; }
   .status { font-size: 8px; }
   .masthead-actions { gap: 8px; }
   .masthead-actions .environment { display: none; }
