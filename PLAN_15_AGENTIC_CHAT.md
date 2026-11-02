@@ -117,8 +117,10 @@ botones.
 Envío y sondeo, estado "pensando…" y, pasados unos 45 s, "está tardando más de
 lo habitual…" (tiempos esperados: 15–35 s típicos, 40–60 s en frío; el plazo
 de 5 minutos es solo el corte de seguridad), render de bloques `data` y `text` con sus
-citas, botón de `suggestReview` que usa el flujo de revisión existente y
-mensaje de "vuelve a enviar la pregunta" cuando un job falla por sesión.
+citas. Botón de `suggestReview` **solo en bloques de texto**, que usa el
+flujo de revisión existente. En bloques de datos, enlace por campo a la
+revisión IDP de ese campo (ADR-021 D2). Mensaje de "vuelve a enviar la
+pregunta" cuando un job falla por sesión.
 
 ### T7. Observabilidad
 
@@ -146,6 +148,10 @@ automáticos:
 
 1. Despliegue de la Lambda `search-documents`, el target, la cola y el worker,
    y la actualización de interceptor, MCP y Harness (sin memoria adjunta).
+   Antes, ampliar el CD para que actualice también el código del worker
+   (`deploy_release.py` y `cd-iam.yaml`, desplegado por el operador) y
+   desplegar la plantilla de Public Edge, para que la siguiente promoción
+   no falle con `deployed_template_scope_changed`.
 2. **Comprobación de sesión de Harness**: confirmar que, sin memoria, el mismo
    `runtimeSessionId` no guarda historial propio. Si lo guarda, usar un
    `runtimeSessionId` nuevo por job.

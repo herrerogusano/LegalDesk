@@ -403,6 +403,14 @@ Tools visibles para el agente, todas por Gateway:
   `suggestReview` con un motivo de la lista cerrada de `create_review_task`.
   La UI lo muestra como botón y, si el usuario lo pulsa, se usa el flujo
   determinista actual de creación de revisión (ADR-016/ADR-017).
+  **Cada error va a donde se corrige** (decisión del propietario, 2026-11-02):
+  - El botón de revisión solo se ofrece para los **bloques de texto**
+    (interpretación grounded), con el mismo snapshot de hoy.
+  - Los **bloques de datos** muestran junto a cada valor un enlace a la
+    **revisión IDP de ese campo**, que corrige el dato en origen para todas
+    las respuestas futuras.
+  - No se crea un tipo de revisión nuevo para respuestas de datos. Revisar la
+    respuesta no corregiría el campo guardado.
 - **Citas inspeccionables**: `search_documents` devuelve sus citas en el
   resultado y el worker, que conoce sujeto, matter y conversación, crea los
   handles de cita con el mismo mecanismo y TTL que hoy (`CitationHandle`). El
@@ -610,11 +618,22 @@ contenido.
 - Harness vuelve a estar en el camino crítico del chat; el fallback evita que
   sea un punto único de fallo.
 - Aparece una métrica de producto nueva: el acierto del routing.
-- **CD**: el CD automático actual solo actualiza el código de la Lambda de la
-  aplicación (D-029). Las Lambdas nuevas (`search-documents`, worker) y las
-  modificadas (MCP, interceptor) se despliegan como las otras 7 de fuera de la
-  app: con change sets revisados por un operador. Ampliar el CD code-only al
-  resto de Lambdas es una mejora transversal registrada aparte.
+- **CD** (decisión del propietario, 2026-11-02):
+  - La infraestructura del worker (cola, DLQ, Lambda, event source mapping)
+    vive en la pila `LegalDeskPhase14PublicEdge` y usa el mismo paquete que la
+    app.
+  - El CD code-only (D-029) se amplía para actualizar **también el código del
+    worker** en el mismo change set. Así API y worker comparten el contrato
+    del job y no se desfasan entre releases.
+  - Implica cambiar `scripts/deploy_release.py` (cambios permitidos) y el rol
+    IAM del CD (`infra/cloudformation/cd-iam.yaml`), que despliega un
+    operador en T9.
+  - Mientras tanto, cualquier cambio en la plantilla de Public Edge exige que
+    el operador despliegue la plantilla antes de la siguiente promoción,
+    porque el CD exige que sea idéntica a la desplegada.
+  - `search-documents`, MCP e interceptor siguen desplegándose con change sets
+    revisados. Ampliar el CD a todas las Lambdas es una mejora transversal
+    registrada aparte.
 
 ### Riesgos y verificaciones previas
 
