@@ -30,9 +30,15 @@ class CostModelTests(unittest.TestCase):
     def test_invocations_stay_inside_the_hard_cap_and_the_reserve_is_explicit(self) -> None:
         for label in ("typical", "upper"):
             invocations = model.report()[label]["harness_invocations"]
-            self.assertEqual(invocations, 30 + 10 + 1 + 2 + 2)
+            self.assertEqual(invocations, 30 + 10 + 1 + 1 + 2 + 2)
             self.assertLessEqual(invocations, model.HARD_CAP["harness_invocations"])
         self.assertEqual(model.HARD_CAP["invocation_retries"], 0)
+
+    def test_the_checks_script_budget_is_inside_the_model(self) -> None:
+        from scripts import phase15_harness_checks as checks
+
+        planned = sum(model.BLOCK["eval"].values()) + sum(model.BLOCK["smoke"].values()) + len(model.ADOT_CALLS) + checks.MAX_INVOCATIONS
+        self.assertEqual(model.report()["typical"]["harness_invocations"], planned)
 
     def test_upper_bound_stays_under_the_ceiling_to_approve_and_above_the_typical_case(self) -> None:
         report = model.report()

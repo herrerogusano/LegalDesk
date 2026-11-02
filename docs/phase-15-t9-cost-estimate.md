@@ -13,7 +13,7 @@ python scripts/phase15_t9_cost_model.py --json   # same, machine readable
 
 | | USD |
 |---|---|
-| **Block, typical case** (45 Harness invocations, ~457 k input / ~32 k output tokens) | **≈ 2.3** |
+| **Block, typical case** (46 Harness invocations, ~460 k input / ~32 k output tokens) | **≈ 2.3** |
 | **Block, upper bound** (inputs ×1.6, outputs ×2 up to each call's token cap, bigger microVM) | **≈ 4.1** |
 | Ceiling proposed for approval | **5.00** |
 | Fixed monthly cost *while `EnableAgentChat=true`* (alarms + custom metrics, upper bound) | ≈ 3.0 typical · ≤ 4.8 upper |
@@ -26,7 +26,7 @@ Bedrock tokens are 85–90 % of the block; everything else together is about 0.2
 
 | Limit | Value |
 |---|---|
-| Harness invocations in the whole block | **50** (45 planned + 5 reserve for one repeat of a failed check) |
+| Harness invocations in the whole block | **50** (46 planned + 4 reserve for one repeat of a failed check) |
 | Retries of an invocation | **0** (the worker's single retry only exists for transient SQS jobs; the eval and checks have none) |
 | Eval real | exactly 30 (one per case), abort after 3 consecutive errors (T8) |
 | Per invocation | `maxIterations` 3, `timeoutSeconds` 90, `maxTokens` 2048 per iteration (`AGENT_CHAT_*` in `agent/.../client.py`) |
@@ -37,7 +37,7 @@ Bedrock tokens are 85–90 % of the block; everything else together is about 0.2
 ## Assumptions
 
 **Questions.** 30 of the eval, ~10 of the browser smoke (one of them forced into the direct-RAG
-fallback), 1 ADOT probe, 2 session-check calls, 2 loop-cut calls. The eval dataset is
+fallback), 1 ADOT probe and the 5 calls of `scripts/phase15_harness_checks.py` (1 allowed-tools pre-check, 2 session-check, 2 loop-cut). The eval dataset is
 `evals/phase15_routing_dataset.json` (frozen); the model classes its 30 cases fall in:
 
 | Class | Cases in eval / smoke | Model calls (Harness iteration **H**, resolver **R**, writer **W**) | Tokens in / out, typical | USD / question, typical | upper |
@@ -120,7 +120,7 @@ iterations (not the resolver and writer inside `search_documents` nor the direct
 |---|---|---|---|
 | Bedrock · eval real (30 questions) | 1.39 | 2.36 | tokens by class × counts |
 | Bedrock · smoke (10 questions + 1 fallback) | 0.56 | 0.94 | same, +15 % history |
-| Bedrock · ADOT probe, session check, loop-cut check (5 invocations) | 0.10 | 0.17 | no tools for the first two; search for the loop-cut check |
+| Bedrock · ADOT probe and the Harness checks script (6 invocations) | 0.10 | 0.17 | no tools for the probe and the session check; tools on for the pre-check; search for the loop-cut check |
 | AgentCore Runtime (Harness sessions) | 0.04 | 0.22 | 15–55 s per question (upper: up to the 90 s timeout), bigger microVM |
 | AgentCore Gateway + Identity | < 0.01 | < 0.01 | 2–16 operations and 1 token per invocation |
 | Knowledge Base Retrieve | 0.02 | 0.02 | one call per `search_documents` and per fallback |
@@ -168,7 +168,7 @@ Search (account-wide span indexing) is not enabled by this plan.
 | The `eu.` premium is not billed | −9 % on Bedrock |
 | The agent calls `search_documents` more than once per question | +≈ 0.03 USD each (R + W) |
 | History in the smoke is at its 24 k-character cap | ≈ +6 k input tokens on each of the ≈ 22 smoke Harness calls: +0.45 USD |
-| A check is repeated | +1 invocation each, inside the 5-invocation reserve |
+| A check is repeated | +1 invocation each, inside the 4-invocation reserve |
 | Harness microVM is larger than assumed | Runtime is < 0.25 USD even at the upper bound; it does not move the total |
 
 ## Verifying the real cost after the block

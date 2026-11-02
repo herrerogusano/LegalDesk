@@ -39,7 +39,7 @@ or a cost reading above the stop value of the cost estimate. **Nothing is retrie
 | Model | `eu.anthropic.claude-sonnet-4-6` everywhere |
 
 Paid-call budget (the whole block; see the cost estimate): **50 Harness invocations**, no retries —
-step 5: 3 · step 11: 2 · step 12: 30 · step 13: 10 · reserve: 5.
+step 5: 1 · step 11: 5 · step 12: 30 · step 13: 10 · reserve: 4.
 
 ```powershell
 # Session variables (PowerShell 5.1). Backups and the ledger live OUTSIDE the repository.
@@ -201,20 +201,11 @@ old one — see Back).
 **Back.** Create a change set with the previous parameters from `$BK` (`EnablePhase09Memory=true`, `EnableManagedAdot=false`) and
 review it the same way. If the Harness was replaced, the old ARN is gone: stop and replan with the owner.
 
-## Step 5 · Harness checks (◆ paid: 3 Harness invocations)
+## Step 5 · ADOT probe (◆ paid: 1 Harness invocation)
 
-**Before.** Step 4 passed. Budget for this step: 1 ADOT probe + 2 session-check calls. The owner is present.
+**Before.** Step 4 passed. The owner is present and the approval reference is at hand.
 
-**5a · Session check** (ADR-021 D7, PLAN_15 T9.2). Goal: without memory, the same `runtimeSessionId` must not keep a
-conversation of its own. Two invocations with the **same** `runtimeSessionId`, no `actorId`, no tools:
-(1) "Remember this word: `T9-SESSION-<random>`. Reply only OK."; (2) "What word did I ask you to remember? Answer UNKNOWN if you
-do not know." Record only: did the second answer contain the word (yes/no), the two `runtimeSessionId`s, token counts.
-
-- **Not retained** → the worker's `runtimeSessionId` scheme is fine; note it as evidence.
-- **Retained** → the worker must use a **new `runtimeSessionId` per job** (PLAN_15 T9.2). That is a code change: stop, tell
-  the supervisor, do not run the eval until it is released.
-
-**5b · ADOT probe** ([`phase-15-adot-probe.md`](phase-15-adot-probe.md), steps 4–5): dry run first, then
+**Do.** [`phase-15-adot-probe.md`](phase-15-adot-probe.md), steps 4–5: dry run first, then
 `--execute --approval-ref <ref> --adot-enabled-attested`, one invocation, immutable report.
 
 | Verdict | What happens |
@@ -223,13 +214,11 @@ do not know." Record only: did the second answer contain the word (yes/no), the 
 | `content_observed` | the owner chooses: accept the residual risk of ADR-021 D9 **in writing** (synthetic data, runtime log-group retention 1–3 days, restricted IAM, `AGENTS.md` §7 qualified) and skip step 6, **or** step 6 |
 | `log_read_failed`, `invoke_failed`, `no_log_groups_found` | no conclusion; **no re-run** without a new approval; step 6 |
 
-> **Open item before the live day:** 5a has no script in the repository (5b has). Either the supervisor runs it with a
-> 30-line helper kept outside the repository, or a `scripts/phase15_harness_checks.py` (dry-run by default, create-only report,
-> hard cap of its own calls, the same pattern as the probe) is written and reviewed in a separate PR. The same helper would
-> serve step 11.
+The session check and the loop-cut check are not here: they need the deployed worker, so they run together in step 11
+(`scripts/phase15_harness_checks.py`), before the eval.
 
-**After.** The probe report and the session-check record are saved; call count so far ≤ 3.
-**Stop if** any invocation errors (do not retry; ask). **Back.** Nothing to undo (ADOT is handled in step 6).
+**After.** The probe report is saved; call count so far = 1.
+**Stop if** the invocation errors (do not retry; ask). **Back.** Nothing to undo (ADOT is handled in step 6).
 
 ## Step 6 · Harness: disable ADOT again (◆ change set) — unless the residual risk was accepted
 
@@ -293,11 +282,11 @@ and, only on exit 0 and the owner's go, `execute-change-set` + `wait stack-updat
 (`EnableSearchDocuments` absent in the old template → deploy the old template body as is); `SearchDocuments*` resources are `DeletionPolicy: Delete`
 and have no data.
 
-> **Risk to watch from step 11 on (not a blocker found in review):** the Harness template's own `AllowedTools` lists only the Phase 08 tools
+> **Risk, checked in step 11 before any eval money is spent:** the Harness template's own `AllowedTools` lists only the Phase 08 tools
 > (`list_matter_documents`, `get_document_metadata`, `create_review_task`); the agent chat sends `allowedTools` and the remote MCP tool **per
 > invocation** (`invoke_agent_chat`). If Harness rejects per-invocation tools that are not in the template list
-> (`search_documents`, `get_extracted_fields`), step 11 fails fast with a validation error and a Harness change set adding those two names
-> (and nothing else) is the fix — a decision for the owner, because it widens the Harness's own default allowlist.
+> (`search_documents`, `get_extracted_fields`), the script reports `request_rejected` or `tool_use_rejected`, and a Harness change set adding
+> those two names (and nothing else) is the fix — a decision for the owner, because it widens the Harness's own default allowlist.
 
 ## Step 8 · Public Edge: queue, worker, alarms and the application code (◆ change set; releases the CD blockage)
 
@@ -374,21 +363,45 @@ release record. Any later edit of the Public Edge template needs this operator s
 Re-run the step 1 inventory into `$Root\after\`; compare. Expected: the four stacks `UPDATE_COMPLETE`, parameters changed only as in the steps above,
 no resource outside the profiles, the Harness ARN/runtime id equal to step 1, ADOT disabled (unless accepted). **Stop if** anything else moved.
 
-## Step 11 · Tool results survive a cut loop (◆ paid: 2 Harness invocations)
+## Step 11 · Harness checks: allowed tools, session, cut loop (◆ paid: 5 Harness invocations)
 
-Goal (PLAN_15 T9.5, base of ADR-021 D5): when a Harness loop ends after a tool completed, the stream still contains that tool's result, so the worker
-can return it instead of re-running RAG.
+[`scripts/phase15_harness_checks.py`](../scripts/phase15_harness_checks.py), the same pattern as the ADOT probe: dry run by default, create-only
+report under `evals/results/phase15-harness-checks-*.json`, a budget of **5 invocations spent before each call**, no retries, two failures in a row stop
+the run, and the report is written even if something fails after a paid call. It uses the worker's own binding, Harness client and output tree, so it
+needs the **worker environment** (the Lambda's variables, with `LEGALDESK_HARNESS_ARN` equal to `--harness-arn`) and the test user's short-lived token in
+`LEGALDESK_EVAL_ACCESS_TOKEN`, never on the command line.
 
-**Do.** Through a worker-built binding (`build_worker_from_environment`, the environment of the worker Lambda, the test user's short-lived token in
-`LEGALDESK_EVAL_ACCESS_TOKEN`), two invocations of the question "What does the notice clause of the lease say?" (an `search_documents` question) with the loop
-forced to end right after the first tool (`maxIterations=1`). Record: `loop_outcome`, `stop_reason`, number of `tool_calls`, their `status`, whether the structured
-result is complete (answer, citations). No question text, answer or passage goes into the record.
+| Check | Calls | Question it answers | Verdicts |
+|---|---|---|---|
+| `allowed_tools` (pre-check, PLAN_15 T9.5 risk) | 1 | Does Harness reject the per-invocation `tools`/`allowedTools` that name `search_documents` and `get_extracted_fields`, which the template's `AllowedTools` does not list? Also read after the cut-loop check, which makes the model *use* a new tool | `accepted`, `request_rejected`, `tool_use_rejected`, `request_accepted_tool_use_not_exercised`, `inconclusive` |
+| `session` (ADR-021 D7, T9.2) | 2 | Without memory, does the same `runtimeSessionId` keep history? Turn 1 carries a word, turn 2 never spells it; the word and each turn's own token are different random values, so a hit can only come from history | `history_not_retained`, `history_retained`, `inconclusive`, `invoke_failed` |
+| `tool_results` (T9.5, base of ADR-021 D5) | 2 | With the loop cut after the first tool (`maxIterations` forced to 1 in this process only), is the completed tool result still in the stream, and what does the production output tree do with it? | `retained`, `lost`, `inconclusive`, `invoke_failed`, `skipped_tools_rejected` |
 
-**After.** `tool_calls ≥ 1` with `status=success` and a complete payload in both calls → D5 holds as written. **Otherwise** the output tree must go straight to
-the direct RAG fallback (ADR-021 D5 last sentence): stop, tell the supervisor; that is a code change, not something to fix live.
-**Stop if** a validation error mentions the tools (see the risk in step 7). **Back.** Nothing to undo. (This step shares the open item of 5a.)
+**Do.**
+
+```powershell
+python scripts/phase15_harness_checks.py --harness-arn <HarnessArn> --matter-id mat_phase14_a_20260928 --output evals/results/phase15-harness-checks-$Stamp-a.json   # dry run: the plan, no network
+# ◆ after the owner's go; the token is in LEGALDESK_EVAL_ACCESS_TOKEN and the worker's environment variables are set
+python scripts/phase15_harness_checks.py --harness-arn <HarnessArn> --matter-id mat_phase14_a_20260928 --output evals/results/phase15-harness-checks-$Stamp-a.json `
+  --approval-ref <ref> --release-commit $commit --artifact-sha256 $sha --execute
+```
+
+**After.** Overall verdict `all_passed` (exit code 0) means: tools accepted, session keeps no history, tool result retained. Anything else is a finding to
+hand to the supervisor, **not** something to fix live and **not** a reason to rerun (a rerun needs a new approval and a new file name):
+
+| Finding | Consequence |
+|---|---|
+| `allowed_tools` = `request_rejected` / `tool_use_rejected` | do **not** run the eval; owner decides on the Harness `AllowedTools` change set (step 7 note). The loop-cut check is skipped when the pre-check is rejected |
+| `session` = `history_retained` | the worker must use a new `runtimeSessionId` per job (PLAN_15 T9.2): code change and release before the eval |
+| `tool_results` = `lost` | ADR-021 D5 last sentence: the output tree goes straight to the direct RAG fallback: code change before the eval |
+| any `inconclusive` | no conclusion; say so in the acceptance document; the owner decides whether a new approval is worth it |
+
+The report holds closed verdicts, booleans, counts and SHA-256 of the markers, the Harness ARN and the matter: never a marker, question, answer or tool payload.
+**Stop if** an invocation errors (the script does not retry). **Back.** Nothing to undo.
 
 ## Step 12 · Routing eval, real mode (◆ paid: 30 Harness invocations)
+
+**Before.** Step 11 ended `all_passed` (or the owner accepted each finding in writing).
 
 Gate fixed before the run (T8): acceptable tool set ≥ **27 of 30**, **0** allowlist violations, **0** invalid plan blocks accepted.
 
@@ -473,11 +486,11 @@ Both states keep `cd-template-match` = `true`, the CD role from step 9, and the 
 | 1 | | | | 0 | |
 | 3 | | artifact version | | 0 | |
 | 4 | | `p15t9-harness-…` | | 0 | |
-| 5 | | probe report path | | 3 | |
+| 5 | | probe report path | | 1 | |
 | 6 | | | | 0 | |
 | 7 | | | | 0 | |
 | 8 | | | | 0 | |
 | 9 | | | | 0 | |
-| 11 | | | | 2 | |
+| 11 | | harness-checks report path | | 5 | |
 | 12 | | report path | | 30 | |
 | 13 | | | | 10 | |
