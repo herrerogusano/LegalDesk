@@ -1,6 +1,7 @@
 """Offline change-set preview and gate for the PLAN_15 T9 rollout.
 
-Two read-only commands, neither of which imports boto3 or touches the network:
+Read-only commands, none of which imports boto3 or touches the network (``params``, ``cd-template-match``
+and the two below):
 
 ``preview``
     Compares the *deployed* template (a backup saved with
@@ -469,6 +470,33 @@ def cd_template_match(deployed_text: str, local_text: str) -> bool:
         raise PreviewError(str(exc)) from exc
 
 
+def build_parameters(template: Mapping[str, Any], stack: Mapping[str, Any], overrides: Mapping[str, str]) -> list[dict[str, Any]]:
+    """The ``--parameters`` list of a change set: only the named deltas change.
+
+    A parameter named in ``overrides`` takes the new value; one the stack already has keeps
+    ``UsePreviousValue`` (this is also what keeps ``NoEcho`` values, which describe-stacks masks,
+    out of every file); a new parameter is omitted when the template gives it a default and is an
+    error when it does not, so nothing is ever guessed.
+    """
+
+    declared = template.get("Parameters") or {}
+    unknown = sorted(set(overrides) - set(declared))
+    if unknown:
+        raise PreviewError("override_not_in_template:" + ",".join(unknown))
+    existing = {item.get("ParameterKey") for item in stack.get("Parameters") or [] if isinstance(item, Mapping)}
+    result: list[dict[str, Any]] = []
+    for name in sorted(declared):
+        if name in overrides:
+            result.append({"ParameterKey": name, "ParameterValue": str(overrides[name])})
+        elif name in existing:
+            result.append({"ParameterKey": name, "UsePreviousValue": True})
+        elif isinstance(declared[name], Mapping) and "Default" in declared[name]:
+            continue
+        else:
+            raise PreviewError("parameter_value_missing:" + name)
+    return result
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -481,6 +509,11 @@ def _parser() -> argparse.ArgumentParser:
     preview.add_argument("--deployed-param", action="append", default=[], metavar="NAME=VALUE", help="parameter value currently deployed (repeatable)")
     preview.add_argument("--profile", help="also check the preview against this expectation profile")
     preview.add_argument("--json", action="store_true")
+    params = sub.add_parser("params", help="write the --parameters JSON of a change set from a describe-stacks backup")
+    params.add_argument("--stack-json", type=Path, required=True, help="saved `aws cloudformation describe-stacks --stack-name X` output")
+    params.add_argument("--template", type=Path, required=True, help="the repository template that will be deployed")
+    params.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", help="the parameter deltas of this step (repeatable)")
+    params.add_argument("--output", type=Path, required=True, help="file to write; it holds no secret")
     match = sub.add_parser("cd-template-match", help="check that the deployed Public Edge template equals the repository one, as the code-only CD requires")
     match.add_argument("--deployed", type=Path, required=True)
     match.add_argument("--local", type=Path, default=Path("infra/cloudformation/phase-14-public-edge.yaml"))
@@ -493,6 +526,14 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "params":
+            stacks = json.loads(args.stack_json.read_text(encoding="utf-8")).get("Stacks")
+            if not isinstance(stacks, list) or len(stacks) != 1:
+                raise PreviewError("stack_inventory_invalid")
+            built = build_parameters(load_template(args.template.read_text(encoding="utf-8")), stacks[0], _parse_params(args.set))
+            args.output.write_text(json.dumps(built, indent=2) + chr(10), encoding="utf-8", newline=chr(10))
+            print(json.dumps({"parameters": len(built), "changed": sorted(_parse_params(args.set)), "output": str(args.output)}))
+            return 0
         if args.command == "cd-template-match":
             matches = cd_template_match(args.deployed.read_text(encoding="utf-8"), args.local.read_text(encoding="utf-8"))
             print(json.dumps({"cdTemplateMatch": matches}))

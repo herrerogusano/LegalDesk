@@ -279,6 +279,49 @@ class RealChangeSetGateTests(unittest.TestCase):
             preview.load_profile("does-not-exist")
 
 
+class ParameterBuilderTests(unittest.TestCase):
+    TEMPLATE = _template("""
+Parameters:
+  A: {Type: String}
+  B: {Type: String, Default: x}
+  Secret: {Type: String, NoEcho: true}
+  New: {Type: String, Default: ''}
+  Needed: {Type: String}
+Resources:
+  R: {Type: AWS::SQS::Queue}
+""")
+    STACK = {"Parameters": [{"ParameterKey": "A", "ParameterValue": "1"}, {"ParameterKey": "B", "ParameterValue": "2"}, {"ParameterKey": "Secret", "ParameterValue": "****"}, {"ParameterKey": "Needed", "ParameterValue": "n"}]}
+
+    def test_deltas_change_everything_else_keeps_the_previous_value_and_defaults_are_omitted(self) -> None:
+        built = {item["ParameterKey"]: item for item in preview.build_parameters(self.TEMPLATE, self.STACK, {"A": "9"})}
+        self.assertEqual(built["A"], {"ParameterKey": "A", "ParameterValue": "9"})
+        self.assertEqual(built["Secret"], {"ParameterKey": "Secret", "UsePreviousValue": True})
+        self.assertEqual(built["B"], {"ParameterKey": "B", "UsePreviousValue": True})
+        self.assertNotIn("New", built, "a new parameter with a default is left to the template")
+
+    def test_a_masked_noecho_value_never_reaches_the_file(self) -> None:
+        self.assertNotIn("****", json.dumps(preview.build_parameters(self.TEMPLATE, self.STACK, {})))
+
+    def test_unknown_override_and_unsupplied_new_parameter_are_errors(self) -> None:
+        with self.assertRaises(preview.PreviewError):
+            preview.build_parameters(self.TEMPLATE, self.STACK, {"Typo": "1"})
+        stack = {"Parameters": [item for item in self.STACK["Parameters"] if item["ParameterKey"] != "Needed"]}
+        with self.assertRaises(preview.PreviewError) as error:
+            preview.build_parameters(self.TEMPLATE, stack, {})
+        self.assertIn("Needed", str(error.exception))
+
+    def test_command_writes_the_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            stack_json = Path(temp) / "stack.json"
+            stack_json.write_text(json.dumps({"Stacks": [{"StackName": "S", **self.STACK}]}), encoding="utf-8")
+            template = Path(temp) / "t.yaml"
+            template.write_text("Parameters: {A: {Type: String}}" + chr(10) + "Resources: {R: {Type: AWS::SQS::Queue}}", encoding="utf-8")
+            output = Path(temp) / "params.json"
+            code = preview.main(["params", "--stack-json", str(stack_json), "--template", str(template), "--set", "A=7", "--output", str(output)])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(output.read_text()), [{"ParameterKey": "A", "ParameterValue": "7"}])
+
+
 class CommandLineTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> tuple[int, str]:
         out = io.StringIO()
