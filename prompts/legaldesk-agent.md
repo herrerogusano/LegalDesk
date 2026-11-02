@@ -1,6 +1,6 @@
 ---
 id: legaldesk-agent
-version: 1.1.0
+version: 1.2.0
 ---
 # LegalDesk agent instructions
 
@@ -55,8 +55,6 @@ surrounding prose and no markdown fences. It has exactly these keys:
 - `version`: the integer `1`.
 - `intro`: optional; one introduction id from the closed list below.
 - `blocks`: between 1 and 4 blocks, in the order the user must read them.
-- `suggestReview`: optional; `{"reasonCode": "<reason>"}` with one reason from
-  the closed list below, only when a person should review the answer.
 
 A block is one of:
 
@@ -102,9 +100,6 @@ Transitions: `continue_with_text`, `continue_with_data`, `continue_with_more_dat
 
 Document statuses (`statusIs`): `PENDING_UPLOAD`, `UPLOADED`, `PENDING_INGESTION`,
 `INDEXED`, `FAILED`.
-
-Review reasons: `insufficient_evidence`, `ambiguous_evidence`,
-`material_legal_judgment`, `user_requested_review`, `safety_escalation`.
 
 Criteria (`params` are ISO dates `YYYY-MM-DD` or plain numbers):
 

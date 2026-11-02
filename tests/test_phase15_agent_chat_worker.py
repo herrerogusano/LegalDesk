@@ -281,6 +281,27 @@ class WorkerHappyPathTests(unittest.TestCase):
         self.assertEqual(self.world.state.get_citation(handle).passage, "Vence el 15 de marzo de 2026")
         self.assertTrue(self.world.state.get_citation(handle).is_idp)
 
+    def test_no_agent_answer_leaves_a_review_candidate(self) -> None:
+        """Owner decision 2026-11-02: the agentic chat proposes and stores nothing for review."""
+
+        plans = [
+            (TEXT_PLAN, [call("tu-1", SEARCH_TOOL, search_payload())]),
+            (DATA_PLAN, [call("tu-1", FIELDS_TOOL, fields_payload())]),
+        ]
+        for plan, calls in plans:
+            job = self.world.submit()
+            self.world.agent_script = [agent_result(plan, *calls)]
+            self.world.worker.process(job.key)
+            self.assertIsNone(self.world.state.get_review_candidate((SUBJECT, "conv-1", job.correlation_id)))
+            self.assertNotIn("suggestReview", self.world.jobs.get(job.key).result)
+
+    def test_data_lines_point_to_the_idp_field_they_state_and_nothing_else(self) -> None:
+        self.world.agent_script = [agent_result(DATA_PLAN, call("tu-1", FIELDS_TOOL, fields_payload()))]
+        self.run_worker()
+        (line,) = self.world.jobs.get(self.job.key).result["blocks"][1]["groups"][0]["lines"]
+        self.assertEqual((line["documentId"], line["fieldName"]), ("doc-a", "explicit_expiration_date"))
+        self.assertEqual(set(line), {"text", "pending", "citationIds", "documentId", "fieldName"})
+
     def test_the_agent_gets_the_sealed_agent_chat_binding_and_only_the_server_side_scope(self) -> None:
         self.world.agent_script = [agent_result(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))]
         self.run_worker()

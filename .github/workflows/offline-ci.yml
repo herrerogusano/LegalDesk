@@ -140,6 +140,7 @@ jobs:
           node --check frontend/citations.js
           node --check frontend/diagnostics.js
           node --check tests/phase14_idp_live_browser.cjs
+          node --check tests/phase15_agent_chat_frontend.cjs
       - name: Install local Playwright browser for behavior gate
         run: |
           npm install --prefix "$RUNNER_TEMP/playwright" --no-save --ignore-scripts playwright@1.62.1
@@ -166,6 +167,9 @@ jobs:
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/playwright/node_modules/playwright" \
             PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" \
             node tests/phase14_frontend_behavior.cjs "$base_url"
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/playwright/node_modules/playwright" \
+            PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" \
+            node tests/phase15_agent_chat_frontend.cjs "$base_url"
       - name: Retain validated Linux Python 3.12 release artifact
         if: ${{ success() }}
         uses: actions/upload-artifact@v4

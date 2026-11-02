@@ -74,7 +74,7 @@ class Phase14FrontendIngestionTests(unittest.TestCase):
         self.assertIn('askButton.textContent = active ? "Consultando…" : "Consultar"', self.source)
         self.assertIn('askButton.setAttribute("aria-busy", "true")', self.source)
         self.assertIn('answer.setAttribute("aria-busy", active ? "true" : "false")', self.source)
-        self.assertIn("function renderLoadingState()", citations)
+        self.assertIn("function renderLoadingState(options)", citations)
         self.assertIn("Buscando en los documentos autorizados…", citations)
         self.assertIn('status.dataset.status = "loading"', citations)
         self.assertIn('BUSCANDO RESPUESTA', citations)
