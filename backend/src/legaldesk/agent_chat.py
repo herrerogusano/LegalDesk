@@ -27,6 +27,7 @@ from typing import Any, Callable, Mapping, Protocol
 from uuid import uuid4
 
 from . import agent_contracts as contracts
+from .agent_chat_telemetry import SegmentTimer, usage_metadata
 from .agent_citations import build_citation_handles
 from .agent_integration import bind_harness_invocation
 from .agent_jobs import (
@@ -224,6 +225,7 @@ class _Computed:
     operation_status: str
     meta: dict[str, object]
     memory_scope: Any
+    timer: SegmentTimer
 
 
 class AgentChatWorker:
@@ -243,8 +245,11 @@ class AgentChatWorker:
         memory: Any = None,
         clock: Callable[[], float] = time.time,
         time_left: Callable[[], float] | None = None,
+        prompt_identity: tuple[str, str] | None = None,
     ) -> None:
         self.job_store, self.state_store, self.quota = job_store, state_store, quota
+        # (version, sha256) of the agent system prompt: ids for telemetry, never its text.
+        self.prompt_identity = prompt_identity
         self.authorization_store, self.conversation_store = authorization_store, conversation_store
         self.grant_repository, self.identity_verifier, self.gateway_url = grant_repository, identity_verifier, gateway_url
         self.invoke_agent, self.rag_chat, self.memory, self.clock = invoke_agent, rag_chat, memory, clock
@@ -260,19 +265,23 @@ class AgentChatWorker:
         if outcome is not ClaimOutcome.STARTED or job is None:
             return WorkerResult("ignored", key.job_id, metadata={"claim": outcome.value})
         attempt, finalized = job.attempt, False
+        queue_wait_ms = max(0, int((self.clock() - job.created_at) * 1000))
         try:
             computed = self._compute(job)
             if not self.job_store.finalize(key, attempt=attempt, now=self.clock()):
                 raise _Superseded()
             finalized = True
-            result = self._publish(job, computed)
+            with computed.timer.segment("publish"):
+                result = self._publish(job, computed)
+            computed.meta["segmentsMs"] = computed.timer.as_dict()
             if not self.job_store.complete(key, attempt=attempt, result=result):
                 raise _Superseded()
         except _Superseded:
             return WorkerResult("ignored", key.job_id, metadata={"claim": "superseded"})
         except Exception as exc:
             return self._handle_error(job, attempt, exc, finalized=finalized)
-        meta = dict(computed.meta, attempt=attempt, latencyMs=int((time.perf_counter() - started) * 1000))
+        meta = dict(computed.meta, attempt=attempt, queueWaitMs=queue_wait_ms,
+                    latencyMs=int((time.perf_counter() - started) * 1000))
         return WorkerResult("completed", key.job_id, metadata=meta)
 
     # -- failure handling ---------------------------------------------
@@ -323,11 +332,15 @@ class AgentChatWorker:
         except Exception:
             return None  # degraded: answer without context rather than fail the question
 
-    def _compute(self, job: ChatJob) -> _Computed:
-        session = self._session(job)
-        binding = self._bind(job, session.access_token)
-        history = self._history(job, binding)
-        loop = self.invoke_agent(binding, job.question or "", history or ())
+    @staticmethod
+    def resolve_loop(loop: Any) -> tuple[AnswerOutput, LoopOutcome, int]:
+        """Parse the tool results of one agent loop and apply the D5 output tree.
+
+        Pure: no I/O. It is also what the routing eval (``evals/phase15_routing_eval.py``)
+        runs against a real loop, so production and eval cannot drift apart.
+        Returns ``(output, loop outcome, number of invalid tool results)``.
+        """
+
         search, fields, inventories, invalid = [], [], [], 0
         for call in loop.tool_calls:
             if call.status != "SUCCESS":
@@ -344,20 +357,42 @@ class AgentChatWorker:
         evidence = LoopEvidence.from_results(search, fields, inventories)
         outcome = LoopOutcome(loop.loop_outcome)
         output = resolve_output(loop=outcome, plan=loop.text if outcome is LoopOutcome.COMPLETED else None, evidence=evidence)
+        return output, outcome, invalid
+
+    def _compute(self, job: ChatJob) -> _Computed:
+        timer = SegmentTimer()
+        with timer.segment("session"):
+            session = self._session(job)
+        with timer.segment("bind"):
+            binding = self._bind(job, session.access_token)
+        with timer.segment("history"):
+            history = self._history(job, binding)
+        with timer.segment("agent"):
+            loop = self.invoke_agent(binding, job.question or "", history or ())
+        with timer.segment("resolve"):
+            output, outcome, invalid = self.resolve_loop(loop)
+        sent = getattr(loop, "history_messages", len(history or ()))
         meta: dict[str, object] = {
-            "loopOutcome": outcome.value, "iterations": loop.iterations,
-            "tools": [call.short_name for call in loop.tool_calls], "invalidToolResults": invalid,
-            "tokens": loop.usage.total_tokens if loop.usage else None,
-            "historyUnavailable": history is None or (bool(history) and getattr(loop, "history_messages", len(history)) == 0),
-            "historyTrimmed": bool(history) and 0 < getattr(loop, "history_messages", len(history)) < len(history),
+            "loopOutcome": outcome.value, "stopReason": getattr(loop, "stop_reason", None), "iterations": loop.iterations,
+            "tools": [call.short_name for call in loop.tool_calls], "toolCalls": len(loop.tool_calls),
+            "toolFailures": sum(1 for call in loop.tool_calls if call.status != "SUCCESS"),
+            "invalidToolResults": invalid, "historyMessages": sent,
+            **usage_metadata(loop.usage),
+            "historyUnavailable": history is None or (bool(history) and sent == 0),
+            "historyTrimmed": bool(history) and 0 < sent < len(history),
+            "correlationId": job.correlation_id,
             **output.metadata(),
         }
+        if self.prompt_identity is not None:
+            meta["agentPromptVersion"], meta["agentPromptSha256"] = self.prompt_identity
         operation_status = "ok"
         if output.path is OutputPath.RAG_FALLBACK:
-            output, operation_status = self._rag_fallback(job, binding, output)
+            with timer.segment("fallback"):
+                output, operation_status = self._rag_fallback(job, binding, output)
             meta["outputPath"] = output.path.value
             meta["citationCount"] = len(output.citations)
-        return _Computed(output, operation_status, meta, binding.memory_scope)
+        meta["segmentsMs"] = timer.as_dict()
+        return _Computed(output, operation_status, meta, binding.memory_scope, timer)
 
     def _rag_fallback(self, job: ChatJob, binding: Any, reasoned: AnswerOutput) -> tuple[AnswerOutput, str]:
         """D5: nothing in the loop was usable; answer with the direct RAG path."""

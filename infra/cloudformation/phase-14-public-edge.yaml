@@ -730,6 +730,209 @@ Resources:
         - - !Ref AgentChatAlarmTopicArn
         - !Ref AWS::NoValue
 
+  # ---------------------------------------------------------------------------
+  # Job metrics and alarms (PLAN_15 T7). They read the allowlisted JSON line the
+  # worker prints per job (event "agent_chat_job"; no question, answer, passage or
+  # token) and the native SQS metrics. The API p95 <= 3 s alarm does not apply to
+  # a job: a job is asynchronous and is expected to take 15-60 s.
+  # ---------------------------------------------------------------------------
+  AgentChatJobDurationMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && $.action = "completed" && $.latencyMs = * }'
+      MetricTransformations:
+        - MetricName: AgentChatJobDurationMs
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "$.latencyMs"
+          Unit: Milliseconds
+
+  AgentChatJobCompletedMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && $.action = "completed" }'
+      MetricTransformations:
+        - MetricName: AgentChatJobsCompleted
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "1"
+          Unit: Count
+
+  # "failed" is a job marked failed; "error" is a message the handler could not classify
+  # (poison or unexpected), which is redelivered once and then goes to the DLQ.
+  AgentChatJobFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && ($.action = "failed" || $.action = "error") }'
+      MetricTransformations:
+        - MetricName: AgentChatJobFailures
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "1"
+          Unit: Count
+
+  # Same events split by the closed failure code (session_closed, deadline_exceeded,
+  # transient_exhausted, attempts_exhausted, agent_failed, internal_error).
+  AgentChatJobFailureByCodeMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && $.action = "failed" && $.failure = * }'
+      MetricTransformations:
+        - MetricName: AgentChatJobFailuresByCode
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "1"
+          Unit: Count
+          Dimensions:
+            - Key: FailureCode
+              Value: $.failure
+
+  # Any answer that did not come from the plan of the agent: a reused tool result or the
+  # direct RAG path. The worker omits fallbackReason when there was none.
+  AgentChatFallbackMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && $.action = "completed" && $.fallbackReason = * }'
+      MetricTransformations:
+        - MetricName: AgentChatFallbacks
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "1"
+          Unit: Count
+
+  AgentChatFallbackByReasonMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && $.action = "completed" && $.fallbackReason = * }'
+      MetricTransformations:
+        - MetricName: AgentChatFallbacksByReason
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "1"
+          Unit: Count
+          Dimensions:
+            - Key: FallbackReason
+              Value: $.fallbackReason
+
+  AgentChatJobDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        p95 of completed agent chat jobs above 90 s (the Harness loop limit) in two
+        consecutive 15-minute periods. Typical jobs take 15-35 s, 40-60 s when cold.
+      Namespace: LegalDesk/Phase15AgentChat
+      MetricName: AgentChatJobDurationMs
+      ExtendedStatistic: p95
+      Period: 900
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 90000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  AgentChatJobFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        Three or more agent chat jobs failed (any closed failure code) within 15
+        minutes. Split by code with the AgentChatJobFailuresByCode metric.
+      Namespace: LegalDesk/Phase15AgentChat
+      MetricName: AgentChatJobFailures
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  # A rate, not a count: a quiet beta would never reach a count threshold. The IF keeps
+  # a single fallback among very few jobs from alarming.
+  AgentChatFallbackRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        At least half of the agent chat jobs completed in the last hour (and at least
+        five of them) did not use the answer plan of the agent. The routing is not
+        working; check AgentChatFallbacksByReason.
+      Metrics:
+        - Id: rate
+          Expression: IF(completed >= 5, 100 * fallbacks / completed, 0)
+          Label: FallbackPercent
+          ReturnData: true
+        - Id: fallbacks
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: LegalDesk/Phase15AgentChat
+              MetricName: AgentChatFallbacks
+            Period: 3600
+            Stat: Sum
+        - Id: completed
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: LegalDesk/Phase15AgentChat
+              MetricName: AgentChatJobsCompleted
+            Period: 3600
+            Stat: Sum
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 50
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  # Queue wait: the excess over MaximumConcurrency waits in the queue (ADR-021 D4). A job
+  # is declared dead 5 minutes after creation, so waiting 2 minutes is already too long.
+  AgentChatQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        The oldest message in the agent chat queue is older than 120 s for two
+        consecutive minutes: the worker concurrency is too low for the traffic.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AgentChatQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 120
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
   PublicApiIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:

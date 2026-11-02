@@ -124,9 +124,12 @@ jobs:
           infra/cloudformation/phase-14-reconciliation.yaml
           infra/cloudformation/phase-14-document-security.yaml
           infra/cloudformation/phase-14-public-edge.yaml
+          infra/cloudformation/phase-01-harness.yaml
           infra/cloudformation/cd-iam.yaml
       - name: Run Python unit and integration tests
         run: python -B -m unittest discover -s tests -q
+      - name: Run Phase 15 routing eval (offline, deterministic, no cloud calls)
+        run: python -B evals/phase15_routing_eval.py offline
       - name: Check Node helper contracts
         run: |
           node tests/phase13_live_browser_helpers.test.cjs
