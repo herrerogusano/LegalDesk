@@ -15,13 +15,14 @@ limits:
   # Phase PRs in this repository are usually large.
   max_changed_files: 60
   max_changed_lines: 3000
-  max_context_chars: 160000
+  # Smaller batches so each review answer fits in the output budget.
+  max_context_chars: 80000
   max_file_bytes: 200000
-  max_output_tokens: 4096
+  max_output_tokens: 12000
   # Preventive per-run estimate, not an accounting cap.
-  max_estimated_cost_usd: 1.00
+  max_estimated_cost_usd: 2.00
   max_inline_comments: 15
-  max_batches: 4
+  max_batches: 6
 
 policy:
   # Backend/agent Python, frontend scripts, IaC/workflows and design documents.
