@@ -180,7 +180,7 @@ Parameters:
     MaxValue: 10000000
   QuotaHarnessPerMonth:
     Type: Number
-    Default: 100
+    Default: 300
     MinValue: 1
     MaxValue: 10000000
   QuotaGatewayPerMonth:
