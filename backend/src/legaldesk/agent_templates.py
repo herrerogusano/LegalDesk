@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 
-TEMPLATES_VERSION = "1.0.0"
+TEMPLATES_VERSION = "1.1.0"
 
 _INTRODUCTIONS = {
     "answer_from_documents": "Esto es lo que dicen los documentos del expediente.",
@@ -23,6 +23,7 @@ _INTRODUCTIONS = {
         "Esto es lo que consta en los documentos del expediente, "
         "en datos extraídos y en su texto."
     ),
+    "inventory_of_documents": "Estos son los documentos del expediente.",
 }
 _TRANSITIONS = {
     "continue_with_text": "A continuación, lo que dicen los documentos:",
@@ -92,7 +93,20 @@ _AGGREGATES = {
     "max_none": "Máximo de {field}: sin datos aceptados para calcularlo",
     "pending_excluded": "{text} ({pending} valores pendientes de revisión humana no incluidos)",
 }
+# Inventory of the documents of the matter (list_matter_documents): the backend
+# writes every line from the metadata the tool returned; no document content.
+_INVENTORY_LINES = {"document": "{document}: {media}, {status}"}
+_INVENTORY_MEDIA = {"application/pdf": "PDF", "text/plain": "texto", "other": "otro formato"}
+_INVENTORY_STATUS = {
+    "PENDING_UPLOAD": "pendiente de subida",
+    "UPLOADED": "subido",
+    "PENDING_INGESTION": "pendiente de indexación",
+    "INDEXED": "indexado",
+    "FAILED": "con error",
+}
+_INVENTORY_TITLE = "Documentos del expediente"
 _NOTICES = {
+    "inventory_empty": "El expediente no tiene documentos con ese criterio.",
     "omitted_block": "No se ha podido mostrar una parte de la respuesta.",
     "omitted_blocks": "No se han podido mostrar {count} partes de la respuesta.",
     "tool_result": "Resultado de la búsqueda en los documentos:",
@@ -106,6 +120,10 @@ FIELD_LABELS: Mapping[str, str] = MappingProxyType(_FIELD_LABELS)
 VALUES: Mapping[str, str] = MappingProxyType(_VALUES)
 AGGREGATES: Mapping[str, str] = MappingProxyType(_AGGREGATES)
 NOTICES: Mapping[str, str] = MappingProxyType(_NOTICES)
+INVENTORY_LINES: Mapping[str, str] = MappingProxyType(_INVENTORY_LINES)
+INVENTORY_MEDIA: Mapping[str, str] = MappingProxyType(_INVENTORY_MEDIA)
+INVENTORY_STATUS: Mapping[str, str] = MappingProxyType(_INVENTORY_STATUS)
+INVENTORY_TITLE = _INVENTORY_TITLE
 
 
 def _compute_sha256() -> str:
@@ -120,6 +138,10 @@ def _compute_sha256() -> str:
             "lines": _LINES,
             "aggregates": _AGGREGATES,
             "notices": _NOTICES,
+            "inventoryLines": _INVENTORY_LINES,
+            "inventoryMedia": _INVENTORY_MEDIA,
+            "inventoryStatus": _INVENTORY_STATUS,
+            "inventoryTitle": _INVENTORY_TITLE,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -142,6 +164,10 @@ __all__ = [
     "FIELD_LABELS",
     "GROUP_TITLES",
     "INTRODUCTIONS",
+    "INVENTORY_LINES",
+    "INVENTORY_MEDIA",
+    "INVENTORY_STATUS",
+    "INVENTORY_TITLE",
     "LINES",
     "NOTICES",
     "TEMPLATES_SHA256",

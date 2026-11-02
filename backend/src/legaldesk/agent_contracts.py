@@ -31,6 +31,7 @@ from .idp.models import DocumentType, FieldAcceptance, FieldPresence
 from .idp.registry import IDPSchemaRegistry
 
 
+LIST_MATTER_DOCUMENTS = "list_matter_documents"
 SEARCH_DOCUMENTS = "search_documents"
 GET_EXTRACTED_FIELDS = "get_extracted_fields"
 SEARCH_DOCUMENTS_TARGET = "search-documents"
@@ -49,6 +50,7 @@ MAX_EVIDENCE_PER_FIELD = 2
 MAX_EVIDENCE_QUOTE_CHARS = 500
 MAX_PLAN_BYTES = 16 * 1024
 MAX_PLAN_BLOCKS = 4
+MAX_INVENTORY_DOCUMENTS = 200
 MAX_GROUPS_PER_BLOCK = 8
 MAX_REFS_PER_GROUP = 100
 MAX_AGGREGATES_PER_BLOCK = 6
@@ -360,6 +362,54 @@ def parse_extracted_fields_result(payload: object) -> ExtractedFieldsResult:
     return ExtractedFieldsResult(documents)
 
 
+# ----------------------------------------------------- inventory (listing)
+
+_DOCUMENT_STATUSES = ("PENDING_UPLOAD", "UPLOADED", "PENDING_INGESTION", "INDEXED", "FAILED")
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryDocument:
+    document_id: str
+    name: str
+    media_type: str
+    status: str
+    uploaded_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryResult:
+    """A validated list_matter_documents result (name, file type, lifecycle status only)."""
+
+    documents: tuple[InventoryDocument, ...]
+
+
+def parse_list_matter_documents_result(payload: object) -> InventoryResult:
+    """Strictly parse the MCP listing; keys the inventory does not use are ignored."""
+
+    raw_documents = payload.get("documents") if isinstance(payload, Mapping) else None
+    if not isinstance(raw_documents, (list, tuple)) or len(raw_documents) > MAX_INVENTORY_DOCUMENTS:
+        raise AgentContractError("invalid_result")
+    documents: list[InventoryDocument] = []
+    for raw in raw_documents:
+        if not isinstance(raw, Mapping):
+            raise AgentContractError("invalid_result")
+        document_id, name, media, status, uploaded = (
+            raw.get("documentId"), raw.get("name"), raw.get("mediaType"), raw.get("status"), raw.get("uploadedAt"),
+        )
+        if (
+            not isinstance(document_id, str) or _OPAQUE_ID.fullmatch(document_id) is None
+            or not isinstance(name, str) or not name.strip() or len(name) > 512
+            or not isinstance(media, str) or len(media) > 128
+            or not isinstance(status, str) or status not in _DOCUMENT_STATUSES
+            or not isinstance(uploaded, str) or len(uploaded) > 64
+        ):
+            raise AgentContractError("invalid_result")
+        documents.append(InventoryDocument(document_id, name.strip(), media, status, uploaded))
+    if len({item.document_id for item in documents}) != len(documents):
+        raise AgentContractError("invalid_result")
+    return InventoryResult(tuple(documents))
+
+
 # ------------------------------------------------------------- answer plan
 
 INTRODUCTION_IDS = tuple(agent_templates.INTRODUCTIONS)
@@ -367,6 +417,8 @@ TRANSITION_IDS = tuple(agent_templates.TRANSITIONS)
 AGGREGATE_TYPES = ("count", "min", "max")
 ORDER_BY = ("document_name", "field_value")
 ORDER_DIRECTIONS = ("asc", "desc")
+INVENTORY_ORDER_BY = ("document_name", "uploaded_at")
+INVENTORY_STATUS_FILTERS = _DOCUMENT_STATUSES
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,9 +503,23 @@ class TextBlock:
 
 
 @dataclass(frozen=True, slots=True)
+class InventoryBlock:
+    """The agent picks a list_matter_documents call, a status filter and an order.
+
+    The backend writes the lines; nothing the agent supplies is ever printed.
+    """
+
+    tool_use_id: str
+    statuses: tuple[str, ...] = ()
+    order_by: str | None = None
+    direction: str = "asc"
+    transition_before: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerPlan:
     intro: str | None
-    blocks: tuple[DataBlock | TextBlock, ...]
+    blocks: tuple[DataBlock | TextBlock | InventoryBlock, ...]
     suggest_review: str | None = None
 
 
@@ -568,6 +634,23 @@ def _parse_data_block(node: Mapping[str, Any]) -> DataBlock:
     return DataBlock(tuple(groups), order, tuple(aggregates), None)
 
 
+def _parse_inventory_block(node: Mapping[str, Any], tool_use_id: str, transition: str | None) -> InventoryBlock:
+    statuses: tuple[str, ...] = ()
+    if "statusIs" in node:
+        raw = node["statusIs"]
+        if not isinstance(raw, (list, tuple)) or not 1 <= len(raw) <= len(INVENTORY_STATUS_FILTERS):
+            raise AgentContractError("limit_exceeded")
+        statuses = tuple(_phrase(item, INVENTORY_STATUS_FILTERS) for item in raw)
+        if len(set(statuses)) != len(statuses):
+            raise AgentContractError("invalid_parameter")
+    order_by, direction = None, "asc"
+    if "order" in node:
+        raw_order = _keys(node["order"], required={"by", "direction"})
+        order_by = _phrase(raw_order["by"], INVENTORY_ORDER_BY)
+        direction = _phrase(raw_order["direction"], ORDER_DIRECTIONS)
+    return InventoryBlock(tool_use_id, statuses, order_by, direction, transition)
+
+
 def _json_loads_strict(text: str) -> object:
     def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
@@ -616,7 +699,7 @@ def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
     blocks_raw = node["blocks"]
     if not isinstance(blocks_raw, (list, tuple)) or not 1 <= len(blocks_raw) <= MAX_PLAN_BLOCKS:
         raise AgentContractError("limit_exceeded")
-    blocks: list[DataBlock | TextBlock] = []
+    blocks: list[DataBlock | TextBlock | InventoryBlock] = []
     for index, raw_block in enumerate(blocks_raw):
         if not isinstance(raw_block, Mapping):
             raise AgentContractError("invalid_shape")
@@ -634,6 +717,10 @@ def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
             item = _keys(raw_block, required={"type", "groups"}, optional={"transitionBefore", "order", "aggregates"})
             data = _parse_data_block(item)
             blocks.append(DataBlock(data.groups, data.order, data.aggregates, transition))
+        elif kind == "inventory":
+            item = _keys(raw_block, required={"type", "source"}, optional={"transitionBefore", "order", "statusIs"})
+            source = _keys(item["source"], required={"toolUseId"})
+            blocks.append(_parse_inventory_block(item, _opaque(source["toolUseId"]), transition))
         else:
             raise AgentContractError("invalid_shape")
     return AnswerPlan(intro, tuple(blocks), suggest)

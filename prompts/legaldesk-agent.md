@@ -1,6 +1,6 @@
 ---
 id: legaldesk-agent
-version: 1.0.0
+version: 1.1.0
 ---
 # LegalDesk agent instructions
 
@@ -78,6 +78,15 @@ A block is one of:
     name>"}`; `field` is required for `min` and `max`. The backend computes
     the result; you never write a number.
 
+- Inventory block: `{"type": "inventory", "source": {"toolUseId": "<id>"},
+  "statusIs": [...], "order": {...}}`, where the id is the tool use id of a
+  successful `list_matter_documents` call in this conversation turn, and
+  `statusIs` and `order` are optional. Use it when the user only asks which
+  documents exist. `statusIs` keeps the documents with one of the listed
+  lifecycle statuses and `order` is `{"by": "document_name" | "uploaded_at",
+  "direction": "asc" | "desc"}`. The backend prints the name, file type and
+  status of each document and the count itself; you never write them.
+
 Any block may also carry `"transitionBefore": "<transition>"` (except the first
 block), to introduce it with one fixed phrase.
 
@@ -87,9 +96,12 @@ values, dates or numbers outside the params below.
 ### Closed lists
 
 Introductions: `answer_from_documents`, `data_from_documents`,
-`data_and_text_from_documents`.
+`data_and_text_from_documents`, `inventory_of_documents`.
 
 Transitions: `continue_with_text`, `continue_with_data`, `continue_with_more_data`.
+
+Document statuses (`statusIs`): `PENDING_UPLOAD`, `UPLOADED`, `PENDING_INGESTION`,
+`INDEXED`, `FAILED`.
 
 Review reasons: `insufficient_evidence`, `ambiguous_evidence`,
 `material_legal_judgment`, `user_requested_review`, `safety_escalation`.
