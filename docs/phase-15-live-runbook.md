@@ -374,8 +374,8 @@ needs the **worker environment** (the Lambda's variables, with `LEGALDESK_HARNES
 | Check | Calls | Question it answers | Verdicts |
 |---|---|---|---|
 | `allowed_tools` (pre-check, PLAN_15 T9.5 risk) | 1 | Does Harness reject the per-invocation `tools`/`allowedTools` that name `search_documents` and `get_extracted_fields`, which the template's `AllowedTools` does not list? Also read after the cut-loop check, which makes the model *use* a new tool | `accepted`, `request_rejected`, `tool_use_rejected`, `request_accepted_tool_use_not_exercised`, `inconclusive` |
-| `session` (ADR-021 D7, T9.2) | 2 | Without memory, does the same `runtimeSessionId` keep history? Turn 1 carries a word, turn 2 never spells it; the word and each turn's own token are different random values, so a hit can only come from history | `history_not_retained`, `history_retained`, `inconclusive`, `invoke_failed` |
-| `tool_results` (T9.5, base of ADR-021 D5) | 2 | With the loop cut after the first tool (`maxIterations` forced to 1 in this process only), is the completed tool result still in the stream, and what does the production output tree do with it? | `retained`, `lost`, `inconclusive`, `invoke_failed`, `skipped_tools_rejected` |
+| `session` (ADR-021 D7, T9.2) | 2 | Without memory, does the same `runtimeSessionId` keep history? Turn 1 carries a word and asks for a unique random acknowledgement token (matched as a whole word, never a substring such as ACK); turn 2 never spells the word; the word, the acknowledgement and each turn's own token are four different random values, so a hit can only come from history | `history_not_retained`, `history_retained`, `inconclusive`, `invoke_failed` |
+| `tool_results` (T9.5, base of ADR-021 D5) | 2 | With the loop cut after the first tool (`maxIterations` forced to 1 in this process only), is the completed tool result still in the stream, and what does the production output tree do with it? | `retained` (any tool that completed with SUCCESS kept its result), `lost` (a tool was requested or succeeded and its result is missing or empty), `inconclusive` (no tool, or only ERROR results), `invoke_failed`, `skipped_tools_rejected` |
 
 **Do.**
 
@@ -391,13 +391,45 @@ hand to the supervisor, **not** something to fix live and **not** a reason to re
 
 | Finding | Consequence |
 |---|---|
-| `allowed_tools` = `request_rejected` / `tool_use_rejected` | do **not** run the eval; owner decides on the Harness `AllowedTools` change set (step 7 note). The loop-cut check is skipped when the pre-check is rejected |
+| `allowed_tools` = `request_rejected` (a ValidationException whose message points at the tools; any other ValidationException is `inconclusive`, class `validation_unattributed`) / `tool_use_rejected` | do **not** run the eval; owner decides on the Harness `AllowedTools` change set (step 7 note). The loop-cut check is skipped when the pre-check is rejected |
 | `session` = `history_retained` | the worker must use a new `runtimeSessionId` per job (PLAN_15 T9.2): code change and release before the eval |
 | `tool_results` = `lost` | ADR-021 D5 last sentence: the output tree goes straight to the direct RAG fallback: code change before the eval |
 | any `inconclusive` | no conclusion; say so in the acceptance document; the owner decides whether a new approval is worth it |
 
 The report holds closed verdicts, booleans, counts and SHA-256 of the markers, the Harness ARN and the matter: never a marker, question, answer or tool payload.
-**Stop if** an invocation errors (the script does not retry). **Back.** Nothing to undo.
+**Stop if** an invocation errors (the script does not retry).
+
+**Residual state and its cleanup.** Each agent call of the script does what the worker does, so it leaves synthetic state in the metadata table. The
+report lists it (`residualState`, random ids and key hashes only, never the key, which contains tenant, matter and user):
+
+| Written per agent call (3 calls: pre-check + 2 cut-loop) | Lifetime | Cleanup |
+|---|---|---|
+| `CONVERSATION#<tenant>#<matter>#<user>#checks-<uuid>` / `SESSION#checks-<uuid>` (a conversation binding) | **no TTL, and the project has no sweeper for bindings** | delete the exact items, below |
+| `GATEWAY#…` invocation grant of the sealed binding | `ttl` = 5 minutes (DynamoDB TTL, plus the reconciliation sweep) | none; the report counts them (`invocationGrantsWritten`) |
+| one `GATEWAY#…` grant per tool call, written by the interceptor | same 5-minute `ttl` | none |
+
+Not written: the job exists only in memory (no `CHATJOB` item), no quota counter, no Harness or backend memory event, no citation handle. The session check
+makes plain Harness calls and writes nothing.
+
+```powershell
+$report = Get-Content evals/results/phase15-harness-checks-$Stamp-a.json -Raw | ConvertFrom-Json
+$table  = "LegalDeskPhase02Documents-DocumentMetadataTable-1DANFLTX8RW7T"
+$tenant = "tnt_phase14_20260928"; $matter = "mat_phase14_a_20260928"
+$user   = "<userId of the synthetic test user: the AUTH#USER#<userId> item, not the Cognito username>"
+function Sha($s) { ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))) -replace "-", "").ToLower() }
+Set-Content "$Root\values.json" ('{":t":{"S":"ConversationBinding"}}') -Encoding ascii
+foreach ($b in $report.residualState.conversationBindings) {
+  $pk = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)"
+  if ((Sha $pk) -ne $b.bindingPkSha256) { throw "this key does not match the hash in the report: stop" }   # never delete a guessed key
+  Set-Content "$Root\key.json" (@{ pk = @{ S = $pk }; sk = @{ S = "SESSION#$($b.sessionSelector)" } } | ConvertTo-Json -Compress) -Encoding ascii
+  aws dynamodb get-item    --table-name $table --key file://$Root\key.json --consistent-read          # must exist, entityType ConversationBinding
+  aws dynamodb delete-item --table-name $table --key file://$Root\key.json --condition-expression "entityType = :t" --expression-attribute-values file://$Root\values.json
+}
+```
+
+The deletes are single, conditional, DynamoDB writes on keys whose hash is in the report (free at this volume). **Known gap:** the real eval of step 12 creates
+one binding per case (`eval-<uuid>`) with the same lifetime and its report does not list them; until it does, they are 30 orphan items, recorded here as accepted
+residue of the synthetic matter (they hold only ids). **Back.** Nothing else to undo.
 
 ## Step 12 · Routing eval, real mode (◆ paid: 30 Harness invocations)
 
@@ -461,9 +493,10 @@ Use the synthetic user in the real browser against the CloudFront origin. Questi
 1. Delete every change set that was created and not executed (`list-change-sets` per stack, `delete-change-set`).
 2. Revoke/let expire the test user's session; unset `LEGALDESK_EVAL_ACCESS_TOKEN`; delete the shell history lines that held it.
 3. Lower (never raise) the retention of any log group created in the block to the lowest the owner accepts (3 days for the Harness runtime groups).
-4. Keep `$BK` and `$Root` **outside the repository** until the owner signs off, then archive them; they contain parameter values (ARNs, ids) but no secret
+4. Confirm the conversation bindings of step 11 were deleted (their cleanup is in step 11); the grants have expired by themselves.
+5. Keep `$BK` and `$Root` **outside the repository** until the owner signs off, then archive them; they contain parameter values (ARNs, ids) but no secret
    (`NoEcho` values are masked by CloudFormation and were only ever passed as `UsePreviousValue`). Copy the evidence summary to `docs/phase-15-acceptance.md`.
-5. Check the real cost the next day in the Billing console (not the Cost Explorer API) and record it next to the estimate.
+6. Check the real cost the next day in the Billing console (not the Cost Explorer API) and record it next to the estimate.
 
 **Final state to leave** — the owner chooses one (the cost of each is in the estimate):
 

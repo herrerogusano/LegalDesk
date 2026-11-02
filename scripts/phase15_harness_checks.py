@@ -44,7 +44,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
@@ -59,6 +59,7 @@ REGION = "eu-west-1"
 
 # Tools the agent chat sends per invocation that the Harness template's AllowedTools does not list.
 NEW_TOOLS = frozenset({"search_documents", "get_extracted_fields"})
+KNOWN_TOOL_NAMES = NEW_TOOLS | {"list_matter_documents", "get_document_metadata"}
 INVOCATIONS = {"allowed_tools": 1, "session": 2, "tool_results": 2}
 MAX_INVOCATIONS = sum(INVOCATIONS.values())
 MAX_CONSECUTIVE_FAILURES = 2
@@ -76,7 +77,7 @@ INTERPRETATION = {
         "request_rejected": "Harness rejected the per-invocation tools at request time: add search_documents and get_extracted_fields to the Harness AllowedTools (owner decision) before the eval",
         "tool_use_rejected": "Harness refused the new tools when the model used them: same fix as request_rejected",
         "request_accepted_tool_use_not_exercised": "the request was accepted but no new tool completed: not conclusive; the eval will show it",
-        "inconclusive": "the pre-check failed for another reason: read errorCode; no conclusion",
+        "inconclusive": "the pre-check failed for another reason (errorCode/errorClass; a ValidationException that does not point at the tools lands here): no conclusion",
         "not_run": "not run",
     },
     "session": {
@@ -118,6 +119,38 @@ class CallBudget:
         self.used += 1
 
 
+GRANT_TTL_SECONDS = 300  # GATEWAY_INVOCATION_TTL_SECONDS: invocation and tool grants expire by themselves
+
+
+class ResidualState:
+    """The synthetic state the checks leave in the metadata table: random ids only, never content.
+
+    Each agent call does what the worker does: it writes a conversation binding (no TTL, and the project has
+    no sweeper for it) and an invocation grant (``ttl`` = 5 minutes, deleted by DynamoDB TTL and by the
+    reconciliation sweep). The interceptor adds one self-expiring grant per tool call. Nothing else is written:
+    the job exists only in memory, and no memory event, quota counter or CHATJOB item is touched.
+    """
+
+    def __init__(self) -> None:
+        self.bindings: list[dict[str, object]] = []
+
+    def conversation_bound(self, conversation_id: str, session_selector: str, partition_key: str) -> dict[str, object]:
+        entry: dict[str, object] = {
+            "conversationId": conversation_id, "sessionSelector": session_selector,
+            "bindingPkSha256": _sha(partition_key), "invocationId": None,
+        }
+        self.bindings.append(entry)  # recorded before the call, so a failure after the bind still leaves the ids
+        return entry
+
+    def as_report(self) -> dict[str, object]:
+        return {
+            "conversationBindings": [dict(item) for item in self.bindings],
+            "invocationGrantsWritten": sum(1 for item in self.bindings if item["invocationId"]),
+            "grantTtlSeconds": GRANT_TTL_SECONDS,
+            "cleanup": "delete the conversation bindings (no TTL); grants expire by themselves (docs/phase-15-live-runbook.md step 11)",
+        }
+
+
 @dataclass(frozen=True)
 class Backends:
     """What the checks need from the outside; injected so the logic is testable without AWS."""
@@ -126,6 +159,7 @@ class Backends:
     agent: Callable[[str], Any]  # question -> AgentChatResult-like; sealed binding, maxIterations forced to 1
     resolve: Callable[[Any], str | None]  # the production output tree: loop -> output path
     new_session_id: Callable[[], str]
+    residual: ResidualState = field(default_factory=ResidualState)
 
 
 def build_plan() -> dict[str, object]:
@@ -133,6 +167,7 @@ def build_plan() -> dict[str, object]:
         "checksVersion": CHECKS_VERSION, "harnessInvocations": MAX_INVOCATIONS, "perCheck": dict(INVOCATIONS), "retries": 0,
         "stopAfterConsecutiveFailures": MAX_CONSECUTIVE_FAILURES, "toolResultsMaxIterations": 1,
         "newToolsNotInTheHarnessTemplate": sorted(NEW_TOOLS), "reportStoresMarkersQuestionsOrAnswers": False,
+        "residualState": "one conversation binding (no TTL) and one 5-minute invocation grant per agent call, ids recorded in the report",
     }
 
 
@@ -158,11 +193,27 @@ def _sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _whole_token(token: str, text: str) -> bool:
+    """``token`` appears in ``text`` as a whole word, not inside a longer run of letters or digits."""
+
+    return re.search(r"(?<![A-Za-z0-9])" + re.escape(token) + r"(?![A-Za-z0-9])", text) is not None
+
+
+# A closed hint read from a ValidationException's message to attribute it to the tools list. The message itself
+# is matched in memory and never stored, logged or copied into the report.
+_ALLOWED_TOOLS_HINT = re.compile(r"allowed[\s_-]*tools?|tools?\b.{0,60}\bnot\b.{0,30}\b(?:allowed|permitted|configured|listed)\b")
+
+
 def classify_agent_error(exc: BaseException) -> str:
-    """``request_rejected`` (a validation error), ``stream_rejected`` (the parser refused a tool) or ``other``."""
+    """Attribute a failed invocation, with a closed answer.
+
+    ``request_rejected`` only for a ``ValidationException`` whose message points at the allowed tools;
+    ``validation_unattributed`` for any other ``ValidationException`` (a bad token limit, a malformed header...);
+    ``stream_rejected`` when the stream parser refused a tool; ``other`` otherwise.
+    """
 
     if _error_code(exc) == "ValidationException":
-        return "request_rejected"
+        return "request_rejected" if _ALLOWED_TOOLS_HINT.search(str(exc).lower()) else "validation_unattributed"
     if "invalid event stream" in str(exc).lower():
         return "stream_rejected"  # the parser fails closed on a tool outside allowedTools; it cannot say which
     return "other"
@@ -202,11 +253,11 @@ def check_allowed_tools(backends: Backends, state: _State) -> dict[str, object]:
 
 def check_session(backends: Backends, state: _State) -> dict[str, object]:
     record: dict[str, object] = {"verdict": "not_run", "invocations": 0, "errorCode": None, "acknowledged": None, "recalled": None}
-    word, token_1, token_2 = "LDSESSWORD" + uuid4().hex, "LDSESSA" + uuid4().hex, "LDSESSB" + uuid4().hex
-    record["markerSha256"] = {"word": _sha(word), "turn1": _sha(token_1), "turn2": _sha(token_2)}
+    word, token_1, token_2, ack = "LDSESSWORD" + uuid4().hex, "LDSESSA" + uuid4().hex, "LDSESSB" + uuid4().hex, "LDSESSACK" + uuid4().hex
+    record["markerSha256"] = {"word": _sha(word), "turn1": _sha(token_1), "turn2": _sha(token_2), "ack": _sha(ack)}
     session_id = backends.new_session_id()
     record["sessionIdSha256"] = _sha(session_id)
-    turn_1 = f"Synthetic session check {token_1}. Remember this word for later: {word}. Reply with exactly: ACK"
+    turn_1 = f"Synthetic session check {token_1}. Remember this word for later: {word}. Reply with exactly: {ack}"
     turn_2 = (
         f"Synthetic session check {token_2}. What word did I ask you to remember earlier? "
         "If you do not know, reply exactly: UNKNOWN"
@@ -225,7 +276,9 @@ def check_session(backends: Backends, state: _State) -> dict[str, object]:
             return record
         state.ok()
         answers.append(text if isinstance(text, str) else "")
-    acknowledged, recalled = "ACK" in answers[0].upper(), word in answers[1]  # computed in memory, never stored
+    # Computed in memory, never stored. The acknowledgement is a random, unique token matched as a whole word
+    # (so "back" or "acknowledge" can never count, and neither can a partial echo of the token).
+    acknowledged, recalled = _whole_token(ack, answers[0]), word in answers[1]
     record["acknowledged"], record["recalled"] = acknowledged, recalled
     if recalled:
         record["verdict"] = "history_retained"
@@ -258,38 +311,55 @@ def check_tool_results(backends: Backends, state: _State, question: str) -> dict
                 break
             continue
         state.ok()
-        tools = [getattr(item, "short_name", None) for item in getattr(loop, "tool_calls", ())]
-        completed = [
-            item for item in getattr(loop, "tool_calls", ())
-            if getattr(item, "short_name", None) in NEW_TOOLS and getattr(item, "status", None) == "SUCCESS" and getattr(item, "payload", None)
-        ]
+        outcome, retained_new = classify_cut_loop(loop)
+        calls = tuple(getattr(loop, "tool_calls", ()))
         call.update({
             "loopOutcome": _closed(getattr(loop, "loop_outcome", None)), "stopReason": _closed(getattr(loop, "stop_reason", None)),
-            "iterations": getattr(loop, "iterations", None), "toolCalls": len(tools), "completedNewToolResults": len(completed),
-            "outputPath": None,
+            "iterations": getattr(loop, "iterations", None), "toolCalls": len(calls),
+            "toolNames": [name if name in KNOWN_TOOL_NAMES else "other" for name in (getattr(item, "short_name", None) for item in calls)],
+            "toolStatuses": [status if status in {"SUCCESS", "ERROR"} else "other" for status in (getattr(item, "status", None) for item in calls)],
+            "completedNewToolResults": retained_new, "outputPath": None, "outcome": outcome,
         })
-        if completed:
+        if outcome == "retained":
             try:
                 call["outputPath"] = _closed(backends.resolve(loop))
             except Exception as exc:  # noqa: BLE001 - the output tree is not the question asked here
                 call["resolveErrorCode"] = _error_code(exc)
-            call["outcome"] = "retained"
+        if retained_new:
             record["newToolCompleted"] = True
-        elif tools:
-            call["outcome"] = "lost"  # a tool was called, but no complete result survived the cut
-        else:
-            call["outcome"] = "no_tool_called"
-        outcomes.append(str(call["outcome"]))
+        outcomes.append(outcome)
         record["calls"].append(call)  # type: ignore[union-attr]
     if "lost" in outcomes:
         record["verdict"] = "lost"
-    elif outcomes and all(item == "retained" for item in outcomes) and len(outcomes) == INVOCATIONS["tool_results"]:
+    elif "retained" in outcomes:
         record["verdict"] = "retained"
     elif outcomes and all(item == "invoke_failed" for item in outcomes):
         record["verdict"] = "invoke_failed"
     else:
         record["verdict"] = "inconclusive"
     return record
+
+
+def classify_cut_loop(loop: Any) -> tuple[str, int]:
+    """(outcome, completed results of the tools outside the template) for one loop cut after its first tool.
+
+    * ``retained``: any tool that completed with ``SUCCESS`` still has its structured result in the stream;
+    * ``lost``: the evidence says a result should be there and is not: a ``SUCCESS`` result whose content is
+      empty, or the model asked for a tool (stop reason ``tool_use``) and the stream holds no tool result at all;
+    * ``inconclusive``: no tool was called, or only ``ERROR`` results (a denial or a tool failure says nothing
+      about whether results survive a cut), or the loop ended for another reason.
+    """
+
+    calls = tuple(getattr(loop, "tool_calls", ()))
+    complete = [item for item in calls if getattr(item, "status", None) == "SUCCESS" and getattr(item, "payload", None)]
+    new_tools = sum(1 for item in complete if getattr(item, "short_name", None) in NEW_TOOLS)
+    if complete:
+        return "retained", new_tools
+    if any(getattr(item, "status", None) == "SUCCESS" for item in calls):
+        return "lost", 0  # completed successfully, yet no content survived
+    if not calls and getattr(loop, "stop_reason", None) == "tool_use":
+        return "lost", 0  # requested, and the stream has no result for it
+    return "inconclusive", 0
 
 
 def run_checks(backends: Backends, budget: CallBudget, results: dict[str, dict[str, object]], *, cut_question: str = DEFAULT_CUT_QUESTION) -> None:
@@ -329,7 +399,8 @@ def _final(results: Mapping[str, Mapping[str, object]]) -> tuple[str, str]:
 
 
 def build_report(results: Mapping[str, Mapping[str, object]], budget: CallBudget, *, started: str, approval_ref: str, release_commit: str,
-                 artifact_sha256: str, harness_arn: str, matter_id: str, internal_error: str | None) -> dict[str, object]:
+                 artifact_sha256: str, harness_arn: str, matter_id: str, internal_error: str | None,
+                 residual: ResidualState | None = None) -> dict[str, object]:
     allowed, overall = _final(results)
     if internal_error and overall == "all_passed":
         overall = "inconclusive"
@@ -342,7 +413,7 @@ def build_report(results: Mapping[str, Mapping[str, object]], budget: CallBudget
         "approvalRef": approval_ref, "releaseCommit": release_commit, "artifactSha256": artifact_sha256,
         "harnessArnSha256": _sha(harness_arn), "matterIdSha256": _sha(matter_id),
         "budget": {"harnessInvocationsLimit": budget.limit, "harnessInvocationsUsed": budget.used, "retries": 0},
-        "checks": checks, "internalErrorCode": internal_error, "verdict": overall,
+        "checks": checks, "residualState": (residual or ResidualState()).as_report(), "internalErrorCode": internal_error, "verdict": overall,
         "interpretation": {name: INTERPRETATION[name].get(str(checks[name]["verdict"]), "") for name in INTERPRETATION},
     }
 
@@ -387,7 +458,8 @@ def execute_checks(
     finally:
         if budget.used:
             report = build_report(results, budget, started=started, approval_ref=approval_ref, release_commit=release_commit,
-                                  artifact_sha256=artifact_sha256, harness_arn=harness_arn, matter_id=matter_id, internal_error=internal_error)
+                                  artifact_sha256=artifact_sha256, harness_arn=harness_arn, matter_id=matter_id, internal_error=internal_error,
+                                  residual=backends.residual)
             try:
                 write_create_only(path, report)
             except Exception:
@@ -422,6 +494,7 @@ def build_real_backends(harness_arn: str, matter_id: str, access_token: str, reg
     from legaldesk.agent_chat_lambda import build_worker_from_environment  # noqa: PLC0415
     from legaldesk.agent_jobs import new_job  # noqa: PLC0415
     from legaldesk.authorization import build_request_context  # noqa: PLC0415
+    from legaldesk.memory import conversation_binding_partition_key  # noqa: PLC0415
     from legaldesk_agent import HarnessInvoker, new_session_id  # noqa: PLC0415
 
     if os.environ.get("LEGALDESK_HARNESS_ARN") != harness_arn:
@@ -432,17 +505,21 @@ def build_real_backends(harness_arn: str, matter_id: str, access_token: str, reg
         harness_arn,
     )
 
+    residual = ResidualState()
+
     def agent(question: str) -> Any:
         identity = worker.identity_verifier.verify_authorization_header(f"Bearer {access_token}")
         context = build_request_context(identity, matter_id, worker.authorization_store)
         conversation_id, selector = f"checks-{uuid4()}", f"checks-{uuid4()}"
         worker.conversation_store.bind(context, conversation_id=conversation_id, session_selector=selector)
+        entry = residual.conversation_bound(conversation_id, selector, conversation_binding_partition_key(context, conversation_id))
         job = new_job(
             job_id=str(uuid4()), subject=identity.subject, tenant_id=context.tenant_id, matter_id=matter_id,
             conversation_id=conversation_id, session_selector=selector, correlation_id=context.correlation_id,
             question=question, session_ref="checks", now=time.time(),
         )
         binding = worker._bind(job, access_token)  # noqa: SLF001 - the same sealed binding as production
+        entry["invocationId"] = binding.invocation_id  # the grant _bind wrote (expires in 5 minutes)
         with _max_iterations_one(agent_client):
             return worker.invoke_agent(binding, question, ())
 
@@ -454,7 +531,7 @@ def build_real_backends(harness_arn: str, matter_id: str, access_token: str, reg
         result = invoker.invoke(message, session_id=session_id)  # no memory scope, no tools
         return result.text if isinstance(getattr(result, "text", None), str) else ""
 
-    return Backends(plain=plain, agent=agent, resolve=resolve, new_session_id=new_session_id)
+    return Backends(plain=plain, agent=agent, resolve=resolve, new_session_id=new_session_id, residual=residual)
 
 
 def main(argv: list[str] | None = None) -> int:

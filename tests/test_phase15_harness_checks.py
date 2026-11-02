@@ -28,6 +28,12 @@ def loop(*calls, outcome: str = "iterations_exhausted", stop: str = "tool_use"):
     return SimpleNamespace(tool_calls=tuple(calls), loop_outcome=outcome, stop_reason=stop, iterations=1, text=ANSWER_SECRET)
 
 
+def ack_reply(message: str) -> str:
+    """What a compliant model answers to turn 1: exactly the acknowledgement token it was given."""
+
+    return message.split("exactly: ")[1].strip()
+
+
 class FakeError(Exception):
     def __init__(self, code: str, message: str = "boom") -> None:
         super().__init__(message)
@@ -39,7 +45,8 @@ class Recorder:
 
     def __init__(self, *, agent=None, plain=None) -> None:
         self.agent_script = list(agent if agent is not None else [loop(), loop(tool_call()), loop(tool_call())])
-        self.plain_script = list(plain if plain is not None else ["ACK", "UNKNOWN"])
+        self.plain_script = list(plain if plain is not None else [ack_reply, "UNKNOWN"])
+        self.residual = checks.ResidualState()
         self.agent_calls: list[str] = []
         self.plain_calls: list[tuple[str, str]] = []
         self.resolved: list[object] = []
@@ -53,17 +60,21 @@ class Recorder:
     def backends(self) -> checks.Backends:
         def agent(question: str):
             self.agent_calls.append(question)
+            n = len(self.agent_calls)
+            entry = self.residual.conversation_bound(f"checks-conv-{n}", f"checks-sel-{n}", f"CONVERSATION#tnt#mat#user#checks-conv-{n}")
+            entry["invocationId"] = f"00000000-0000-4000-8000-00000000000{n}"
             return self._next(self.agent_script)
 
         def plain(message: str, session_id: str) -> str:
             self.plain_calls.append((message, session_id))
-            return self._next(self.plain_script)
+            value = self._next(self.plain_script)
+            return value(message) if callable(value) else value
 
         def resolve(item):
             self.resolved.append(item)
             return "tool_result"
 
-        return checks.Backends(plain=plain, agent=agent, resolve=resolve, new_session_id=lambda: "session-" + "a" * 40)
+        return checks.Backends(plain=plain, agent=agent, resolve=resolve, new_session_id=lambda: "session-" + "a" * 40, residual=self.residual)
 
     @property
     def paid_calls(self) -> int:
@@ -99,21 +110,9 @@ class VerdictTests(ChecksTestCase):
         self.assertEqual(report["checks"]["tool_results"]["calls"][0]["outputPath"], "tool_result")
 
     def test_session_that_keeps_history_is_a_finding(self) -> None:
-        recorder = Recorder(plain=["ACK", "I remember"])
-        recorder.plain_script[1] = None  # placeholder replaced below once the word is known
-
-        def plain(message: str, session_id: str) -> str:
-            recorder.plain_calls.append((message, session_id))
-            if len(recorder.plain_calls) == 1:
-                recorder.word = message.split("later: ")[1].split(".")[0]
-                return "ACK"
-            return "The word was " + recorder.word
-
-        backends = recorder.backends()
-        report = checks.execute_checks(
-            checks.Backends(plain=plain, agent=backends.agent, resolve=backends.resolve, new_session_id=backends.new_session_id),
-            output=self.output, approval_ref="ticket-1", release_commit="a" * 40, artifact_sha256="b" * 64, harness_arn=ARN, matter_id="m",
-        )
+        recorder = Recorder()
+        recorder.plain_script[:] = [ack_reply, lambda message: "The word was " + recorder.plain_calls[0][0].split("later: ")[1].split(".")[0]]
+        report = self.run_with(recorder)
         self.assertEqual(report["checks"]["session"]["verdict"], "history_retained")
         self.assertEqual(report["verdict"], "findings")
 
@@ -129,7 +128,9 @@ class VerdictTests(ChecksTestCase):
         self.assertEqual(session_1, session_2)
         word = first.split("later: ")[1].split(".")[0]
         token_1, token_2 = first.split("check ")[1].split(".")[0], second.split("check ")[1].split(".")[0]
-        self.assertEqual(len({word, token_1, token_2}), 3)
+        ack = ack_reply(first)
+        self.assertEqual(len({word, token_1, token_2, ack}), 4)
+        self.assertNotIn(ack, second)
         self.assertNotIn(word, second)
         self.assertNotIn(token_1, second)
 
@@ -139,7 +140,8 @@ class VerdictTests(ChecksTestCase):
         self.assertEqual(report["verdict"], "findings")
 
     def test_a_model_that_calls_no_tool_is_inconclusive(self) -> None:
-        report = self.run_with(Recorder(agent=[loop(), loop(), loop()]))
+        ended = loop(outcome="no_tool_called", stop="end_turn")
+        report = self.run_with(Recorder(agent=[loop(), ended, ended]))
         self.assertEqual(report["checks"]["tool_results"]["verdict"], "inconclusive")
         self.assertEqual(report["checks"]["allowed_tools"]["verdict"], "request_accepted_tool_use_not_exercised")
         self.assertEqual(report["verdict"], "inconclusive")
@@ -148,14 +150,15 @@ class VerdictTests(ChecksTestCase):
         report = self.run_with(Recorder(agent=[loop(), loop(tool_call("list_matter_documents")), loop(tool_call("list_matter_documents"))]))
         self.assertNotEqual(report["checks"]["allowed_tools"]["verdict"], "accepted")
 
-    def test_one_conclusive_and_one_missing_call_is_inconclusive(self) -> None:
-        report = self.run_with(Recorder(agent=[loop(), loop(tool_call()), loop()]))
-        self.assertEqual(report["checks"]["tool_results"]["verdict"], "inconclusive")
+    def test_one_retained_call_and_one_without_tool_is_retained(self) -> None:
+        ended = loop(outcome="no_tool_called", stop="end_turn")
+        report = self.run_with(Recorder(agent=[loop(), loop(tool_call()), ended]))
+        self.assertEqual(report["checks"]["tool_results"]["verdict"], "retained")
 
 
 class AllowedToolsTests(ChecksTestCase):
     def test_request_rejected_is_reported_and_the_tool_check_is_skipped_but_not_the_session(self) -> None:
-        recorder = Recorder(agent=[FakeError("ValidationException", "tool not in allowedTools")], plain=["ACK", "UNKNOWN"])
+        recorder = Recorder(agent=[FakeError("ValidationException", "tool not in allowedTools")], plain=[ack_reply, "UNKNOWN"])
         report = self.run_with(recorder)
         self.assertEqual(report["checks"]["allowed_tools"]["verdict"], "request_rejected")
         self.assertEqual(report["checks"]["tool_results"]["verdict"], "skipped_tools_rejected")
@@ -236,15 +239,16 @@ class BudgetAndFailureTests(ChecksTestCase):
 
 class ReportContentTests(ChecksTestCase):
     def test_the_report_stores_no_marker_question_answer_or_tool_payload(self) -> None:
-        recorder = Recorder(plain=["ACK " + ANSWER_SECRET, "UNKNOWN " + ANSWER_SECRET])
+        recorder = Recorder(plain=[lambda m: ack_reply(m) + " " + ANSWER_SECRET, "UNKNOWN " + ANSWER_SECRET])
         self.run_with(recorder, cut_question="SYNTHETIC-CUT-QUESTION-TEXT")
         text = self.output.read_text()
         forbidden = [ANSWER_SECRET, PAYLOAD_SECRET, "SYNTHETIC-CUT-QUESTION-TEXT", checks.ALLOWED_TOOLS_QUESTION, "mat_synthetic", ARN]
         forbidden += [message.split("later: ")[1].split(".")[0] for message, _ in recorder.plain_calls[:1]]
+        forbidden += [ack_reply(message) for message, _ in recorder.plain_calls[:1]]
         for secret in forbidden:
             self.assertNotIn(secret, text)
         data = json.loads(text)
-        self.assertEqual(set(data["checks"]["session"]["markerSha256"]), {"word", "turn1", "turn2"})
+        self.assertEqual(set(data["checks"]["session"]["markerSha256"]), {"word", "turn1", "turn2", "ack"})
         self.assertEqual(len(data["harnessArnSha256"]), 64)
 
     def test_unexpected_labels_from_harness_are_not_copied_verbatim(self) -> None:
