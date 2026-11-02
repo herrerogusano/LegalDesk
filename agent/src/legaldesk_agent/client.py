@@ -164,6 +164,8 @@ _TOOL_RESULT_KEYS = {
     "confidentiality", "metadata",
 }
 _MAX_TOOL_FRAGMENT = 64 * 1024
+# Agentic chat keeps whole tool results (a grounded answer plus its passages).
+_MAX_AGENT_TOOL_RESULT = 256 * 1024
 _MAX_TOOL_RESULTS = 16
 _MAX_STREAM_EVENTS = 256
 _MAX_STREAM_BYTES = 1_048_576
@@ -353,13 +355,18 @@ def _tool_name_allowed(name: str, allowed_tools: tuple[str, ...] | None) -> bool
     )
 
 
-def _safe_tool_payload(value: object) -> Mapping[str, object]:
-    """Keep bounded metadata needed by application code, never tool bodies."""
+def _safe_tool_payload(value: object, *, raw: bool = False) -> Mapping[str, object]:
+    """Keep bounded metadata needed by application code, never tool bodies.
+
+    ``raw=True`` is for the agentic chat only: the result is unwrapped and
+    returned whole (the backend validates it against a strict contract and
+    never logs it) instead of being filtered to the review/metadata keys.
+    """
 
     if value in (None, ""):
         return {}
     if isinstance(value, str):
-        if len(value) > _MAX_TOOL_FRAGMENT:
+        if len(value) > (_MAX_AGENT_TOOL_RESULT if raw else _MAX_TOOL_FRAGMENT):
             raise ValueError("tool result is too large")
         try:
             value = json.loads(value)
@@ -392,6 +399,9 @@ def _safe_tool_payload(value: object) -> Mapping[str, object]:
                 raise ValueError("tool result content is not an object")
             unwrapped.update(fragment)
         value = unwrapped
+    if raw:
+        return value
+
     def clean(item: object, depth: int = 0) -> object:
         if depth > 3:
             raise ValueError("tool result is too deeply nested")
@@ -424,6 +434,8 @@ def _structured_tool_results(
     events: Iterable[Mapping[str, Any]],
     *,
     allowed_tools: tuple[str, ...] | None = None,
+    raw: bool = False,
+    allow_incomplete: bool = False,
 ) -> tuple[HarnessToolResult, ...]:
     """Parse the actual SDK tool-use/result stream, failing closed on gaps.
 
@@ -496,8 +508,6 @@ def _structured_tool_results(
                 if type(block_index) is not int or block_index < 0 or block_index > 1024:
                     raise ValueError("Harness content block index is invalid")
                 fragments_delta = body.get("toolResult")
-                if not isinstance(fragments_delta, (list, tuple)) or not fragments_delta:
-                    raise ValueError("Harness tool result fragment is invalid")
                 # SDK deltas are bound to the content block.  Find only the
                 # result whose index matches; a single active match is not
                 # accepted for an ambiguous/missing index.
@@ -508,31 +518,60 @@ def _structured_tool_results(
                 result_record = matches[0]
                 fragments = result_record["fragments"]
                 assert isinstance(fragments, list)
-                for fragment_block in fragments_delta:
-                    if not isinstance(fragment_block, Mapping):
+                try:
+                    if not isinstance(fragments_delta, (list, tuple)) or not fragments_delta:
                         raise ValueError("Harness tool result fragment is invalid")
-                    fragment = fragment_block.get("text")
-                    if fragment is None and "json" in fragment_block:
-                        fragment = json.dumps(fragment_block.get("json"), separators=(",", ":"))
-                    if not isinstance(fragment, str) or len(fragment) > _MAX_TOOL_FRAGMENT:
-                        raise ValueError("Harness tool result fragment is invalid")
-                    if sum(len(item) for item in fragments) + len(fragment) > _MAX_TOOL_FRAGMENT:
-                        raise ValueError("Harness tool result is too large")
-                    fragments.append(fragment)
+                    for fragment_block in fragments_delta:
+                        if result_record.get("bad"):
+                            break
+                        if not isinstance(fragment_block, Mapping):
+                            raise ValueError("Harness tool result fragment is invalid")
+                        fragment = fragment_block.get("text")
+                        if fragment is None and "json" in fragment_block:
+                            fragment = json.dumps(fragment_block.get("json"), separators=(",", ":"))
+                        limit = _MAX_AGENT_TOOL_RESULT if raw else _MAX_TOOL_FRAGMENT
+                        if not isinstance(fragment, str) or len(fragment) > limit:
+                            raise ValueError("Harness tool result fragment is invalid")
+                        if sum(len(item) for item in fragments) + len(fragment) > limit:
+                            raise ValueError("Harness tool result is too large")
+                        fragments.append(fragment)
+                except ValueError:
+                    if not raw:
+                        raise
+                    # Agentic chat: an oversized or non-text result spoils only its own
+                    # tool call. The other results of the loop stay usable (ADR-021 D5).
+                    result_record["bad"] = True
+                    fragments.clear()
     if len(uses) > _MAX_TOOL_RESULTS:
         raise ValueError("too many Harness tool results")
-    if set(uses) != set(results):
+    if set(uses) != set(results) and not allow_incomplete:
         raise ValueError("Harness tool result is missing")
     parsed: list[HarnessToolResult] = []
     for tool_id, (name, _message_number, _block_index) in uses.items():
-        record = results[tool_id]
+        record = results.get(tool_id)
+        if record is None:
+            continue  # the loop was cut before this call returned: nothing to reuse
+        if record.get("bad"):
+            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}))
+            continue
         fragments = record["fragments"]
         assert isinstance(fragments, list)
-        payload = _safe_tool_payload("".join(fragments))
+        try:
+            payload = _safe_tool_payload("".join(fragments), raw=raw)
+        except ValueError:
+            if not raw:
+                raise
+            # One unusable result must not discard the others in the loop.
+            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}))
+            continue
         if record["status"] == "SUCCESS" and not payload:
+            if raw:
+                parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}))
+                continue
             raise ValueError("successful Harness tool result has no structured payload")
         if (
-            record["status"] == "SUCCESS"
+            not raw
+            and record["status"] == "SUCCESS"
             and name.rsplit("___", 1)[-1] == "create_review_task"
             and not isinstance(payload.get("reviewTaskId"), str)
         ):
@@ -855,6 +894,224 @@ class HarnessInvoker:
             usage=usage,
             usage_records=usage_records,
         )
+
+
+# ---------------------------------------------------------------- agentic chat
+
+AGENT_CHAT_MAX_ITERATIONS = 3
+AGENT_CHAT_TIMEOUT_SECONDS = 90
+AGENT_CHAT_MAX_TOKENS = 2048
+MAX_HISTORY_MESSAGES = 12
+MAX_HISTORY_CHARS = 24_000
+MAX_HISTORY_TEXT_CHARS = 2_000
+_MAX_QUESTION_CHARS = 8_000
+_TRANSIENT_STREAM_CODES = frozenset({
+    "throttlingexception", "serviceunavailableexception", "internalserverexception", "modeltimeoutexception",
+})
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolCall:
+    """One completed tool call of the loop, with its whole structured result."""
+
+    tool_use_id: str
+    name: str
+    status: str
+    payload: Mapping[str, object]
+
+    @property
+    def short_name(self) -> str:
+        return self.name.rsplit("___", 1)[-1]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentChatResult:
+    """What the loop produced. ``loop_outcome`` uses the backend's closed vocabulary."""
+
+    session_id: str
+    correlation_id: str
+    text: str
+    loop_outcome: str  # completed | no_tool_called | failed | iterations_exhausted | timeout
+    iterations: int
+    stop_reason: str | None
+    tool_calls: tuple[AgentToolCall, ...] = ()
+    usage: HarnessUsage | None = None
+    # How many history messages were actually sent (after trimming); lets the caller tell
+    # that a non-empty history was dropped.
+    history_messages: int = 0
+
+
+def _final_message_text(events: list[Mapping[str, Any]]) -> str:
+    """Text of the last message that has any: the answer plan, not the reasoning before a tool call."""
+
+    chunks: dict[int, list[str]] = {}
+    message_number = -1
+    for event in events:
+        if "messageStart" in event:
+            message_number += 1
+        delta = event.get("contentBlockDelta", {}).get("delta", {}) if isinstance(event.get("contentBlockDelta"), Mapping) else {}
+        if isinstance(delta, Mapping) and "text" in delta:
+            chunks.setdefault(message_number, []).append(str(delta["text"]))
+    return "".join(chunks[max(chunks)]) if chunks else ""
+
+
+def _loop_shape(events: list[Mapping[str, Any]]) -> tuple[int, str | None]:
+    """(assistant messages, stop reason of the last message)."""
+
+    assistant_messages, stop_reason = 0, None
+    for event in events:
+        start = event.get("messageStart")
+        if isinstance(start, Mapping) and start.get("role", "assistant") == "assistant":
+            assistant_messages += 1
+        stop = event.get("messageStop")
+        if isinstance(stop, Mapping) and isinstance(stop.get("stopReason"), str):
+            stop_reason = stop["stopReason"]
+    return assistant_messages, stop_reason
+
+
+def classify_loop(*, tool_calls: int, stop_reason: str | None, error: str | None) -> str:
+    """Map the stream to the backend's closed loop outcomes.
+
+    Harness signals a cut loop through its stop reason or a runtime error; the
+    exact wording of the iteration and time limits is confirmed in the live
+    block (PLAN_15 T9), so anything not clearly a clean end is treated as cut.
+    """
+
+    if error is not None:
+        return "timeout" if "timeout" in error or "timed out" in error else "failed"
+    if stop_reason == "tool_use":
+        return "iterations_exhausted"  # the model still wanted a tool when the budget ended
+    if stop_reason not in (None, "end_turn", "stop_sequence"):
+        return "failed"
+    return "completed" if tool_calls else "no_tool_called"
+
+
+def _agent_history(history: tuple[tuple[str, str], ...]) -> list[dict[str, Any]]:
+    """Validate the backend's history and fit it to the budget; never raises on size.
+
+    An oversized history must not make every later question of the conversation fail, so
+    it is trimmed deterministically: each text is cut to ``MAX_HISTORY_TEXT_CHARS`` and the
+    oldest messages are dropped, two at a time to keep the user/assistant pairs, until at
+    most ``MAX_HISTORY_MESSAGES`` messages and ``MAX_HISTORY_CHARS`` characters remain. If
+    nothing fits, the question goes without history. Malformed entries are still a
+    programming error and raise.
+    """
+
+    if not isinstance(history, tuple):
+        raise ValueError("history is invalid")
+    cleaned: list[tuple[str, str]] = []
+    for entry in history:
+        if not isinstance(entry, tuple) or len(entry) != 2:
+            raise ValueError("history entry is invalid")
+        role, text = entry
+        if role not in {"user", "assistant"} or not isinstance(text, str) or not text.strip():
+            raise ValueError("history entry is invalid")
+        cleaned.append((role, text.strip()[:MAX_HISTORY_TEXT_CHARS]))
+    while cleaned and (
+        len(cleaned) > MAX_HISTORY_MESSAGES
+        or sum(len(text) for _, text in cleaned) > MAX_HISTORY_CHARS
+        or cleaned[0][0] != "user"
+    ):
+        del cleaned[: 2 if len(cleaned) > 1 and cleaned[0][0] == "user" else 1]
+    return [{"role": role, "content": [{"text": text}]} for role, text in cleaned]
+
+
+def invoke_agent_chat(
+    invoker: "HarnessInvoker",
+    message: str,
+    *,
+    invocation_scope: HarnessInvocationScope,
+    system_prompt: tuple[Mapping[str, object], ...],
+    history: tuple[tuple[str, str], ...] = (),
+) -> AgentChatResult:
+    """Run one read-only agent loop for the asynchronous chat (ADR-021 D4, D7).
+
+    * no ``actorId``: Harness memory is not attached; the backend is the only
+      owner of conversation memory and passes the last pairs as ``messages``;
+    * the tool list, ``allowedTools`` and headers come only from the sealed
+      scope; model, tools and skills are never overridable by the caller;
+    * ``maxIterations`` 3 and ``timeoutSeconds`` 90 are fixed here.
+
+    An error before the stream starts propagates (the worker decides if it is
+    transient). A cut stream returns what completed so far so the worker can
+    reuse a valid tool result (D5).
+    """
+
+    if not isinstance(message, str) or not message.strip() or len(message) > _MAX_QUESTION_CHARS:
+        raise ValueError("message is invalid")
+    if not isinstance(invocation_scope, HarnessInvocationScope):
+        raise TypeError("invocation_scope must be a server-derived HarnessInvocationScope")
+    if not isinstance(system_prompt, tuple) or not system_prompt:
+        raise ValueError("the agent system prompt is required")
+    session_id = validate_session_id(invocation_scope.memory_scope.session_id)
+    correlation_id = invocation_scope.correlation_id
+    history_messages = _agent_history(history)
+    request: dict[str, Any] = {
+        "harnessArn": invoker.harness_arn,
+        "runtimeSessionId": session_id,
+        "messages": [*history_messages, {"role": "user", "content": [{"text": message.strip()}]}],
+        "tools": [invocation_scope.remote_mcp_tool()],
+        "allowedTools": list(invocation_scope.allowed_tools),
+        "baggage": f"legaldesk.correlation_id={correlation_id}",
+        "systemPrompt": list(system_prompt),
+        "maxIterations": AGENT_CHAT_MAX_ITERATIONS,
+        "maxTokens": AGENT_CHAT_MAX_TOKENS,
+        "timeoutSeconds": AGENT_CHAT_TIMEOUT_SECONDS,
+    }
+    started_at = time.perf_counter()
+    _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "started", operation="invoke_harness")
+    try:
+        response = invoker.client.invoke_harness(**request)
+    except Exception:
+        _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "error", operation="invoke_harness",
+                            started_at=started_at, error_code="harness_invoke_failed")
+        raise
+    stream = response.get("stream") if isinstance(response, Mapping) else None
+    if isinstance(stream, (str, bytes, Mapping)) or not isinstance(stream, Iterable):
+        _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "error", operation="invoke_harness",
+                            started_at=started_at, error_code="harness_malformed_response")
+        raise HarnessInvocationError("AgentCore returned an invalid event stream")
+    events: list[Mapping[str, Any]] = []
+    stream_bytes, error = 0, None
+    try:
+        for event in stream:
+            if not isinstance(event, Mapping) or len(events) >= _MAX_STREAM_EVENTS:
+                raise ValueError("invalid or oversized Harness stream")
+            stream_bytes += len(json.dumps(event, ensure_ascii=False, default=str).encode("utf-8"))
+            if stream_bytes > _MAX_STREAM_BYTES:
+                raise ValueError("Harness stream is too large")
+            if "runtimeClientError" in event:
+                message_text = event["runtimeClientError"].get("message", "") if isinstance(event["runtimeClientError"], Mapping) else ""
+                raise HarnessInvocationError(str(message_text))
+            events.append(event)
+    except Exception as exc:
+        code = getattr(exc, "response", {}).get("Error", {}).get("Code", "") if isinstance(getattr(exc, "response", None), Mapping) else ""
+        if not events and str(code).lower() in _TRANSIENT_STREAM_CODES:
+            _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "error", operation="invoke_harness",
+                                started_at=started_at, error_code="harness_stream_error")
+            raise  # nothing was produced: a retry loses nothing
+        error = str(exc).lower()
+    try:
+        calls = _structured_tool_results(
+            events, allowed_tools=invocation_scope.allowed_tools, raw=True, allow_incomplete=True,
+        )
+        usage_records = _harness_usages(events)
+    except ValueError as exc:
+        _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "error", operation="invoke_harness",
+                            started_at=started_at, error_code="harness_malformed_response")
+        raise HarnessInvocationError("AgentCore returned an invalid event stream") from exc
+    iterations, stop_reason = _loop_shape(events)
+    outcome = classify_loop(tool_calls=len(calls), stop_reason=stop_reason, error=error)
+    _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "succeeded" if error is None else "error",
+                        operation="invoke_harness", started_at=started_at,
+                        error_code=None if error is None else "harness_stream_error")
+    return AgentChatResult(
+        session_id=session_id, correlation_id=correlation_id, text=_final_message_text(events),
+        loop_outcome=outcome, iterations=max(1, iterations), stop_reason=stop_reason,
+        tool_calls=tuple(AgentToolCall(call.tool_use_id, call.name, call.status, call.payload) for call in calls),
+        usage=usage_records[0] if len(usage_records) == 1 else None,
+        history_messages=len(history_messages),
+    )
 
 
 def _record_agent_event(

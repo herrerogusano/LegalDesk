@@ -106,6 +106,7 @@ jobs:
           required = {
               "legaldesk/malware_scan_lambda.py", "legaldesk/idp_lambda.py",
               "legaldesk/idp_ocr_lambda.py", "legaldesk/reconciliation_lambda.py",
+              "legaldesk/agent_chat_lambda.py", "prompts/legaldesk-agent.md",
               "prompts/idp-classifier.md", "prompts/idp-extractor.md",
           }
           missing = required - names

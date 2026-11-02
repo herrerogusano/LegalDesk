@@ -36,6 +36,8 @@ from .agent_contracts import (
     ExtractedFieldsResult,
     FieldStatus,
     Group,
+    InventoryBlock,
+    InventoryResult,
     Order,
     SearchDocumentsResult,
     TextBlock,
@@ -55,6 +57,7 @@ MAX_CITATIONS_PER_FIELD = 1
 class OutputPath(StrEnum):
     GROUNDED = "grounded"          # search_documents text, verbatim
     DATA = "data"                  # backend-written data block(s)
+    INVENTORY = "inventory"        # backend-written listing of the matter documents
     MIXED = "mixed"                # data and text blocks, each with its own citations
     TOOL_RESULT = "tool_result"    # plan unusable; a valid search_documents result is reused
     RAG_FALLBACK = "rag_fallback"  # nothing usable; the caller runs the direct RAG path
@@ -83,6 +86,7 @@ class BlockError(StrEnum):
 
     UNKNOWN_TOOL_USE_ID = "unknown_tool_use_id"
     DUPLICATE_TEXT_BLOCK = "duplicate_text_block"
+    DUPLICATE_INVENTORY_BLOCK = "duplicate_inventory_block"
     MISSING_CITATION = "missing_citation"
     UNKNOWN_REF = "unknown_ref"
     EMPTY_REF = "empty_ref"
@@ -114,12 +118,14 @@ class LoopEvidence:
 
     search_results: Mapping[str, SearchDocumentsResult] = field(default_factory=dict)
     documents: Mapping[str, DocumentFields] = field(default_factory=dict)
+    inventories: Mapping[str, InventoryResult] = field(default_factory=dict)
 
     @classmethod
     def from_results(
         cls,
         search_results: Iterable[tuple[str, SearchDocumentsResult]] = (),
         extracted: Iterable[ExtractedFieldsResult] = (),
+        inventories: Iterable[tuple[str, InventoryResult]] = (),
     ) -> "LoopEvidence":
         """Collect results in call order; later field values replace earlier ones."""
 
@@ -129,7 +135,7 @@ class LoopEvidence:
                 previous = merged.get(document_id)
                 fields = {**previous.fields, **document.fields} if previous else dict(document.fields)
                 merged[document_id] = DocumentFields(document_id, document.document_name, document.document_type, fields)
-        return cls(dict(search_results), merged)
+        return cls(dict(search_results), merged, dict(inventories))
 
 
 # ------------------------------------------------------------------- output
@@ -221,6 +227,19 @@ class AnswerOutput:
             ],
             "suggestReview": {"reasonCode": self.suggest_review} if self.suggest_review else None,
         }
+
+    def plain_text(self) -> str:
+        """The answer as the user reads it, for conversation memory (final answer only)."""
+
+        parts: list[str] = []
+        for block in self.blocks:
+            if block.text:
+                parts.append(block.text)
+            for group in block.groups:
+                parts.append(group.title)
+                parts.extend(line.text for line in group.lines)
+            parts.extend(line.text for line in block.aggregates)
+        return "\n".join(parts)
 
     def metadata(self) -> dict[str, object]:
         """Content-free facts for telemetry (ADR-021 D9)."""
@@ -494,6 +513,42 @@ def _text_output(result: SearchDocumentsResult) -> tuple[OutputBlock, list[Rende
     )
 
 
+def render_inventory_block(
+    block: InventoryBlock, evidence: LoopEvidence, used: set[str]
+) -> tuple[OutputBlock, list[RenderedCitation]]:
+    """List the documents a ``list_matter_documents`` call returned, from templates only.
+
+    The agent chose the call, an optional status filter and an order; name, file
+    type and status come from the tool result. The listing is metadata, not
+    document content, so it carries no passage citations.
+    """
+
+    result = evidence.inventories.get(block.tool_use_id)
+    if result is None:
+        raise _BlockInvalid(BlockError.UNKNOWN_TOOL_USE_ID)
+    if block.tool_use_id in used:
+        raise _BlockInvalid(BlockError.DUPLICATE_INVENTORY_BLOCK)
+    documents = [item for item in result.documents if not block.statuses or item.status in block.statuses]
+    if block.order_by == "uploaded_at":
+        documents.sort(key=lambda item: (item.uploaded_at, item.name.casefold(), item.document_id),
+                       reverse=block.direction == "desc")
+    else:
+        documents.sort(key=lambda item: (item.name.casefold(), item.document_id), reverse=block.direction == "desc")
+    if not documents:
+        return OutputBlock("inventory", text=tpl.NOTICES["inventory_empty"]), []
+    lines = tuple(
+        DataLine(
+            tpl.fill(tpl.INVENTORY_LINES["document"], document=item.name,
+                     media=tpl.INVENTORY_MEDIA.get(item.media_type, tpl.INVENTORY_MEDIA["other"]),
+                     status=tpl.INVENTORY_STATUS.get(item.status, tpl.INVENTORY_STATUS["other"])),
+            False, (),
+        )
+        for item in documents
+    )
+    count = AggregateLine(tpl.fill(tpl.AGGREGATES["count"], value=len(documents)), ())
+    return OutputBlock("inventory", groups=(DataGroup(tpl.INVENTORY_TITLE, lines),), aggregates=(count,)), []
+
+
 # ------------------------------------------------------------- output tree
 
 def _salvage(evidence: LoopEvidence, reason: FallbackReason, plan_error: str | None = None,
@@ -519,10 +574,13 @@ def render_plan(plan: AnswerPlan, evidence: LoopEvidence) -> AnswerOutput | None
     citations: dict[str, RenderedCitation] = {}
     omitted: list[OmittedBlock] = []
     used_text: set[str] = set()
+    used_inventory: set[str] = set()
     for index, block in enumerate(plan.blocks):
         try:
             if isinstance(block, TextBlock):
                 output, block_citations = render_text_block(block, evidence, used_text)
+            elif isinstance(block, InventoryBlock):
+                output, block_citations = render_inventory_block(block, evidence, used_inventory)
             else:
                 output, block_citations = render_data_block(block, evidence)
             # The whole output shares one citation budget; a block that would
@@ -535,12 +593,19 @@ def render_plan(plan: AnswerPlan, evidence: LoopEvidence) -> AnswerOutput | None
             continue
         if isinstance(block, TextBlock):
             used_text.add(block.tool_use_id)
+        elif isinstance(block, InventoryBlock):
+            used_inventory.add(block.tool_use_id)
         rendered.append((block.transition_before, output))
         citations.update({c.citation_id: c for c in block_citations})
     if not rendered:
         return None
     kinds = {output.kind for _, output in rendered}
-    path = OutputPath.GROUNDED if kinds == {"text"} else OutputPath.DATA if kinds == {"data"} else OutputPath.MIXED
+    path = (
+        OutputPath.GROUNDED if kinds == {"text"}
+        else OutputPath.DATA if kinds == {"data"}
+        else OutputPath.INVENTORY if kinds == {"inventory"}
+        else OutputPath.MIXED
+    )
     blocks: list[OutputBlock] = []
     # A verbatim grounded answer is returned as is: no backend framing around it.
     if plan.intro and path is not OutputPath.GROUNDED:
@@ -592,12 +657,19 @@ def resolve_output(
 
 
 def _all_errors(plan: AnswerPlan, evidence: LoopEvidence) -> list[tuple[int, BlockError]]:
+    """Why each block was dropped, with the same uniqueness rules as :func:`render_plan`."""
+
     errors: list[tuple[int, BlockError]] = []
-    used: set[str] = set()
+    used_text: set[str] = set()
+    used_inventory: set[str] = set()
     for index, block in enumerate(plan.blocks):
         try:
             if isinstance(block, TextBlock):
-                render_text_block(block, evidence, used)
+                render_text_block(block, evidence, used_text)
+                used_text.add(block.tool_use_id)
+            elif isinstance(block, InventoryBlock):
+                render_inventory_block(block, evidence, used_inventory)
+                used_inventory.add(block.tool_use_id)
             else:
                 render_data_block(block, evidence)
         except _BlockInvalid as invalid:

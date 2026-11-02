@@ -32,8 +32,8 @@ from legaldesk_agent import HarnessInvocationScope, HarnessInvoker
 AGENT_PROMPT_PATH = ROOT / "prompts" / "legaldesk-agent.md"
 # Changing a template or the prompt is a reviewed, versioned change: update the
 # version and these pins together.
-PINNED_AGENT_PROMPT_SHA256 = "97840a58e6682678d3813e1bddb7da28335673dbb1102f0611845fd1790e9945"
-PINNED_TEMPLATES_SHA256 = "71fe01f653b65e977d2da9cf6fb90214b6ccc710406175f597d48b025033f83d"
+PINNED_AGENT_PROMPT_SHA256 = "1b5b729a0d9f27d9c5b826d2cff0beba6194d0b1e160ca4506844827b55e75f3"
+PINNED_TEMPLATES_SHA256 = "9808f766ee3898c7bea74210d903479baae55f6c1430399f61c56235a742442a"
 
 
 def valid_plan() -> dict[str, object]:
@@ -86,7 +86,7 @@ class ContractVocabularyTests(unittest.TestCase):
             self.assertLessEqual(fields, allowed, key)
 
     def test_templates_are_pinned_by_hash(self) -> None:
-        self.assertEqual(templates.TEMPLATES_VERSION, "1.0.0")
+        self.assertEqual(templates.TEMPLATES_VERSION, "1.1.1")
         self.assertEqual(templates.TEMPLATES_SHA256, PINNED_TEMPLATES_SHA256)
 
     def test_fill_never_reinterprets_values_as_templates(self) -> None:
@@ -259,7 +259,7 @@ class AnswerPlanContractTests(unittest.TestCase):
             "boolean version": lambda p: p.update(version=True),
             "no blocks": lambda p: p.update(blocks=[]),
             "too many blocks": lambda p: p.update(blocks=[p["blocks"][0]] * 5),
-            "unknown block type": lambda p: p["blocks"][1].update(type="inventory"),
+            "unknown block type": lambda p: p["blocks"][1].update(type="summary"),
             "duplicate refs": lambda p: p["blocks"][0]["groups"][0].update(refs=[p["blocks"][0]["groups"][0]["refs"][0]] * 2),
             "document type UNKNOWN": lambda p: p["blocks"][0]["groups"].append(
                 {"criterion": {"id": "document_type_is", "params": {"documentType": "UNKNOWN"}},
@@ -393,7 +393,7 @@ class AgentPromptTests(unittest.TestCase):
         cls.prompt = " ".join(cls.artifact.content.split())
 
     def test_prompt_is_versioned_and_pinned_by_hash(self) -> None:
-        self.assertEqual((self.artifact.prompt_id, self.artifact.version), ("legaldesk-agent", "1.0.0"))
+        self.assertEqual((self.artifact.prompt_id, self.artifact.version), ("legaldesk-agent", "1.1.0"))
         self.assertEqual(self.artifact.sha256, PINNED_AGENT_PROMPT_SHA256)
         self.assertNotIn(b"\r", AGENT_PROMPT_PATH.read_bytes())
 
