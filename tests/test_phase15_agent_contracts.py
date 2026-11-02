@@ -33,7 +33,7 @@ AGENT_PROMPT_PATH = ROOT / "prompts" / "legaldesk-agent.md"
 # Changing a template or the prompt is a reviewed, versioned change: update the
 # version and these pins together.
 PINNED_AGENT_PROMPT_SHA256 = "97840a58e6682678d3813e1bddb7da28335673dbb1102f0611845fd1790e9945"
-PINNED_TEMPLATES_SHA256 = "c478908bc811e32c1396b7c19e1fb7535a7aa8bbacb738c0af48cb46d19bce0d"
+PINNED_TEMPLATES_SHA256 = "71fe01f653b65e977d2da9cf6fb90214b6ccc710406175f597d48b025033f83d"
 
 
 def valid_plan() -> dict[str, object]:

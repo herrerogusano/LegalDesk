@@ -49,6 +49,37 @@ _GROUP_TITLES = {
     "document_type_is.DEMAND": "Demandas",
     "document_type_is.JUDGMENT": "Sentencias",
 }
+_FIELD_LABELS = {
+    "amount": "Importe",
+    "appeal_information": "Información sobre recursos",
+    "automatic_renewal": "Renovación automática",
+    "case_number": "Número de procedimiento",
+    "claimants": "Demandantes",
+    "claimed_amount": "Importe reclamado",
+    "claims": "Pretensiones",
+    "costs_statement": "Costas",
+    "court": "Tribunal",
+    "currency": "Moneda",
+    "decision_date": "Fecha de la resolución",
+    "defendants": "Demandados",
+    "document_type": "Tipo de documento",
+    "effective_date": "Fecha de entrada en vigor",
+    "explicit_expiration_date": "Fecha de vencimiento",
+    "filing_date": "Fecha de presentación",
+    "general_document_evidence": "Evidencia general del documento",
+    "governing_law": "Ley aplicable",
+    "initial_duration_unit": "Unidad de la duración inicial",
+    "initial_duration_value": "Duración inicial",
+    "jurisdiction": "Jurisdicción",
+    "operative_ruling": "Fallo",
+    "parties": "Partes",
+    "renewal_period_unit": "Unidad del periodo de renovación",
+    "renewal_period_value": "Periodo de renovación",
+    "subtype": "Subtipo",
+    "termination_notice_unit": "Unidad del preaviso de resolución",
+    "termination_notice_value": "Preaviso de resolución",
+}
+_VALUES = {"true": "sí", "false": "no"}
 _LINES = {
     "fact": "{document}: {field}: {value}",
     "pending": "{document}: {field}: {value} (pendiente de revisión humana)",
@@ -57,7 +88,8 @@ _AGGREGATES = {
     "count": "Número de documentos: {value}",
     "min": "Mínimo de {field}: {value}",
     "max": "Máximo de {field}: {value}",
-    "no_value": "{label}: sin datos aceptados para calcularlo",
+    "min_none": "Mínimo de {field}: sin datos aceptados para calcularlo",
+    "max_none": "Máximo de {field}: sin datos aceptados para calcularlo",
     "pending_excluded": "{text} ({pending} valores pendientes de revisión humana no incluidos)",
 }
 _NOTICES = {
@@ -70,6 +102,8 @@ INTRODUCTIONS: Mapping[str, str] = MappingProxyType(_INTRODUCTIONS)
 TRANSITIONS: Mapping[str, str] = MappingProxyType(_TRANSITIONS)
 GROUP_TITLES: Mapping[str, str] = MappingProxyType(_GROUP_TITLES)
 LINES: Mapping[str, str] = MappingProxyType(_LINES)
+FIELD_LABELS: Mapping[str, str] = MappingProxyType(_FIELD_LABELS)
+VALUES: Mapping[str, str] = MappingProxyType(_VALUES)
 AGGREGATES: Mapping[str, str] = MappingProxyType(_AGGREGATES)
 NOTICES: Mapping[str, str] = MappingProxyType(_NOTICES)
 
@@ -81,6 +115,8 @@ def _compute_sha256() -> str:
             "introductions": _INTRODUCTIONS,
             "transitions": _TRANSITIONS,
             "groupTitles": _GROUP_TITLES,
+            "fieldLabels": _FIELD_LABELS,
+            "values": _VALUES,
             "lines": _LINES,
             "aggregates": _AGGREGATES,
             "notices": _NOTICES,
@@ -103,6 +139,7 @@ def fill(template: str, **values: object) -> str:
 
 __all__ = [
     "AGGREGATES",
+    "FIELD_LABELS",
     "GROUP_TITLES",
     "INTRODUCTIONS",
     "LINES",
@@ -110,5 +147,6 @@ __all__ = [
     "TEMPLATES_SHA256",
     "TEMPLATES_VERSION",
     "TRANSITIONS",
+    "VALUES",
     "fill",
 ]

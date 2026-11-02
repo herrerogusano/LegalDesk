@@ -65,6 +65,8 @@ from .review_tasks import (
     parse_review_task_input,
     default_due_at,
 )
+from .agent_citations import CITATION_HANDLE_TTL_SECONDS, build_citation_handles
+from .agent_output import RenderedCitation
 from .state import (
     CitationHandle,
     EphemeralStateStore,
@@ -795,7 +797,7 @@ class LoopbackLegalDeskApp:
                 conversation_id=conversation_id,
                 document_id=document.document_id,
                 passage=quote[:8_000],
-                expires_at=time.time() + 300,
+                expires_at=time.time() + CITATION_HANDLE_TTL_SECONDS,
                 is_idp=True,
             )
             self.state_store.put_citation(
@@ -1138,20 +1140,22 @@ class LoopbackLegalDeskApp:
     def _store_authorized_evidence(self, identity: VerifiedIdentity, context: Any, request: Any, response: Any, passages: tuple[Any, ...]) -> None:
         if len(passages) > 32:
             raise ValueError("too many citation passages")
+        citations: list[RenderedCitation] = []
         for passage in passages:
-            self._bound_state()
             citation = getattr(passage, "citation", None)
             document_id = getattr(citation, "document_id", None)
             citation_id = getattr(citation, "citation_id", None)
             text = getattr(passage, "text", None)
             if not all(isinstance(value, str) and value for value in (document_id, citation_id, text)):
                 raise ValueError("citation passage is malformed")
-            handle_id = secrets.token_urlsafe(24)
-            handle = CitationHandle(handle_id, identity.subject, context.tenant_id, context.matter_id, request.conversation_id, document_id, text, time.time() + 300)
-            self.state_store.put_citation(
-                handle,
-                citation_key=(identity.subject, request.conversation_id, context.correlation_id, citation_id),
-            )
+            citations.append(RenderedCitation(citation_id, document_id, None, None, None, text, False))
+        # Same builder (scope binding and TTL) the agentic worker uses.
+        for handle, citation_key in build_citation_handles(
+            subject=identity.subject, tenant_id=context.tenant_id, matter_id=context.matter_id,
+            conversation_id=request.conversation_id, correlation_id=context.correlation_id, citations=citations,
+        ):
+            self._bound_state()
+            self.state_store.put_citation(handle, citation_key=citation_key)
 
     def _history(self, environ: Mapping[str, Any], identity: VerifiedIdentity, conversation_id: str):
         record = self.state_store.get_conversation(conversation_id)
