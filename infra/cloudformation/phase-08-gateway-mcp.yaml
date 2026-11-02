@@ -1,5 +1,15 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: LegalDesk Phase 08 AgentCore Gateway with review Lambda and metadata MCP target
+Description: LegalDesk Phase 08 AgentCore Gateway with review Lambda, metadata MCP and (Phase 15, optional) search-documents targets
+
+Metadata:
+  cfn-lint:
+    config:
+      # The Phase 15 search-documents parameters are deliberately empty while
+      # EnableSearchDocuments is "false" (so existing stacks keep their
+      # parameter set). cfn-lint validates those empty defaults against the
+      # properties of resources that CloudFormation then never creates, as in
+      # phase-01-harness.yaml.
+      ignore_checks: [W1030, W1031]
 
 Parameters:
   ExistingMetadataTableName:
@@ -76,8 +86,73 @@ Parameters:
     Type: String
     Default: ""
     AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  # Phase 15 (ADR-021): the grounded-search Lambda target. Everything below is
+  # inert while EnableSearchDocuments is "false", so existing stacks keep their
+  # current parameter set and change set.
+  EnableSearchDocuments:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  SearchDocumentsCodeBucket:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  SearchDocumentsCodeKey:
+    Type: String
+    Default: ""
+    MaxLength: 1024
+  SearchDocumentsCodeVersion:
+    Type: String
+    Default: ""
+    MaxLength: 1024
+  SearchTenantId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    Description: Single tenant whose source documents the search Lambda may HEAD
+  SourceBucketArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+  KnowledgeBaseId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[A-Za-z0-9]{1,100}$"
+  KnowledgeBaseArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:]+:bedrock:[^:]+:[0-9]{12}:knowledge-base/[A-Za-z0-9]+$"
+  GuardrailIdentifier:
+    Type: String
+    Default: ""
+    MaxLength: 256
+  GuardrailVersion:
+    Type: String
+    Default: ""
+    MaxLength: 32
+  GuardrailArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:]+:bedrock:[^:]+:[0-9]{12}:guardrail/[A-Za-z0-9]+$"
+  ResolverModelArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^*?]+$"
+  WriterModelArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^*?]+$"
+  ResolverFoundationModelArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:*?]+:bedrock:(?:[^:*?]+|\\*)::foundation-model/[A-Za-z0-9._:-]+$"
+  WriterFoundationModelArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:*?]+:bedrock:(?:[^:*?]+|\\*)::foundation-model/[A-Za-z0-9._:-]+$"
 
 Conditions:
+  HasSearchDocuments: !Equals [!Ref EnableSearchDocuments, "true"]
   HasAdditionalGatewayClient: !Not [!Equals [!Ref GatewayJwtAdditionalClientId, ""]]
   HasSecondIDPMatter: !Not
     - !Equals
@@ -288,7 +363,8 @@ Resources:
         S3Key: !Ref MetadataMcpCodeKey
         S3ObjectVersion: !Ref MetadataMcpCodeVersion
       MemorySize: 512
-      Timeout: 10
+      # get_extracted_fields projects up to 20 documents per call (Phase 15).
+      Timeout: 20
       Environment:
         Variables:
           AWS_MAX_ATTEMPTS: "1"
@@ -341,6 +417,12 @@ Resources:
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource: !GetAtt GatewayRequestInterceptorFunction.Arn
+              - !If
+                - HasSearchDocuments
+                - Effect: Allow
+                  Action: lambda:InvokeFunction
+                  Resource: !GetAtt SearchDocumentsFunction.Arn
+                - !Ref AWS::NoValue
               # AgentCore requires this on a custom Gateway service role when
               # GATEWAY_IAM_ROLE outbound authorization is used. Referencing
               # LegalDeskGateway here would create a role/Gateway cycle, so
@@ -556,6 +638,133 @@ Resources:
             Endpoint: !GetAtt MetadataMcpFunctionUrl.FunctionUrl
             ListingMode: DYNAMIC
 
+  SearchDocumentsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: HasSearchDocuments
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/LegalDeskSearchDocumentsPhase15
+      RetentionInDays: 14
+
+  SearchDocumentsExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: HasSearchDocuments
+    Properties:
+      Description: Least-privilege role for the grounded search-documents Lambda target
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskSearchDocumentsPhase15
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Grant lookup, bilateral user/matter authorization and the
+              # document record check. Read-only: this Lambda writes nothing.
+              - Sid: ReadAuthorizationGrantsAndDocumentRecords
+                Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !Ref ExistingMetadataTableArn
+              - Sid: HeadAuthorizedSourceObjects
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${SourceBucketArn}/tenants/${SearchTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/tenants/${SearchTenantId}/matters/*/documents/*/original.txt"
+              - Sid: RetrieveFromTheKnowledgeBase
+                Effect: Allow
+                Action: bedrock:Retrieve
+                Resource: !Ref KnowledgeBaseArn
+              - Sid: ApplyTheVersionedGuardrail
+                Effect: Allow
+                Action: bedrock:ApplyGuardrail
+                Resource: !Ref GuardrailArn
+              - Sid: InvokeTheApprovedResolverAndWriterModels
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Ref ResolverModelArn
+                  - !Ref WriterModelArn
+                  - !Ref ResolverFoundationModelArn
+                  - !Ref WriterFoundationModelArn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${SearchDocumentsLogGroup.Arn}:*
+
+  SearchDocumentsFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasSearchDocuments
+    DependsOn: SearchDocumentsLogGroup
+    Properties:
+      FunctionName: LegalDeskSearchDocumentsPhase15
+      Runtime: python3.12
+      Handler: legaldesk.search_documents_lambda.search_documents_lambda_handler
+      Role: !GetAtt SearchDocumentsExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref SearchDocumentsCodeBucket
+        S3Key: !Ref SearchDocumentsCodeKey
+        S3ObjectVersion: !Ref SearchDocumentsCodeVersion
+      MemorySize: 1024
+      # ADR-021 D4: 25 s budget per tool call, no SDK retries.
+      Timeout: 25
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          DOCUMENT_METADATA_TABLE_NAME: !Ref ExistingMetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Select [5, !Split [":", !Ref SourceBucketArn]]
+          LEGALDESK_KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+          LEGALDESK_GUARDRAIL_ID: !Ref GuardrailIdentifier
+          LEGALDESK_GUARDRAIL_VERSION: !Ref GuardrailVersion
+          LEGALDESK_RESOLVER_MODEL_ID: !Ref ResolverModelArn
+          LEGALDESK_WRITER_MODEL_ID: !Ref WriterModelArn
+          LEGALDESK_SYSTEM_PROMPT_PATH: /var/task/prompts/legaldesk-system.md
+
+  SearchDocumentsGatewayTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Condition: HasSearchDocuments
+    Properties:
+      GatewayIdentifier: !Ref LegalDeskGateway
+      Name: search-documents
+      Description: Read-only grounded search over the matter's documents (Retrieve, resolver, writer, Guardrail, citations)
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+      TargetConfiguration:
+        Mcp:
+          Lambda:
+            LambdaArn: !GetAtt SearchDocumentsFunction.Arn
+            ToolSchema:
+              InlinePayload:
+                - Name: search_documents
+                  Description: >-
+                    Answer a question about what the documents of the current
+                    matter say, with citations. Returns answer, evidenceStatus,
+                    operationStatus and citations. Use it for legal text.
+                  InputSchema:
+                    Type: object
+                    Required:
+                      - matterId
+                      - question
+                    Properties:
+                      matterId:
+                        Type: string
+                        Description: "Matter selector required by the Gateway; the server ignores it for authorization."
+                      question:
+                        Type: string
+                        Description: "Question about what the matter's documents say."
+                      _legaldeskGrantId:
+                        Type: string
+                        Description: Reserved server-injected opaque authorization grant; client values are rejected.
+                  OutputSchema:
+                    Type: object
+
 Outputs:
   GatewayIdentifier:
     Value: !Ref LegalDeskGateway
@@ -565,3 +774,6 @@ Outputs:
     Value: !GetAtt LegalDeskGateway.GatewayUrl
   MetadataMcpEndpoint:
     Value: !GetAtt MetadataMcpFunctionUrl.FunctionUrl
+  SearchDocumentsFunctionArn:
+    Condition: HasSearchDocuments
+    Value: !GetAtt SearchDocumentsFunction.Arn

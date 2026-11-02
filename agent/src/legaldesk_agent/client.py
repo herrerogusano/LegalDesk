@@ -24,6 +24,8 @@ _HTTPS_URL = re.compile(r"^https://[^\s]+$")
 _MCP_TOOL_NAMES = (
     "@legaldesk_gateway/metadata-mcp___list_matter_documents",
     "@legaldesk_gateway/metadata-mcp___get_document_metadata",
+    "@legaldesk_gateway/metadata-mcp___get_extracted_fields",
+    "@legaldesk_gateway/search-documents___search_documents",
     "@legaldesk_gateway/review-task-lambda___create_review_task",
 )
 
