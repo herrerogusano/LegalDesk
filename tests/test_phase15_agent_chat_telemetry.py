@@ -79,6 +79,13 @@ class CostAndTimerTests(unittest.TestCase):
         self.assertIsNone(telemetry.estimate_loop_cost_usd(None))
         self.assertEqual(telemetry.usage_metadata(None), {"usageAvailable": False})
 
+    def test_price_table_is_the_published_sonnet_46_price_plus_the_regional_premium(self) -> None:
+        # Anthropic list price of Sonnet 4.6 (platform.claude.com pricing, read 2026-11-02) and the
+        # 10 % premium of Bedrock regional endpoints, which the `eu.` inference profile is. Changing
+        # this table means re-reading both pages and the cost estimate document.
+        self.assertEqual(telemetry.PRICE_PER_MILLION_TOKENS, {"input": 3.30, "output": 16.50, "cache_read": 0.33, "cache_write": 4.125})
+        self.assertEqual(telemetry.PRICING_VERSION, "estimate-2026-11-eu-regional")
+
     def test_a_segment_that_raises_is_still_timed_and_unknown_segments_are_refused(self) -> None:
         timer = telemetry.SegmentTimer()
         with self.assertRaises(RuntimeError), timer.segment("agent"):
@@ -108,7 +115,7 @@ class WorkerEmitsTheMetadataTests(unittest.TestCase):
         self.assertEqual((meta["tools"], meta["toolCalls"], meta["toolFailures"], meta["iterations"]), (["search_documents"], 1, 0, 2))
         self.assertEqual((meta["outputPath"], meta["loopOutcome"], meta["stopReason"]), ("grounded", "completed", "end_turn"))
         self.assertEqual((meta["tokens"], meta["inputTokens"], meta["outputTokens"], meta["usageAvailable"]), (1800, 1500, 300, True))
-        self.assertAlmostEqual(meta["estimatedLoopCostUsd"], (1500 * 3 + 300 * 15) / 1_000_000, places=6)
+        self.assertAlmostEqual(meta["estimatedLoopCostUsd"], (1500 * 3.30 + 300 * 16.50) / 1_000_000, places=6)
         self.assertEqual(meta["pricingVersion"], telemetry.PRICING_VERSION)
         self.assertEqual(set(meta["segmentsMs"]), SEGMENT_NAMES)  # no fallback stage on this path
         self.assertEqual(meta["queueWaitMs"], 4000)

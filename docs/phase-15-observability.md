@@ -27,8 +27,9 @@ LegalDesk's are reported as `other`; nulls are dropped).
 of `agent_chat_telemetry.PRICE_PER_MILLION_TOKENS` (`pricingVersion` says which).
 The Bedrock calls made inside `search_documents` (resolver, writer) and by the
 direct RAG fallback are not in the Harness usage, so the figure is a lower
-bound for the whole question. The table is an estimate to check against the
-Bedrock price list before quoting cost in a report.
+bound for the whole question. The table is an estimate: since `estimate-2026-11-eu-regional` it is the Sonnet 4.6 list price plus the 10 % premium of the `eu.`
+regional profile (sources and the gaps in them: [`phase-15-t9-cost-estimate.md`](phase-15-t9-cost-estimate.md)); confirm it against the bill
+before quoting cost in a report.
 
 ## Metrics and alarms (`LegalDesk/Phase15AgentChat`, only with `EnableAgentChat=true`)
 

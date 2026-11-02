@@ -26,12 +26,19 @@ from . import agent_contracts as contracts
 # Stages of one job, in execution order. The names are a closed vocabulary.
 SEGMENTS = ("session", "bind", "history", "agent", "resolve", "fallback", "publish")
 
-PRICING_VERSION = "estimate-2026-11"
+PRICING_VERSION = "estimate-2026-11-eu-regional"
 # USD per million tokens for the pinned Harness model (eu.anthropic.claude-sonnet-4-6).
-# This is an ESTIMATE kept in code so every report states which table it used; it
-# covers only the Harness loop. The tool-internal resolver and writer calls of
-# ``search_documents`` and the direct RAG fallback are not part of the Harness usage.
-PRICE_PER_MILLION_TOKENS = {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75}
+# ``eu.`` is a regional (geographic cross-region) inference profile. Anthropic's list price for
+# Sonnet 4.6 is $3 input / $15 output / $0.30 cache read / $3.75 cache write (5 min) per million,
+# and Bedrock regional endpoints carry a 10 % premium over the global endpoint (Anthropic
+# pricing page and "Claude on Amazon Bedrock", read 2026-11-02; the AWS pricing page renders its
+# Anthropic table with JavaScript and could not be read, so confirm against the bill).
+# This is an ESTIMATE kept in code so every report states which table it used; it covers only
+# the Harness loop. The tool-internal resolver and writer calls of ``search_documents`` and the
+# direct RAG fallback are not part of the Harness usage.
+REGIONAL_ENDPOINT_PREMIUM = 1.10
+_BASE_PRICE_PER_MILLION_TOKENS = {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75}
+PRICE_PER_MILLION_TOKENS = {name: round(price * REGIONAL_ENDPOINT_PREMIUM, 6) for name, price in _BASE_PRICE_PER_MILLION_TOKENS.items()}
 
 KNOWN_TOOLS = frozenset({contracts.SEARCH_DOCUMENTS, contracts.GET_EXTRACTED_FIELDS, contracts.LIST_MATTER_DOCUMENTS})
 
