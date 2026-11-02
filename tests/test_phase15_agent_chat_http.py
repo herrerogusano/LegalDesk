@@ -30,7 +30,7 @@ from legaldesk.memory import InMemoryConversationBindingStore
 from legaldesk.quota import InMemoryQuotaLedger, QuotaLimits
 from legaldesk.state import InMemoryEphemeralStateStore, SessionRecord
 from test_phase15_agent_chat_worker import (
-    DATA_PLAN, FIELDS_TOOL, SEARCH_TOOL, TEXT_PLAN, agent_result, call, fields_payload, search_payload,
+    SEARCH_TOOL, TEXT_PLAN, agent_result, call, search_payload,
 )
 
 ALICE, CAROL, BOB = "subject-alice", "subject-carol", "subject-bob"
@@ -215,69 +215,28 @@ class SubmitTests(unittest.TestCase):
 
 
 class ReviewAfterJobTests(unittest.TestCase):
-    """The existing POST /reviews flow works for the text of an agent answer, and only for it."""
+    """The review-an-answer flow is not available for agentic answers (owner decision 2026-11-02)."""
 
-    def setUp(self) -> None:
-        self.h = Harness()
-        self.alice, self.carol = self.h.login("alice"), self.h.login("carol")
-        self.worker = AgentChatWorker(
-            job_store=self.h.jobs, state_store=self.h.state, quota=self.h.quota, authorization_store=self.h.auth,
-            conversation_store=self.h.composition.conversation_store, grant_repository=InMemoryGatewayGrantRepository(),
-            identity_verifier=self.h.composition.identity_verifier, gateway_url="https://gateway.example.test/mcp",
-            invoke_agent=lambda *_args: self.script.pop(0), rag_chat=None,
+    def test_saving_an_agent_answer_for_review_fails_closed(self) -> None:
+        h = Harness()
+        alice = h.login("alice")
+        worker = AgentChatWorker(
+            job_store=h.jobs, state_store=h.state, quota=h.quota, authorization_store=h.auth,
+            conversation_store=h.composition.conversation_store, grant_repository=InMemoryGatewayGrantRepository(),
+            identity_verifier=h.composition.identity_verifier, gateway_url="https://gateway.example.test/mcp",
+            invoke_agent=lambda *_args: agent_result(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload())), rag_chat=None,
         )
-
-    def answered(self, plan, *calls, who=None):
-        who = who or self.alice
-        self.script = [agent_result(plan, *calls)]
-        (status, body), conv = self.h.ask(who)
+        (status, body), conv = h.ask(alice)
         self.assertEqual(status, 202)
-        self.assertEqual(self.worker.process(self.h.published[-1]).action, "completed")
-        return body, conv
-
-    def review(self, body, conv, *, who=None, correlation=None):
-        status, response = self.h.call("POST", "/api/matters/mat_1/reviews", {
+        self.assertEqual(worker.process(h.published[-1]).action, "completed")
+        self.assertEqual(h.jobs.get(JobKey("tnt_a", "mat_1", body["jobId"])).status, JobStatus.SUCCEEDED)
+        status, _ = h.call("POST", "/api/matters/mat_1/reviews", {
             "conversationId": conv["conversationId"], "sessionId": conv["sessionId"], "reasonCode": "user_requested_review",
             "dueAt": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 86400 * 3)), "note": "",
-            "originCorrelationId": correlation or body["correlationId"], "idempotencyKey": f"{body['jobId']}:review",
-        }, who=who or self.alice)
-        return status, response
-
-    def test_text_answer_can_be_saved_for_review_with_the_server_side_snapshot(self) -> None:
-        body, conv = self.answered(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))
-        status, created = self.review(body, conv)
-        self.assertEqual((status, created["reviewTaskId"]), (201, "rt-1"))
-        (gateway,) = self.h.review_calls
-        snapshot = gateway["arguments"]["snapshot"]
-        self.assertEqual((snapshot["question"], snapshot["answer"], snapshot["evidenceStatus"]), (QUESTION, "El plazo es de 30 días.", "answerable"))
-        self.assertEqual(snapshot["citations"][0]["passage"], "El plazo será de 30 días.")
-
-    def test_data_only_answer_cannot_be_saved_for_review(self) -> None:
-        body, conv = self.answered(DATA_PLAN, call("tu-1", FIELDS_TOOL, fields_payload()))
-        status, _ = self.review(body, conv)
+            "originCorrelationId": body["correlationId"],
+        }, who=alice)
         self.assertGreaterEqual(status, 400)
-        self.assertEqual(self.h.review_calls, [])
-
-    def test_a_job_of_another_subject_or_conversation_cannot_be_reviewed(self) -> None:
-        body, conv = self.answered(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))
-        # carol is a member of the same matter but neither owns the conversation nor the correlation
-        self.assertEqual(self.review(body, conv, who=self.carol)[0], 403)
-        carol_conv = self.h.conversation("mat_1", self.carol)
-        status, _ = self.h.call("POST", "/api/matters/mat_1/reviews", {
-            "conversationId": carol_conv["conversationId"], "sessionId": carol_conv["sessionId"],
-            "reasonCode": "user_requested_review", "dueAt": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 86400 * 3)),
-            "originCorrelationId": body["correlationId"],
-        }, who=self.carol)
-        self.assertEqual(status, 403)
-        # the same user from another conversation of the matter
-        other = self.h.conversation("mat_1", self.alice)
-        status, _ = self.h.call("POST", "/api/matters/mat_1/reviews", {
-            "conversationId": other["conversationId"], "sessionId": other["sessionId"],
-            "reasonCode": "user_requested_review", "dueAt": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 86400 * 3)),
-            "originCorrelationId": body["correlationId"],
-        }, who=self.alice)
-        self.assertEqual(status, 403)
-        self.assertEqual(self.h.review_calls, [])
+        self.assertEqual(h.review_calls, [])
 
 
 class JobReadTests(unittest.TestCase):

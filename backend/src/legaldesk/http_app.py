@@ -23,7 +23,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import UUID, uuid4
 
-from .agent_chat import REVIEW_CANDIDATE_TTL_SECONDS, AgentChatRuntime, input_not_allowed_response, release_job_quota, submit_agent_chat
+from .agent_chat import AgentChatRuntime, input_not_allowed_response, release_job_quota, submit_agent_chat
 from .agent_integration import bind_harness_invocation
 from .agent_jobs import MIN_SESSION_REMAINING_SECONDS, JobKey
 from .authorization import AuthorizationDenied, AuthorizationStore, VerifiedIdentity, build_request_context
@@ -84,6 +84,7 @@ from .idp.review import IDPQueryResult, IDPReviewError, query_selected_document
 
 MAX_HTTP_BODY = 1_048_576
 MAX_QUESTION = 1_000
+REVIEW_CANDIDATE_TTL_SECONDS = 15 * 60
 SESSION_COOKIE = "legaldesk_session"
 STATE_COOKIE = "legaldesk_oauth_state"
 CSRF_HEADER = "HTTP_X_CSRF_TOKEN"

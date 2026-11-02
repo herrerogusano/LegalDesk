@@ -45,7 +45,7 @@ _APPLICATION_TOOL_ALLOWLISTS = {
         "@legaldesk_gateway/review-task-lambda___update_review_task",
     ),
     # ADR-021 D2/D6: the open-ended chat agent reads only. No review tool is
-    # ever visible to it; a review can only be *suggested* in the final plan.
+    # ever visible to it, and its answers carry no review proposal (owner decision 2026-11-02).
     "agent_chat": (
         "@legaldesk_gateway/metadata-mcp___list_matter_documents",
         "@legaldesk_gateway/metadata-mcp___get_extracted_fields",

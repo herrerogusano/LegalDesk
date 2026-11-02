@@ -281,65 +281,19 @@ class WorkerHappyPathTests(unittest.TestCase):
         self.assertEqual(self.world.state.get_citation(handle).passage, "Vence el 15 de marzo de 2026")
         self.assertTrue(self.world.state.get_citation(handle).is_idp)
 
-    def candidate(self):
-        return self.world.state.get_review_candidate((SUBJECT, "conv-1", self.job.correlation_id))
+    def test_no_agent_answer_leaves_a_review_candidate(self) -> None:
+        """Owner decision 2026-11-02: the agentic chat proposes and stores nothing for review."""
 
-    def test_text_answer_leaves_the_server_side_review_candidate_the_sync_chat_would_leave(self) -> None:
-        self.world.agent_script = [agent_result(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))]
-        result = self.run_worker()
-        expires, candidate = self.candidate()
-        self.assertEqual(expires, T0 + 15 * 60)
-        self.assertEqual(candidate, {
-            "question": "¿Cuándo vence el contrato?", "answer": "El plazo es de 30 días.", "evidenceStatus": "answerable",
-            "citations": [{"citationId": "c1", "documentId": "doc-a", "documentName": "Alfa.pdf", "pageNumber": 2,
-                           "passage": "El plazo será de 30 días."}],
-        })
-        self.assertTrue(result.metadata["reviewCandidateStored"])
-        self.assertNotIn("passage", json.dumps(self.world.jobs.get(self.job.key).result))
-
-    def test_data_only_answer_has_no_review_candidate(self) -> None:
-        self.world.agent_script = [agent_result(DATA_PLAN, call("tu-1", FIELDS_TOOL, fields_payload()))]
-        result = self.run_worker()
-        self.assertIsNone(self.candidate())
-        self.assertFalse(result.metadata["reviewCandidateStored"])
-
-    def test_mixed_answer_reviews_the_first_text_block_not_the_data_lines(self) -> None:
-        plan = {"version": 1, "intro": "data_and_text_from_documents", "blocks": DATA_PLAN["blocks"] + TEXT_PLAN["blocks"]}
-        self.world.agent_script = [agent_result(plan, call("tu-1", SEARCH_TOOL, search_payload()),
-                                                call("tu-2", FIELDS_TOOL, fields_payload()))]
-        self.run_worker()
-        _, candidate = self.candidate()
-        self.assertEqual(candidate["answer"], "El plazo es de 30 días.")
-        self.assertEqual([c["citationId"] for c in candidate["citations"]], ["c1"])
-
-    def test_rag_fallback_answer_is_reviewable_like_a_synchronous_one(self) -> None:
-        self.world.agent_script = [agent_result("no es un plan", call("tu-1", SEARCH_TOOL, {"x": 1}))]
-        self.world.rag_response = rag_ok()
-        self.run_worker()
-        _, candidate = self.candidate()
-        self.assertEqual((candidate["answer"], candidate["evidenceStatus"]), ("Según el contrato, el plazo es de 30 días.", "answerable"))
-        self.assertEqual(candidate["citations"][0]["passage"], "Pasaje recuperado por RAG.")
-
-    def test_candidate_is_written_once_per_job_even_if_the_message_is_delivered_again(self) -> None:
-        self.world.agent_script = [agent_result(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))]
-        self.run_worker()
-        writes = []
-        real = self.world.state.put_review_candidate
-        self.world.state.put_review_candidate = lambda *a, **k: (writes.append(a), real(*a, **k))
-        self.assertEqual(self.run_worker().action, "ignored")
-        self.assertEqual(writes, [])
-
-    def test_a_failing_candidate_store_does_not_discard_the_final_answer(self) -> None:
-        self.world.agent_script = [agent_result(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))]
-
-        def broken(*_args, **_kwargs):
-            raise RuntimeError("store down")
-
-        self.world.state.put_review_candidate = broken
-        result = self.run_worker()
-        self.assertEqual(result.action, "completed")
-        self.assertFalse(result.metadata["reviewCandidateStored"])
-        self.assertEqual(self.world.jobs.get(self.job.key).status, JobStatus.SUCCEEDED)
+        plans = [
+            (TEXT_PLAN, [call("tu-1", SEARCH_TOOL, search_payload())]),
+            (DATA_PLAN, [call("tu-1", FIELDS_TOOL, fields_payload())]),
+        ]
+        for plan, calls in plans:
+            job = self.world.submit()
+            self.world.agent_script = [agent_result(plan, *calls)]
+            self.world.worker.process(job.key)
+            self.assertIsNone(self.world.state.get_review_candidate((SUBJECT, "conv-1", job.correlation_id)))
+            self.assertNotIn("suggestReview", self.world.jobs.get(job.key).result)
 
     def test_data_lines_point_to_the_idp_field_they_state_and_nothing_else(self) -> None:
         self.world.agent_script = [agent_result(DATA_PLAN, call("tu-1", FIELDS_TOOL, fields_payload()))]

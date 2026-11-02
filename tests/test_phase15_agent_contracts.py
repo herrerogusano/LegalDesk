@@ -26,13 +26,12 @@ from legaldesk.idp.models import DocumentType
 from legaldesk.memory import InMemoryConversationBindingStore
 from legaldesk.prompts import FileSystemSystemPromptProvider
 from legaldesk.retrieval import MAX_QUERY_LENGTH
-from legaldesk.review_tasks import ReviewReasonCode
 from legaldesk_agent import HarnessInvocationScope, HarnessInvoker
 
 AGENT_PROMPT_PATH = ROOT / "prompts" / "legaldesk-agent.md"
 # Changing a template or the prompt is a reviewed, versioned change: update the
 # version and these pins together.
-PINNED_AGENT_PROMPT_SHA256 = "1b5b729a0d9f27d9c5b826d2cff0beba6194d0b1e160ca4506844827b55e75f3"
+PINNED_AGENT_PROMPT_SHA256 = "31e4e2ce2e650bfdf5b79f1e36e99672627715e5b0ebe6beee190d018393d0b0"
 PINNED_TEMPLATES_SHA256 = "9808f766ee3898c7bea74210d903479baae55f6c1430399f61c56235a742442a"
 
 
@@ -52,14 +51,12 @@ def valid_plan() -> dict[str, object]:
             },
             {"type": "text", "transitionBefore": "continue_with_text", "source": {"toolUseId": "tooluse_abc"}},
         ],
-        "suggestReview": {"reasonCode": "material_legal_judgment"},
     }
 
 
 class ContractVocabularyTests(unittest.TestCase):
     def test_vocabularies_stay_aligned_with_the_modules_they_mirror(self) -> None:
         self.assertEqual(contracts.MAX_SEARCH_QUESTION_LENGTH, MAX_QUERY_LENGTH)
-        self.assertEqual(contracts.REVIEW_REASON_CODES, tuple(code.value for code in ReviewReasonCode))
         self.assertEqual(
             set(contracts._PLAN_DOCUMENT_TYPES),
             {item.value for item in DocumentType} - {"UNKNOWN"},
@@ -210,7 +207,7 @@ class AnswerPlanContractTests(unittest.TestCase):
     def test_valid_plan_round_trips_through_json(self) -> None:
         plan = parse_answer_plan(json.dumps(valid_plan()))
         self.assertEqual(plan.intro, "data_and_text_from_documents")
-        self.assertEqual(plan.suggest_review, "material_legal_judgment")
+        self.assertFalse(hasattr(plan, "suggest_review"))
         data, text = plan.blocks
         self.assertEqual(str(data.groups[0].criterion.params["from"]), "2026-01-01")
         self.assertEqual(data.groups[0].criterion.title_key, "expires_in_period.both")
@@ -247,8 +244,8 @@ class AnswerPlanContractTests(unittest.TestCase):
             "free text param": lambda p: p["blocks"][0]["groups"][0]["criterion"]["params"].update({"from": "mañana"}),
             "invalid calendar date": lambda p: p["blocks"][0]["groups"][0]["criterion"]["params"].update({"to": "2026-02-30"}),
             "inverted period": lambda p: p["blocks"][0]["groups"][0]["criterion"]["params"].update({"from": "2026-04-01"}),
-            "unknown review reason": lambda p: p.update(suggestReview={"reasonCode": "because_i_say_so"}),
-            "review with note": lambda p: p.update(suggestReview={"reasonCode": "user_requested_review", "note": "x"}),
+            # Owner decision 2026-11-02: the agent never proposes a review.
+            "review proposal": lambda p: p.update(suggestReview={"reasonCode": "user_requested_review"}),
             "unknown aggregate": lambda p: p["blocks"][0].update(aggregates=[{"type": "average", "field": "amount"}]),
             "min without field": lambda p: p["blocks"][0].update(aggregates=[{"type": "min"}]),
             "unknown field": lambda p: p["blocks"][0]["groups"][0]["refs"][0].update(field="password"),
@@ -360,7 +357,7 @@ class UnhashableValueTests(unittest.TestCase):
                      ("blocks", 0, "order", "direction"), ("blocks", 0, "aggregates", 0, "type"),
                      ("blocks", 0, "groups", 0, "criterion", "id"), ("blocks", 0, "groups", 0, "refs", 0, "field"),
                      ("blocks", 0, "groups", 1, "criterion", "params", "documentType"),
-                     ("suggestReview", "reasonCode"), ("blocks", 0, "type"), ("version",)):
+                     ("blocks", 0, "type"), ("version",)):
             broken = json.loads(json.dumps(plan_payload))
             node = broken
             for key in path[:-1]:
@@ -393,12 +390,12 @@ class AgentPromptTests(unittest.TestCase):
         cls.prompt = " ".join(cls.artifact.content.split())
 
     def test_prompt_is_versioned_and_pinned_by_hash(self) -> None:
-        self.assertEqual((self.artifact.prompt_id, self.artifact.version), ("legaldesk-agent", "1.1.0"))
+        self.assertEqual((self.artifact.prompt_id, self.artifact.version), ("legaldesk-agent", "1.2.0"))
         self.assertEqual(self.artifact.sha256, PINNED_AGENT_PROMPT_SHA256)
         self.assertNotIn(b"\r", AGENT_PROMPT_PATH.read_bytes())
 
     def test_prompt_lists_exactly_the_contract_vocabulary(self) -> None:
-        for phrase in (*contracts.INTRODUCTION_IDS, *contracts.TRANSITION_IDS, *contracts.REVIEW_REASON_CODES,
+        for phrase in (*contracts.INTRODUCTION_IDS, *contracts.TRANSITION_IDS,
                        *contracts.CRITERIA, *contracts._PLAN_DOCUMENT_TYPES):
             self.assertIn(f"`{phrase}`", self.prompt, phrase)
         for phrase in (*contracts.AGGREGATE_TYPES, *contracts.ORDER_BY, *contracts.ORDER_DIRECTIONS):
@@ -424,7 +421,7 @@ class AgentPromptTests(unittest.TestCase):
             self.assertIn(expected, text)
 
     def test_prompt_mentions_every_plan_key_the_parser_accepts(self) -> None:
-        for key in ("version", "intro", "blocks", "suggestReview", "reasonCode", "source", "toolUseId",
+        for key in ("version", "intro", "blocks", "source", "toolUseId",
                     "groups", "criterion", "params", "refs", "documentId", "field", "order", "by",
                     "direction", "aggregates", "type", "transitionBefore"):
             self.assertTrue(f'"{key}"' in self.prompt or f"`{key}`" in self.prompt, key)

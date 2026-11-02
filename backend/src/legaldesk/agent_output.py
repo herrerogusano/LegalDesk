@@ -195,7 +195,6 @@ class AnswerOutput:
     path: OutputPath
     blocks: tuple[OutputBlock, ...] = ()
     citations: tuple[RenderedCitation, ...] = ()
-    suggest_review: str | None = None
     fallback_reason: FallbackReason | None = None
     plan_error: str | None = None
     omitted: tuple[OmittedBlock, ...] = ()
@@ -232,7 +231,6 @@ class AnswerOutput:
                  "pageNumber": c.page_number, "section": c.section}
                 for c in self.citations
             ],
-            "suggestReview": {"reasonCode": self.suggest_review} if self.suggest_review else None,
         }
 
     def plain_text(self) -> str:
@@ -627,7 +625,7 @@ def render_plan(plan: AnswerPlan, evidence: LoopEvidence) -> AnswerOutput | None
             tpl.NOTICES["omitted_blocks"], count=len(omitted))
         blocks.append(OutputBlock("notice", text=notice))
     return AnswerOutput(
-        path, blocks=tuple(blocks), citations=tuple(citations.values()), suggest_review=plan.suggest_review,
+        path, blocks=tuple(blocks), citations=tuple(citations.values()),
         omitted=tuple(omitted),
     )
 

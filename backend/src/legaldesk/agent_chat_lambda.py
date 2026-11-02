@@ -27,7 +27,7 @@ _MESSAGE_KEYS = frozenset({"jobId", "tenantId", "matterId"})
 _SAFE_META_KEYS = frozenset({
     "claim", "failure", "quotaReleased", "attempt", "reason", "loopOutcome", "iterations", "tools",
     "invalidToolResults", "tokens", "historyUnavailable", "historyTrimmed", "outputPath", "fallbackReason", "planError",
-    "omittedBlocks", "blockCount", "citationCount", "memoryWritten", "reviewCandidateStored", "latencyMs",
+    "omittedBlocks", "blockCount", "citationCount", "memoryWritten", "latencyMs",
 })
 AGENT_PROMPT_FILENAME = "legaldesk-agent.md"
 

@@ -56,16 +56,6 @@ MAX_REFS_PER_GROUP = 100
 MAX_AGGREGATES_PER_BLOCK = 6
 PLAN_VERSION = 1
 
-# Closed vocabulary of ``create_review_task`` (asserted equal to
-# ``review_tasks.ReviewReasonCode`` in the tests).
-REVIEW_REASON_CODES = (
-    "insufficient_evidence",
-    "ambiguous_evidence",
-    "material_legal_judgment",
-    "user_requested_review",
-    "safety_escalation",
-)
-
 
 class AgentContractError(ValueError):
     """A tool result or answer plan violates its contract.
@@ -523,7 +513,6 @@ class InventoryBlock:
 class AnswerPlan:
     intro: str | None
     blocks: tuple[DataBlock | TextBlock | InventoryBlock, ...]
-    suggest_review: str | None = None
 
 
 def _keys(value: object, *, required: set[str], optional: set[str] = frozenset()) -> Mapping[str, Any]:
@@ -692,13 +681,10 @@ def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
             raise AgentContractError("invalid_json") from exc
     else:
         plan_node = raw
-    node = _keys(plan_node, required={"version", "blocks"}, optional={"intro", "suggestReview"})
+    node = _keys(plan_node, required={"version", "blocks"}, optional={"intro"})
     if isinstance(node["version"], bool) or node["version"] != PLAN_VERSION:
         raise AgentContractError("unsupported_version")
     intro = _phrase(node["intro"], INTRODUCTION_IDS) if "intro" in node else None
-    suggest = None
-    if "suggestReview" in node:
-        suggest = _phrase(_keys(node["suggestReview"], required={"reasonCode"})["reasonCode"], REVIEW_REASON_CODES)
     blocks_raw = node["blocks"]
     if not isinstance(blocks_raw, (list, tuple)) or not 1 <= len(blocks_raw) <= MAX_PLAN_BLOCKS:
         raise AgentContractError("limit_exceeded")
@@ -726,7 +712,7 @@ def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
             blocks.append(_parse_inventory_block(item, _opaque(source["toolUseId"]), transition))
         else:
             raise AgentContractError("invalid_shape")
-    return AnswerPlan(intro, tuple(blocks), suggest)
+    return AnswerPlan(intro, tuple(blocks))
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

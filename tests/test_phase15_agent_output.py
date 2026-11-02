@@ -151,7 +151,6 @@ class DataBlockTests(unittest.TestCase):
             result.blocks[0].groups[0].lines[0].text,
             "{value}.pdf: Ley aplicable: " + injected,
         )
-        self.assertIsNone(result.suggest_review)
 
     def test_booleans_lists_and_numbers_are_rendered_by_the_backend(self) -> None:
         evidence = LoopEvidence.from_results(extracted=[fields_result(
@@ -281,7 +280,7 @@ class TextAndMixedBlockTests(unittest.TestCase):
         result = render(plan(
             data_block(q1_group(ref("doc-c", "explicit_expiration_date"))),
             {"type": "text", "source": {"toolUseId": "tooluse_search"}, "transitionBefore": "continue_with_text"},
-            intro="data_and_text_from_documents", suggestReview={"reasonCode": "material_legal_judgment"},
+            intro="data_and_text_from_documents",
         ))
         self.assertIs(result.path, OutputPath.MIXED)
         self.assertEqual([block.kind for block in result.blocks], ["intro", "data", "transition", "text"])
@@ -289,7 +288,6 @@ class TextAndMixedBlockTests(unittest.TestCase):
         data, text = result.blocks[1], result.blocks[3]
         self.assertEqual(data.citation_ids, ("idp-doc-c-explicit_expiration_date-1",))
         self.assertEqual(text.citation_ids, ("c1",))
-        self.assertEqual(result.suggest_review, "material_legal_judgment")
         self.assertEqual({c.citation_id for c in result.citations}, {"idp-doc-c-explicit_expiration_date-1", "c1"})
 
     def test_an_invalid_block_is_omitted_and_reported_but_the_valid_one_survives(self) -> None:
