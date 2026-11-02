@@ -43,8 +43,20 @@ Parameters:
   Phase09MemoryArn:
     Type: String
     Default: ""
+  EnableManagedAdot:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: >-
+      Keep "false" (managed ADOT disabled, the Phase 11 state). Set to "true" only
+      for the bounded ADOT probe of PLAN_15 T9 (docs/phase-15-adot-probe.md); the
+      content opt-out stays on either way. Re-disable it right after the probe
+      unless the owner accepts the residual risk of ADR-021 D9.
 
 Conditions:
+  ManagedAdotEnabled: !Equals [!Ref EnableManagedAdot, "true"]
   AttachPhase08Gateway: !Equals [!Ref EnablePhase08Gateway, "true"]
   AttachPhase09Memory: !Equals [!Ref EnablePhase09Memory, "true"]
 
@@ -161,9 +173,11 @@ Resources:
       # of LLM content extraction; the stronger switch disables the managed
       # ADOT observability layer because the content opt-out was ineffective in
       # the deployed Harness. LegalDesk keeps its own allowlisted telemetry.
+      # EnableManagedAdot (default "false") removes the disable switch for the T9 probe;
+      # the content opt-out is never removed.
       EnvironmentVariables:
         AWS_GENAI_CONTENT_EXTRACTION_OPT_OUT: "true"
-        DISABLE_ADOT_OBSERVABILITY: "true"
+        DISABLE_ADOT_OBSERVABILITY: !If [ManagedAdotEnabled, !Ref AWS::NoValue, "true"]
       SystemPrompt:
         - Text: >-
             You are the LegalDesk portfolio agent. Reply briefly, never provide
