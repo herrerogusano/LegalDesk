@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from scripts import phase15_adot_marker_probe as probe
 
@@ -87,8 +90,9 @@ class FakeLogs:
 
     def filter_log_events(self, **kwargs):
         self.queries.append(kwargs)
-        suffix = kwargs["filterPattern"].strip('"')[-2:]
-        return {"events": [{"message": "SECRET EVENT BODY"}] * self.hits.get(suffix, 0)}
+        token = kwargs["filterPattern"].strip('"')
+        kind = "-Q" if token == probe.question_token(token[: -len("-Q")]) else "-A"  # -A = the answer token
+        return {"events": [{"message": "SECRET EVENT BODY"}] * self.hits.get(kind, 0)}
 
 
 class ProbeExecutionTests(unittest.TestCase):
@@ -132,6 +136,79 @@ class ProbeExecutionTests(unittest.TestCase):
         logs = FakeLogs(["/aws/bedrock-agentcore/runtimes/rt-1-DEFAULT"], hits={"-Q": 1})
         report, _, _, sleeps = self.execute("invokefail", logs, invoke=failing)
         self.assertEqual((report["verdict"], report["retries"], sleeps, logs.queries), (probe.VERDICT_INVOKE_FAILED, 0, [], []))
+
+    def test_question_and_answer_tokens_are_distinct_and_attributable(self) -> None:
+        marker = "LDADOTPROBEfixed"
+        message = probe.probe_message(marker)
+        question, answer = probe.question_token(marker), probe.answer_token(marker)
+        self.assertIn(question, message)
+        self.assertNotIn(answer, message)         # a hit on the answer token can only come from the model output
+        self.assertNotIn(question, answer)        # and a hit on the question token only from the prompt
+        self.assertIn(answer[: -len("WER")], message)
+        self.assertEqual(probe.answer_token(marker)[-3:], "WER")
+
+    def test_an_answer_only_hit_is_not_counted_as_a_question_hit(self) -> None:
+        logs = FakeLogs(["/aws/bedrock-agentcore/runtimes/rt-1-DEFAULT"], hits={"-A": 3})
+        report, _, _, _ = self.execute("answeronly", logs)
+        self.assertEqual((report["questionMarkerEvents"], report["answerMarkerEvents"]), (0, 3))
+        self.assertEqual(report["verdict"], probe.VERDICT_CONTENT)
+
+    def test_whether_the_model_wrote_the_answer_token_is_recorded_without_storing_it(self) -> None:
+        logs = FakeLogs(["/aws/bedrock-agentcore/runtimes/rt-1-DEFAULT"])
+        report, output, _, _ = self.execute("complied", logs, invoke=lambda m: SimpleNamespace(text="LDADOTPROBEfixed-ANSWER"))
+        self.assertIs(report["answerTokenWritten"], True)
+        report, _, _, _ = self.execute("refused", logs, invoke=lambda m: "no puedo")
+        self.assertIs(report["answerTokenWritten"], False)
+        report, _, _, _ = self.execute("unknown", logs)  # the seam returned nothing
+        self.assertIsNone(report["answerTokenWritten"])
+        self.assertNotIn("ANSWER", output.read_text(encoding="utf-8").replace("answerTokenWritten", "").replace("answerMarkerEvents", ""))
+
+    def test_a_log_read_failure_after_the_paid_call_still_writes_the_report(self) -> None:
+        class Throttled(Exception):
+            response = {"Error": {"Code": "ThrottlingException"}}
+
+        class Failing(FakeLogs):
+            def __init__(self, groups, *, fail_on, hits=None):
+                super().__init__(groups, hits)
+                self.fail_on = fail_on
+
+            def get_paginator(self, name):
+                if self.fail_on == "describe":
+                    raise Throttled("slow down")
+                return super().get_paginator(name)
+
+            def filter_log_events(self, **kwargs):
+                if self.fail_on == "answer" and kwargs["filterPattern"].strip('"').endswith("ANSWER"):
+                    raise Throttled("slow down")
+                return super().filter_log_events(**kwargs)
+
+        for name, fail_on, question_hits, expected_question in (
+            ("describe", "describe", {}, 0),
+            ("midway", "answer", {"-Q": 2}, 2),  # the question side was counted before the failure
+        ):
+            with self.subTest(fail_on=fail_on):
+                logs = Failing(["/aws/bedrock-agentcore/runtimes/rt-1-DEFAULT"], fail_on=fail_on, hits=question_hits)
+                report, output, calls, _ = self.execute(f"readfail-{name}", logs)
+                self.assertEqual(len(calls), 1)  # the paid invocation is never repeated
+                self.assertTrue(output.exists())
+                self.assertEqual(json.loads(output.read_text(encoding="utf-8")), json.loads(json.dumps(report)))
+                self.assertEqual((report["verdict"], report["errorCode"]), (probe.VERDICT_LOG_READ_FAILED, "ThrottlingException"))
+                self.assertEqual((report["questionMarkerEvents"], report["answerMarkerEvents"]), (expected_question, 0))
+                self.assertEqual(report["markerSha256"], hashlib.sha256(b"LDADOTPROBEfixed").hexdigest())
+                self.assertIn("do not reinvoke", report["interpretation"])
+                self.assertNotIn("LDADOTPROBEfixed", output.read_text(encoding="utf-8"))
+                self.assertNotIn("slow down", output.read_text(encoding="utf-8"))  # the code, never the message
+
+    def test_a_failed_report_write_puts_the_evidence_on_stderr(self) -> None:
+        logs = FakeLogs(["/aws/bedrock-agentcore/runtimes/rt-1-DEFAULT"])
+        output = probe.RESULTS_ROOT / "phase15-adot-probe-test-writefail.json"
+        with patch.object(probe, "_write_create_only", side_effect=OSError("disk full")),                 patch("sys.stderr", new_callable=io.StringIO) as err, self.assertRaises(OSError):
+            probe.run_probe(harness_arn=ARN, runtime_id="rt-1", approval_ref=APPROVAL, output=output, execute=True,
+                            adot_enabled_attested=True, polls=1, wait_seconds=5, marker="LDADOTPROBEfixed",
+                            invoke=lambda m: None, logs_client=logs, sleep=lambda s: None)
+        evidence = json.loads(err.getvalue())
+        self.assertEqual(evidence["verdict"], probe.VERDICT_NO_CONTENT)
+        self.assertNotIn("LDADOTPROBEfixed", err.getvalue())
 
     def test_reports_are_create_only(self) -> None:
         logs = FakeLogs(["/aws/bedrock-agentcore/runtimes/rt-1-DEFAULT"])

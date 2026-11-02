@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import sys
 import unittest
 from dataclasses import replace
@@ -326,22 +328,41 @@ class ReportAndCliTests(unittest.TestCase):
             with self.subTest(path=bad), self.assertRaises(ValueError):
                 ev.assert_report_path(bad)
 
+    @contextlib.contextmanager
+    def sealed_environment(self, **variables):
+        """No real environment variable, token or AWS client can reach the CLI under test.
+
+        ``clear=True`` removes everything (AWS_*, LEGALDESK_*, tokens) and boto3 cannot build a client.
+        """
+
+        with patch.dict(os.environ, variables, clear=True),                 patch("boto3.client", side_effect=AssertionError("a real AWS client was built")),                 patch("boto3.Session", side_effect=AssertionError("a real AWS session was built")),                 patch("legaldesk.agent_chat_lambda.build_worker_from_environment",
+                      side_effect=AssertionError("the real worker was composed")) as builder:
+            yield builder
+
     def test_real_without_execute_is_a_preflight_that_builds_nothing(self) -> None:
-        with patch("legaldesk.agent_chat_lambda.build_worker_from_environment", side_effect=AssertionError("no AWS")), \
-                patch("builtins.print") as printed:
+        # Even with a token and AWS credentials in the environment, the preflight must not use them.
+        with self.sealed_environment(LEGALDESK_EVAL_ACCESS_TOKEN="real-looking-token", AWS_ACCESS_KEY_ID="AKIAREAL") as builder,                 patch("builtins.print") as printed:
             self.assertEqual(ev.main(["real"]), 0)
+        builder.assert_not_called()
         plan = json.loads(printed.call_args.args[0])["plan"]
         self.assertEqual((plan["harnessInvocations"], plan["retries"], plan["directRagFallbackExecuted"]), (30, 0, False))
 
     def test_execute_requires_approval_release_matter_output_and_token(self) -> None:
-        with patch.dict("os.environ", {}, clear=False), \
-                patch("legaldesk.agent_chat_lambda.build_worker_from_environment", side_effect=AssertionError("no AWS")):
+        complete = ["real", "--execute", "--approval-ref", "owner-approval:x", "--release-commit", "a" * 40,
+                    "--artifact-sha256", "b" * 64, "--matter-id", "mat_sundial",
+                    "--output", str(ev.RESULTS_ROOT / "phase15-routing-guard.json")]
+        with self.sealed_environment() as builder:   # no token at all
             with self.assertRaises(SystemExit):
                 ev.main(["real", "--execute"])
             with self.assertRaises(SystemExit):
-                ev.main(["real", "--execute", "--approval-ref", "owner-approval:x", "--release-commit", "a" * 40,
-                         "--artifact-sha256", "b" * 64, "--matter-id", "mat_sundial",
-                         "--output", str(ev.RESULTS_ROOT / "phase15-routing-x.json")])  # no token in the environment
+                ev.main(complete)
+        builder.assert_not_called()
+        for missing in ("--approval-ref", "--release-commit", "--artifact-sha256", "--matter-id", "--output"):
+            index = complete.index(missing)
+            partial = complete[:index] + complete[index + 2:]   # drop the flag and its value
+            with self.subTest(missing=missing), self.sealed_environment(LEGALDESK_EVAL_ACCESS_TOKEN="token") as builder,                     self.assertRaises(SystemExit):
+                ev.main(partial)
+            builder.assert_not_called()   # a token is present, yet nothing real is composed
 
     def test_offline_cli_exits_zero_when_green_and_one_when_red(self) -> None:
         with patch("builtins.print"):

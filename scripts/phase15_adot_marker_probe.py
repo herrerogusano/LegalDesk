@@ -12,6 +12,8 @@ Safety properties:
 * execution needs ``--execute``, an approval reference and the operator's attestation that
   ADOT is enabled; it makes exactly ONE Harness invocation and no retries;
 * log reads are bounded (``--polls`` x one ``filter_log_events`` page per group and marker);
+* once the paid call is made, the report is ALWAYS written (a log-read failure ends in the
+  ``log_read_failed`` verdict with the counts seen so far, never in a lost run);
 * the report is create-only and holds counts, closed codes and the SHA-256 of the marker.
   It never stores the marker, the question, the answer or any log event.
 
@@ -50,14 +52,33 @@ VERDICT_NO_CONTENT = "no_content_observed"
 VERDICT_CONTENT = "content_observed"
 VERDICT_INVOKE_FAILED = "invoke_failed"
 VERDICT_NO_LOG_GROUPS = "no_log_groups_found"
+VERDICT_LOG_READ_FAILED = "log_read_failed"
 
 
 def new_marker() -> str:
     return "LDADOTPROBE" + uuid4().hex
 
 
+def question_token(marker: str) -> str:
+    """Appears only in the prompt."""
+
+    return f"{marker}-Q"
+
+
+def answer_token(marker: str) -> str:
+    """Appears only in the model's answer: the prompt carries its two halves apart, never together."""
+
+    return f"{marker}-ANSWER"
+
+
 def probe_message(marker: str) -> str:
-    return f"Synthetic probe {marker}-Q. Reply with exactly the single token {marker}-A and nothing else."
+    # Distinct tokens make every hit attributable: a log event containing the question token held the
+    # prompt; one containing the answer token held the model output, because the prompt never spells it.
+    head = answer_token(marker)[: -len("WER")]
+    return (
+        f"Synthetic probe {question_token(marker)}. Write the single token obtained by joining "
+        f"the two parts {head} and WER with nothing between them, and nothing else."
+    )
 
 
 def build_plan(*, runtime_id: str, polls: int, wait_seconds: int) -> dict[str, object]:
@@ -92,16 +113,32 @@ def _write_create_only(path: Path, payload: Mapping[str, object]) -> None:
         handle.write(encoded)
 
 
-def _count_marker_events(logs: Any, groups: list[str], marker: str) -> dict[str, int]:
-    """Matching events per marker kind. Only counts leave this function, never an event."""
+def _count_marker_events(logs: Any, groups: list[str], marker: str, counts: dict[str, int]) -> None:
+    """Matching events per marker kind, written into ``counts`` as each kind completes.
 
-    counts = {"question": 0, "answer": 0}
-    for kind, suffix in (("question", "-Q"), ("answer", "-A")):
+    Only counts leave this function, never an event. If a read fails half way, ``counts`` still holds
+    every kind that was completed, so the report can say what was seen before the failure.
+    """
+
+    for kind, token in (("question", question_token(marker)), ("answer", answer_token(marker))):
+        total = 0
         for group in groups:
-            response = logs.filter_log_events(logGroupName=group, filterPattern=f'"{marker}{suffix}"', limit=50)
+            response = logs.filter_log_events(logGroupName=group, filterPattern=f'"{token}"', limit=50)
             events = response.get("events", []) if isinstance(response, Mapping) else []
-            counts[kind] += len(events)
-    return counts
+            total += len(events)
+        counts[kind] = total
+
+
+def _error_code(exc: BaseException) -> str:
+    """A closed-shape code for the report: the AWS error code if it has a safe shape, else the class name."""
+
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, Mapping) else None
+    code = error.get("Code") if isinstance(error, Mapping) else None
+    for candidate in (code, type(exc).__name__):
+        if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.]{1,64}", candidate):
+            return candidate
+    return "unknown"
 
 
 def run_probe(
@@ -115,7 +152,7 @@ def run_probe(
     polls: int = 4,
     wait_seconds: int = 30,
     region: str = REGION,
-    invoke: Callable[[str], None] | None = None,
+    invoke: Callable[[str], object] | None = None,
     logs_client: Any = None,
     sleep: Callable[[float], None] = time.sleep,
     marker: str | None = None,
@@ -147,30 +184,37 @@ def run_probe(
 
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     verdict, counts, groups_scanned, polls_used = VERDICT_INVOKE_FAILED, {"question": 0, "answer": 0}, 0, 0
+    error_code: str | None = None
+    answer_complied: bool | None = None  # did the model write the answer token? computed in memory, never stored
     try:
-        invoke(probe_message(marker))
-    except Exception:
-        invoked = False
+        result = invoke(probe_message(marker))
+    except Exception as exc:  # noqa: BLE001 - the paid call failed: still leave evidence
+        error_code = _error_code(exc)
     else:
-        invoked = True
-    if invoked:
+        text = result if isinstance(result, str) else getattr(result, "text", None)
+        answer_complied = answer_token(marker) in text if isinstance(text, str) else None
         verdict = VERDICT_NO_CONTENT
-        for polls_used in range(1, polls + 1):
-            sleep(wait_seconds)  # provider telemetry is delivered with a delay
-            paginator = logs_client.get_paginator("describe_log_groups")
-            groups = [
-                item["logGroupName"] for page in paginator.paginate(logGroupNamePrefix=f"{RUNTIME_LOG_PREFIX}{runtime_id}")
-                for item in page.get("logGroups", [])
-            ][:MAX_LOG_GROUPS]
-            groups_scanned = len(groups)
-            if not groups:
-                verdict = VERDICT_NO_LOG_GROUPS
-                continue
-            counts = _count_marker_events(logs_client, groups, marker)
-            if counts["question"] or counts["answer"]:
-                verdict = VERDICT_CONTENT
-                break
-            verdict = VERDICT_NO_CONTENT
+        # Everything after the paid invocation is guarded: whatever fails, the single approved run
+        # must end in a report with the counts seen so far.
+        try:
+            for polls_used in range(1, polls + 1):
+                sleep(wait_seconds)  # provider telemetry is delivered with a delay
+                paginator = logs_client.get_paginator("describe_log_groups")
+                groups = [
+                    item["logGroupName"] for page in paginator.paginate(logGroupNamePrefix=f"{RUNTIME_LOG_PREFIX}{runtime_id}")
+                    for item in page.get("logGroups", [])
+                ][:MAX_LOG_GROUPS]
+                groups_scanned = len(groups)
+                if not groups:
+                    verdict = VERDICT_NO_LOG_GROUPS
+                    continue
+                _count_marker_events(logs_client, groups, marker, counts)
+                if counts["question"] or counts["answer"]:
+                    verdict = VERDICT_CONTENT
+                    break
+                verdict = VERDICT_NO_CONTENT
+        except Exception as exc:  # noqa: BLE001 - throttling, AccessDenied, malformed responses...
+            verdict, error_code = VERDICT_LOG_READ_FAILED, _error_code(exc)
     report = {
         "schemaVersion": SCHEMA_VERSION, "probeVersion": PROBE_VERSION, "startedAt": started,
         "approvalRef": approval_ref, "harnessArnSha256": hashlib.sha256(harness_arn.encode()).hexdigest(),
@@ -178,15 +222,25 @@ def run_probe(
         "harnessInvocations": 1, "retries": 0, "operatorAttestsAdotEnabled": True,
         "logGroupsScanned": groups_scanned, "pollsUsed": polls_used, "waitSecondsBetweenPolls": wait_seconds,
         "questionMarkerEvents": counts["question"], "answerMarkerEvents": counts["answer"],
+        "answerTokenWritten": answer_complied, "errorCode": error_code,
         "verdict": verdict,
         "interpretation": {
             VERDICT_NO_CONTENT: "marker not seen within the window; absence is bounded evidence, not proof",
             VERDICT_CONTENT: "content reached provider logs: apply the residual risk path of ADR-021 D9 or disable ADOT",
             VERDICT_INVOKE_FAILED: "the single invocation failed; no conclusion; a rerun needs new approval",
             VERDICT_NO_LOG_GROUPS: "no runtime log group found for the runtime id; no conclusion",
+            VERDICT_LOG_READ_FAILED: (
+                "the invocation was made but reading the logs failed; counts are what was seen before the failure; "
+                "no conclusion unless a count is above zero; read the logs by hand under the same approval, do not reinvoke"
+            ),
         }[verdict],
     }
-    _write_create_only(report_path, report)
+    try:
+        _write_create_only(report_path, report)
+    except Exception:
+        # The only paid run must not lose its evidence: put the report on stderr (it holds no content).
+        print(json.dumps(report, sort_keys=True), file=sys.stderr)
+        raise
     return report
 
 
