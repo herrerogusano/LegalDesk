@@ -1,3 +1,10 @@
+# Phase 15 routing eval
+
+`phase15_routing_eval.py` and `phase15_routing_dataset.json` (30 synthetic cases) evaluate the tool routing of
+the agentic chat. `python evals/phase15_routing_eval.py offline` is the deterministic CI gate (simulated agent,
+real interceptor and worker, zero cloud calls). The real mode is prepared and **not executed**: it is part of
+T9 and needs cost approval. See [`docs/phase-15-routing-eval.md`](../docs/phase-15-routing-eval.md).
+
 # Phase 12 local evaluation
 
 ## Phase 14 frozen semantic holdout
