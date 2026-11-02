@@ -16,10 +16,11 @@ sys.path.insert(0, str(ROOT / "agent" / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from fixture_loader import test_identity
-from legaldesk.agent_chat import AgentChatRuntime, InputDecision
+from legaldesk.agent_chat import AgentChatRuntime, AgentChatWorker, InputDecision
 from legaldesk.agent_jobs import FailureCode, InMemoryChatJobStore, JobKey, JobStatus
 from legaldesk.authorization import InMemoryAuthorizationStore
 from legaldesk.chat import ChatResponse
+from legaldesk.gateway_interceptor import InMemoryGatewayGrantRepository
 from legaldesk.documents import DocumentPipeline, InMemoryDocumentMetadataRepository, InMemoryObjectStorage
 from legaldesk.domain.models import Matter, User
 from legaldesk.evidence import EvidenceStatus
@@ -28,6 +29,9 @@ from legaldesk.mcp_server import MCPServer
 from legaldesk.memory import InMemoryConversationBindingStore
 from legaldesk.quota import InMemoryQuotaLedger, QuotaLimits
 from legaldesk.state import InMemoryEphemeralStateStore, SessionRecord
+from test_phase15_agent_chat_worker import (
+    DATA_PLAN, FIELDS_TOOL, SEARCH_TOOL, TEXT_PLAN, agent_result, call, fields_payload, search_payload,
+)
 
 ALICE, CAROL, BOB = "subject-alice", "subject-carol", "subject-bob"
 QUESTION = "¿Qué documentos hay y cuándo vencen?"
@@ -60,6 +64,12 @@ class Harness:
         self.sync_calls: list[dict] = []
         self.quota = InMemoryQuotaLedger(limits=QuotaLimits(chats_per_month=2, harness_per_month=2, gateway_per_month=2))
         self.input_kind = input_kind
+        self.review_calls: list[dict] = []
+
+        def gateway_invoke(binding, *, tool_name, arguments):
+            self.review_calls.append({"tool": tool_name, "arguments": dict(arguments)})
+            return {"status": "SUCCESS", "tool": f"@legaldesk_gateway/review-task-lambda___{tool_name}",
+                    "result": {"reviewTaskId": "rt-1", "status": "open"}, "correlationId": binding.correlation_id}
         metadata = InMemoryDocumentMetadataRepository()
         storage = InMemoryObjectStorage()
         identities = {f"tok-{name}": test_identity(subject) for name, subject in (("alice", ALICE), ("carol", CAROL), ("bob", BOB))}
@@ -79,7 +89,8 @@ class Harness:
             document_pipeline=DocumentPipeline(self.auth, storage, metadata), object_storage=storage,
             metadata_repository=metadata, mcp_server=MCPServer(metadata),
             matter_catalog=("mat_1", "mat_2", "mat_b"), state_store=self.state, quota=self.quota,
-            chat_service=chat_service,
+            chat_service=chat_service, gateway_invoker=SimpleNamespace(invoke=gateway_invoke),
+            gateway_grant_repository=InMemoryGatewayGrantRepository(),
             agent_chat=AgentChatRuntime(self.jobs, SimpleNamespace(publish=self.published.append), check) if with_agent else None,
         )
         self.app = create_http_app(self.composition)
@@ -201,6 +212,72 @@ class SubmitTests(unittest.TestCase):
         status, _ = h.call("POST", "/api/chat", {"question": QUESTION, "matterId": "mat_2", "conversationId": conv["conversationId"],
                                                  "sessionId": conv["sessionId"]}, who=carol)
         self.assertEqual((status, h.published), (403, []))
+
+
+class ReviewAfterJobTests(unittest.TestCase):
+    """The existing POST /reviews flow works for the text of an agent answer, and only for it."""
+
+    def setUp(self) -> None:
+        self.h = Harness()
+        self.alice, self.carol = self.h.login("alice"), self.h.login("carol")
+        self.worker = AgentChatWorker(
+            job_store=self.h.jobs, state_store=self.h.state, quota=self.h.quota, authorization_store=self.h.auth,
+            conversation_store=self.h.composition.conversation_store, grant_repository=InMemoryGatewayGrantRepository(),
+            identity_verifier=self.h.composition.identity_verifier, gateway_url="https://gateway.example.test/mcp",
+            invoke_agent=lambda *_args: self.script.pop(0), rag_chat=None,
+        )
+
+    def answered(self, plan, *calls, who=None):
+        who = who or self.alice
+        self.script = [agent_result(plan, *calls)]
+        (status, body), conv = self.h.ask(who)
+        self.assertEqual(status, 202)
+        self.assertEqual(self.worker.process(self.h.published[-1]).action, "completed")
+        return body, conv
+
+    def review(self, body, conv, *, who=None, correlation=None):
+        status, response = self.h.call("POST", "/api/matters/mat_1/reviews", {
+            "conversationId": conv["conversationId"], "sessionId": conv["sessionId"], "reasonCode": "user_requested_review",
+            "dueAt": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 86400 * 3)), "note": "",
+            "originCorrelationId": correlation or body["correlationId"], "idempotencyKey": f"{body['jobId']}:review",
+        }, who=who or self.alice)
+        return status, response
+
+    def test_text_answer_can_be_saved_for_review_with_the_server_side_snapshot(self) -> None:
+        body, conv = self.answered(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))
+        status, created = self.review(body, conv)
+        self.assertEqual((status, created["reviewTaskId"]), (201, "rt-1"))
+        (gateway,) = self.h.review_calls
+        snapshot = gateway["arguments"]["snapshot"]
+        self.assertEqual((snapshot["question"], snapshot["answer"], snapshot["evidenceStatus"]), (QUESTION, "El plazo es de 30 días.", "answerable"))
+        self.assertEqual(snapshot["citations"][0]["passage"], "El plazo será de 30 días.")
+
+    def test_data_only_answer_cannot_be_saved_for_review(self) -> None:
+        body, conv = self.answered(DATA_PLAN, call("tu-1", FIELDS_TOOL, fields_payload()))
+        status, _ = self.review(body, conv)
+        self.assertGreaterEqual(status, 400)
+        self.assertEqual(self.h.review_calls, [])
+
+    def test_a_job_of_another_subject_or_conversation_cannot_be_reviewed(self) -> None:
+        body, conv = self.answered(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))
+        # carol is a member of the same matter but neither owns the conversation nor the correlation
+        self.assertEqual(self.review(body, conv, who=self.carol)[0], 403)
+        carol_conv = self.h.conversation("mat_1", self.carol)
+        status, _ = self.h.call("POST", "/api/matters/mat_1/reviews", {
+            "conversationId": carol_conv["conversationId"], "sessionId": carol_conv["sessionId"],
+            "reasonCode": "user_requested_review", "dueAt": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 86400 * 3)),
+            "originCorrelationId": body["correlationId"],
+        }, who=self.carol)
+        self.assertEqual(status, 403)
+        # the same user from another conversation of the matter
+        other = self.h.conversation("mat_1", self.alice)
+        status, _ = self.h.call("POST", "/api/matters/mat_1/reviews", {
+            "conversationId": other["conversationId"], "sessionId": other["sessionId"],
+            "reasonCode": "user_requested_review", "dueAt": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 86400 * 3)),
+            "originCorrelationId": body["correlationId"],
+        }, who=self.alice)
+        self.assertEqual(status, 403)
+        self.assertEqual(self.h.review_calls, [])
 
 
 class JobReadTests(unittest.TestCase):

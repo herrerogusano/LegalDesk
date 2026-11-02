@@ -156,6 +156,10 @@ class DataLine:
     text: str
     pending: bool
     citation_ids: tuple[str, ...]
+    # Opaque references of the IDP value this line states. They let the UI point to the
+    # field a user wants to correct; inventory lines describe documents, not fields.
+    document_id: str | None = None
+    field_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,7 +212,10 @@ class AnswerOutput:
                     "evidenceStatus": block.evidence_status,
                     "groups": [
                         {"title": group.title, "lines": [
-                            {"text": line.text, "pending": line.pending, "citationIds": list(line.citation_ids)}
+                            {key: value for key, value in {
+                                "text": line.text, "pending": line.pending, "citationIds": list(line.citation_ids),
+                                "documentId": line.document_id, "fieldName": line.field_name,
+                            }.items() if value is not None}
                             for line in group.lines
                         ]}
                         for group in block.groups
@@ -471,6 +478,7 @@ def render_data_block(block: DataBlock, evidence: LoopEvidence) -> tuple[OutputB
                          document=line.document.document_name, field=_label(line.extracted.name),
                          value=render_value(line.extracted.value)),
                 line.pending, tuple(c.citation_id for c in line.citations),
+                line.document.document_id, line.extracted.name,
             )
             for line in lines
         )))

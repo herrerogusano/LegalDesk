@@ -69,6 +69,10 @@ TRANSIENT_ERROR_CLASSES = frozenset({
 # time left the job fails cleanly instead of being killed half way.
 MIN_FALLBACK_SECONDS = 40
 
+# How long the server keeps the review candidate of an answer; the synchronous chat uses the same.
+REVIEW_CANDIDATE_TTL_SECONDS = 15 * 60
+_REVIEWABLE_EVIDENCE_STATUSES = frozenset({"answerable", "ambiguous", "insufficient_evidence"})
+
 
 class SubmissionError(RuntimeError):
     """The job could not be created or queued; the quota has been given back."""
@@ -406,6 +410,8 @@ class AgentChatWorker:
         for citation in result["citations"]:  # type: ignore[union-attr]
             citation["handle"] = by_citation.get(citation["citationId"])
         result.update(operationStatus=computed.operation_status, correlationId=job.correlation_id, disclaimerRequired=True)
+        if computed.operation_status == "ok":
+            computed.meta["reviewCandidateStored"] = self._remember_review_candidate(job, output)
         if self.memory is not None and computed.operation_status == "ok":
             computed.meta["memoryWritten"] = self._remember(job, output, computed.memory_scope)
         self.state_store.append_audit({
@@ -413,6 +419,47 @@ class AgentChatWorker:
             "correlationId": job.correlation_id, "operation": "chat_agent", "timestampMs": int(self.clock() * 1000),
         })
         return result
+
+    def _remember_review_candidate(self, job: ChatJob, output: AnswerOutput) -> bool:
+        """Same server-side candidate the synchronous chat keeps for ``POST /reviews``.
+
+        Only the grounded interpretation (the first ``text`` block) can be reviewed: data and
+        inventory blocks are corrected at the IDP field, not by reviewing an answer (ADR-021 D2).
+        Key and shape match ``HttpApplication._remember_review_candidate``; the browser never
+        supplies the snapshot. Runs after ``finalize``, so at most once per job.
+        """
+
+        block = next((item for item in output.blocks if item.kind == "text"), None)
+        question = (job.question or "").strip()
+        if block is None or not question or block.evidence_status not in _REVIEWABLE_EVIDENCE_STATUSES:
+            return False
+        if not isinstance(block.text, str) or not block.text.strip():
+            return False
+        by_id = {citation.citation_id: citation for citation in output.citations}
+        citations: list[dict[str, object]] = []
+        for citation_id in block.citation_ids:
+            citation = by_id.get(citation_id)
+            if citation is None or not citation.passage.strip():
+                continue
+            entry = {
+                "citationId": citation.citation_id, "documentId": citation.document_id,
+                "documentName": citation.document_name, "pageNumber": citation.page_number,
+                "section": citation.section, "passage": citation.passage,
+            }
+            citations.append({key: value for key, value in entry.items() if value is not None})
+        candidate = {
+            "question": question, "answer": block.text, "evidenceStatus": block.evidence_status,
+            "citations": citations,
+        }
+        try:
+            self.state_store.put_review_candidate(
+                (job.subject, job.conversation_id, job.correlation_id),
+                (self.clock() + REVIEW_CANDIDATE_TTL_SECONDS, candidate)  # same clock as the state store,
+            )
+            return True
+        except Exception:
+            # The answer is already final; without a candidate the user just cannot save it for review.
+            return False
 
     def _remember(self, job: ChatJob, output: AnswerOutput, scope: Any) -> bool:
         """Question and final answer only, once; never intermediate tool results (D7)."""
@@ -436,7 +483,7 @@ class AgentChatWorker:
 
 
 __all__ = [
-    "AgentChatRuntime", "AgentChatWorker", "InputDecision", "input_not_allowed_response", "JobQueue", "PermanentAgentError", "SubmissionError",
+    "REVIEW_CANDIDATE_TTL_SECONDS", "AgentChatRuntime", "AgentChatWorker", "InputDecision", "input_not_allowed_response", "JobQueue", "PermanentAgentError", "SubmissionError",
     "TransientAgentError", "WorkerResult", "is_transient_error", "release_job_quota", "reserve_job_quota",
     "submit_agent_chat",
 ]
