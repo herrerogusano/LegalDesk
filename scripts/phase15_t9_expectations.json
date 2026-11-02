@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "note": "Expected outcome of each T9 change set. Used by phase15_changeset_preview.py (preview and check-change-set). Regenerate and review the diff whenever a template changes.",
+  "note": "Expected outcome of each T9 change set. Used by phase15_changeset_preview.py (preview and check-change-set). Regenerate and review the diff whenever a template changes. wideAllowed lists, per IAM statement, the widening reasons the profile accepts (NotAction/NotResource, action or resource wildcards, partial resource wildcards); anything else fails.",
   "profiles": {
     "public-edge-agent-chat": {
       "description": "LegalDeskPhase14PublicEdge: template catch-up + EnableAgentChat=true + new immutable code. The 17 AgentChat* resources are added; the application function and role are modified; nothing is replaced or removed.",
@@ -125,7 +125,30 @@
           "change": "changed"
         }
       ],
-      "remove": []
+      "remove": [],
+      "wideAllowed": [
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "sid": "HeadCanonicalSourceDocumentsOnly",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "sid": "WriteWorkerLogs",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        }
+      ]
     },
     "gateway-search-documents": {
       "description": "LegalDeskPhase08Gateway: EnableSearchDocuments=true + new code for the MCP and interceptor Lambdas. Adds the search-documents Lambda, role, log group and Gateway target; the Gateway role may invoke the new Lambda.",
@@ -201,7 +224,23 @@
           "change": "added"
         }
       ],
-      "remove": []
+      "remove": [],
+      "wideAllowed": [
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "sid": "HeadAuthorizedSourceObjects",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "sid": "anon:6abfb18d",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        }
+      ]
     },
     "harness-memory-off-adot-on": {
       "description": "LegalDeskPhase01 (Harness): detach memory (ADR-021 D7) and enable managed ADOT for the probe. MinimalHarness is the only non-IAM resource; its Replacement must be False.",
@@ -409,6 +448,15 @@
           "policy": "LegalDeskPublicApplicationDataPlane",
           "sid": "WriteOnlyApplicationOwnedState",
           "change": "changed"
+        }
+      ],
+      "wideAllowed": [
+        {
+          "resource": "ApplicationExecutionRole",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
         }
       ]
     }

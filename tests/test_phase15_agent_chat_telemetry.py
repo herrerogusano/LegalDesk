@@ -77,6 +77,7 @@ class CostAndTimerTests(unittest.TestCase):
         expected = prices["input"] + 0.1 * prices["output"] + 2 * prices["cache_read"] + 0.4 * prices["cache_write"]
         self.assertAlmostEqual(telemetry.estimate_loop_cost_usd(usage), expected, places=6)
         self.assertIsNone(telemetry.estimate_loop_cost_usd(None))
+        self.assertEqual(telemetry.usage_metadata(None), {"usageAvailable": False})
 
     def test_price_table_is_the_published_sonnet_46_price_plus_the_regional_premium(self) -> None:
         # Anthropic list price of Sonnet 4.6 (platform.claude.com pricing, read 2026-11-02) and the
@@ -84,7 +85,6 @@ class CostAndTimerTests(unittest.TestCase):
         # this table means re-reading both pages and the cost estimate document.
         self.assertEqual(telemetry.PRICE_PER_MILLION_TOKENS, {"input": 3.30, "output": 16.50, "cache_read": 0.33, "cache_write": 4.125})
         self.assertEqual(telemetry.PRICING_VERSION, "estimate-2026-11-eu-regional")
-        self.assertEqual(telemetry.usage_metadata(None), {"usageAvailable": False})
 
     def test_a_segment_that_raises_is_still_timed_and_unknown_segments_are_refused(self) -> None:
         timer = telemetry.SegmentTimer()

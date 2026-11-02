@@ -230,14 +230,42 @@ def _iam_statements(resource: Mapping[str, Any]) -> dict[tuple[str, str], Any]:
     return found
 
 
-def _is_wide(statement: Any) -> bool:
+def _strings(node: Any) -> list[str]:
+    """Every string inside a policy value, including the parts of ``Fn::Sub`` / ``Fn::Join``."""
+
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, Mapping):
+        return [text for value in node.values() for text in _strings(value)]
+    if isinstance(node, list):
+        return [text for value in node for text in _strings(value)]
+    return []
+
+
+def wide_reasons(statement: Any) -> list[str]:
+    """Why a statement widens access; empty when it is exact.
+
+    ``NotAction`` / ``NotResource`` (everything except...), a ``*`` action or an action wildcard, a bare ``*``
+    resource, and any partial resource wildcard (``arn:...:*``, ``bucket/*``, a path with ``*``) are all
+    expansions that the expectation profile must allow explicitly (``wideAllowed``).
+    """
+
     if not isinstance(statement, Mapping):
-        return False
-    actions = statement.get("Action")
-    actions = actions if isinstance(actions, list) else [actions]
-    resources = statement.get("Resource")
-    resources = resources if isinstance(resources, list) else [resources]
-    return any(isinstance(a, str) and a.endswith("*") for a in actions) or "*" in resources
+        return []
+    reasons: list[str] = []
+    for key in ("NotAction", "NotResource", "NotPrincipal"):
+        if key in statement:
+            reasons.append(key)
+    if any("*" in text or "?" in text for text in _strings(statement.get("Action"))):
+        reasons.append("action_wildcard")
+    top = statement.get("Resource")
+    # Bare "*" only counts as the whole resource; a "*" piece of an Fn::Join/Fn::Sub builds a partial wildcard.
+    resources = _strings(top)
+    if "*" in (top if isinstance(top, list) else [top]):
+        reasons.append("resource_wildcard")
+    elif any("*" in text or "?" in text for text in resources):
+        reasons.append("resource_partial_wildcard")
+    return reasons
 
 
 def _iam_changes(logical_id: str, before: Mapping[str, Any] | None, after: Mapping[str, Any] | None) -> list[dict[str, Any]]:
@@ -253,11 +281,8 @@ def _iam_changes(logical_id: str, before: Mapping[str, Any] | None, after: Mappi
             kind = "changed"
         else:
             continue
-        statement = new.get(key)
-        changes.append({
-            "resource": logical_id, "policy": key[0], "sid": key[1], "change": kind,
-            "wide": kind != "removed" and key[0] not in {"AssumeRolePolicyDocument", "ManagedPolicyArns"} and _is_wide(statement),
-        })
+        reasons = [] if kind == "removed" or key[0] in {"AssumeRolePolicyDocument", "ManagedPolicyArns", "PermissionsBoundary"} else wide_reasons(new.get(key))
+        changes.append({"resource": logical_id, "policy": key[0], "sid": key[1], "change": kind, "wide": bool(reasons), "wideReasons": reasons})
     return changes
 
 
@@ -370,9 +395,13 @@ def check_preview(preview: Mapping[str, Any], profile: Mapping[str, Any]) -> lis
         problems.append("unexpected IAM statement change: " + " / ".join(item))
     for item in sorted(expected_iam - seen_iam - optional_iam):
         problems.append("expected IAM statement change missing: " + " / ".join(item))
+    allowed_wide = {(e["resource"], e["sid"]): set(e.get("reasons", [])) for e in profile.get("wideAllowed", [])}
     for change in preview["iam"]:
-        if change["wide"] and change["sid"] not in set(profile.get("wideAllowed", [])):
-            problems.append(f"wildcard action/resource in {change['resource']} / {change['sid']}")
+        if not change["wide"]:
+            continue
+        extra = set(change["wideReasons"]) - allowed_wide.get((change["resource"], change["sid"]), set())
+        if extra:
+            problems.append(f"widening not allowed by the profile in {change['resource']} / {change['sid']}: {', '.join(sorted(extra))}")
     for logical_id in preview["conditionUnknown"]:
         problems.append(f"condition of {logical_id} could not be resolved; pass the missing --param/--deployed-param")
     return problems
@@ -445,7 +474,7 @@ def _render(preview: Mapping[str, Any]) -> str:
     lines.append(f"REMOVE   ({len(preview['removed'])})")
     lines += [f"  - {item['id']}  {item['type']}" for item in preview["removed"]]
     lines.append(f"IAM      ({len(preview['iam'])} statement-level changes)")
-    lines += [f"  {item['change']:<7} {item['resource']} / {item['policy']} / {item['sid']}{'  [WIDE]' if item['wide'] else ''}" for item in preview["iam"]]
+    lines += [f"  {item['change']:<7} {item['resource']} / {item['policy']} / {item['sid']}{'  [WIDE: ' + ', '.join(item['wideReasons']) + ']' if item['wide'] else ''}" for item in preview["iam"]]
     if preview["newParameters"]:
         lines.append("NEW PARAMETERS (must be supplied or have a default): " + ", ".join(preview["newParameters"]))
     if preview["removedParameters"]:

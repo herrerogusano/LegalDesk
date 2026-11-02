@@ -110,7 +110,33 @@ class EngineTests(unittest.TestCase):
     def test_a_wildcard_in_an_added_statement_is_flagged(self) -> None:
         wide = SYNTHETIC.replace("Action: [s3:PutObject], Resource: arn:aws:s3:::bucket/key}", "Action: ['s3:*'], Resource: '*'}")
         result = _compare({"Flag": "false"}, {"Flag": "true"}, text=SYNTHETIC, local_text=wide)
-        self.assertTrue(next(c for c in result["iam"] if c["sid"] == "Write")["wide"])
+        change = next(c for c in result["iam"] if c["sid"] == "Write")
+        self.assertTrue(change["wide"])
+        self.assertEqual(change["wideReasons"], ["action_wildcard", "resource_wildcard"])
+
+    def test_every_kind_of_widening_is_reported_with_its_reason(self) -> None:
+        exact = {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "arn:aws:s3:::bucket/key"}
+        cases = {
+            "NotAction": ({**exact, "Action": None, "NotAction": ["iam:*"]}, ["NotAction"]),
+            "NotResource": ({**exact, "NotResource": "arn:aws:s3:::bucket/key"}, ["NotResource"]),
+            "action wildcard": ({**exact, "Action": ["s3:Get*"]}, ["action_wildcard"]),
+            "bare resource": ({**exact, "Resource": "*"}, ["resource_wildcard"]),
+            "bare resource in list": ({**exact, "Resource": ["arn:aws:s3:::bucket/key", "*"]}, ["resource_wildcard"]),
+            "arn wildcard": ({**exact, "Resource": "arn:aws:logs:eu-west-1:123456789012:log-group:x:*"}, ["resource_partial_wildcard"]),
+            "path wildcard": ({**exact, "Resource": "arn:aws:s3:::bucket/*"}, ["resource_partial_wildcard"]),
+            "wildcard inside Fn::Sub": ({**exact, "Resource": {"Fn::Sub": "${Bucket}/tenants/*/original.pdf"}}, ["resource_partial_wildcard"]),
+            "wildcard inside Fn::Join": ({**exact, "Resource": {"Fn::Join": ["", ["arn:aws:s3:::b/", "*"]]}}, ["resource_partial_wildcard"]),
+        }
+        for label, (statement, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(preview.wide_reasons({key: value for key, value in statement.items() if value is not None}), expected)
+        self.assertEqual(preview.wide_reasons(exact), [])
+        self.assertEqual(preview.wide_reasons({**exact, "Resource": {"Fn::GetAtt": ["Queue", "Arn"]}}), [])
+
+    def test_not_action_is_detected_in_a_real_template_diff(self) -> None:
+        widened = SYNTHETIC.replace("Action: [s3:PutObject], Resource: arn:aws:s3:::bucket/key}", "NotAction: ['iam:*'], Resource: arn:aws:s3:::bucket/key}")
+        result = _compare({"Flag": "false"}, {"Flag": "true"}, text=SYNTHETIC, local_text=widened)
+        self.assertEqual(next(c for c in result["iam"] if c["sid"] == "Write")["wideReasons"], ["NotAction"])
 
     def test_a_condition_that_cannot_be_resolved_is_reported_not_guessed(self) -> None:
         text = SYNTHETIC.replace('Flag: {Type: String, Default: "false"}', "Flag: {Type: String, NoEcho: true}")
@@ -162,10 +188,23 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
         result = _flip("phase-01-harness.yaml", {**base, "EnableManagedAdot": "false"}, {**base, "EnableManagedAdot": "true"})
         self.assertEqual(preview.check_preview(result, preview.load_profile("harness-memory-off-adot-on")), [])
 
-    def test_the_search_documents_role_grants_no_wildcards_and_the_agent_chat_worker_none_either(self) -> None:
+    def test_the_new_roles_never_use_not_statements_or_bare_wildcards(self) -> None:
+        # Path-scoped resource wildcards are the only widening these roles use, and the profiles name each one.
         for name, flip in (("phase-08-gateway-mcp.yaml", ("EnableSearchDocuments", "SearchDocumentsExecutionRole")), ("phase-14-public-edge.yaml", ("EnableAgentChat", "AgentChatWorkerExecutionRole"))):
             result = _flip(name, {flip[0]: "false"}, {flip[0]: "true"})
-            self.assertFalse([c for c in result["iam"] if c["wide"] and c["resource"] == flip[1]], name)
+            reasons = {reason for c in result["iam"] if c["resource"] == flip[1] for reason in c["wideReasons"]}
+            self.assertLessEqual(reasons, {"resource_partial_wildcard"}, name)
+
+    def test_every_widening_in_the_profiles_is_listed_with_its_exact_reasons(self) -> None:
+        for profile_name, template_name, deployed, local in (
+            ("gateway-search-documents", "phase-08-gateway-mcp.yaml", {"EnableSearchDocuments": "false"}, {"EnableSearchDocuments": "true"}),
+            ("public-edge-agent-chat", "phase-14-public-edge.yaml", {"EnableAgentChat": "false"}, {"EnableAgentChat": "true"}),
+            ("public-edge-agent-chat-rollback", "phase-14-public-edge.yaml", {"EnableAgentChat": "true"}, {"EnableAgentChat": "false"}),
+        ):
+            result = _flip(template_name, deployed, local)
+            seen = {(c["resource"], c["sid"]): set(c["wideReasons"]) for c in result["iam"] if c["wide"]}
+            allowed = {(e["resource"], e["sid"]): set(e["reasons"]) for e in preview.load_profile(profile_name)["wideAllowed"]}
+            self.assertEqual(seen, allowed, profile_name)
 
     def test_profile_ids_exist_in_their_templates(self) -> None:
         mapping = {
@@ -201,13 +240,23 @@ class ProfileViolationTests(unittest.TestCase):
             (lambda p: p["removed"].append({"id": "FrontendBucket", "type": "AWS::S3::Bucket"}), "removal outside the profile: FrontendBucket"),
             (lambda p: p["modified"].append({"id": "FrontendBucket", "type": "AWS::S3::Bucket", "properties": ["BucketName"], "replacement": "UNKNOWN"}), "unexpected modification: FrontendBucket"),
             (lambda p: p["modified"][0].update(replacement="REPLACEMENT"), "replacement risk (REPLACEMENT)"),
-            (lambda p: p["iam"].append({"resource": "ApplicationExecutionRole", "policy": "P", "sid": "Extra", "change": "added", "wide": False}), "unexpected IAM statement change"),
-            (lambda p: p["iam"].append({"resource": "ApplicationExecutionRole", "policy": "P", "sid": "Wide", "change": "added", "wide": True}), "wildcard action/resource"),
+            (lambda p: p["iam"].append({"resource": "ApplicationExecutionRole", "policy": "P", "sid": "Extra", "change": "added", "wide": False, "wideReasons": []}), "unexpected IAM statement change"),
+            (lambda p: p["iam"].append({"resource": "ApplicationExecutionRole", "policy": "P", "sid": "Wide", "change": "added", "wide": True, "wideReasons": ["resource_wildcard"]}), "widening not allowed by the profile in ApplicationExecutionRole / Wide: resource_wildcard"),
+            (lambda p: p["iam"].append({"resource": "ApplicationExecutionRole", "policy": "P", "sid": "NotAct", "change": "added", "wide": True, "wideReasons": ["NotAction"]}), "NotAction"),
         ):
             with self.subTest(expected=expected):
                 mutated = copy.deepcopy(self.clean)
                 mutate(mutated)
                 self.assertTrue(any(expected in problem for problem in preview.check_preview(mutated, self.profile)), expected)
+
+    def test_a_listed_widening_cannot_silently_grow_into_a_bigger_one(self) -> None:
+        mutated = copy.deepcopy(self.clean)
+        change = next(c for c in mutated["iam"] if c["sid"] == "HeadCanonicalSourceDocumentsOnly")
+        self.assertEqual(change["wideReasons"], ["resource_partial_wildcard"])  # allowed, by name
+        change["wideReasons"] = ["resource_partial_wildcard", "resource_wildcard", "NotAction"]
+        problems = preview.check_preview(mutated, self.profile)
+        self.assertTrue(any("HeadCanonicalSourceDocumentsOnly" in p and "NotAction" in p and "resource_wildcard" in p for p in problems), problems)
+        self.assertFalse(any("resource_partial_wildcard" in p for p in problems))
 
     def test_a_missing_expected_addition_or_property_set_is_not_silently_accepted(self) -> None:
         mutated = copy.deepcopy(self.clean)
