@@ -170,6 +170,44 @@ class DataGovernanceTests(unittest.TestCase):
         events = self.state.list_audit(SUBJECT)
         self.assertEqual({item.get("operation") for item in events}, {"keep", "legacy-residual"})
 
+    def test_matter_delete_removes_agentic_chat_jobs_of_every_subject_and_only_that_matter(self) -> None:
+        from legaldesk.agent_jobs import InMemoryChatJobStore, JobKey, new_job
+
+        jobs = InMemoryChatJobStore(clock=lambda: NOW.timestamp())
+
+        def job(job_id: str, *, subject: str, tenant: str = TENANT, matter: str = MATTER):
+            return new_job(job_id=job_id, subject=subject, tenant_id=tenant, matter_id=matter, conversation_id="c",
+                           session_selector="s", correlation_id="x", question="q", session_key="k", now=NOW.timestamp())
+
+        for item in (job("mine", subject=SUBJECT), job("colleague", subject="idp|someone-else"),
+                     job("other-matter", subject=SUBJECT, matter="mat_other"),
+                     job("other-tenant", subject=SUBJECT, tenant="tnt_other")):
+            jobs.create(item)
+        service = OperatorDataGovernanceService(
+            metadata_repository=self.metadata, object_storage=self.storage, review_repository=self.reviews,
+            state_store=self.state, job_store=jobs, max_records=10, clock=lambda: NOW,
+        )
+        report = service.delete_matter(self.scope)
+        self.assertTrue(report.ok, report.as_dict())
+        self.assertEqual(report.state_records_removed, 2)
+        self.assertIsNone(jobs.get(JobKey(TENANT, MATTER, "mine")))
+        self.assertIsNone(jobs.get(JobKey(TENANT, MATTER, "colleague")))
+        self.assertIsNotNone(jobs.get(JobKey(TENANT, "mat_other", "other-matter")))
+        self.assertIsNotNone(jobs.get(JobKey("tnt_other", MATTER, "other-tenant")))
+
+    def test_job_cleanup_failure_is_reported_for_retry(self) -> None:
+        class Broken:
+            def delete_for_matter(self, **_kwargs: object) -> int:
+                raise RuntimeError("provider detail must not leak")
+
+        service = OperatorDataGovernanceService(
+            metadata_repository=self.metadata, object_storage=self.storage, review_repository=self.reviews,
+            job_store=Broken(), max_records=10, clock=lambda: NOW,
+        )
+        report = service.delete_matter(self.scope)
+        self.assertEqual([failure.target for failure in report.failures], ["job_cleanup"])
+        self.assertNotIn("provider detail", json.dumps(report.as_dict()))
+
     def test_export_rejects_review_boundary_without_overflow_cursor(self) -> None:
         for index in range(10):
             self.reviews.save(ReviewTask(

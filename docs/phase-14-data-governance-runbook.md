@@ -52,6 +52,19 @@ allow it. State without a scope index remains subject to its application
 expiry/TTL and is an explicit production follow-up; TTL is not treated as
 proof of exact deletion.
 
+Agentic chat jobs (Phase 15, ADR-021 D4) are part of the matter scope. A job
+holds the question while it is active and the rendered answer once it has
+succeeded, and DynamoDB TTL (1 hour) is not an exact delete, so matter deletion
+also removes them. They live under one partition per tenant and matter
+(`LEGALDESK#P15#CHATJOB#<tenant>#MATTER#<matter>`), so the same bounded query
+removes the jobs of **every subject** of the matter, not only the operator's.
+Their count is added to `stateRecordsRemoved`; above the limit the operation
+refuses instead of deleting a partial set, and a provider error is reported as
+`job_cleanup`. The job record never stores a token: it keeps the server-side
+session key only until the job ends, and it is removed on success and on
+failure. Citation handles created for an agentic answer follow the existing
+state deletion.
+
 The report sets `indexCleanupPending=true` when documents were deleted. This
 is intentional: Bedrock Knowledge Bases may retain stale vectors until a
 subsequent bounded synchronization observes the deletion. The retrieval gate
@@ -75,7 +88,7 @@ idempotent; limits and conditional transitions are required.
 1. Keep the generic `GovernanceReport`; never log provider exceptions, object
    bodies, tokens, or export payloads.
 2. If a report contains `object_cleanup`, `metadata_cleanup`,
-   `review_cleanup`, or `state_cleanup`, retain the record and retry the same
+   `review_cleanup`, `state_cleanup`, or `job_cleanup`, retain the record and retry the same
    exact server-derived scope after the provider incident is resolved.
 3. If a binding or authorization failure is reported, stop and investigate;
    do not broaden the selector or retry with browser-supplied tenant data.

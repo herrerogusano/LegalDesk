@@ -121,6 +121,10 @@ class GovernanceReport:
         }
 
 
+class _ChatJobStore(Protocol):
+    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> int: ...
+
+
 class _ScopeStateStore(Protocol):
     def delete_scope_state(
         self, *, subject: str, tenant_id: str, matter_id: str, limit: int
@@ -179,6 +183,7 @@ class OperatorDataGovernanceService:
         object_storage: ObjectStorage,
         review_repository: ReviewTaskRepository,
         state_store: _ScopeStateStore | None = None,
+        job_store: _ChatJobStore | None = None,
         max_records: int = MAX_GOVERNANCE_RECORDS,
         clock: Any = lambda: datetime.now(timezone.utc),
     ) -> None:
@@ -188,6 +193,7 @@ class OperatorDataGovernanceService:
         self.object_storage = object_storage
         self.review_repository = review_repository
         self.state_store = state_store
+        self.job_store = job_store
         self.max_records = max_records
         self.clock = clock
 
@@ -339,6 +345,18 @@ class OperatorDataGovernanceService:
                 )
             except Exception:
                 failures.append(GovernanceFailure("state_cleanup"))
+        if self.job_store is not None:
+            # Agentic chat jobs (ADR-021 D4) hold the question and the rendered
+            # answer. DynamoDB TTL is not an exact delete, so the matter scope
+            # removes them explicitly, for every subject of the matter.
+            try:
+                state_removed += self.job_store.delete_for_matter(
+                    tenant_id=context.tenant_id,
+                    matter_id=context.matter_id,
+                    limit=min(self.max_records, 100),
+                )
+            except Exception:
+                failures.append(GovernanceFailure("job_cleanup"))
         return GovernanceReport(
             "delete_matter", context.tenant_id, context.matter_id,
             len(documents) + len(reviews), completed, tuple(failures), state_removed,
