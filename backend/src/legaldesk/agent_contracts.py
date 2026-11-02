@@ -179,7 +179,7 @@ def classify_field(*, presence: object, acceptance: object, has_value: bool) -> 
     pending human review, and anything absent, rejected or unavailable is empty.
     """
 
-    if not has_value or presence != FieldPresence.PRESENT.value:
+    if not has_value or presence != FieldPresence.PRESENT.value or not isinstance(acceptance, str):
         return FieldStatus.EMPTY
     if acceptance in _FACT_ACCEPTANCE:
         return FieldStatus.FACT
@@ -229,7 +229,7 @@ def parse_search_documents_result(payload: object) -> SearchDocumentsResult:
     if (
         payload["operationStatus"] != "ok"
         or not isinstance(answer, str) or not answer.strip() or len(answer) > MAX_RESULT_ANSWER_CHARS
-        or status not in {"answerable", "ambiguous", "insufficient_evidence"}
+        or not isinstance(status, str) or status not in {"answerable", "ambiguous", "insufficient_evidence"}
         or not isinstance(raw_citations, (list, tuple)) or len(raw_citations) > MAX_RESULT_CITATIONS
     ):
         raise AgentContractError("invalid_result")
@@ -320,7 +320,7 @@ def parse_extracted_fields_result(payload: object) -> ExtractedFieldsResult:
         if (
             not isinstance(document_id, str) or _OPAQUE_ID.fullmatch(document_id) is None or document_id in documents
             or not isinstance(name, str) or not name.strip() or len(name) > 512
-            or (doc_type is not None and doc_type not in {t.value for t in DocumentType})
+            or (doc_type is not None and (not isinstance(doc_type, str) or doc_type not in {t.value for t in DocumentType}))
             or not isinstance(raw_fields, (list, tuple)) or len(raw_fields) > len(IDP_FIELD_NAMES)
         ):
             raise AgentContractError("invalid_result")
@@ -329,12 +329,11 @@ def parse_extracted_fields_result(payload: object) -> ExtractedFieldsResult:
             if not isinstance(raw_field, Mapping) or set(raw_field) != {"name", "status", "value", "origin", "evidence"}:
                 raise AgentContractError("invalid_result")
             field_name, raw_status = raw_field["name"], raw_field["status"]
-            if field_name not in IDP_FIELD_NAMES or field_name in fields:
+            if not isinstance(field_name, str) or field_name not in IDP_FIELD_NAMES or field_name in fields:
                 raise AgentContractError("unknown_field")
-            try:
-                status = FieldStatus(raw_status)
-            except ValueError as exc:
-                raise AgentContractError("invalid_result") from exc
+            if not isinstance(raw_status, str) or raw_status not in {item.value for item in FieldStatus}:
+                raise AgentContractError("invalid_result")
+            status = FieldStatus(raw_status)
             value, origin = raw_field["value"], raw_field["origin"]
             raw_evidence = raw_field["evidence"]
             if (

@@ -287,6 +287,105 @@ class AnswerPlanContractTests(unittest.TestCase):
             AgentContractError("free text message")
 
 
+UNHASHABLE = ([], {}, [1], {"a": 1})
+
+
+def mutations(node, replacement):
+    """Copies of ``node`` with exactly one value, at any depth, replaced."""
+
+    if isinstance(node, dict):
+        for key in node:
+            yield {**node, key: replacement}
+            for sub in mutations(node[key], replacement):
+                yield {**node, key: sub}
+    elif isinstance(node, list):
+        for index in range(len(node)):
+            yield [*node[:index], replacement, *node[index + 1:]]
+            for sub in mutations(node[index], replacement):
+                yield [*node[:index], sub, *node[index + 1:]]
+
+
+class UnhashableValueTests(unittest.TestCase):
+    """PB-001: a list or dict where a string is expected is a contract error.
+
+    A ``TypeError`` from ``value in {...}`` would skip the D5 fallback, so every
+    parser must raise only ``AgentContractError`` whatever type each field has.
+    """
+
+    def assert_contract_error_only(self, parser, payload) -> int:
+        checked = 0
+        for replacement in UNHASHABLE:
+            for mutated in mutations(payload, replacement):
+                with self.subTest(replacement=replacement):
+                    try:
+                        parser(mutated)
+                    except AgentContractError:
+                        pass  # the only exception a parser may raise
+                    checked += 1
+        return checked
+
+    def test_search_documents_result_with_any_field_replaced_by_a_list_or_dict(self) -> None:
+        payload = ToolResultParserTests.search_payload(None)
+        self.assertGreater(self.assert_contract_error_only(contracts.parse_search_documents_result, payload), 30)
+        with self.assertRaises(AgentContractError):
+            contracts.parse_search_documents_result({**payload, "evidenceStatus": ["answerable"]})
+        with self.assertRaises(AgentContractError):
+            contracts.parse_search_documents_result({**payload, "operationStatus": {"ok": 1}})
+
+    def test_extracted_fields_result_with_any_field_replaced_by_a_list_or_dict(self) -> None:
+        payload = ToolResultParserTests.fields_payload(None)
+        self.assertGreater(self.assert_contract_error_only(contracts.parse_extracted_fields_result, payload), 30)
+        for path in (("documents", 0, "documentType"), ("documents", 0, "fields", 0, "status"),
+                     ("documents", 0, "fields", 0, "name"), ("documents", 0, "fields", 0, "origin")):
+            broken = json.loads(json.dumps(payload))
+            node = broken
+            for key in path[:-1]:
+                node = node[key]
+            node[path[-1]] = ["x"]
+            with self.subTest(path=path), self.assertRaises(AgentContractError):
+                contracts.parse_extracted_fields_result(broken)
+
+    def test_answer_plan_with_any_field_replaced_by_a_list_or_dict(self) -> None:
+        plan_payload = valid_plan()
+        plan_payload["blocks"][0]["groups"].append(
+            {"criterion": {"id": "document_type_is", "params": {"documentType": "CONTRACT"}},
+             "refs": [{"documentId": "doc-2", "field": "amount"}]}
+        )
+        plan_payload["blocks"][0]["groups"].append(
+            {"criterion": {"id": "amount_in_range", "params": {"min": 1, "max": 5}},
+             "refs": [{"documentId": "doc-3", "field": "amount"}]}
+        )
+        self.assertGreater(self.assert_contract_error_only(parse_answer_plan, plan_payload), 100)
+        for path in (("intro",), ("blocks", 1, "transitionBefore"), ("blocks", 0, "order", "by"),
+                     ("blocks", 0, "order", "direction"), ("blocks", 0, "aggregates", 0, "type"),
+                     ("blocks", 0, "groups", 0, "criterion", "id"), ("blocks", 0, "groups", 0, "refs", 0, "field"),
+                     ("blocks", 0, "groups", 1, "criterion", "params", "documentType"),
+                     ("suggestReview", "reasonCode"), ("blocks", 0, "type"), ("version",)):
+            broken = json.loads(json.dumps(plan_payload))
+            node = broken
+            for key in path[:-1]:
+                node = node[key]
+            node[path[-1]] = ["x"]
+            with self.subTest(path=path), self.assertRaises(AgentContractError):
+                parse_answer_plan(broken)
+
+    def test_tool_arguments_and_field_classification_tolerate_unhashable_values(self) -> None:
+        for value in UNHASHABLE:
+            with self.subTest(value=value):
+                for arguments in ({"documentIds": [value]}, {"documentIds": ["a"], "fieldNames": [value]},
+                                  {"documentIds": value}, {"documentIds": ["a"], "fieldNames": value}):
+                    with self.assertRaises(AgentContractError):
+                        contracts.parse_get_extracted_fields_arguments(arguments)
+                self.assertIs(
+                    contracts.classify_field(presence="PRESENT", acceptance=value, has_value=True),
+                    contracts.FieldStatus.EMPTY,
+                )
+                self.assertIs(
+                    contracts.classify_field(presence=value, acceptance="AUTO_ACCEPTED", has_value=True),
+                    contracts.FieldStatus.EMPTY,
+                )
+
+
 class AgentPromptTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

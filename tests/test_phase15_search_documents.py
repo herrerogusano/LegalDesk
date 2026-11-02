@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import sys
 import time
 import unittest
@@ -166,6 +167,224 @@ class SearchDocumentsLambdaTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertIsNone(lambda_module._service_from_environment())
             self.assertEqual(lambda_module.search_documents_lambda_handler(self.event(), None), {"error": "service_unavailable"})
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class Context:
+    def __init__(self, remaining_ms: int) -> None:
+        self.remaining_ms = remaining_ms
+
+    def get_remaining_time_in_millis(self) -> int:
+        return self.remaining_ms
+
+
+class Recorder:
+    def __init__(self) -> None:
+        self.events = []
+
+    def record(self, event) -> None:
+        self.events.append(event)
+
+
+class SlowStage:
+    """Wrap a fake stage so that each call consumes simulated time."""
+
+    def __init__(self, inner, clock, seconds, method):
+        self.inner, self.clock, self.seconds, self.method = inner, clock, seconds, method
+        self.calls = 0
+
+    def __getattr__(self, name):
+        attribute = getattr(self.inner, name)
+        if name != self.method:
+            return attribute
+
+        def call(*args, **kwargs):
+            self.calls += 1
+            self.clock.now += self.seconds
+            return attribute(*args, **kwargs)
+
+        return call
+
+
+class PipelineDeadlineTests(unittest.TestCase):
+    """PB-002: the whole pipeline has a deadline and ends with a clean error."""
+
+    put_grant = SearchDocumentsLambdaTests.put_grant
+    event = SearchDocumentsLambdaTests.event
+
+    def setUp(self) -> None:
+        SearchDocumentsLambdaTests.setUp(self)
+        self.clock = FakeClock()
+        self.sink = Recorder()
+        self.service = dataclasses.replace(self.service, telemetry_sink=self.sink)
+
+    def slow(self, **seconds):
+        stages = {"retrieval_client": "retrieve", "guardrail_client": "apply_guardrail",
+                  "evidence_resolver": "resolve", "answer_writer": "write", "grounding_validator": "validate"}
+        wrapped = {name: SlowStage(getattr(self.service, name), self.clock, seconds[name], method)
+                   for name, method in stages.items() if name in seconds}
+        self.service = dataclasses.replace(self.service, **wrapped)
+        return wrapped
+
+    def call_with(self, remaining_ms=None, event=None):
+        context = Context(remaining_ms) if remaining_ms is not None else None
+        with patch.object(lambda_module, "_service_from_environment", return_value=(self.service, self.grants)):
+            return lambda_module.search_documents_lambda_handler(event or self.event(), context, clock=self.clock)
+
+    def final_tool_event(self):
+        events = [item for item in self.sink.events if item.event_type.value == "tool"]
+        return events[0], events[-1]
+
+    def test_budget_constants_are_consistent_with_the_template_and_the_stage_timeouts(self) -> None:
+        template = (ROOT / "infra" / "cloudformation" / "phase-08-gateway-mcp.yaml").read_text(encoding="utf-8")
+        function = template.split("\n  SearchDocumentsFunction:\n", 1)[1].split("\n  SearchDocumentsGatewayTarget:", 1)[0]
+        self.assertIn(f"Timeout: {lambda_module.SEARCH_TOOL_BUDGET_SECONDS}", function)
+        usable = lambda_module.SEARCH_TOOL_BUDGET_SECONDS - lambda_module.SAFETY_MARGIN_SECONDS
+        # One model call must always be startable on a fresh deadline, and a
+        # single stage can never outlast the usable budget.
+        for stage in (lambda_module.MODEL_CALL_SECONDS, lambda_module.GUARDRAIL_CALL_SECONDS,
+                      lambda_module.RETRIEVE_CALL_SECONDS):
+            self.assertLess(stage, usable)
+        self.assertGreater(lambda_module.SAFETY_MARGIN_SECONDS, 0)
+
+    def test_a_pipeline_within_budget_is_unchanged(self) -> None:
+        self.slow(retrieval_client=1, evidence_resolver=2, answer_writer=2)
+        output = self.call_with(remaining_ms=25_000)
+        self.assertEqual(output["operationStatus"], "ok")
+        first, last = self.final_tool_event()
+        self.assertEqual((first.outcome.value, last.outcome.value), ("started", "succeeded"))
+
+    def test_the_deadline_is_our_budget_even_when_the_platform_leaves_more(self) -> None:
+        deadline = lambda_module.SearchDeadline.for_invocation(Context(900_000), clock=self.clock)
+        self.assertEqual(deadline.remaining(), lambda_module.SEARCH_TOOL_BUDGET_SECONDS - lambda_module.SAFETY_MARGIN_SECONDS)
+        self.assertEqual(
+            lambda_module.SearchDeadline.for_invocation(None, clock=self.clock).remaining(),
+            lambda_module.SEARCH_TOOL_BUDGET_SECONDS - lambda_module.SAFETY_MARGIN_SECONDS,
+        )
+
+    def test_the_deadline_follows_what_the_platform_says_is_left(self) -> None:
+        deadline = lambda_module.SearchDeadline.for_invocation(Context(9_000), clock=self.clock)
+        self.assertEqual(deadline.remaining(), 9 - lambda_module.SAFETY_MARGIN_SECONDS)
+
+    def test_a_late_stage_that_no_longer_fits_returns_a_clean_timeout_and_is_not_started(self) -> None:
+        # Usable budget 22 s: retrieval 1 s, resolver 9 s, writer 9 s -> 3 s left,
+        # but the grounding Guardrail needs 5 s to be started.
+        stages = self.slow(retrieval_client=1, evidence_resolver=9, answer_writer=9, grounding_validator=1)
+        output = self.call_with(remaining_ms=25_000)
+        self.assertEqual(output, {"error": "timeout"})
+        self.assertEqual(stages["grounding_validator"].calls, 0)
+        first, last = self.final_tool_event()
+        self.assertEqual((first.outcome.value, last.outcome.value), ("started", "error"))
+        self.assertEqual(last.error_code.value, "timeout")
+
+    def test_a_stage_is_refused_when_the_platform_has_little_time_left(self) -> None:
+        stages = self.slow(retrieval_client=1)
+        output = self.call_with(remaining_ms=6_000)  # 3 s usable: the input Guardrail needs 5 s
+        self.assertEqual(output, {"error": "timeout"})
+        self.assertEqual(stages["retrieval_client"].calls, 0)
+        self.assertEqual(self.guardrail.calls, [])
+        self.assertEqual(self.final_tool_event()[1].error_code.value, "timeout")
+
+    def test_no_guarded_stage_ever_starts_without_room_for_its_own_timeout(self) -> None:
+        needs = {"retrieve": lambda_module.RETRIEVE_CALL_SECONDS, "resolve": lambda_module.MODEL_CALL_SECONDS,
+                 "write": lambda_module.MODEL_CALL_SECONDS, "validate": lambda_module.GUARDRAIL_CALL_SECONDS}
+        seen = []
+
+        class Probe:
+            def __init__(self, inner, method, deadline_holder):
+                self.inner, self.method, self.holder = inner, method, deadline_holder
+
+            def __getattr__(self, name):
+                attribute = getattr(self.inner, name)
+                if name != self.method:
+                    return attribute
+
+                def call(*args, **kwargs):
+                    seen.append((self.method, self.holder["deadline"].remaining()))
+                    self.holder["clock"].now += 4.5
+                    return attribute(*args, **kwargs)
+
+                return call
+
+        holder = {"clock": self.clock}
+        original = lambda_module._with_deadline
+
+        def capture(service, deadline):
+            holder["deadline"] = deadline
+            # The probe sits inside the guard: it only sees calls the guard let start.
+            probed = dataclasses.replace(service, **{
+                name: Probe(getattr(service, name), method, holder)
+                for name, method in (("retrieval_client", "retrieve"), ("evidence_resolver", "resolve"),
+                                     ("answer_writer", "write"), ("grounding_validator", "validate"))
+            })
+            return original(probed, deadline)
+
+        with patch.object(lambda_module, "_with_deadline", capture):
+            self.call_with(remaining_ms=25_000)
+        self.assertTrue(seen)
+        for method, remaining in seen:
+            self.assertGreaterEqual(remaining, needs[method], method)
+
+    def test_a_deadline_hit_in_the_first_stage_is_a_timeout_not_a_service_error(self) -> None:
+        # The input Guardrail runs inside answer_question; a refusal there must
+        # not escape as a generic failure.
+        output = self.call_with(remaining_ms=3_500)
+        self.assertEqual(output, {"error": "timeout"})
+        self.assertEqual(self.retrieval.calls, [])
+
+    def test_a_real_failure_closes_the_telemetry_span_and_is_not_reported_as_a_timeout(self) -> None:
+        class Broken:
+            def retrieve(self, **kwargs):
+                raise RuntimeError("synthetic outage")
+
+        self.service = dataclasses.replace(self.service, retrieval_client=Broken())
+        output = self.call_with(remaining_ms=25_000)
+        self.assertEqual((output["operationStatus"], output["citations"]), ("error", []))
+        self.assertEqual(self.final_tool_event()[1].outcome.value, "error")
+        self.assertNotIn("timeout", [getattr(item.error_code, "value", None) for item in self.sink.events])
+
+    def test_sdk_clients_are_built_with_per_call_timeouts_that_fit_the_deadline(self) -> None:
+        configs = {}
+
+        def client(service_name, **kwargs):
+            configs.setdefault(service_name, []).append(kwargs["config"])
+            return object()
+
+        class Resource:
+            def __init__(self, service_name, **kwargs):
+                configs.setdefault(service_name, []).append(kwargs["config"])
+
+            def Table(self, name):
+                return object()
+
+        environment = {
+            "DOCUMENT_METADATA_TABLE_NAME": "table", "LEGALDESK_SOURCE_BUCKET": "bucket",
+            "LEGALDESK_KNOWLEDGE_BASE_ID": "KBID", "LEGALDESK_GUARDRAIL_ID": "guardrail",
+            "LEGALDESK_GUARDRAIL_VERSION": "1", "LEGALDESK_RESOLVER_MODEL_ID": "arn:resolver",
+            "LEGALDESK_WRITER_MODEL_ID": "arn:writer",
+        }
+        with patch.dict("os.environ", environment, clear=True), \
+                patch("boto3.client", side_effect=client), patch("boto3.resource", side_effect=Resource):
+            built = lambda_module._service_from_environment()
+        self.assertIsNotNone(built)
+        usable = lambda_module.SEARCH_TOOL_BUDGET_SECONDS - lambda_module.SAFETY_MARGIN_SECONDS
+        all_configs = [config for items in configs.values() for config in items]
+        self.assertEqual(len(all_configs), 5)  # model, guardrail, retrieve, dynamodb, s3
+        self.assertEqual(
+            sorted(config.read_timeout for config in configs["bedrock-runtime"]),
+            sorted([lambda_module.GUARDRAIL_CALL_SECONDS, lambda_module.MODEL_CALL_SECONDS]),
+        )
+        for config in all_configs:
+            self.assertLess(config.read_timeout, usable)
+            self.assertEqual(config.retries["total_max_attempts"], 1)
+            self.assertEqual(config.connect_timeout, lambda_module.CONNECT_SECONDS)
 
 
 if __name__ == "__main__":

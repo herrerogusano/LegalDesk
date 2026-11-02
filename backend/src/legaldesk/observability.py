@@ -75,6 +75,7 @@ class TelemetryErrorCode(StrEnum):
     RETRIEVAL_INVALID_RESPONSE = "retrieval_invalid_response"
     MODEL_FAILED = "model_failed"
     SERVICE_UNAVAILABLE = "service_unavailable"
+    TIMEOUT = "timeout"
     INVALID_REQUEST = "invalid_request"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     GUARDRAIL_ERROR = "guardrail_error"
