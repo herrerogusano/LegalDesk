@@ -332,6 +332,33 @@ class AgentChatWorker:
         except Exception:
             return None  # degraded: answer without context rather than fail the question
 
+    @staticmethod
+    def resolve_loop(loop: Any) -> tuple[AnswerOutput, LoopOutcome, int]:
+        """Parse the tool results of one agent loop and apply the D5 output tree.
+
+        Pure: no I/O. It is also what the routing eval (``evals/phase15_routing_eval.py``)
+        runs against a real loop, so production and eval cannot drift apart.
+        Returns ``(output, loop outcome, number of invalid tool results)``.
+        """
+
+        search, fields, inventories, invalid = [], [], [], 0
+        for call in loop.tool_calls:
+            if call.status != "SUCCESS":
+                continue
+            try:
+                if call.short_name == contracts.SEARCH_DOCUMENTS:
+                    search.append((call.tool_use_id, contracts.parse_search_documents_result(call.payload)))
+                elif call.short_name == contracts.GET_EXTRACTED_FIELDS:
+                    fields.append(contracts.parse_extracted_fields_result(call.payload))
+                elif call.short_name == contracts.LIST_MATTER_DOCUMENTS:
+                    inventories.append((call.tool_use_id, contracts.parse_list_matter_documents_result(call.payload)))
+            except contracts.AgentContractError:
+                invalid += 1
+        evidence = LoopEvidence.from_results(search, fields, inventories)
+        outcome = LoopOutcome(loop.loop_outcome)
+        output = resolve_output(loop=outcome, plan=loop.text if outcome is LoopOutcome.COMPLETED else None, evidence=evidence)
+        return output, outcome, invalid
+
     def _compute(self, job: ChatJob) -> _Computed:
         timer = SegmentTimer()
         with timer.segment("session"):
@@ -343,22 +370,7 @@ class AgentChatWorker:
         with timer.segment("agent"):
             loop = self.invoke_agent(binding, job.question or "", history or ())
         with timer.segment("resolve"):
-            search, fields, inventories, invalid = [], [], [], 0
-            for call in loop.tool_calls:
-                if call.status != "SUCCESS":
-                    continue
-                try:
-                    if call.short_name == contracts.SEARCH_DOCUMENTS:
-                        search.append((call.tool_use_id, contracts.parse_search_documents_result(call.payload)))
-                    elif call.short_name == contracts.GET_EXTRACTED_FIELDS:
-                        fields.append(contracts.parse_extracted_fields_result(call.payload))
-                    elif call.short_name == contracts.LIST_MATTER_DOCUMENTS:
-                        inventories.append((call.tool_use_id, contracts.parse_list_matter_documents_result(call.payload)))
-                except contracts.AgentContractError:
-                    invalid += 1
-            evidence = LoopEvidence.from_results(search, fields, inventories)
-            outcome = LoopOutcome(loop.loop_outcome)
-            output = resolve_output(loop=outcome, plan=loop.text if outcome is LoopOutcome.COMPLETED else None, evidence=evidence)
+            output, outcome, invalid = self.resolve_loop(loop)
         sent = getattr(loop, "history_messages", len(history or ()))
         meta: dict[str, object] = {
             "loopOutcome": outcome.value, "stopReason": getattr(loop, "stop_reason", None), "iterations": loop.iterations,
