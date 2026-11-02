@@ -398,19 +398,20 @@ Tools visibles para el agente, todas por Gateway:
   evidence resolver → answer writer → Guardrail → citas validadas) y devuelve
   la respuesta estructurada. Tiene su propio target para que el IAM de KB,
   modelo y Guardrail no se añada a la Lambda MCP.
-- Las tools de review no son visibles para el agente. Como mucho puede
-  *proponer* una revisión: su salida final incluye un campo opcional
-  `suggestReview` con un motivo de la lista cerrada de `create_review_task`.
-  La UI lo muestra como botón y, si el usuario lo pulsa, se usa el flujo
-  determinista actual de creación de revisión (ADR-016/ADR-017).
-  **Cada error va a donde se corrige** (decisión del propietario, 2026-11-02):
-  - El botón de revisión solo se ofrece para los **bloques de texto**
-    (interpretación grounded), con el mismo snapshot de hoy.
-  - Los **bloques de datos** muestran junto a cada valor un enlace a la
-    **revisión IDP de ese campo**, que corrige el dato en origen para todas
-    las respuestas futuras.
-  - No se crea un tipo de revisión nuevo para respuestas de datos. Revisar la
-    respuesta no corregiría el campo guardado.
+- Las tools de review no son visibles para el agente y **el chat agentic no
+  propone revisiones** (decisión del propietario, 2026-11-02). La cola de
+  revisión de respuestas no cierra el círculo: no corrige datos ni devuelve la
+  respuesta del revisor a la conversación, y en la beta no hay un rol de
+  revisor distinto del usuario. El agente no la promueve; qué hacer con ella
+  (darle sentido con roles y respuesta de vuelta, dejarla como pieza didáctica
+  o retirarla) queda como decisión de producto aparte.
+- **Verificación de datos**: cada línea de un bloque de datos lleva
+  `{documentId, fieldName}`. La UI enlaza a la revisión IDP si el campo está
+  pendiente de revisión, o al panel de datos extraídos del documento (valor,
+  página y cita) si está aceptado. No se crea un flujo nuevo de corrección.
+  Corregir en origen un campo aceptado e incorrecto requeriría que el usuario
+  pudiera abrir revisiones IDP, que hoy solo crea el pipeline (ADR-020). Queda
+  registrado como mejora aparte, con su propio ADR.
 - **Citas inspeccionables**: `search_documents` devuelve sus citas en el
   resultado y el worker, que conoce sujeto, matter y conversación, crea los
   handles de cita con el mismo mecanismo y TTL que hoy (`CitationHandle`). El

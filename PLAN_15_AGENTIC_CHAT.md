@@ -42,8 +42,8 @@ de pruebas en vivo.
 2. Contrato de salida final del agente: plan de respuesta JSON con bloques
    (`data`, `text`). Para `data`: referencias a campos, grupos con criterios
    de una lista cerrada, orden y agregados pedidos por tipo. Además,
-   introducción y transiciones de una lista cerrada y `suggestReview`
-   opcional. Sin texto libre.
+   introducción y transiciones de una lista cerrada. Sin texto libre y sin
+   propuesta de revisión (ADR-021 D2).
 3. Plantillas versionadas del backend para redactar líneas de datos,
    agregados, introducciones y transiciones (en `prompts/` o junto al
    validador, fijadas por hash).
@@ -117,9 +117,9 @@ botones.
 Envío y sondeo, estado "pensando…" y, pasados unos 45 s, "está tardando más de
 lo habitual…" (tiempos esperados: 15–35 s típicos, 40–60 s en frío; el plazo
 de 5 minutos es solo el corte de seguridad), render de bloques `data` y `text` con sus
-citas. Botón de `suggestReview` **solo en bloques de texto**, que usa el
-flujo de revisión existente. En bloques de datos, enlace por campo a la
-revisión IDP de ese campo (ADR-021 D2). Mensaje de "vuelve a enviar la
+citas. Sin botón de revisión en el chat agentic. En bloques de datos, enlace
+por campo "ver de dónde sale este dato": a la revisión IDP si está pendiente,
+o al panel de datos extraídos del documento si está aceptado (ADR-021 D2). Mensaje de "vuelve a enviar la
 pregunta" cuando un job falla por sesión.
 
 ### T7. Observabilidad
