@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import copy
+import dataclasses
 import json
 import sys
 import unittest
@@ -431,11 +431,11 @@ class CitationHandleTests(unittest.TestCase):
     def test_duplicates_collapse_and_malformed_or_oversized_input_is_rejected(self) -> None:
         citations = self.citations()
         self.assertEqual(len(self.build(tuple(citations) * 2)), 2)
-        too_many = tuple(copy.replace(citations[0], citation_id=f"c{index}") for index in range(33))
+        too_many = tuple(dataclasses.replace(citations[0], citation_id=f"c{index}") for index in range(33))
         with self.assertRaises(ValueError):
             self.build(too_many)
         with self.assertRaises(ValueError):
-            self.build((copy.replace(citations[0], passage="  "),))
+            self.build((dataclasses.replace(citations[0], passage="  "),))
         for name in ("subject", "tenant_id", "matter_id", "conversation_id", "correlation_id"):
             with self.subTest(name), self.assertRaises(ValueError):
                 self.build(**{name: ""})

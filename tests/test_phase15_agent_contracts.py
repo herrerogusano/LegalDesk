@@ -384,7 +384,7 @@ class ClientCannotOverrideAgentConfigurationTests(unittest.TestCase):
             conversation_id="conversation-a", session_selector="session-a",
             authorization_store=auth, conversation_store=bindings,
             invocation_repository=InMemoryGatewayGrantRepository(),
-            correlation_id="11111111-1111-4111-8111-111111111111",
+            correlation_id="11111111-1111-4111-8111-111111111111", application_action="agent_chat",
         )
         artifact = FileSystemSystemPromptProvider(AGENT_PROMPT_PATH).load()
         HarnessInvoker(
@@ -397,7 +397,11 @@ class ClientCannotOverrideAgentConfigurationTests(unittest.TestCase):
         self.assertEqual(request["systemPrompt"], [{"text": artifact.content}])
         self.assertEqual(request["harnessArn"], "arn:test")
         self.assertEqual(request["maxIterations"], 3)
-        self.assertEqual(request["allowedTools"], list(binding.allowed_tools))
+        self.assertEqual(request["allowedTools"], [
+            "@legaldesk_gateway/metadata-mcp___list_matter_documents",
+            "@legaldesk_gateway/metadata-mcp___get_extracted_fields",
+            "@legaldesk_gateway/search-documents___search_documents",
+        ])
         self.assertEqual(len(request["tools"]), 1)
         for name in ("model", "modelId", "skills", "memory"):
             self.assertNotIn(name, request)

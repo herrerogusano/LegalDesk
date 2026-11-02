@@ -361,7 +361,7 @@ def _sort_key_by_name(line: _Line) -> tuple[str, str, str]:
     return line.document.document_name.casefold(), line.document.document_id, line.extracted.name
 
 
-def _order_lines(lines: list[_Line], order: Order | None, documents: Mapping[str, DocumentFields]) -> list[_Line]:
+def _order_lines(lines: list[_Line], order: Order | None) -> list[_Line]:
     if order is None:
         return lines
     reverse = order.direction == "desc"
@@ -388,9 +388,7 @@ def _order_lines(lines: list[_Line], order: Order | None, documents: Mapping[str
     return ordered
 
 
-def _aggregate_line(
-    request: AggregateRequest, lines: list[_Line], documents: Mapping[str, DocumentFields]
-) -> AggregateLine:
+def _aggregate_line(request: AggregateRequest, lines: list[_Line]) -> AggregateLine:
     if request.type == "count":
         scoped = [line for line in lines if request.field is None or line.extracted.name == request.field]
         if not scoped:
@@ -438,7 +436,7 @@ def render_data_block(block: DataBlock, evidence: LoopEvidence) -> tuple[OutputB
             line_citations = _idp_citations(document, extracted)
             lines.append(_Line(document, extracted, extracted.status is FieldStatus.PENDING_REVIEW or decided_on == "pending",
                                line_citations))
-        lines = _order_lines(lines, block.order, documents)
+        lines = _order_lines(lines, block.order)
         all_lines.extend(lines)
         groups.append(DataGroup(group_title(group.criterion), tuple(
             DataLine(
@@ -451,7 +449,7 @@ def render_data_block(block: DataBlock, evidence: LoopEvidence) -> tuple[OutputB
         )))
         for line in lines:
             citations.update({c.citation_id: c for c in line.citations})
-    aggregates = tuple(_aggregate_line(request, all_lines, documents) for request in block.aggregates)
+    aggregates = tuple(_aggregate_line(request, all_lines) for request in block.aggregates)
     if not citations:
         raise _BlockInvalid(BlockError.MISSING_CITATION)
     return (
