@@ -195,6 +195,32 @@ class DataGovernanceTests(unittest.TestCase):
         self.assertIsNotNone(jobs.get(JobKey(TENANT, "mat_other", "other-matter")))
         self.assertIsNotNone(jobs.get(JobKey("tnt_other", MATTER, "other-tenant")))
 
+    def test_more_jobs_than_the_limit_are_deleted_over_repeated_calls_never_reported_complete_early(self) -> None:
+        from legaldesk.agent_jobs import InMemoryChatJobStore, JobKey, new_job
+
+        jobs = InMemoryChatJobStore(clock=lambda: NOW.timestamp())
+        for index in range(25):
+            jobs.create(new_job(job_id=f"job-{index:02d}", subject=f"idp|user-{index % 3}", tenant_id=TENANT, matter_id=MATTER,
+                                conversation_id="c", session_selector="s", correlation_id="x", question="q",
+                                session_ref="r", now=NOW.timestamp()))
+        jobs.create(new_job(job_id="other", subject=SUBJECT, tenant_id=TENANT, matter_id="mat_other", conversation_id="c",
+                            session_selector="s", correlation_id="x", question="q", session_ref="r", now=NOW.timestamp()))
+        service = OperatorDataGovernanceService(
+            metadata_repository=self.metadata, object_storage=self.storage, review_repository=self.reviews,
+            job_store=jobs, max_records=10, clock=lambda: NOW,
+        )
+        outcomes = []
+        for _ in range(5):
+            report = service.delete_matter(self.scope)
+            outcomes.append((report.ok, report.state_records_removed, [f.target for f in report.failures]))
+            if report.ok:
+                break
+        self.assertEqual(outcomes, [
+            (False, 10, ["job_cleanup_incomplete"]), (False, 10, ["job_cleanup_incomplete"]), (True, 5, []),
+        ])
+        self.assertIsNotNone(jobs.get(JobKey(TENANT, "mat_other", "other")))
+        self.assertEqual(service.delete_matter(self.scope).failures, ())  # nothing left: repeating is a clean no-op
+
     def test_job_cleanup_failure_is_reported_for_retry(self) -> None:
         class Broken:
             def delete_for_matter(self, **_kwargs: object) -> int:

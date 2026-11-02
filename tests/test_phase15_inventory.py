@@ -122,11 +122,21 @@ class InventoryContractTests(unittest.TestCase):
         self.assertEqual(len(listing(*DOCS).documents), 3)
         row = {"documentId": "d", "name": "n", "mediaType": "x", "status": "INDEXED", "uploadedAt": "t"}
         for bad in (
-            {"documents": "nope"}, {"documents": [dict(row, status="WEIRD")]}, {"documents": [dict(row, name=" ")]},
+            {"documents": "nope"}, {"documents": [dict(row, status="weird status")]}, {"documents": [dict(row, status="X" * 40)]},
+            {"documents": [dict(row, status="INDEXED\n")]}, {"documents": [dict(row, status="")]}, {"documents": [dict(row, name=" ")]},
             {"documents": [row, row]}, {"documents": [dict(row, documentId="../x")]}, None,
         ):
             with self.assertRaises(contracts.AgentContractError, msg=str(bad)):
                 contracts.parse_list_matter_documents_result(bad)
+
+    def test_an_unknown_lifecycle_status_gets_a_generic_label_and_never_raises(self) -> None:
+        row = {"documentId": "d", "name": "Nuevo.pdf", "mediaType": "application/pdf", "status": "QUARANTINED", "uploadedAt": "t"}
+        inventory = contracts.parse_list_matter_documents_result({"documents": [row]})
+        result = run({}, inventory=inventory)
+        self.assertEqual(result.blocks[0].groups[0].lines[0].text, "Nuevo.pdf: PDF, estado no reconocido")
+        self.assertNotIn("QUARANTINED", result.plain_text())
+        filtered = run({"statusIs": ["INDEXED"]}, inventory=inventory)  # filters only know the closed list
+        self.assertEqual(filtered.blocks[0].text, templates.NOTICES["inventory_empty"])
 
     def test_prompt_documents_the_inventory_vocabulary(self) -> None:
         prompt = " ".join(FileSystemSystemPromptProvider(ROOT / "prompts" / "legaldesk-agent.md").load().content.split())

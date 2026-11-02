@@ -58,9 +58,13 @@ succeeded, and DynamoDB TTL (1 hour) is not an exact delete, so matter deletion
 also removes them. They live under one partition per tenant and matter
 (`LEGALDESK#P15#CHATJOB#<tenant>#MATTER#<matter>`), so the same bounded query
 removes the jobs of **every subject** of the matter, not only the operator's.
-Their count is added to `stateRecordsRemoved`; above the limit the operation
-refuses instead of deleting a partial set, and a provider error is reported as
-`job_cleanup`. The job record never stores a token or the session cookie value: it keeps only
+Jobs are deleted in bounded batches (at most the operation limit, 100, per
+call). Their count is added to `stateRecordsRemoved`. If more jobs remain after
+a batch, the report carries the retryable failure `job_cleanup_incomplete` and
+is **not** `ok`: a partial deletion is never reported as complete. Repeat the
+same `delete_matter` call until it reports no failure; each call removes the
+next batch, so a matter with any number of jobs ends up empty without waiting
+for TTL. A provider error is reported as `job_cleanup`. The job record never stores a token or the session cookie value: it keeps only
 a derived reference (the digest the durable store already keys sessions by)
 until the job ends, and it is removed on success and on failure. Citation handles created for an agentic answer follow the existing
 state deletion.
@@ -88,7 +92,7 @@ idempotent; limits and conditional transitions are required.
 1. Keep the generic `GovernanceReport`; never log provider exceptions, object
    bodies, tokens, or export payloads.
 2. If a report contains `object_cleanup`, `metadata_cleanup`,
-   `review_cleanup`, `state_cleanup`, or `job_cleanup`, retain the record and retry the same
+   `review_cleanup`, `state_cleanup`, `job_cleanup`, or `job_cleanup_incomplete`, retain the record and retry the same
    exact server-derived scope after the provider incident is resolved.
 3. If a binding or authorization failure is reported, stop and investigate;
    do not broaden the selector or retry with browser-supplied tenant data.

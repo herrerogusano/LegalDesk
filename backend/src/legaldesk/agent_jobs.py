@@ -147,6 +147,18 @@ def new_job(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class JobDeletion:
+    """One bounded deletion batch. ``complete`` is false while jobs of the matter remain.
+
+    A partial delete is never reported as complete: the operator repeats the same call
+    until ``complete`` is true.
+    """
+
+    removed: int
+    complete: bool
+
+
 class ChatJobStore(Protocol):
     def create(self, job: ChatJob) -> None: ...
 
@@ -164,7 +176,7 @@ class ChatJobStore(Protocol):
 
     def expire_if_due(self, key: JobKey, *, now: float) -> tuple[ChatJob | None, bool]: ...
 
-    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> int: ...
+    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> JobDeletion: ...
 
 
 def _encode_result(result: Mapping[str, object]) -> str:
@@ -280,15 +292,15 @@ class InMemoryChatJobStore:
             failed_now = due is not None and self._fail_locked(key, due)
             return self._jobs[key], failed_now
 
-    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> int:
+    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> JobDeletion:
         _check_limit(limit)
         with self._lock:
-            keys = [key for key in self._jobs if (key.tenant_id, key.matter_id) == (tenant_id, matter_id)]
-            if len(keys) > limit:
-                raise ValueError("job deletion limit exceeded")
-            for key in keys:
+            keys = sorted((key for key in self._jobs if (key.tenant_id, key.matter_id) == (tenant_id, matter_id)),
+                          key=lambda key: key.job_id)
+            batch = keys[:limit]
+            for key in batch:
                 del self._jobs[key]
-            return len(keys)
+            return JobDeletion(len(batch), len(keys) <= limit)
 
 
 def _check_limit(limit: int) -> None:
@@ -498,13 +510,19 @@ class DynamoDBChatJobStore:
         failed_now = self.fail(key, due)
         return self.get(key, now=now), failed_now
 
-    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> int:
+    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> JobDeletion:
+        """Delete at most ``limit`` jobs of the matter and say whether any remain.
+
+        A page ends at 1 MB of *evaluated* data (a succeeded job can hold ~200 KB), so a
+        short page proves nothing: pages are followed until ``limit + 1`` keys are seen
+        (more remain) or ``LastEvaluatedKey`` is absent (that was all of them). A matter
+        with more than ``limit`` jobs is therefore removed over several calls, each
+        bounded, and only the call that leaves nothing behind reports ``complete``.
+        """
+
         _check_limit(limit)
         from boto3.dynamodb.conditions import Key
 
-        # A page ends at 1 MB of *evaluated* data (a succeeded job can hold ~200 KB), so a
-        # short page proves nothing. Read every page and apply the limit to the accumulated
-        # total before deleting anything: either the whole matter is removed or nothing is.
         keys: list[dict[str, str]] = []
         start: dict[str, object] | None = None
         while True:
@@ -522,18 +540,17 @@ class DynamoDBChatJobStore:
             for item in response.get("Items", ()):
                 if isinstance(item, Mapping) and isinstance(item.get("pk"), str) and isinstance(item.get("sk"), str):
                     keys.append({"pk": item["pk"], "sk": item["sk"]})
-            if len(keys) > limit:
-                raise ValueError("job deletion limit exceeded")
             start = response.get("LastEvaluatedKey")
-            if not start:
+            if len(keys) > limit or not start:
                 break
-        for key in keys:
+        batch = keys[:limit]
+        for key in batch:
             self.table.delete_item(Key=key)
-        return len(keys)
+        return JobDeletion(len(batch), len(keys) <= limit)
 
 
 __all__ = [
     "ACTIVE", "ATTEMPT_WINDOW_SECONDS", "ChatJob", "ChatJobStore", "ClaimOutcome", "DynamoDBChatJobStore",
-    "FailureCode", "InMemoryChatJobStore", "JOB_TOTAL_DEADLINE_SECONDS", "JOB_TTL_SECONDS", "JobKey", "JobStatus",
+    "FailureCode", "InMemoryChatJobStore", "JOB_TOTAL_DEADLINE_SECONDS", "JOB_TTL_SECONDS", "JobDeletion", "JobKey", "JobStatus",
     "MAX_ATTEMPTS", "MIN_SESSION_REMAINING_SECONDS", "RETRY_VISIBILITY_SECONDS", "TERMINAL", "new_job",
 ]

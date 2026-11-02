@@ -365,6 +365,9 @@ def parse_extracted_fields_result(payload: object) -> ExtractedFieldsResult:
 # ----------------------------------------------------- inventory (listing)
 
 _DOCUMENT_STATUSES = ("PENDING_UPLOAD", "UPLOADED", "PENDING_INGESTION", "INDEXED", "FAILED")
+# A status this version does not list is kept (rendered with a generic label) rather than
+# invalidating the whole listing; only its shape is checked.
+_STATUS_SHAPE = re.compile(r"[A-Z][A-Z0-9_]{0,31}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,7 +403,7 @@ def parse_list_matter_documents_result(payload: object) -> InventoryResult:
             not isinstance(document_id, str) or _OPAQUE_ID.fullmatch(document_id) is None
             or not isinstance(name, str) or not name.strip() or len(name) > 512
             or not isinstance(media, str) or len(media) > 128
-            or not isinstance(status, str) or status not in _DOCUMENT_STATUSES
+            or not isinstance(status, str) or _STATUS_SHAPE.fullmatch(status) is None
             or not isinstance(uploaded, str) or len(uploaded) > 64
         ):
             raise AgentContractError("invalid_result")

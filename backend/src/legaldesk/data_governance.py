@@ -122,7 +122,7 @@ class GovernanceReport:
 
 
 class _ChatJobStore(Protocol):
-    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> int: ...
+    def delete_for_matter(self, *, tenant_id: str, matter_id: str, limit: int) -> Any: ...
 
 
 class _ScopeStateStore(Protocol):
@@ -350,11 +350,16 @@ class OperatorDataGovernanceService:
             # answer. DynamoDB TTL is not an exact delete, so the matter scope
             # removes them explicitly, for every subject of the matter.
             try:
-                state_removed += self.job_store.delete_for_matter(
+                deletion = self.job_store.delete_for_matter(
                     tenant_id=context.tenant_id,
                     matter_id=context.matter_id,
                     limit=min(self.max_records, 100),
                 )
+                state_removed += deletion.removed
+                if not deletion.complete:
+                    # Jobs remain after this bounded batch: never report a partial delete as done.
+                    # The operator repeats delete_matter until no failure is reported.
+                    failures.append(GovernanceFailure("job_cleanup_incomplete"))
             except Exception:
                 failures.append(GovernanceFailure("job_cleanup"))
         return GovernanceReport(

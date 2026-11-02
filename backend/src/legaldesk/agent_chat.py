@@ -348,7 +348,9 @@ class AgentChatWorker:
             "loopOutcome": outcome.value, "iterations": loop.iterations,
             "tools": [call.short_name for call in loop.tool_calls], "invalidToolResults": invalid,
             "tokens": loop.usage.total_tokens if loop.usage else None,
-            "historyUnavailable": history is None, **output.metadata(),
+            "historyUnavailable": history is None or (bool(history) and getattr(loop, "history_messages", len(history)) == 0),
+            "historyTrimmed": bool(history) and 0 < getattr(loop, "history_messages", len(history)) < len(history),
+            **output.metadata(),
         }
         operation_status = "ok"
         if output.path is OutputPath.RAG_FALLBACK:

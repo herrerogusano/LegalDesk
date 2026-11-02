@@ -26,10 +26,25 @@ MAX_MESSAGE_BYTES = 1024
 _MESSAGE_KEYS = frozenset({"jobId", "tenantId", "matterId"})
 _SAFE_META_KEYS = frozenset({
     "claim", "failure", "quotaReleased", "attempt", "reason", "loopOutcome", "iterations", "tools",
-    "invalidToolResults", "tokens", "historyUnavailable", "outputPath", "fallbackReason", "planError",
+    "invalidToolResults", "tokens", "historyUnavailable", "historyTrimmed", "outputPath", "fallbackReason", "planError",
     "omittedBlocks", "blockCount", "citationCount", "memoryWritten", "latencyMs",
 })
-DEFAULT_AGENT_PROMPT_PATH = Path(__file__).resolve().parents[3] / "prompts" / "legaldesk-agent.md"
+AGENT_PROMPT_FILENAME = "legaldesk-agent.md"
+
+
+def default_agent_prompt_path(module_file: str | Path = __file__) -> Path:
+    """Where the agent prompt lives next to this module, in the Lambda zip or in a checkout.
+
+    In the zip the module is ``<root>/legaldesk/agent_chat_lambda.py`` and the prompt
+    ``<root>/prompts/...`` (``parents[1]``); in a checkout it is
+    ``<repo>/backend/src/legaldesk/...`` and ``<repo>/prompts/...`` (``parents[3]``).
+    The deployed template also sets ``LEGALDESK_AGENT_PROMPT_PATH`` explicitly.
+    """
+
+    here = Path(module_file).resolve()
+    candidates = [parent / "prompts" / AGENT_PROMPT_FILENAME for parent in (here.parents[1:2] + here.parents[3:4])]
+    candidates.append(here.parent / "prompts" / AGENT_PROMPT_FILENAME)  # shallow layouts: never fail to build a path
+    return next((path for path in candidates if path.is_file()), candidates[0])
 
 
 class AgentChatLambdaConfigurationError(RuntimeError):
@@ -134,7 +149,7 @@ def build_worker_from_environment() -> tuple[Any, str, Callable[[str, int], None
     if runtime is None:
         raise AgentChatLambdaConfigurationError("agent chat is not enabled in the composition")
     prompt_path = os.environ.get("LEGALDESK_AGENT_PROMPT_PATH")
-    prompt = FileSystemSystemPromptProvider(Path(prompt_path) if prompt_path else DEFAULT_AGENT_PROMPT_PATH).load()
+    prompt = FileSystemSystemPromptProvider(Path(prompt_path) if prompt_path else default_agent_prompt_path()).load()
     # The loop may stream for up to 90 s (timeoutSeconds); the shared client's default
     # 60 s read timeout would cut a quiet stretch, so the worker owns its Harness client.
     harness_client = boto3.client(
@@ -196,5 +211,6 @@ def lambda_handler(
 
 __all__ = [
     "AgentChatLambdaConfigurationError", "Boto3AgentChatQueue", "build_worker_from_environment",
+    "default_agent_prompt_path",
     "handle_sqs_event", "lambda_handler", "parse_message",
 ]

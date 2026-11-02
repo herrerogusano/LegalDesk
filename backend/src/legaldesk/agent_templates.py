@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 
-TEMPLATES_VERSION = "1.1.0"
+TEMPLATES_VERSION = "1.1.1"
 
 _INTRODUCTIONS = {
     "answer_from_documents": "Esto es lo que dicen los documentos del expediente.",
@@ -103,6 +103,8 @@ _INVENTORY_STATUS = {
     "PENDING_INGESTION": "pendiente de indexación",
     "INDEXED": "indexado",
     "FAILED": "con error",
+    # Any lifecycle status this version does not know yet: a generic label, never the raw value.
+    "other": "estado no reconocido",
 }
 _INVENTORY_TITLE = "Documentos del expediente"
 _NOTICES = {

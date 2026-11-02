@@ -121,15 +121,43 @@ class AgentChatInvocationTests(unittest.TestCase):
         for forbidden in ("model", "skills", "toolChoice"):
             self.assertNotIn(forbidden, call)
 
-    def test_history_is_bounded_and_well_formed(self) -> None:
-        for history in (
-            tuple(("user", "x") for _ in range(13)),
-            (("system", "x"),),
-            (("user", " "),),
-            (("user", "x" * 25_000),),
-        ):
+    def test_malformed_history_is_still_rejected(self) -> None:
+        for history in ((("system", "x"),), (("user", " "),), (("user",),), [("user", "x")]):
             with self.assertRaises(ValueError):
                 self.invoke(StreamClient(final_message("{}")), history=history)
+
+    def test_a_long_conversation_is_trimmed_not_refused(self) -> None:
+        # 12 messages of 5,000 characters: far above the budget, and it must not fail the question.
+        history = tuple(("user" if index % 2 == 0 else "assistant", f"{index:02d}" + "x" * 4_998) for index in range(12))
+        client = StreamClient(final_message("{}"))
+        result = self.invoke(client, history=history)
+        sent = client.calls[0]["messages"]
+        texts = [m["content"][0]["text"] for m in sent[:-1]]
+        self.assertTrue(all(len(t) <= 2_000 for t in texts))
+        self.assertLessEqual(sum(map(len, texts)), 24_000)
+        self.assertEqual(sent[-1]["content"][0]["text"], "¿Qué dice?")
+        self.assertEqual(result.history_messages, len(texts))
+        # Deterministic, newest kept, pairs intact: the same input gives the same output.
+        self.assertTrue(texts[-1].startswith("11"))
+        self.assertEqual([m["role"] for m in sent[:-1]][:2], ["user", "assistant"])
+        again = StreamClient(final_message("{}"))
+        self.invoke(again, history=history)
+        self.assertEqual(again.calls[0]["messages"], sent)
+
+    def test_more_than_twelve_messages_drop_the_oldest_pairs(self) -> None:
+        history = tuple(("user" if i % 2 == 0 else "assistant", f"m{i}") for i in range(16))
+        client = StreamClient(final_message("{}"))
+        self.invoke(client, history=history)
+        self.assertEqual([m["content"][0]["text"] for m in client.calls[0]["messages"][:-1]], [f"m{i}" for i in range(4, 16)])
+
+    def test_when_nothing_fits_the_question_goes_without_history(self) -> None:
+        from unittest.mock import patch
+
+        client = StreamClient(final_message("{}"))
+        with patch("legaldesk_agent.client.MAX_HISTORY_CHARS", 3):
+            result = self.invoke(client, history=(("user", "antes"), ("assistant", "respuesta")))
+        self.assertEqual((len(client.calls[0]["messages"]), result.history_messages), (1, 0))
+        self.assertEqual(result.loop_outcome, "no_tool_called")
 
     def test_whole_tool_results_survive_and_only_the_final_message_is_the_plan(self) -> None:
         answer = {"answer": BIG_ANSWER, "evidenceStatus": "answerable", "operationStatus": "ok", "citations": []}

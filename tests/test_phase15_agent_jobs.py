@@ -21,6 +21,7 @@ from legaldesk.agent_jobs import (
     DynamoDBChatJobStore,
     FailureCode,
     InMemoryChatJobStore,
+    JobDeletion,
     JobKey,
     JobStatus,
     new_job,
@@ -236,18 +237,39 @@ class JobStoreContract:
         self.store.create(make_job("job-2", subject="bob"))
         self.store.create(make_job("job-3", matter="matter-b"))
         self.store.create(make_job("job-4", tenant="tenant-b"))
-        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), 2)
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), JobDeletion(2, True))
         self.assertIsNone(self.store.get(self.key))
         self.assertIsNotNone(self.store.get(JobKey("tenant-a", "matter-b", "job-3")))
         self.assertIsNotNone(self.store.get(JobKey("tenant-b", "matter-a", "job-4")))
 
-    def test_matter_delete_refuses_to_guess_past_its_limit(self) -> None:
-        for index in range(3):
-            self.store.create(make_job(f"extra-{index}"))
-        with self.assertRaises(ValueError):
-            self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=3)
-        with self.assertRaises(ValueError):
-            self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=0)
+    def test_matter_with_more_jobs_than_the_limit_is_deleted_in_bounded_batches(self) -> None:
+        for index in range(6):
+            self.store.create(make_job(f"extra-{index}"))  # 7 jobs of matter-a
+        self.store.create(make_job("keep", matter="matter-b"))
+        batches = []
+        while True:
+            outcome = self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=3)
+            batches.append(outcome)
+            if outcome.complete:
+                break
+            self.assertEqual(outcome.removed, 3)  # a full batch, and it never claims to be finished
+            self.assertLess(len(batches), 10)
+        self.assertEqual([(b.removed, b.complete) for b in batches], [(3, False), (3, False), (1, True)])
+        self.assertIsNone(self.store.get(self.key))
+        self.assertIsNotNone(self.store.get(JobKey("tenant-a", "matter-b", "keep")))
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=3), JobDeletion(0, True))
+
+    def test_exactly_the_limit_is_complete_and_one_more_is_not(self) -> None:
+        self.store.create(make_job("job-b"))
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=3), JobDeletion(2, True))
+        for index in range(4):
+            self.store.create(make_job(f"again-{index}"))
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=3), JobDeletion(3, False))
+
+    def test_matter_delete_rejects_an_invalid_limit(self) -> None:
+        for bad in (0, -1, 101, True, "5"):
+            with self.assertRaises(ValueError):
+                self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=bad)  # type: ignore[arg-type]
         self.assertIsNotNone(self.store.get(self.key))
 
     def test_public_view_never_carries_scope_or_content(self) -> None:
@@ -294,27 +316,40 @@ class DynamoDBJobStoreTests(JobStoreContract, unittest.TestCase):
         self.assertEqual(sk, "JOB#job-1")
         self.assertEqual(int(item["ttl"]), T0 + JOB_TTL_SECONDS)
 
-    def test_matter_delete_reads_every_page_before_deleting_anything(self) -> None:
+    def matter_a_keys(self):
+        return [k for k in self.table.items if "matter-a" in k[0]]
+
+    def test_matter_delete_follows_pages_to_the_end(self) -> None:
         self.table.page_size = 2  # a page can end long before the limit when jobs hold big results
         for index in range(4):
             self.store.create(make_job(f"extra-{index}"))  # 5 jobs of matter-a in total
         self.store.create(make_job("keep", matter="matter-b"))
-        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), 5)
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), JobDeletion(5, True))
         self.assertGreaterEqual(self.table.queries, 3)
-        self.assertEqual([k for k in self.table.items if "matter-a" in k[0]], [])
+        self.assertEqual(self.matter_a_keys(), [])
         self.assertIsNotNone(self.store.get(JobKey("tenant-a", "matter-b", "keep")))
 
-    def test_matter_delete_over_the_limit_across_pages_deletes_nothing(self) -> None:
+    def test_over_the_limit_across_pages_deletes_a_batch_and_reports_incomplete(self) -> None:
         self.table.page_size = 2
         for index in range(4):
             self.store.create(make_job(f"extra-{index}"))
-        with self.assertRaises(ValueError):
-            self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=4)  # 5 > 4, only visible on page 3
-        self.assertEqual(len([k for k in self.table.items if "matter-a" in k[0]]), 5)
+        first = self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=4)  # 5 > 4, seen on page 3
+        self.assertEqual(first, JobDeletion(4, False))
+        self.assertEqual(len(self.matter_a_keys()), 1)
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=4), JobDeletion(1, True))
+        self.assertEqual(self.matter_a_keys(), [])
+
+    def test_the_scan_stops_reading_once_it_knows_more_remain(self) -> None:
+        self.table.page_size = 1
+        for index in range(30):
+            self.store.create(make_job(f"extra-{index}"))
+        self.table.queries = 0
+        self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=3)
+        self.assertEqual(self.table.queries, 4)  # limit + 1 keys, not the whole partition
 
     def test_an_empty_last_page_still_ends_the_scan(self) -> None:
         self.table.page_size = 1
-        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), 1)
+        self.assertEqual(self.store.delete_for_matter(tenant_id="tenant-a", matter_id="matter-a", limit=10), JobDeletion(1, True))
 
     def test_a_corrupt_record_is_not_served(self) -> None:
         (_pk, _sk), item = next(iter(self.table.items.items()))

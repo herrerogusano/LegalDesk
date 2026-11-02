@@ -33,7 +33,7 @@ AGENT_PROMPT_PATH = ROOT / "prompts" / "legaldesk-agent.md"
 # Changing a template or the prompt is a reviewed, versioned change: update the
 # version and these pins together.
 PINNED_AGENT_PROMPT_SHA256 = "1b5b729a0d9f27d9c5b826d2cff0beba6194d0b1e160ca4506844827b55e75f3"
-PINNED_TEMPLATES_SHA256 = "5936a03246fa178d3c4efa239815f0d818a07b2e0c115cdca1ec5573f879cc80"
+PINNED_TEMPLATES_SHA256 = "9808f766ee3898c7bea74210d903479baae55f6c1430399f61c56235a742442a"
 
 
 def valid_plan() -> dict[str, object]:
@@ -86,7 +86,7 @@ class ContractVocabularyTests(unittest.TestCase):
             self.assertLessEqual(fields, allowed, key)
 
     def test_templates_are_pinned_by_hash(self) -> None:
-        self.assertEqual(templates.TEMPLATES_VERSION, "1.1.0")
+        self.assertEqual(templates.TEMPLATES_VERSION, "1.1.1")
         self.assertEqual(templates.TEMPLATES_SHA256, PINNED_TEMPLATES_SHA256)
 
     def test_fill_never_reinterprets_values_as_templates(self) -> None:

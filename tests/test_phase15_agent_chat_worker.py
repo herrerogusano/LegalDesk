@@ -325,6 +325,18 @@ class WorkerHappyPathTests(unittest.TestCase):
         self.assertEqual(len(history), 12)
         self.assertEqual(history[0][1], "pregunta 2")
 
+    def test_a_long_conversation_keeps_answering_with_a_bounded_history(self) -> None:
+        big = "R" * 7_900
+        for index in range(10):
+            job = self.world.submit(f"pregunta {index} " + "q" * 900)
+            self.world.agent_script = [agent_result(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload(big)))]
+            self.assertEqual(self.world.worker.process(job.key).action, "completed")
+        history = self.world.agent_calls[-1][2]
+        self.assertEqual(len(history), 8)  # ~2,900 characters per pair: 4 pairs fit in 12,000, older ones are dropped
+        self.assertLessEqual(sum(len(text) for _, text in history), 12_000)
+        self.assertTrue(all(len(text) <= 2_000 for _, text in history))
+        self.assertTrue(history[-2][1].startswith("pregunta 8"))  # the newest answered pair is kept
+
     def test_gateway_counter_is_never_charged_by_a_job(self) -> None:
         self.world.agent_script = [agent_result(TEXT_PLAN, call("tu-1", SEARCH_TOOL, search_payload()))]
         self.run_worker()

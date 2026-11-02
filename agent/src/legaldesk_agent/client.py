@@ -890,6 +890,7 @@ AGENT_CHAT_TIMEOUT_SECONDS = 90
 AGENT_CHAT_MAX_TOKENS = 2048
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CHARS = 24_000
+MAX_HISTORY_TEXT_CHARS = 2_000
 _MAX_QUESTION_CHARS = 8_000
 _TRANSIENT_STREAM_CODES = frozenset({
     "throttlingexception", "serviceunavailableexception", "internalserverexception", "modeltimeoutexception",
@@ -922,6 +923,9 @@ class AgentChatResult:
     stop_reason: str | None
     tool_calls: tuple[AgentToolCall, ...] = ()
     usage: HarnessUsage | None = None
+    # How many history messages were actually sent (after trimming); lets the caller tell
+    # that a non-empty history was dropped.
+    history_messages: int = 0
 
 
 def _final_message_text(events: list[Mapping[str, Any]]) -> str:
@@ -970,17 +974,33 @@ def classify_loop(*, tool_calls: int, stop_reason: str | None, error: str | None
 
 
 def _agent_history(history: tuple[tuple[str, str], ...]) -> list[dict[str, Any]]:
-    if not isinstance(history, tuple) or len(history) > MAX_HISTORY_MESSAGES:
-        raise ValueError("history is too long")
-    total, messages = 0, []
-    for role, text in history:
+    """Validate the backend's history and fit it to the budget; never raises on size.
+
+    An oversized history must not make every later question of the conversation fail, so
+    it is trimmed deterministically: each text is cut to ``MAX_HISTORY_TEXT_CHARS`` and the
+    oldest messages are dropped, two at a time to keep the user/assistant pairs, until at
+    most ``MAX_HISTORY_MESSAGES`` messages and ``MAX_HISTORY_CHARS`` characters remain. If
+    nothing fits, the question goes without history. Malformed entries are still a
+    programming error and raise.
+    """
+
+    if not isinstance(history, tuple):
+        raise ValueError("history is invalid")
+    cleaned: list[tuple[str, str]] = []
+    for entry in history:
+        if not isinstance(entry, tuple) or len(entry) != 2:
+            raise ValueError("history entry is invalid")
+        role, text = entry
         if role not in {"user", "assistant"} or not isinstance(text, str) or not text.strip():
             raise ValueError("history entry is invalid")
-        total += len(text)
-        if total > MAX_HISTORY_CHARS:
-            raise ValueError("history is too large")
-        messages.append({"role": role, "content": [{"text": text.strip()}]})
-    return messages
+        cleaned.append((role, text.strip()[:MAX_HISTORY_TEXT_CHARS]))
+    while cleaned and (
+        len(cleaned) > MAX_HISTORY_MESSAGES
+        or sum(len(text) for _, text in cleaned) > MAX_HISTORY_CHARS
+        or cleaned[0][0] != "user"
+    ):
+        del cleaned[: 2 if len(cleaned) > 1 and cleaned[0][0] == "user" else 1]
+    return [{"role": role, "content": [{"text": text}]} for role, text in cleaned]
 
 
 def invoke_agent_chat(
@@ -1012,10 +1032,11 @@ def invoke_agent_chat(
         raise ValueError("the agent system prompt is required")
     session_id = validate_session_id(invocation_scope.memory_scope.session_id)
     correlation_id = invocation_scope.correlation_id
+    history_messages = _agent_history(history)
     request: dict[str, Any] = {
         "harnessArn": invoker.harness_arn,
         "runtimeSessionId": session_id,
-        "messages": [*_agent_history(history), {"role": "user", "content": [{"text": message.strip()}]}],
+        "messages": [*history_messages, {"role": "user", "content": [{"text": message.strip()}]}],
         "tools": [invocation_scope.remote_mcp_tool()],
         "allowedTools": list(invocation_scope.allowed_tools),
         "baggage": f"legaldesk.correlation_id={correlation_id}",
@@ -1076,6 +1097,7 @@ def invoke_agent_chat(
         loop_outcome=outcome, iterations=max(1, iterations), stop_reason=stop_reason,
         tool_calls=tuple(AgentToolCall(call.tool_use_id, call.name, call.status, call.payload) for call in calls),
         usage=usage_records[0] if len(usage_records) == 1 else None,
+        history_messages=len(history_messages),
     )
 
 

@@ -540,7 +540,7 @@ def render_inventory_block(
         DataLine(
             tpl.fill(tpl.INVENTORY_LINES["document"], document=item.name,
                      media=tpl.INVENTORY_MEDIA.get(item.media_type, tpl.INVENTORY_MEDIA["other"]),
-                     status=tpl.INVENTORY_STATUS[item.status]),
+                     status=tpl.INVENTORY_STATUS.get(item.status, tpl.INVENTORY_STATUS["other"])),
             False, (),
         )
         for item in documents
