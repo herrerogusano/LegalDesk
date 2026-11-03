@@ -1098,7 +1098,6 @@ class PipelineRun:
 
 def make_pipeline(case: Mapping[str, Any], world: Mapping[str, DocTruth], faults: frozenset[str]) -> PipelineRun:
     record, telemetry = PipelineRecord(), InMemoryTelemetrySink(max_events=10_000)
-    expected_input = as_list(case["expected"].get("input", "allowed"))
     kb = RecordingKB(GoldenKB(case, world, faults, record), record)
     metadata = InMemoryDocumentMetadataRepository()
     for doc in sundial_documents(world):
@@ -1116,7 +1115,6 @@ def make_pipeline(case: Mapping[str, Any], world: Mapping[str, DocTruth], faults
         answer_writer=RecordingWriter(GoldenWriter(case, faults), record, case["expected"].get("facts")),
         grounding_validator=RecordingGrounding(GoldenGrounding(faults), record), prompt_provider=FileSystemSystemPromptProvider(),
         metadata_repository=metadata, object_storage=None, telemetry_sink=telemetry)
-    del expected_input
     return PipelineRun(case, service, record, telemetry)
 
 
