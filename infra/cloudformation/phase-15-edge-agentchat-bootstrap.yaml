@@ -120,6 +120,14 @@ Resources:
                   - apigateway:GET
                   - apigateway:PATCH
                 Resource: !Ref PublicApiIntegrationArn
+              - Sid: ReadOnlyAgentChatQueueAttributes
+                Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:LegalDeskPhase14PublicEdge-agent-chat"
+                  - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:LegalDeskPhase14PublicEdge-agent-chat-dlq"
               - Sid: DescribeRegionalLogGroupMetadataOnly
                 Effect: Allow
                 Action: logs:DescribeLogGroups

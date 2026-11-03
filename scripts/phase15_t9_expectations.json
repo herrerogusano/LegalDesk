@@ -283,7 +283,7 @@
       "iam": []
     },
     "cd-iam": {
-      "description": "LegalDeskProductionCD: adds the agent chat worker to the release and CloudFormation roles (4 statements, all on the one function and its unchanged role). Roles are modified in place, never replaced.",
+      "description": "LegalDeskProductionCD: adds the agent chat worker to the release and CloudFormation roles (4 statements, all on the one function and its unchanged role) plus the read-only queue attributes that CloudFormation resolves when it updates the code (5 statements in all). Roles are modified in place, never replaced.",
       "add": [],
       "modify": {
         "CloudFormationExecutionRole": [
@@ -314,6 +314,12 @@
         {
           "resource": "CloudFormationExecutionRole",
           "policy": "LegalDeskCodeAndIntegrationUpdate",
+          "sid": "ReadOnlyAgentChatQueueAttributes",
+          "change": "added"
+        },
+        {
+          "resource": "CloudFormationExecutionRole",
+          "policy": "LegalDeskCodeAndIntegrationUpdate",
           "sid": "ReadUnchangedAgentChatWorkerRolePolicy",
           "change": "added"
         },
@@ -321,6 +327,27 @@
           "resource": "ProductionDeploymentRole",
           "policy": "LegalDeskProductionRelease",
           "sid": "VerifyOnlyTheAgentChatWorker",
+          "change": "added"
+        }
+      ],
+      "remove": []
+    },
+    "cd-iam-attribute-reads": {
+      "description": "LegalDeskProductionCD already executed with the worker statements (step 9 of 2026-11-03): the only change is the read-only queue attributes of the code-only CloudFormation role (sqs:GetQueueAttributes and GetQueueUrl on the queue and its dead-letter queue). The role is modified in place, never replaced.",
+      "add": [],
+      "modify": {
+        "CloudFormationExecutionRole": [
+          "Policies"
+        ]
+      },
+      "iamResources": [
+        "CloudFormationExecutionRole"
+      ],
+      "iam": [
+        {
+          "resource": "CloudFormationExecutionRole",
+          "policy": "LegalDeskCodeAndIntegrationUpdate",
+          "sid": "ReadOnlyAgentChatQueueAttributes",
           "change": "added"
         }
       ],

@@ -222,6 +222,18 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:GetRolePolicy
                 Resource: !Ref AgentChatWorkerExecutionRoleArn
+              # CloudFormation resolves !GetAtt / !Ref of the neighbours of a function with the service role when it updates the function's
+              # Code (2026-11-03: "Unable to retrieve Arn attribute for AWS::SQS::Queue ... not authorized to perform: sqs:getqueueattributes").
+              # AgentChatQueue.Arn is read by the worker (env + event source) and Ref AgentChatQueue by the application; the dead-letter queue is
+              # listed so a re-resolution of the queue's redrive target cannot fail closed either. Reads of these two queues only.
+              - Sid: ReadOnlyAgentChatQueueAttributes
+                Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:LegalDeskPhase14PublicEdge-agent-chat"
+                  - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:LegalDeskPhase14PublicEdge-agent-chat-dlq"
               - Sid: ReadAndPatchOnlyTheApiIntegration
                 Effect: Allow
                 Action:
