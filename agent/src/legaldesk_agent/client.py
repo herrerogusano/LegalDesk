@@ -816,12 +816,18 @@ class HarnessInvoker:
                 raise ValueError("correlation_id conflicts with invocation scope")
             correlation_id = invocation_scope.correlation_id
         if memory_scope is not None and session_id is not None:
-            if validate_session_id(session_id) != memory_scope.session_id:
-                raise ValueError("session_id conflicts with memory scope")
+            raise ValueError("session_id cannot be combined with a memory scope: the runtime session of a scoped call is always new")
+        # A call made for a binding (memory scope or invocation scope) gets a NEW runtimeSessionId, like the agent chat (T9 step 11,
+        # 2026-11-03): Harness keeps the history of a runtimeSessionId in its microVM even with memory disabled, so reusing the binding's
+        # session id would build, outside the backend, a hidden per-session history of tool results (metadata, extracted fields, review
+        # tasks). The binding's memory scope is NOT the runtime session: it still feeds actorId, the interceptor headers
+        # (x-legaldesk-memory-session-id) and the invocation record. A caller that passes only ``session_id`` (smokes, probes) is
+        # choosing its own session on purpose and keeps it.
         effective_session_id = validate_session_id(
-            memory_scope.session_id if memory_scope is not None else (session_id or new_session_id())
+            new_session_id() if memory_scope is not None else (session_id or new_session_id())
         )
-        effective_correlation_id = correlation_id or effective_session_id
+        # Telemetry joins by the binding's session id when nothing better was given, as before.
+        effective_correlation_id = correlation_id or (memory_scope.session_id if memory_scope is not None else effective_session_id)
         validate_session_id(effective_correlation_id)
         started_at = time.perf_counter()
         _record_agent_event(
