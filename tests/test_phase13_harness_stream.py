@@ -57,13 +57,14 @@ class Phase13HarnessStreamTests(unittest.TestCase):
             "cacheWriteInputTokens": 0,
         })
 
-    def test_repeated_usage_blocks_are_preserved_without_cadence_assumption(self):
+    def test_repeated_usage_blocks_are_preserved_and_their_total_is_the_sum(self):
+        # One block per model call (USAGE_CADENCE): the total of the stream is their sum, never "unknown" (that hid the cost of every loop with a tool).
         client = StreamClient([
             {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 1, "totalTokens": 11}}},
             {"metadata": {"usage": {"inputTokens": 7, "outputTokens": 2, "totalTokens": 9}}},
         ])
         result = HarnessInvoker(client, "arn:test").invoke("hello")
-        self.assertIsNone(result.usage)
+        self.assertEqual((result.usage.input_tokens, result.usage.output_tokens, result.usage.total_tokens), (17, 3, 20))
         self.assertEqual([item.input_tokens for item in result.usage_records], [10, 7])
 
     def test_usage_requires_core_counts(self):

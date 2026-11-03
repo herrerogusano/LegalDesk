@@ -84,6 +84,15 @@ class TelemetryErrorCode(StrEnum):
     RETRIEVAL_OBJECT_MISSING = "retrieval_object_missing"
     RETRIEVAL_OBJECT_FAILED = "retrieval_object_failed"
     MODEL_FAILED = "model_failed"
+    # Why a model stage's output was rejected, on the resolve_evidence / write_answer stage event only (T9 step 12, 2026-11-03: three
+    # writer failures that all read model_failed). The aggregate generate_answer event and the response keep model_failed.
+    MODEL_OUTPUT_INVALID = "model_output_invalid"
+    MODEL_OUTPUT_TRUNCATED = "model_output_truncated"
+    RESOLUTION_INVALID = "resolution_invalid"
+    WRITER_ANSWER_INVALID = "writer_answer_invalid"
+    WRITER_RELATIONSHIP_INVALID = "writer_relationship_invalid"
+    WRITER_RELATIONSHIP_MISSING = "writer_relationship_missing"
+    WRITER_RELATIONSHIP_UNSUPPORTED = "writer_relationship_unsupported"
     SERVICE_UNAVAILABLE = "service_unavailable"
     TIMEOUT = "timeout"
     INVALID_REQUEST = "invalid_request"

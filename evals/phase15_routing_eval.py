@@ -46,7 +46,7 @@ from evals.residual_state import ResidualState  # noqa: E402
 from fixture_loader import load_authorization_store, test_identity  # noqa: E402
 from legaldesk import agent_contracts as contracts  # noqa: E402
 from legaldesk.agent_chat import AgentChatRuntime, AgentChatWorker, InputDecision, submit_agent_chat  # noqa: E402
-from legaldesk.agent_chat_telemetry import PRICING_VERSION, usage_metadata  # noqa: E402
+from legaldesk.agent_chat_telemetry import PRICING_VERSION, loop_usage_metadata  # noqa: E402
 from legaldesk.agent_integration import _APPLICATION_TOOL_ALLOWLISTS  # noqa: E402
 from legaldesk.agent_jobs import InMemoryChatJobStore, JobStatus, new_job  # noqa: E402
 from legaldesk.agent_output import OutputPath  # noqa: E402
@@ -98,6 +98,10 @@ _TARGETS = {
     "review-task-lambda": GatewayTarget.REVIEW_LAMBDA,
 }
 MAX_CONSECUTIVE_REAL_ERRORS = 3
+# Stop the run when the summed estimate of the Harness loops passes this. Upper bound of the loop for the 30 cases (1.75 USD) plus 25 %:
+# scripts/phase15_t9_cost_model.py HARD_CAP["stop_eval_if_loop_usd_exceeds"] (a test keeps both equal). Until 2026-11-03 this rule lived only
+# in the runbook, and the estimate it would have read counted only loops with exactly one model call.
+LOOP_COST_STOP_USD = 2.20
 SUBJECT, MATTER, TENANT = "idp|alice-fictional", "mat_sundial", "tnt_aurora"
 T0 = 1_800_000_000.0
 
@@ -502,7 +506,7 @@ class WorkerLoopClient:
         obs.output_path, obs.fallback_reason = output.path.value, output.fallback_reason.value if output.fallback_reason else None
         obs.omitted_blocks, obs.plan_blocks = len(output.omitted), _plan_block_count(loop.text)
         obs.loop_outcome, obs.iterations = outcome.value, loop.iterations
-        obs.usage = usage_metadata(loop.usage)
+        obs.usage = loop_usage_metadata(loop)
         obs.latency_ms = int((time.perf_counter() - started) * 1000)
         return obs
 
@@ -541,7 +545,12 @@ def score_case(case: Mapping[str, Any], obs: Observation, *, offline: bool) -> d
             "unansweredTools": list(obs.unanswered_tools), "streamErrorHint": obs.stream_error_hint,
             "invalidToolResults": obs.invalid_tool_results, "sourceIdMatches": list(obs.source_id_matches),
         },
-        **({"tokens": obs.usage.get("tokens"), "estimatedLoopCostUsd": obs.usage.get("estimatedLoopCostUsd")} if obs.usage else {}),
+        **({
+            key: value for key, value in (
+                ("tokens", obs.usage.get("tokens")), ("estimatedLoopCostUsd", obs.usage.get("estimatedLoopCostUsd")),
+                ("usageComplete", obs.usage.get("usageComplete")), ("costBasis", obs.usage.get("costBasis")), ("modelCalls", obs.usage.get("modelCalls")),
+            ) if value is not None
+        } if obs.usage else {}),
     }
 
 
@@ -569,6 +578,9 @@ def summarize(rows: list[dict[str, Any]], *, mode: str) -> dict[str, Any]:
     if mode == "real":
         summary["tokens"] = sum(r.get("tokens") or 0 for r in rows)
         summary["estimatedLoopCostUsd"] = round(sum(r.get("estimatedLoopCostUsd") or 0 for r in rows), 6)
+        # "upper_bound" = at least one loop made model calls that reported no usage, priced at an upper bound instead of at zero.
+        summary["usageIncompleteCases"] = sum(1 for r in rows if r.get("usageComplete") is False)
+        summary["loopCostBasis"] = "upper_bound" if summary["usageIncompleteCases"] else "reported"
     return summary
 
 
@@ -614,7 +626,7 @@ def run_offline(dataset: Mapping[str, Any], dataset_sha256: str = "") -> dict[st
 def real_plan(cases: int) -> dict[str, object]:
     return {
         "harnessInvocations": cases, "retries": 0, "maxIterationsPerInvocation": 3,
-        "maxConsecutiveErrorsBeforeAbort": MAX_CONSECUTIVE_REAL_ERRORS, "directRagFallbackExecuted": False,
+        "maxConsecutiveErrorsBeforeAbort": MAX_CONSECUTIVE_REAL_ERRORS, "loopCostStopUsd": LOOP_COST_STOP_USD, "directRagFallbackExecuted": False,
         "thresholds": THRESHOLDS, "thresholdsSha256": sha256_of(THRESHOLDS),
     }
 
@@ -634,6 +646,7 @@ def run_real(
 
     cases = dataset["cases"]
     used, consecutive_errors, rows = 0, 0, []
+    loop_cost, aborted_by = 0.0, None
     interrupted: BaseException | None = None
     try:
         for case in cases:
@@ -641,10 +654,17 @@ def run_real(
                 raise RuntimeError("invocation budget exhausted")
             used += 1
             obs = client.run(case)
-            rows.append(score_case(case, obs, offline=False))
+            row = score_case(case, obs, offline=False)
+            rows.append(row)
+            # The estimate prices a model call that reported no usage at an upper bound, never at zero: an unknown cost can trip this rule.
+            loop_cost += row.get("estimatedLoopCostUsd") or 0.0
             consecutive_errors = consecutive_errors + 1 if obs.error else 0
             if consecutive_errors >= MAX_CONSECUTIVE_REAL_ERRORS:
+                aborted_by = "consecutive_errors"
                 break  # a systemic failure: stop spending
+            if loop_cost > LOOP_COST_STOP_USD:
+                aborted_by = "cost_stop"
+                break  # the cases not run count as failed, so a run stopped on cost can never pass
     except BaseException as exc:  # noqa: BLE001 - leave evidence of what was spent and what was created, then re-raise
         interrupted = exc
     completed = len(rows)
@@ -656,7 +676,7 @@ def run_real(
         "agentPromptVersion": prompt_identity[0] if prompt_identity else None,
         "agentPromptSha256": prompt_identity[1] if prompt_identity else None,
         "budget": {"harnessInvocationsPlanned": len(cases), "harnessInvocationsUsed": used, "retries": 0},
-        "aborted": completed < len(cases),
+        "aborted": completed < len(cases), "abortedBy": aborted_by if completed < len(cases) else None, "loopCostStopUsd": LOOP_COST_STOP_USD,
         "interruptedBy": type(interrupted).__name__ if interrupted is not None else None,
         "residualState": (residual if isinstance(residual, ResidualState) else ResidualState()).as_report(),
     })

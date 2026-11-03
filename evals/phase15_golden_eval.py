@@ -703,7 +703,12 @@ def evaluate_case(case: Mapping[str, Any], obs: GoldenObservation, world: Mappin
         "job": ({k: obs.job.get(k) for k in ("status", "failure", "attempts", "timeline", "latencyS", "asyncFinalCorrect", "asyncPath")} if obs.job else None),
         "answerSha256": final.get("sha"), "latencyMs": obs.latency_ms, "simulatedSeconds": obs.simulated_seconds,
         "error": obs.error if obs.error != "not_run" else "not_run",
-        **({"tokens": obs.usage.get("tokens"), "estimatedLoopCostUsd": obs.usage.get("estimatedLoopCostUsd")} if obs.usage else {}),
+        **({
+            key: value for key, value in (
+                ("tokens", obs.usage.get("tokens")), ("estimatedLoopCostUsd", obs.usage.get("estimatedLoopCostUsd")),
+                ("usageComplete", obs.usage.get("usageComplete")), ("costBasis", obs.usage.get("costBasis")), ("modelCalls", obs.usage.get("modelCalls")),
+            ) if value is not None
+        } if obs.usage else {}),
     }
 
 
@@ -763,6 +768,8 @@ def metrics_for(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "firstFailureByPhase": {p: sum(1 for r in evaluated if r["firstFailure"] == p) for p in PHASES},
         "latencyMsP50": _percentile([r["latencyMs"] for r in evaluated], 50), "latencyMsP95": _percentile([r["latencyMs"] for r in evaluated], 95),
         "tokens": sum(r.get("tokens") or 0 for r in rows), "estimatedLoopCostUsd": round(sum(r.get("estimatedLoopCostUsd") or 0 for r in rows), 6),
+        "usageIncompleteCases": sum(1 for r in rows if r.get("usageComplete") is False),
+        "loopCostBasis": "upper_bound" if any(r.get("usageComplete") is False for r in rows) else "reported",
     }
 
 
@@ -1437,9 +1444,9 @@ class DeployedGoldenClient:
         obs.path = output.path.value
         obs.fallback_reason = output.fallback_reason.value if output.fallback_reason else None
         obs.omitted_blocks = len(output.omitted)
-        from legaldesk.agent_chat_telemetry import usage_metadata  # noqa: PLC0415
+        from legaldesk.agent_chat_telemetry import loop_usage_metadata  # noqa: PLC0415
 
-        obs.usage = usage_metadata(loop.usage)
+        obs.usage = loop_usage_metadata(loop)
         public = remap_output(dict(output.public_dict(), operationStatus="ok"), self.id_map)
         is_fallback = output.path is agent_output.OutputPath.RAG_FALLBACK
         payload = None

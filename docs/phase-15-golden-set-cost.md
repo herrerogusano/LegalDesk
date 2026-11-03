@@ -119,3 +119,5 @@ AgentCore Memory events written by the deployed worker for the async subset are 
 Use the Billing console the day after (month-to-date, filtered to Bedrock, AgentCore, CloudWatch, Lambda). Do not use the Cost Explorer API without the
 owner's single-use confirmation (`AWS_COST_POLICY.md`). If the real Bedrock cost is outside the typical–upper range by more than 25 %, re-read the assumptions
 before any new live run. Record the observed figure next to this estimate.
+
+> **Correction (2026-11-04).** The 5.9 USD loop-cost stop reads `estimatedLoopCostUsd`, which before this date counted only loops with a single model call (so it could not trip). It now sums the model calls of each loop and prices a call that reported no usage at an upper bound; an unknown cost can trip the stop. See `docs/phase-15-t9-cost-estimate.md` (usage accounting correction and the CloudWatch cross-check).
