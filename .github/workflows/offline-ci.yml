@@ -126,6 +126,7 @@ jobs:
           infra/cloudformation/phase-14-public-edge.yaml
           infra/cloudformation/phase-01-harness.yaml
           infra/cloudformation/cd-iam.yaml
+          infra/cloudformation/phase-15-edge-agentchat-bootstrap.yaml
       - name: Run Python unit and integration tests
         run: python -B -m unittest discover -s tests -q
       - name: Run Phase 15 routing eval (offline, deterministic, no cloud calls)

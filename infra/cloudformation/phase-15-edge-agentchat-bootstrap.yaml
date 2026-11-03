@@ -1,0 +1,274 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Temporary service role for the Phase 15 (T9) Public Edge change sets. The stack is bound to the
+  code-only CD role, which cannot update the function environment or create the AgentChat*
+  resources (live block, 2026-11-03). Passed with --role-arn to steps 8a and 8b only, as in the
+  Phase 14 secret rotation (D-054), then deleted in step 9b right after the code-only role is
+  restored. Stage code-and-quota: the existing application function and API integration. Stage
+  agent-chat adds the AgentChat* resources by name pattern and may write inline policies in two
+  roles only (the worker role and the application role). Only a principal with iam:PassRole on
+  it can use it: administrators, not the CD roles. Procedure: docs/phase-15-live-runbook.md, step 8.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: code-and-quota
+    AllowedValues: [code-and-quota, agent-chat]
+    Description: >-
+      code-and-quota for step 8a; agent-chat for step 8b (a reviewed update of this stack, with
+      its own change set, adds the creation permissions only when they are needed).
+  ExistingApplicationRoleArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:iam::[0-9]{12}:role/LegalDeskPhase14PublicEdge-ApplicationExecutionRole-[A-Za-z0-9]+$"
+    Description: Exact existing Public Edge application execution role ARN
+  ApplicationFunctionArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:lambda:[^:]+:[0-9]{12}:function:LegalDeskPhase14PublicEdge-application$"
+    Description: Exact existing Public Edge application function ARN
+  CloudFrontDistributionArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:cloudfront::[0-9]{12}:distribution/[A-Z0-9]+$"
+    Description: Exact existing Public Edge distribution ARN (read-only dependency)
+  OriginAccessControlArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:cloudfront::[0-9]{12}:origin-access-control/[A-Z0-9]+$"
+    Description: Exact existing frontend origin access control (read-only dependency)
+  ResponseHeadersPolicyArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:cloudfront::[0-9]{12}:response-headers-policy/[a-f0-9-]+$"
+    Description: Exact existing edge response headers policy (read-only dependency)
+  PublicApiIntegrationArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:apigateway:[^:]+::/apis/[A-Za-z0-9]+/integrations/[A-Za-z0-9]+$"
+    Description: Exact existing API integration; no other API resource is in scope
+  ArtifactBucketArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: Immutable code-artifact bucket; only the phase-14/ prefix is readable
+
+Conditions:
+  IncludeAgentChat: !Equals [!Ref Stage, agent-chat]
+
+Resources:
+  EdgeAgentChatCloudFormationRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: Temporary least-privilege service role for the Phase 15 Public Edge change sets (T9 steps 8a and 8b)
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFormationOnly
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskPhase15EdgeAgentChat
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ---- stage code-and-quota: exactly what the code-only CD role has, plus the function configuration
+              - Sid: ReadAndUpdateOnlyTheApplicationFunction
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListTags
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                Resource: !Ref ApplicationFunctionArn
+              - Sid: ReadOnlyImmutableLambdaArtifact
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "${ArtifactBucketArn}/phase-14/*"
+              - Sid: PassOnlyTheApplicationRoleToLambda
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Ref ExistingApplicationRoleArn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: lambda.amazonaws.com
+              - Sid: ReadTheApplicationRole
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:GetRolePolicy
+                Resource: !Ref ExistingApplicationRoleArn
+              - Sid: ReadOnlyDistributionAndItsDependencies
+                Effect: Allow
+                # CloudFormation resolves these Ref/GetAtt dependencies and the distribution outputs; read-only, exact resources.
+                Action:
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:ListTagsForResource
+                  - cloudfront:GetOriginAccessControl
+                  - cloudfront:GetResponseHeadersPolicy
+                Resource:
+                  - !Ref CloudFrontDistributionArn
+                  - !Ref OriginAccessControlArn
+                  - !Ref ResponseHeadersPolicyArn
+              - Sid: ReadAndPatchOnlyTheApiIntegration
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:PATCH
+                Resource: !Ref PublicApiIntegrationArn
+              - Sid: DescribeRegionalLogGroupMetadataOnly
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+              # ---- stage agent-chat: create, update and delete the AgentChat* resources, each by name pattern
+              - !If
+                - IncludeAgentChat
+                - Sid: ManageOnlyTheAgentChatQueues
+                  Effect: Allow
+                  Action:
+                    - sqs:CreateQueue
+                    - sqs:DeleteQueue
+                    - sqs:GetQueueUrl
+                    - sqs:GetQueueAttributes
+                    - sqs:SetQueueAttributes
+                    - sqs:TagQueue
+                    - sqs:UntagQueue
+                    - sqs:ListQueueTags
+                  Resource: !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:LegalDeskPhase14PublicEdge-agent-chat*"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                - Sid: ManageOnlyTheWorkerLogGroupAndItsMetricFilters
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:DeleteLogGroup
+                    - logs:PutRetentionPolicy
+                    - logs:DeleteRetentionPolicy
+                    - logs:TagResource
+                    - logs:UntagResource
+                    - logs:ListTagsForResource
+                    - logs:ListTagsLogGroup
+                    - logs:PutMetricFilter
+                    - logs:DeleteMetricFilter
+                    - logs:DescribeMetricFilters
+                  Resource:
+                    - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/LegalDeskPhase14PublicEdge-agent-chat-worker"
+                    - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/LegalDeskPhase14PublicEdge-agent-chat-worker:*"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                - Sid: ManageOnlyTheWorkerFunction
+                  Effect: Allow
+                  Action:
+                    - lambda:CreateFunction
+                    - lambda:DeleteFunction
+                    - lambda:GetFunction
+                    - lambda:GetFunctionConfiguration
+                    - lambda:ListTags
+                    - lambda:TagResource
+                    - lambda:UntagResource
+                    - lambda:UpdateFunctionCode
+                    - lambda:UpdateFunctionConfiguration
+                  Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:LegalDeskPhase14PublicEdge-agent-chat-worker"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                - Sid: ManageOnlyTheEventSourceMappingOfTheWorker
+                  Effect: Allow
+                  Action:
+                    - lambda:CreateEventSourceMapping
+                    - lambda:UpdateEventSourceMapping
+                    - lambda:DeleteEventSourceMapping
+                    - lambda:GetEventSourceMapping
+                  # A mapping has no name before it exists: scope it by the function it feeds.
+                  Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*"
+                  Condition:
+                    ArnEquals:
+                      lambda:FunctionArn: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:LegalDeskPhase14PublicEdge-agent-chat-worker"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                - Sid: CreateTheEventSourceMappingForTheWorkerOnly
+                  Effect: Allow
+                  Action: lambda:CreateEventSourceMapping
+                  Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:LegalDeskPhase14PublicEdge-agent-chat-worker"
+                  Condition:
+                    ArnEquals:
+                      lambda:FunctionArn: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:LegalDeskPhase14PublicEdge-agent-chat-worker"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                - Sid: ManageOnlyTheWorkerExecutionRole
+                  Effect: Allow
+                  Action:
+                    - iam:CreateRole
+                    - iam:DeleteRole
+                    - iam:GetRole
+                    - iam:ListRolePolicies
+                    - iam:ListAttachedRolePolicies
+                    - iam:GetRolePolicy
+                    - iam:PutRolePolicy
+                    - iam:DeleteRolePolicy
+                    - iam:TagRole
+                    - iam:UntagRole
+                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorker*"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                - Sid: PassOnlyTheWorkerRoleToLambda
+                  Effect: Allow
+                  Action: iam:PassRole
+                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorker*"
+                  Condition:
+                    StringEquals:
+                      iam:PassedToService: lambda.amazonaws.com
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                # The one write on an existing role: the inline policy of the application role gains the queue
+                # permission and the CHATJOB leading keys. It cannot create, delete or attach anything on it.
+                - Sid: UpdateOnlyTheInlinePolicyOfTheApplicationRole
+                  Effect: Allow
+                  Action:
+                    - iam:PutRolePolicy
+                  Resource: !Ref ExistingApplicationRoleArn
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                - Sid: ManageOnlyTheAgentChatAlarms
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:PutMetricAlarm
+                    - cloudwatch:DeleteAlarms
+                    - cloudwatch:TagResource
+                    - cloudwatch:UntagResource
+                    - cloudwatch:ListTagsForResource
+                  Resource: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:LegalDeskPhase14PublicEdge-AgentChat*"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
+                # DescribeAlarms and ListEventSourceMappings have no resource-level permissions: read-only, regional.
+                - Sid: ReadOnlyListingsWithoutResourceLevelPermissions
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:DescribeAlarms
+                    - lambda:ListEventSourceMappings
+                  Resource: "*"
+                  Condition:
+                    StringEquals:
+                      aws:RequestedRegion: !Ref AWS::Region
+                - !Ref AWS::NoValue
+
+Outputs:
+  EdgeAgentChatCloudFormationRoleArn:
+    Value: !GetAtt EdgeAgentChatCloudFormationRole.Arn
+  Stage:
+    Value: !Ref Stage

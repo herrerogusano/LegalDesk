@@ -1,0 +1,234 @@
+{
+  "_note": "Real describe-change-set output of the T9 live block, 2026-11-03, trimmed and anonymised (see scripts/make_fixtures in the PR).",
+  "StackName": "LegalDeskPhase08Gateway",
+  "Status": "CREATE_COMPLETE",
+  "ExecutionStatus": "AVAILABLE",
+  "Changes": [
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "GatewayExecutionRole",
+        "PhysicalResourceId": "<physical-id>",
+        "ResourceType": "AWS::IAM::Role",
+        "Replacement": "False",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Policies",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "ResourceAttribute",
+            "CausingEntity": "MetadataMcpFunction.Arn"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Policies",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "ResourceAttribute",
+            "CausingEntity": "SearchDocumentsFunction.Arn"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Policies",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "ResourceAttribute",
+            "CausingEntity": "GatewayRequestInterceptorFunction.Arn"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Policies",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "DirectModification"
+          }
+        ]
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "GatewayRequestInterceptorFunction",
+        "PhysicalResourceId": "<physical-id>",
+        "ResourceType": "AWS::Lambda::Function",
+        "Replacement": "False",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Code",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "ParameterReference",
+            "CausingEntity": "InterceptorCodeKey"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Code",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "ParameterReference",
+            "CausingEntity": "InterceptorCodeVersion"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Code",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "DirectModification"
+          }
+        ]
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "LegalDeskGateway",
+        "PhysicalResourceId": "<physical-id>",
+        "ResourceType": "AWS::BedrockAgentCore::Gateway",
+        "Replacement": "False",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "RoleArn",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "ResourceAttribute",
+            "CausingEntity": "GatewayExecutionRole.Arn"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "InterceptorConfigurations",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "ResourceAttribute",
+            "CausingEntity": "GatewayRequestInterceptorFunction.Arn"
+          }
+        ]
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "MetadataMcpFunction",
+        "PhysicalResourceId": "<physical-id>",
+        "ResourceType": "AWS::Lambda::Function",
+        "Replacement": "False",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Code",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "ParameterReference",
+            "CausingEntity": "MetadataMcpCodeVersion"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Code",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "DirectModification"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Timeout",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "DirectModification"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Code",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "ParameterReference",
+            "CausingEntity": "MetadataMcpCodeKey"
+          }
+        ]
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Add",
+        "LogicalResourceId": "SearchDocumentsExecutionRole",
+        "ResourceType": "AWS::IAM::Role",
+        "Scope": [],
+        "Details": []
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Add",
+        "LogicalResourceId": "SearchDocumentsFunction",
+        "ResourceType": "AWS::Lambda::Function",
+        "Scope": [],
+        "Details": []
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Add",
+        "LogicalResourceId": "SearchDocumentsGatewayTarget",
+        "ResourceType": "AWS::BedrockAgentCore::GatewayTarget",
+        "Scope": [],
+        "Details": []
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Add",
+        "LogicalResourceId": "SearchDocumentsLogGroup",
+        "ResourceType": "AWS::Logs::LogGroup",
+        "Scope": [],
+        "Details": []
+      }
+    }
+  ]
+}

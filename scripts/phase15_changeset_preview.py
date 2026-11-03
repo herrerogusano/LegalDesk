@@ -17,7 +17,21 @@ and the two below):
     Reads the JSON of a real ``aws cloudformation describe-change-set`` (saved to a file by
     the operator) and fails unless it is exactly what the named profile in
     ``phase15_t9_expectations.json`` allows: only the listed additions, only the listed
-    modifications and properties, no removal, no ``Replacement`` other than ``False``.
+    modifications and properties, no removal unless the profile lists it, and no replacement.
+
+    Two refinements learned from the real change sets of the T9 live block (2026-11-03):
+
+    * a property that changes only because a resource **of the same change set that is not
+      replaced** (``Replacement=False``) changed an attribute (``Evaluation: Dynamic`` +
+      ``ChangeSource: ResourceAttribute`` + ``CausingEntity`` = that resource), such as the
+      ``RoleArn`` of the Gateway or the ``ExecutionRoleArn`` of the Harness, is inherited, not
+      an edit, and is accepted without being listed. Any other property still has to be listed;
+    * ``Replacement: Conditional`` is not a blind stop: the properties that make it conditional
+      are looked up in the createOnly list of the resource type (``createOnly`` in the expectations
+      file, from ``aws cloudformation describe-type``). A createOnly property stops; a property
+      with createOnly paths *below* it (``Memory/ManagedMemoryConfiguration/EncryptionKeyArn``)
+      stops unless the profile accepts it explicitly (``conditionalNestedAllowed``); a type
+      without a list stops.
 
 Exit code 0 = within the profile, 1 = violations, 2 = unusable input.
 """
@@ -51,6 +65,37 @@ REPLACEMENT_PROPERTIES: dict[str, frozenset[str]] = {
     "AWS::CloudWatch::Alarm": frozenset({"AlarmName"}),
     "AWS::BedrockAgentCore::GatewayTarget": frozenset({"GatewayIdentifier", "Name"}),
 }
+
+
+def load_create_only(path: Path = EXPECTATIONS_PATH) -> dict[str, tuple[str, ...]]:
+    """createOnly property paths per resource type (from ``describe-type``), as recorded in the expectations file."""
+
+    try:
+        table = json.loads(path.read_text(encoding="utf-8-sig")).get("createOnly", {})
+    except (OSError, ValueError) as exc:
+        raise PreviewError("profile_unknown") from exc
+    return {str(name): tuple(str(item) for item in paths) for name, paths in table.items() if isinstance(paths, list)}
+
+
+def replacement_of(resource_type: str, properties: Sequence[str], table: Mapping[str, Sequence[str]]) -> tuple[str, list[str]]:
+    """(status, properties whose nested paths are createOnly) for a set of changed top-level properties.
+
+    ``REPLACEMENT``: a changed property is itself createOnly. ``CONDITIONAL``: a changed property has createOnly paths
+    below it, so a replacement is possible depending on the value. ``no``: nothing createOnly is involved. ``UNKNOWN``:
+    the type has no createOnly list (and no heuristic).
+    """
+
+    paths = table.get(resource_type)
+    if paths is None:
+        immutable = REPLACEMENT_PROPERTIES.get(resource_type)
+        if immutable is None:
+            return "UNKNOWN", []
+        return ("REPLACEMENT" if immutable.intersection(properties) else "no"), []
+    whole = {path for path in paths if "/" not in path}
+    if whole.intersection(properties):
+        return "REPLACEMENT", []
+    nested = sorted(name for name in properties if any(path.startswith(name + "/") for path in paths))
+    return ("CONDITIONAL" if nested else "no"), nested
 
 
 class PreviewError(RuntimeError):
@@ -286,16 +331,14 @@ def _iam_changes(logical_id: str, before: Mapping[str, Any] | None, after: Mappi
     return changes
 
 
-def _replacement(resource_type: str, properties: Sequence[str]) -> str:
-    immutable = REPLACEMENT_PROPERTIES.get(resource_type)
-    if immutable is None:
-        return "UNKNOWN"
-    return "REPLACEMENT" if immutable.intersection(properties) else "no"
+def _replacement(resource_type: str, properties: Sequence[str], table: Mapping[str, Sequence[str]] | None = None) -> tuple[str, list[str]]:
+    return replacement_of(resource_type, properties, load_create_only() if table is None else table)
 
 
 def compare(deployed: Mapping[str, Any], local: Mapping[str, Any], deployed_params: Mapping[str, str], local_params: Mapping[str, str]) -> dict[str, Any]:
     """The preview: added / modified / removed resources, replacement risk and IAM changes."""
 
+    create_only = load_create_only()
     old = effective_resources(deployed, Context(deployed, deployed_params))
     new = effective_resources(local, Context(local, local_params))
     added = sorted(set(new) - set(old))
@@ -304,14 +347,15 @@ def compare(deployed: Mapping[str, Any], local: Mapping[str, Any], deployed_para
     for logical_id in sorted(set(old) & set(new)):
         before, after = old[logical_id], new[logical_id]
         if before["type"] != after["type"]:
-            modified[logical_id] = {"type": after["type"], "properties": ["<Type>"], "replacement": "REPLACEMENT"}
+            modified[logical_id] = {"type": after["type"], "properties": ["<Type>"], "replacement": "REPLACEMENT", "conditionalProperties": []}
             continue
         names = sorted(
             name for name in set(before["properties"]) | set(after["properties"])
             if _canon(before["properties"].get(name)) != _canon(after["properties"].get(name))
         )
         if names:
-            modified[logical_id] = {"type": after["type"], "properties": names, "replacement": _replacement(after["type"], names)}
+            status, conditional = _replacement(after["type"], names, create_only)
+            modified[logical_id] = {"type": after["type"], "properties": names, "replacement": status, "conditionalProperties": conditional}
     iam: list[dict[str, Any]] = []
     for logical_id in sorted(set(old) | set(new)):
         resource = new.get(logical_id) or old.get(logical_id)
@@ -333,7 +377,7 @@ def compare(deployed: Mapping[str, Any], local: Mapping[str, Any], deployed_para
 
 def load_profile(name: str, path: Path = EXPECTATIONS_PATH) -> Mapping[str, Any]:
     try:
-        profiles = json.loads(path.read_text(encoding="utf-8"))["profiles"]
+        profiles = json.loads(path.read_text(encoding="utf-8-sig"))["profiles"]
         profile = profiles[name]
     except (OSError, ValueError, KeyError) as exc:
         raise PreviewError("profile_unknown") from exc
@@ -379,12 +423,13 @@ def check_preview(preview: Mapping[str, Any], profile: Mapping[str, Any]) -> lis
         {item["id"]: item["type"] for item in preview["added"]},
         {item["id"]: item["properties"] for item in preview["modified"]},
         [item["id"] for item in preview["removed"]],
-        # The preview cannot know the replacement behaviour of some types (the Harness); the profile
-        # names them and the real change set must then show Replacement=False (check-change-set).
+        # CONDITIONAL (a changed property has createOnly paths below it) is accepted only when the profile names it.
         {
             item["id"]: item["replacement"]
             for item in preview["modified"]
-            if item["replacement"] != "no" and not (item["replacement"] == "UNKNOWN" and item["id"] in profile.get("previewReplacementUnknown", []))
+            if item["replacement"] != "no" and not (
+                item["replacement"] == "CONDITIONAL" and set(item["conditionalProperties"]) <= set((profile.get("conditionalNestedAllowed") or {}).get(item["id"], {}))
+            )
         },
         sorted({item["resource"] for item in preview["iam"]}),
     )
@@ -407,49 +452,109 @@ def check_preview(preview: Mapping[str, Any], profile: Mapping[str, Any]) -> lis
     return problems
 
 
-def check_change_set(described: Mapping[str, Any], profile: Mapping[str, Any]) -> list[str]:
-    """Validate the JSON of ``describe-change-set`` against a profile."""
+def _causing_root(entity: object) -> str | None:
+    """``GatewayExecutionRole.Arn`` -> ``GatewayExecutionRole`` (a parameter name has no dot and is returned as is)."""
 
+    return entity.split(".", 1)[0] if isinstance(entity, str) and entity else None
+
+
+def analyze_change_set(described: Mapping[str, Any], profile: Mapping[str, Any], create_only: Mapping[str, Sequence[str]] | None = None) -> dict[str, Any]:
+    """Validate the JSON of ``describe-change-set`` against a profile.
+
+    Returns ``{"violations": [...], "inherited": [...], "conditionalAccepted": [...]}``: what was refused, and what
+    was accepted by rule rather than by being listed (so that the operator sees it).
+    """
+
+    table = load_create_only() if create_only is None else create_only
     changes = described.get("Changes")
     if not isinstance(changes, list):
         raise PreviewError("change_set_shape_invalid")
     if described.get("Status") not in {None, "CREATE_COMPLETE"}:
         raise PreviewError("change_set_not_ready")
+    rows: list[Mapping[str, Any]] = []
+    for wrapper in changes:
+        change = wrapper.get("ResourceChange") if isinstance(wrapper, Mapping) else None
+        if not isinstance(change, Mapping):
+            raise PreviewError("change_set_shape_invalid")
+        if not isinstance(change.get("LogicalResourceId"), str) or not isinstance(change.get("ResourceType"), str):
+            raise PreviewError("change_set_shape_invalid")
+        if change.get("Action") not in {"Add", "Modify", "Remove"}:
+            raise PreviewError("change_set_shape_invalid")
+        rows.append(change)
+    # A resource of this change set that is modified and NOT replaced: what an inherited change may point at.
+    stable = {row["LogicalResourceId"] for row in rows if row["Action"] == "Modify" and row.get("Replacement") == "False"}
+
     added: dict[str, str] = {}
     modified: dict[str, list[str]] = {}
     removed: list[str] = []
     replacements: dict[str, str] = {}
     touched_iam: list[str] = []
-    for wrapper in changes:
-        change = wrapper.get("ResourceChange") if isinstance(wrapper, Mapping) else None
-        if not isinstance(change, Mapping):
-            raise PreviewError("change_set_shape_invalid")
-        logical_id, action, resource_type = change.get("LogicalResourceId"), change.get("Action"), change.get("ResourceType")
-        if not isinstance(logical_id, str) or not isinstance(resource_type, str):
-            raise PreviewError("change_set_shape_invalid")
-        if change.get("Replacement") not in (None, "False"):
-            replacements[logical_id] = str(change.get("Replacement"))
-        if resource_type in IAM_TYPES and action in {"Add", "Modify", "Remove"}:
+    inherited: list[str] = []
+    conditional_accepted: list[str] = []
+    extra_problems: list[str] = []
+    allowed_nested = profile.get("conditionalNestedAllowed") or {}
+    for change in rows:
+        logical_id, action, resource_type = change["LogicalResourceId"], change["Action"], change["ResourceType"]
+        if resource_type in IAM_TYPES:
             touched_iam.append(logical_id)
         if action == "Add":
             added[logical_id] = resource_type
         elif action == "Remove":
             removed.append(logical_id)
-        elif action == "Modify":
-            names = {
-                detail["Target"]["Name"]
-                for detail in change.get("Details") or []
-                if isinstance(detail, Mapping) and isinstance(detail.get("Target"), Mapping) and isinstance(detail["Target"].get("Name"), str)
-            }
-            # A Modify with no named property (dependency re-evaluation) is surfaced, not hidden.
-            modified[logical_id] = sorted(names) or ["<dependency re-evaluation>"]
         else:
-            raise PreviewError("change_set_shape_invalid")
-    problems = _violations_for(profile, added, modified, removed, replacements, touched_iam)
+            details = [d for d in change.get("Details") or [] if isinstance(d, Mapping) and isinstance(d.get("Target"), Mapping) and isinstance(d["Target"].get("Name"), str)]
+            direct: set[str] = set()
+            for detail in details:
+                name = detail["Target"]["Name"]
+                cause = _causing_root(detail.get("CausingEntity"))
+                if detail.get("Evaluation") == "Dynamic" and detail.get("ChangeSource") == "ResourceAttribute" and cause in stable and cause != logical_id:
+                    inherited.append(f"{logical_id}.{name} <- {detail.get('CausingEntity')}")
+                else:
+                    direct.add(name)
+            # Nothing named at all (dependency re-evaluation) is surfaced; an all-inherited resource needs no listing.
+            if direct or not details:
+                modified[logical_id] = sorted(direct) or ["<dependency re-evaluation>"]
+        replacement = change.get("Replacement")
+        if replacement in (None, "False"):
+            continue
+        if replacement != "Conditional":
+            replacements[logical_id] = str(replacement)
+            continue
+        paths = table.get(resource_type)
+        if paths is None:
+            extra_problems.append(f"replacement risk (Conditional): {logical_id}: no createOnly list for {resource_type} in the expectations file; stop")
+            continue
+        always = [d["Target"]["Name"] for d in change.get("Details") or [] if isinstance(d, Mapping) and isinstance(d.get("Target"), Mapping)
+                  and d["Target"].get("RequiresRecreation") == "Always"]
+        for name in always:
+            extra_problems.append(f"replacement risk (Conditional): {logical_id}.{name} always requires recreation")
+        conditional = [d["Target"]["Name"] for d in change.get("Details") or [] if isinstance(d, Mapping) and isinstance(d.get("Target"), Mapping)
+                       and d["Target"].get("RequiresRecreation") == "Conditionally"]
+        if not conditional and not always:
+            extra_problems.append(f"replacement risk (Conditional): {logical_id}: no property explains it; stop")
+        for name in conditional:
+            whole = name in paths
+            nested = [path for path in paths if path.startswith(name + "/")]
+            if whole:
+                extra_problems.append(f"replacement risk (Conditional): {logical_id}.{name} is createOnly")
+            elif not nested:
+                extra_problems.append(f"replacement risk (Conditional): {logical_id}.{name} has no createOnly path in the list for {resource_type}: the list is stale or incomplete; stop")
+            elif name in allowed_nested.get(logical_id, {}):
+                conditional_accepted.append(f"{logical_id}.{name}: {allowed_nested[logical_id][name]}")
+            else:
+                extra_problems.append(
+                    f"replacement risk (Conditional): {logical_id}.{name} has createOnly paths below it ({', '.join(nested)}); "
+                    "accept it in the profile (conditionalNestedAllowed) only after checking that none of them changes"
+                )
+    problems = _violations_for(profile, added, modified, removed, replacements, touched_iam) + extra_problems
     for logical_id, properties in modified.items():
         if properties == ["<dependency re-evaluation>"] and logical_id in (profile.get("modify") or {}):
             problems.append(f"{logical_id} is modified without a named property; review it by hand")
-    return problems
+    return {"violations": problems, "inherited": inherited, "conditionalAccepted": conditional_accepted}
+
+
+def check_change_set(described: Mapping[str, Any], profile: Mapping[str, Any], create_only: Mapping[str, Sequence[str]] | None = None) -> list[str]:
+    return analyze_change_set(described, profile, create_only)["violations"]
 
 
 # --------------------------------------------------------------------------------- CLI
@@ -470,7 +575,7 @@ def _render(preview: Mapping[str, Any]) -> str:
     lines.append(f"ADD      ({len(preview['added'])})")
     lines += [f"  + {item['id']}  {item['type']}" for item in preview["added"]]
     lines.append(f"MODIFY   ({len(preview['modified'])})")
-    lines += [f"  ~ {item['id']}  {item['type']}  props=[{', '.join(item['properties'])}]  replacement={item['replacement']}" for item in preview["modified"]]
+    lines += [f"  ~ {item['id']}  {item['type']}  props=[{', '.join(item['properties'])}]  replacement={item['replacement']}{' (' + ', '.join(item['conditionalProperties']) + ')' if item['conditionalProperties'] else ''}" for item in preview["modified"]]
     lines.append(f"REMOVE   ({len(preview['removed'])})")
     lines += [f"  - {item['id']}  {item['type']}" for item in preview["removed"]]
     lines.append(f"IAM      ({len(preview['iam'])} statement-level changes)")
@@ -526,6 +631,47 @@ def build_parameters(template: Mapping[str, Any], stack: Mapping[str, Any], over
     return result
 
 
+BOOTSTRAP_STAGES = ("code-and-quota", "agent-chat")
+
+
+def bootstrap_parameters(resources: Mapping[str, Any], stack: Mapping[str, Any], stage: str) -> list[dict[str, str]]:
+    """Parameters of the temporary Public Edge role stack, derived from the deployed stack, never typed by hand.
+
+    ``resources`` is ``aws cloudformation describe-stack-resources`` of ``LegalDeskPhase14PublicEdge`` and ``stack`` its
+    ``describe-stacks``. Account, region and partition come from the stack id; every ARN is rebuilt from a physical id.
+    """
+
+    if stage not in BOOTSTRAP_STAGES:
+        raise PreviewError("stage_invalid")
+    stack_id = str(stack.get("StackId", ""))
+    parts = stack_id.split(":")
+    if len(parts) < 6 or parts[0] != "arn" or not parts[4].isdigit() or stack.get("StackName") != "LegalDeskPhase14PublicEdge":
+        raise PreviewError("stack_inventory_invalid")
+    partition, region, account = parts[1], parts[3], parts[4]
+    physical: dict[str, str] = {}
+    for item in resources.get("StackResources") or []:
+        if isinstance(item, Mapping) and isinstance(item.get("LogicalResourceId"), str) and isinstance(item.get("PhysicalResourceId"), str):
+            physical[item["LogicalResourceId"]] = item["PhysicalResourceId"]
+    needed = ("ApplicationExecutionRole", "ApplicationFunction", "PublicDistribution", "FrontendOriginAccessControl", "EdgeResponseHeadersPolicy", "PublicApi", "PublicApiIntegration")
+    missing = [name for name in needed if not physical.get(name)]
+    if missing:
+        raise PreviewError("resource_missing:" + ",".join(missing))
+    bucket = next((item.get("ParameterValue") for item in stack.get("Parameters") or [] if isinstance(item, Mapping) and item.get("ParameterKey") == "ApplicationCodeBucket"), None)
+    if not isinstance(bucket, str) or not bucket or "/" in bucket:
+        raise PreviewError("artifact_bucket_missing")
+    values = {
+        "Stage": stage,
+        "ExistingApplicationRoleArn": f"arn:{partition}:iam::{account}:role/{physical['ApplicationExecutionRole']}",
+        "ApplicationFunctionArn": f"arn:{partition}:lambda:{region}:{account}:function:{physical['ApplicationFunction']}",
+        "CloudFrontDistributionArn": f"arn:{partition}:cloudfront::{account}:distribution/{physical['PublicDistribution']}",
+        "OriginAccessControlArn": f"arn:{partition}:cloudfront::{account}:origin-access-control/{physical['FrontendOriginAccessControl']}",
+        "ResponseHeadersPolicyArn": f"arn:{partition}:cloudfront::{account}:response-headers-policy/{physical['EdgeResponseHeadersPolicy']}",
+        "PublicApiIntegrationArn": f"arn:{partition}:apigateway:{region}::/apis/{physical['PublicApi']}/integrations/{physical['PublicApiIntegration']}",
+        "ArtifactBucketArn": f"arn:{partition}:s3:::{bucket}",
+    }
+    return [{"ParameterKey": key, "ParameterValue": value} for key, value in values.items()]
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -543,6 +689,11 @@ def _parser() -> argparse.ArgumentParser:
     params.add_argument("--template", type=Path, required=True, help="the repository template that will be deployed")
     params.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", help="the parameter deltas of this step (repeatable)")
     params.add_argument("--output", type=Path, required=True, help="file to write; it holds no secret")
+    boot = sub.add_parser("bootstrap-params", help="write the parameters of the temporary Public Edge role stack from the deployed stack")
+    boot.add_argument("--stack-json", type=Path, required=True, help="saved `describe-stacks --stack-name LegalDeskPhase14PublicEdge`")
+    boot.add_argument("--resources-json", type=Path, required=True, help="saved `describe-stack-resources --stack-name LegalDeskPhase14PublicEdge`")
+    boot.add_argument("--stage", choices=BOOTSTRAP_STAGES, required=True)
+    boot.add_argument("--output", type=Path, required=True)
     match = sub.add_parser("cd-template-match", help="check that the deployed Public Edge template equals the repository one, as the code-only CD requires")
     match.add_argument("--deployed", type=Path, required=True)
     match.add_argument("--local", type=Path, default=Path("infra/cloudformation/phase-14-public-edge.yaml"))
@@ -555,28 +706,38 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        if args.command == "params":
-            stacks = json.loads(args.stack_json.read_text(encoding="utf-8")).get("Stacks")
+        if args.command == "bootstrap-params":
+            stacks = json.loads(args.stack_json.read_text(encoding="utf-8-sig")).get("Stacks")
             if not isinstance(stacks, list) or len(stacks) != 1:
                 raise PreviewError("stack_inventory_invalid")
-            built = build_parameters(load_template(args.template.read_text(encoding="utf-8")), stacks[0], _parse_params(args.set))
+            built = bootstrap_parameters(json.loads(args.resources_json.read_text(encoding="utf-8-sig")), stacks[0], args.stage)
+            args.output.write_text(json.dumps(built, indent=2) + chr(10), encoding="utf-8", newline=chr(10))
+            print(json.dumps({"parameters": len(built), "stage": args.stage, "output": str(args.output)}))
+            return 0
+        if args.command == "params":
+            stacks = json.loads(args.stack_json.read_text(encoding="utf-8-sig")).get("Stacks")
+            if not isinstance(stacks, list) or len(stacks) != 1:
+                raise PreviewError("stack_inventory_invalid")
+            built = build_parameters(load_template(args.template.read_text(encoding="utf-8-sig")), stacks[0], _parse_params(args.set))
             args.output.write_text(json.dumps(built, indent=2) + chr(10), encoding="utf-8", newline=chr(10))
             print(json.dumps({"parameters": len(built), "changed": sorted(_parse_params(args.set)), "output": str(args.output)}))
             return 0
         if args.command == "cd-template-match":
-            matches = cd_template_match(args.deployed.read_text(encoding="utf-8"), args.local.read_text(encoding="utf-8"))
+            matches = cd_template_match(args.deployed.read_text(encoding="utf-8-sig"), args.local.read_text(encoding="utf-8-sig"))
             print(json.dumps({"cdTemplateMatch": matches}))
             return 0 if matches else 1
         if args.command == "check-change-set":
-            described = json.loads(args.change_set_json.read_text(encoding="utf-8"))
-            problems = check_change_set(described, load_profile(args.profile))
-            print(json.dumps({"profile": args.profile, "ok": not problems, "violations": problems}, indent=2))
+            described = json.loads(args.change_set_json.read_text(encoding="utf-8-sig"))
+            analysis = analyze_change_set(described, load_profile(args.profile))
+            problems = analysis["violations"]
+            print(json.dumps({"profile": args.profile, "ok": not problems, "violations": problems, "acceptedAsInherited": analysis["inherited"],
+                              "acceptedAsConditional": analysis["conditionalAccepted"]}, indent=2))
             return 1 if problems else 0
-        local = load_template(args.local.read_text(encoding="utf-8"))
+        local = load_template(args.local.read_text(encoding="utf-8-sig"))
         if args.deployed_git_ref:
             deployed_text = _git_show(args.deployed_git_ref, args.local.as_posix())
         else:
-            deployed_text = args.deployed.read_text(encoding="utf-8")
+            deployed_text = args.deployed.read_text(encoding="utf-8-sig")
         deployed = load_template(deployed_text)
         preview = compare(deployed, local, _parse_params(args.deployed_param), _parse_params(args.param))
         problems = check_preview(preview, load_profile(args.profile)) if args.profile else []

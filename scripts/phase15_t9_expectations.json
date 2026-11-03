@@ -264,9 +264,11 @@
         }
       ],
       "remove": [],
-      "previewReplacementUnknown": [
-        "MinimalHarness"
-      ]
+      "conditionalNestedAllowed": {
+        "MinimalHarness": {
+          "Memory": "createOnly path below Memory is ManagedMemoryConfiguration/EncryptionKeyArn; this change moves AgentCoreMemoryConfiguration to Disabled and does not touch it"
+        }
+      }
     },
     "harness-adot-off": {
       "description": "LegalDeskPhase01 (Harness): disable managed ADOT again after the probe. Only the environment variables of MinimalHarness change.",
@@ -278,10 +280,7 @@
         ]
       },
       "iamResources": [],
-      "iam": [],
-      "previewReplacementUnknown": [
-        "MinimalHarness"
-      ]
+      "iam": []
     },
     "cd-iam": {
       "description": "LegalDeskProductionCD: adds the agent chat worker to the release and CloudFormation roles (4 statements, all on the one function and its unchanged role). Roles are modified in place, never replaced.",
@@ -453,6 +452,167 @@
           ]
         }
       ]
+    },
+    "public-edge-code-and-quota": {
+      "description": "LegalDeskPhase14PublicEdge step 8a: the new immutable application code and QuotaHarnessPerMonth=50 with EnableAgentChat=false. Only the application function (Code, Environment) and the dependent API integration change; no new resource, no IAM.",
+      "add": [],
+      "remove": [],
+      "modify": {
+        "ApplicationFunction": [
+          "Code",
+          "Environment"
+        ]
+      },
+      "iamResources": [],
+      "iam": []
+    },
+    "public-edge-agent-chat-on": {
+      "description": "LegalDeskPhase14PublicEdge step 8b: EnableAgentChat=true on top of 8a (same code, same quota). Adds the 14 AgentChat resources; the application function environment and the application role policy change; nothing else.",
+      "add": [
+        "AgentChatDeadLetterQueue",
+        "AgentChatDeadLetterQueueAlarm",
+        "AgentChatEventSourceMapping",
+        "AgentChatFallbackMetric",
+        "AgentChatFallbackRateAlarm",
+        "AgentChatJobDurationAlarm",
+        "AgentChatJobFailureAlarm",
+        "AgentChatJobFailureMetric",
+        "AgentChatQueue",
+        "AgentChatQueueAgeAlarm",
+        "AgentChatWorkerErrorsAlarm",
+        "AgentChatWorkerExecutionRole",
+        "AgentChatWorkerFunction",
+        "AgentChatWorkerLogGroup"
+      ],
+      "remove": [],
+      "modify": {
+        "ApplicationExecutionRole": [
+          "Policies"
+        ],
+        "ApplicationFunction": [
+          "Environment"
+        ]
+      },
+      "iamResources": [
+        "AgentChatWorkerExecutionRole",
+        "ApplicationExecutionRole"
+      ],
+      "iam": [
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "AssumeRolePolicyDocument",
+          "sid": "-",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ApprovedModelDataPlane",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "BedrockKnowledgeBaseRetrieveOnly",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ConsumeJobMessages",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ConversationMemory",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "GuardrailDataPlane",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "HeadCanonicalSourceDocumentsOnly",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "InvokeTheAgentHarnessOnly",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ReadAuthorizationSessionAndJobState",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "WriteJobGrantCitationHistoryAndQuotaState",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "WriteWorkerLogs",
+          "change": "added"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "PublishAgentChatJobIds",
+          "change": "added"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "change": "changed"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "WriteOnlyApplicationOwnedState",
+          "change": "changed"
+        }
+      ],
+      "wideAllowed": [
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "sid": "HeadCanonicalSourceDocumentsOnly",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "sid": "WriteWorkerLogs",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        }
+      ]
     }
-  }
+  },
+  "createOnly": {
+    "AWS::BedrockAgentCore::Harness": [
+      "HarnessName",
+      "Memory/ManagedMemoryConfiguration/EncryptionKeyArn"
+    ]
+  },
+  "createOnlyNote": "Per resource type, the property paths that CloudFormation cannot update in place (createOnly in the resource schema, aws cloudformation describe-type, read 2026-11-03). Used by check-change-set to decide a Replacement of Conditional; a type missing here stops the check. Re-read the schema before adding a type."
 }
