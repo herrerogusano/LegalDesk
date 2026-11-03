@@ -399,37 +399,9 @@ hand to the supervisor, **not** something to fix live and **not** a reason to re
 The report holds closed verdicts, booleans, counts and SHA-256 of the markers, the Harness ARN and the matter: never a marker, question, answer or tool payload.
 **Stop if** an invocation errors (the script does not retry).
 
-**Residual state and its cleanup.** Each agent call of the script does what the worker does, so it leaves synthetic state in the metadata table. The
-report lists it (`residualState`, random ids and key hashes only, never the key, which contains tenant, matter and user):
-
-| Written per agent call (3 calls: pre-check + 2 cut-loop) | Lifetime | Cleanup |
-|---|---|---|
-| `CONVERSATION#<tenant>#<matter>#<user>#checks-<uuid>` / `SESSION#checks-<uuid>` (a conversation binding) | **no TTL, and the project has no sweeper for bindings** | delete the exact items, below |
-| `GATEWAY#…` invocation grant of the sealed binding | `ttl` = 5 minutes (DynamoDB TTL, plus the reconciliation sweep) | none; the report counts them (`invocationGrantsWritten`) |
-| one `GATEWAY#…` grant per tool call, written by the interceptor | same 5-minute `ttl` | none |
-
-Not written: the job exists only in memory (no `CHATJOB` item), no quota counter, no Harness or backend memory event, no citation handle. The session check
-makes plain Harness calls and writes nothing.
-
-```powershell
-$report = Get-Content evals/results/phase15-harness-checks-$Stamp-a.json -Raw | ConvertFrom-Json
-$table  = "LegalDeskPhase02Documents-DocumentMetadataTable-1DANFLTX8RW7T"
-$tenant = "tnt_phase14_20260928"; $matter = "mat_phase14_a_20260928"
-$user   = "<userId of the synthetic test user: the AUTH#USER#<userId> item, not the Cognito username>"
-function Sha($s) { ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))) -replace "-", "").ToLower() }
-Set-Content "$Root\values.json" ('{":t":{"S":"ConversationBinding"}}') -Encoding ascii
-foreach ($b in $report.residualState.conversationBindings) {
-  $pk = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)"
-  if ((Sha $pk) -ne $b.bindingPkSha256) { throw "this key does not match the hash in the report: stop" }   # never delete a guessed key
-  Set-Content "$Root\key.json" (@{ pk = @{ S = $pk }; sk = @{ S = "SESSION#$($b.sessionSelector)" } } | ConvertTo-Json -Compress) -Encoding ascii
-  aws dynamodb get-item    --table-name $table --key file://$Root\key.json --consistent-read          # must exist, entityType ConversationBinding
-  aws dynamodb delete-item --table-name $table --key file://$Root\key.json --condition-expression "entityType = :t" --expression-attribute-values file://$Root\values.json
-}
-```
-
-The deletes are single, conditional, DynamoDB writes on keys whose hash is in the report (free at this volume). **Known gap:** the real eval of step 12 creates
-one binding per case (`eval-<uuid>`) with the same lifetime and its report does not list them; until it does, they are 30 orphan items, recorded here as accepted
-residue of the synthetic matter (they hold only ids). **Back.** Nothing else to undo.
+**Residual state.** Each agent call of the script does what the worker does, so it leaves synthetic state in the metadata table (a conversation binding
+with no TTL and a 5-minute grant). The report lists it under `residualState` (random ids and the SHA-256 of the key, never the key), noting each binding
+**before** its call, so it is listed even if the call fails or the run is interrupted. **Its cleanup is mandatory and is done in step 14**, together with the eval's.
 
 ## Step 12 · Routing eval, real mode (◆ paid: 30 Harness invocations)
 
@@ -452,6 +424,10 @@ run and call the owner if it passes 2.20**.
 **After.** The report is create-only and immutable; read `summary` (tool accuracy, path accuracy, violations, `estimatedLoopCostUsd`, latency p50/p95, tokens).
 Commit the report, never the questions. **Stop if** < 27/30 or any violation: do **not** re-run to "get a pass" (a rerun needs a new approval and a new file name);
 the failure is the finding. **Back.** None.
+
+**Residual state.** Every case builds the worker's sealed binding, so each one leaves a conversation binding (`eval-<uuid>`, no TTL, no sweeper) and a 5-minute grant.
+The report lists them under `residualState` in the same format as step 11 (ids and key hashes only), noting each binding **before** the case's call. The report is
+written even if the run errors or is interrupted (`interruptedBy` says by what; the cases not run count as failed). Their deletion is **mandatory** (step 14).
 
 ## Step 13 · Browser smoke (◆ paid: ≈ 10 questions through the worker)
 
@@ -493,10 +469,92 @@ Use the synthetic user in the real browser against the CloudFront origin. Questi
 1. Delete every change set that was created and not executed (`list-change-sets` per stack, `delete-change-set`).
 2. Revoke/let expire the test user's session; unset `LEGALDESK_EVAL_ACCESS_TOKEN`; delete the shell history lines that held it.
 3. Lower (never raise) the retention of any log group created in the block to the lowest the owner accepts (3 days for the Harness runtime groups).
-4. Confirm the conversation bindings of step 11 were deleted (their cleanup is in step 11); the grants have expired by themselves.
+4. **Mandatory: delete the synthetic conversation bindings of steps 11 and 12** and verify it (section below). It is not optional and the block is not closed until it is done.
 5. Keep `$BK` and `$Root` **outside the repository** until the owner signs off, then archive them; they contain parameter values (ARNs, ids) but no secret
    (`NoEcho` values are masked by CloudFormation and were only ever passed as `UsePreviousValue`). Copy the evidence summary to `docs/phase-15-acceptance.md`.
 6. Check the real cost the next day in the Billing console (not the Cost Explorer API) and record it next to the estimate.
+
+### Mandatory cleanup of the synthetic conversation bindings (steps 11 and 12)
+
+Both live tools write the same block, `residualState`, into their immutable reports: `evals/results/phase15-harness-checks-*.json` (3 bindings) and
+`evals/results/phase15-routing-*.json` (up to 30, one per case run). Each entry holds random ids and `bindingPkSha256`, the SHA-256 of the partition key, never the key
+(it holds the tenant, the matter and the user). The bindings have **no TTL and nothing in the project sweeps them**, so they stay until deleted. The 5-minute grants
+(one per agent call, plus one per tool call written by the interceptor) expire by themselves and need nothing.
+
+Not created by either tool: the job (memory only), `CHATJOB` items, quota counters, Harness or backend memory events, citation handles. The plain session-check calls write nothing.
+
+The script reads **any number of reports** and deletes only keys it can rebuild and whose hash matches the report. It is built so that a failure can never read as success:
+
+- a **pre-check** (account, region, table `ACTIVE`) runs before anything is touched, and every hash of every report is checked before the first delete;
+- `$LASTEXITCODE` is checked after **every** `aws` call and any failure is a `throw` (expired credentials, wrong region or profile, throttling, network, and a `ConditionalCheckFailedException` on the delete when the item changed type);
+- a binding counts as **absent only when the read succeeded and returned no item**, and as **deleted only after a successful delete**; empty output from `aws` is a failure, never "absent";
+- the verification re-reads every key and a failed read stops it, so `remaining=0` can only be printed when every read succeeded and found nothing.
+
+```powershell
+$reports = Get-ChildItem evals\results\phase15-harness-checks-$Stamp-*.json, evals\results\phase15-routing-$Stamp-*.json   # every report of this block
+$table   = "LegalDeskPhase02Documents-DocumentMetadataTable-1DANFLTX8RW7T"
+$tenant  = "tnt_phase14_20260928"; $matter = "mat_phase14_a_20260928"
+$user    = "<userId of the synthetic test user: the AUTH#USER#<userId> item, not the Cognito username>"
+function Sha($s) { ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))) -replace "-", "").ToLower() }
+function KeyFile($b) { Set-Content "$Root\key.json" (@{ pk = @{ S = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)" }; sk = @{ S = "SESSION#$($b.sessionSelector)" } } | ConvertTo-Json -Compress) -Encoding ascii }
+
+# 0. Pre-check: right account, right region, table reachable. Nothing is touched before this passes.
+if (-not $reports) { throw "no report found for stamp ${Stamp}: nothing to clean, or the wrong stamp" }
+if ($env:AWS_REGION -ne "eu-west-1") { throw "AWS_REGION must be eu-west-1" }
+$account = aws sts get-caller-identity --query Account --output text
+if ($LASTEXITCODE -ne 0) { throw "sts get-caller-identity failed (exit $LASTEXITCODE): credentials expired or wrong profile; stop" }
+if ($account -ne "344774635844") { throw "wrong AWS account ($account); stop" }
+$status = aws dynamodb describe-table --table-name $table --query Table.TableStatus --output text
+if ($LASTEXITCODE -ne 0) { throw "describe-table failed (exit $LASTEXITCODE): wrong region, profile or table name; stop" }
+if ($status -ne "ACTIVE") { throw "table $table is $status; stop" }
+
+# 1. Read every report and check every hash BEFORE deleting anything.
+$entries = @()
+foreach ($report in $reports) {
+  foreach ($b in (Get-Content $report.FullName -Raw | ConvertFrom-Json).residualState.conversationBindings) {
+    $pk = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)"
+    if ((Sha $pk) -ne $b.bindingPkSha256) { throw "key does not match the hash in $($report.Name): stop, do not guess" }
+    $entries += $b
+  }
+}
+$expected = $entries.Count
+if ($expected -eq 0) { throw "the reports list no binding: stop (a run that made calls always lists them)" }
+
+# 2. Delete. Absent only if the call SUCCEEDED and returned no item; deleted only after a successful delete.
+Set-Content "$Root\values.json" ('{":t":{"S":"ConversationBinding"}}') -Encoding ascii
+$deleted = 0; $absent = 0
+foreach ($b in $entries) {
+  KeyFile $b
+  $out = aws dynamodb get-item --table-name $table --key file://$Root\key.json --consistent-read --query "Item.[pk.S, entityType.S]" --output json
+  if ($LASTEXITCODE -ne 0) { throw "get-item failed (exit $LASTEXITCODE): this is NOT 'absent'; stop" }
+  if (-not $out) { throw "get-item returned nothing: stop" }
+  $item = $out | ConvertFrom-Json
+  if ($null -eq $item) { $absent++; continue }                                      # success and no Item: already gone
+  if ($item[1] -ne "ConversationBinding") { throw "not a ConversationBinding: stop" }
+  aws dynamodb delete-item --table-name $table --key file://$Root\key.json --condition-expression "entityType = :t" --expression-attribute-values file://$Root\values.json
+  if ($LASTEXITCODE -ne 0) { throw "delete-item failed (exit $LASTEXITCODE; a ConditionalCheckFailedException means the item changed type): stop" }
+  $deleted++
+}
+
+# 3. Verification: every listed binding is gone. A failed read is a failure, never a zero.
+$remaining = 0
+foreach ($b in $entries) {
+  KeyFile $b
+  $out = aws dynamodb get-item --table-name $table --key file://$Root\key.json --consistent-read --query "Item.[pk.S, entityType.S]" --output json
+  if ($LASTEXITCODE -ne 0) { throw "verification get-item failed (exit $LASTEXITCODE): the cleanup is NOT verified; stop" }
+  if (-not $out) { throw "verification get-item returned nothing: stop" }
+  if ($null -ne ($out | ConvertFrom-Json)) { $remaining++ }
+}
+"reports=$($reports.Count) expected=$expected deleted=$deleted alreadyAbsent=$absent remaining=$remaining"
+if ($remaining -ne 0 -or ($deleted + $absent) -ne $expected) { throw "cleanup incomplete: do not close the block" }
+```
+
+**Verification** is the last two lines: the summary with `remaining=0` and `deleted + alreadyAbsent = expected` (a run that threw printed no summary and does not count). Paste that line in the evidence ledger. The reads are consistent single-item reads and the deletes are
+conditional single-item writes (free at this volume).
+
+**If a report is missing** (the process was killed before it could write, or the file was lost) the ids are lost with it. As a last resort, with the owner's go, one read-only scan of
+the metadata table with the filter `entityType = ConversationBinding AND tenantId = :tenant AND matterId = :matter AND (begins_with(conversationId, "checks-") OR begins_with(conversationId, "eval-"))`
+lists them (it reads the whole table once: a few hundred items); delete only the items whose `userId` is the synthetic test user's, with the same conditional delete.
 
 **Final state to leave** — the owner chooses one (the cost of each is in the estimate):
 
@@ -527,3 +585,4 @@ Both states keep `cd-template-match` = `true`, the CD role from step 9, and the 
 | 11 | | harness-checks report path | | 5 | |
 | 12 | | report path | | 30 | |
 | 13 | | | | 10 | |
+| 14 | | cleanup line (`reports=… expected=… deleted=… alreadyAbsent=… remaining=0`) | | 0 | |
