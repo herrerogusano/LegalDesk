@@ -217,6 +217,11 @@ automáticos:
 
 ## Coste y seguridad
 
+- **Decisiones del propietario para T9** (2026-11-03):
+  - techo de 5 USD y 50 invocaciones de Harness, sin reintentos;
+  - estado final: chat agentic **encendido**, con `QuotaHarnessPerMonth` = 50;
+  - alarmas con métricas nativas y solo en la consola;
+  - ADOT apagado tras la sonda si aparece contenido.
 - Despliegue: el CD actual solo actualiza la Lambda de la aplicación (D-029).
   La Lambda `search-documents`, el worker, la cola y los cambios en MCP,
   interceptor y Harness se despliegan con change sets revisados por un

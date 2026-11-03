@@ -619,6 +619,21 @@ contenido.
 - Harness vuelve a estar en el camino crítico del chat; el fallback evita que
   sea un punto único de fallo.
 - Aparece una métrica de producto nueva: el acierto del routing.
+- **Estado tras T9** (decisión del propietario, 2026-11-03):
+  - **El chat agentic queda encendido** para poder hacer demos, con una cuota
+    desplegada de `harness` de **50 preguntas al mes**. El valor por defecto
+    de D8 sigue siendo 300.
+  - **Coste fijo:** las alarmas del job usan **métricas nativas** de SQS y
+    Lambda, que son gratuitas, y solo se mantienen como personalizadas las que
+    no tienen equivalente (como mínimo, la tasa de fallback). Objetivo: unos
+    1 USD al mes.
+  - **Alarmas** solo en la consola, sin SNS. Si hay que cortar el servicio,
+    se pone la cuota de `harness` a 0: un único cambio de parámetro, sin crear
+    ni borrar recursos.
+  - Encender o apagar los flags supone actualizar dos pilas como operador
+    (unos 10–15 minutos). No compensa para el coste residual.
+  - **Bloque T9:** techo de 5 USD y 50 invocaciones de Harness. ADOT se apaga
+    tras la sonda si aparece contenido en los traces.
 - **CD** (decisión del propietario, 2026-11-02):
   - La infraestructura del worker (cola, DLQ, Lambda, event source mapping)
     vive en la pila `LegalDeskPhase14PublicEdge` y usa el mismo paquete que la
