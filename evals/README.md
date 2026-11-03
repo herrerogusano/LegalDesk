@@ -5,6 +5,15 @@ the agentic chat. `python evals/phase15_routing_eval.py offline` is the determin
 real interceptor and worker, zero cloud calls). The real mode is prepared and **not executed**: it is part of
 T9 and needs cost approval. See [`docs/phase-15-routing-eval.md`](../docs/phase-15-routing-eval.md).
 
+# Phase 15 golden set
+
+`phase15_golden_eval.py`, `phase15_golden_async.py` and `phase15_golden_dataset.json` (80 synthetic cases over 27 documents) answer whether the
+final answer is right and which phase failed first (input, routing, IDP, retrieval, resolver, writer, grounding, citations, plan, job), and whether the
+asynchronous chain holds (29 scenarios: idempotency, retries by failure type, half-done jobs, DLQ, quota, session).
+`python evals/phase15_golden_eval.py offline` is the deterministic CI gate (production code, doubles for the cloud services, zero cloud calls). The real mode
+is prepared and **not executed**: it needs cost approval, a synthetic matter with the corpus (`prepare-corpus`), a document map and the owner's thresholds hash.
+See [`docs/phase-15-golden-set.md`](../docs/phase-15-golden-set.md) and [`docs/phase-15-golden-set-cost.md`](../docs/phase-15-golden-set-cost.md).
+
 # Phase 12 local evaluation
 
 ## Phase 14 frozen semantic holdout
