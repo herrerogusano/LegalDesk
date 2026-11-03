@@ -424,9 +424,6 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(self._run(["preview", "--deployed", "missing.yaml", "--local", str(TEMPLATES / "cd-iam.yaml")])[0], 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class InheritedIamChangeTests(unittest.TestCase):
     """Step 9 again (2026-11-03): an IAM role whose only change is inherited from an unreplaced role is not 'touched'."""
@@ -448,8 +445,20 @@ class InheritedIamChangeTests(unittest.TestCase):
         self.assertEqual(analysis["violations"], [])
         self.assertIn("ProductionDeploymentRole.Policies <- CloudFormationExecutionRole.Arn", analysis["inherited"])
 
+    def test_a_replaced_role_with_only_inherited_details_still_stops(self) -> None:
+        inherited = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                      "Evaluation": "Dynamic", "ChangeSource": "ResourceAttribute", "CausingEntity": "CloudFormationExecutionRole.Arn"}]
+        described = self.described(inherited)
+        described["Changes"][1]["ResourceChange"]["Replacement"] = "True"
+        violations = preview.analyze_change_set(described, preview.load_profile("cd-iam-attribute-reads"))["violations"]
+        self.assertIn("IAM resource changed outside the profile: ProductionDeploymentRole", violations)
+
     def test_a_direct_change_of_that_role_still_stops(self) -> None:
         direct = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
                    "Evaluation": "Static", "ChangeSource": "DirectModification"}]
         violations = preview.analyze_change_set(self.described(direct), preview.load_profile("cd-iam-attribute-reads"))["violations"]
         self.assertIn("IAM resource changed outside the profile: ProductionDeploymentRole", violations)
+
+
+if __name__ == "__main__":
+    unittest.main()

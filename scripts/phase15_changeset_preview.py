@@ -495,7 +495,8 @@ def analyze_change_set(described: Mapping[str, Any], profile: Mapping[str, Any],
     allowed_nested = profile.get("conditionalNestedAllowed") or {}
     for change in rows:
         logical_id, action, resource_type = change["LogicalResourceId"], change["Action"], change["ResourceType"]
-        if action in ("Add", "Remove") and resource_type in IAM_TYPES:
+        # Added, removed or replaced IAM resources always count; a replacement gets a new ARN whatever the details say.
+        if resource_type in IAM_TYPES and (action in ("Add", "Remove") or change.get("Replacement") not in (None, "False")):
             touched_iam.append(logical_id)
         if action == "Add":
             added[logical_id] = resource_type
@@ -517,7 +518,7 @@ def analyze_change_set(described: Mapping[str, Any], profile: Mapping[str, Any],
                 # An IAM resource counts as changed only through a direct change: one whose only change is inherited from a
                 # resource of this change set that is not replaced keeps exactly the same policy text (2026-11-03, step 9 again:
                 # ProductionDeploymentRole.Policies <- CloudFormationExecutionRole.Arn).
-                if resource_type in IAM_TYPES:
+                if resource_type in IAM_TYPES and logical_id not in touched_iam:
                     touched_iam.append(logical_id)
         replacement = change.get("Replacement")
         if replacement in (None, "False"):
