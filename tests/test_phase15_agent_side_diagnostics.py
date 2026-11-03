@@ -22,7 +22,6 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT / "agent" / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-import jsonschema  # noqa: E402
 import test_phase15_agent_chat_client as chat  # noqa: E402
 from evals import phase15_routing_eval as ev  # noqa: E402
 from legaldesk import agent_contracts as contracts  # noqa: E402
@@ -120,8 +119,34 @@ class ThePlanGrammarOfThePromptIsWhatTheValidatorAcceptsTests(unittest.TestCase)
 class TheToolCallThePromptPrescribesFitsTheSchemaTests(unittest.TestCase):
     schema = contracts.GET_EXTRACTED_FIELDS_SCHEMA
 
+    @classmethod
+    def fits(cls, schema, value) -> bool:
+        """The JSON-Schema subset these tool schemas use (no third-party validator is installed in CI)."""
+
+        kind = schema.get("type")
+        if kind == "object":
+            if not isinstance(value, dict) or any(key not in value for key in schema.get("required", ())):
+                return False
+            properties = schema.get("properties", {})
+            if schema.get("additionalProperties") is False and set(value) - set(properties):
+                return False
+            return all(cls.fits(properties[key], item) for key, item in value.items() if key in properties)
+        if kind == "array":
+            if not isinstance(value, list) or not schema.get("minItems", 0) <= len(value) <= schema.get("maxItems", 10**9):
+                return False
+            if schema.get("uniqueItems") and len(set(map(str, value))) != len(value):
+                return False
+            return all(cls.fits(schema["items"], item) for item in value)
+        if kind == "string":
+            if not isinstance(value, str) or len(value) > schema.get("maxLength", 10**9) or len(value) < schema.get("minLength", 0):
+                return False
+            if "enum" in schema and value not in schema["enum"]:
+                return False
+            return "pattern" not in schema or re.search(schema["pattern"], value) is not None
+        return True
+
     def valid(self, instance) -> bool:
-        return jsonschema.Draft202012Validator(self.schema).is_valid(instance)
+        return self.fits(self.schema, instance)
 
     def test_matter_selector_ids_from_the_listing_and_registry_names_validate(self) -> None:
         ids = [document(i)["documentId"] for i in range(1, 4)]
