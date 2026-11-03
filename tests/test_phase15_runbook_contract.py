@@ -196,6 +196,14 @@ class GeneratedNamesInTheRunbookTests(unittest.TestCase):
         self.assertIn("compare the role name in the event with `generated-name`", eight_b)
 
 
+class PassRoleSimulationTests(unittest.TestCase):
+    def test_passrole_is_simulated_with_the_passed_to_service_context(self) -> None:
+        for line in RUNBOOK.splitlines():
+            if "simulate-principal-policy" in line and "iam:PassRole" in line:
+                self.assertIn("ContextKeyName=iam:PassedToService", line, line)
+                self.assertIn("ContextKeyValues=lambda.amazonaws.com", line, line)
+
+
 class ProfilesAndCommandsExistTests(unittest.TestCase):
     def test_every_profile_the_runbook_names_exists(self) -> None:
         names = set(re.findall(r"--profile ([a-z0-9-]+)", RUNBOOK)) | set(re.findall(r"profile `([a-z0-9-]+)`", RUNBOOK))

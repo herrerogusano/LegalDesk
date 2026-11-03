@@ -484,7 +484,9 @@ keeps them (`UsePreviousValue`), so the worker and the API run the same package.
    $workerRoleName      # LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-XXXXXXXXXXXX : both the stack name and the logical id are cut
    $acct = (aws sts get-caller-identity --query Account --output text); Assert-Aws "sts"
    $roleArn = "arn:aws:iam::${acct}:role/$workerRoleName"
-   aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names iam:CreateRole iam:TagRole iam:PutRolePolicy iam:GetRole iam:DeleteRolePolicy iam:DeleteRole iam:PassRole --resource-arns $roleArn   # all allowed
+   aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names iam:CreateRole iam:TagRole iam:PutRolePolicy iam:GetRole iam:DeleteRolePolicy iam:DeleteRole --resource-arns $roleArn   # all allowed
+   # PassRole is conditioned on iam:PassedToService = lambda.amazonaws.com: without the context key the simulator reports implicitDeny
+   aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names iam:PassRole --resource-arns $roleArn --context-entries ContextKeyName=iam:PassedToService,ContextKeyValues=lambda.amazonaws.com,ContextKeyType=string   # allowed
    $appRoleLike = "arn:aws:iam::${acct}:role/" + (python $Repo\scripts\phase15_changeset_preview.py generated-name --stack LegalDeskPhase14PublicEdge --logical-id ApplicationExecutionRole)
    aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names iam:CreateRole iam:DeleteRole iam:DeleteRolePolicy --resource-arns $appRoleLike   # implicitDeny: never the application role's name
    ```
