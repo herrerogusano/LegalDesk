@@ -546,18 +546,33 @@ python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-
 Then, on exit 0 and the owner's go, execute and wait. Review by eye as well: the two roles are `Modify`, `RoleName` unchanged, `Replacement` `False`, and the
 trust policy (`ExactProductionGitHubSubject`) is not in the diff.
 
-**After.** Prove the permissions without using them (IAM simulation is a free read):
+**Already executed before the attribute reads existed (live 2026-11-03).** The first version of this step did not give the code-only role the reads that CloudFormation makes on the neighbours of the functions it updates, and the CD of the promotion failed with
+"Unable to retrieve Arn attribute for AWS::SQS::Queue ... not authorized to perform: sqs:getqueueattributes". If the stack `LegalDeskProductionCD` was executed from the older template, run **this step again** with the current `cd-iam.yaml` (same `Do` block, but check the change set with `--profile cd-iam-attribute-reads`: it adds
+the statement `ReadOnlyAgentChatQueueAttributes` on `CloudFormationExecutionRole` and nothing else) before the next promotion.
+
+**After.** Prove the permissions without using them (IAM simulation is a free read). The real ARNs of the queues come from the deployed stack, not from an example:
 
 ```powershell
 $cfnRole = "arn:aws:iam::344774635844:role/LegalDeskProductionCloudFormation"; $relRole = "arn:aws:iam::344774635844:role/LegalDeskProductionDeployment"
+$edgeOutputs = (aws cloudformation describe-stacks --stack-name LegalDeskPhase14PublicEdge --query "Stacks[0].Outputs" --output json | ConvertFrom-Json)
+$queueArn = ($edgeOutputs | Where-Object OutputKey -eq "AgentChatQueueArn").OutputValue
+$dlqArn   = ($edgeOutputs | Where-Object OutputKey -eq "AgentChatDeadLetterQueueArn").OutputValue
+$queueArn; $dlqArn     # arn:aws:sqs:eu-west-1:344774635844:LegalDeskPhase14PublicEdge-agent-chat and ...-agent-chat-dlq
 aws iam simulate-principal-policy --policy-source-arn $cfnRole --action-names lambda:UpdateFunctionCode lambda:GetFunction --resource-arns $workerArn      # allowed
 aws iam simulate-principal-policy --policy-source-arn $cfnRole --action-names lambda:UpdateFunctionCode --resource-arns arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskSearchDocumentsPhase15   # implicitDeny
 aws iam simulate-principal-policy --policy-source-arn $cfnRole --action-names iam:PutRolePolicy iam:AttachRolePolicy --resource-arns $workerRole             # implicitDeny
+# the attribute reads CloudFormation makes on the neighbours when it updates the code (!GetAtt AgentChatQueue.Arn, !Ref AgentChatQueue, role Arn):
+aws iam simulate-principal-policy --policy-source-arn $cfnRole --action-names sqs:GetQueueAttributes sqs:GetQueueUrl --resource-arns $queueArn $dlqArn     # allowed
+aws iam simulate-principal-policy --policy-source-arn $cfnRole --action-names iam:GetRole --resource-arns $workerRole                                      # allowed
+aws iam simulate-principal-policy --policy-source-arn $cfnRole --action-names sqs:SendMessage sqs:ReceiveMessage sqs:SetQueueAttributes sqs:PurgeQueue --resource-arns $queueArn   # implicitDeny
+aws iam simulate-principal-policy --policy-source-arn $cfnRole --action-names sqs:GetQueueAttributes --resource-arns arn:aws:sqs:eu-west-1:344774635844:SomeOtherQueue          # implicitDeny
 aws iam simulate-principal-policy --policy-source-arn $relRole --action-names lambda:GetFunction --resource-arns $workerArn                                 # allowed
 aws iam simulate-principal-policy --policy-source-arn $relRole --action-names lambda:InvokeFunction sqs:SendMessage --resource-arns $workerArn            # implicitDeny
 ```
 
-**Stop if** an "allowed" is denied (the first promotion would fail closed and roll back) or a "denied" is allowed. **Back.** Change set from
+**Stop if** an "allowed" is denied (the first promotion would fail closed and roll back) or a "denied" is allowed. An `Unable to retrieve ... attribute` error in the CD (`stack_update_failed`, an `UPDATE_FAILED` of `ApplicationFunction`, `AgentChatWorkerFunction` or `PublicApiIntegration` naming an `...:GetQueueAttributes`, `iam:GetRole` or similar denial for the
+code-only role) is **this case**: CloudFormation resolves the `!GetAtt`/`!Ref` of the neighbours with the service role when it updates a function's `Code`. Read the denied action and resource in the event, add **only that read** on **only that resource** to `CloudFormationExecutionRole` through a reviewed change
+(the test `tests/test_cd_iam_attribute_reads.py` derives the reads from the Public Edge template and fails when a new neighbour is not covered), and repeat this step; do not widen with a wildcard. **Back.** Change set from
 `$BK\LegalDeskProductionCD.template.yaml` with the recorded parameters; the application function's CD path is unchanged either way.
 
 **Next: step 9b, immediately.** The promotion that restores the code-only role is the next one, and it comes **after** this step: the CD's change set now includes the worker's code, which the code-only CloudFormation role can update only once this step has been executed. Do not stop here.

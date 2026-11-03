@@ -213,6 +213,7 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
             "harness-memory-off-adot-on": "phase-01-harness.yaml",
             "harness-adot-off": "phase-01-harness.yaml",
             "cd-iam": "cd-iam.yaml",
+            "cd-iam-attribute-reads": "cd-iam.yaml",
         }
         for profile_name, template_name in mapping.items():
             resources = set(_real(template_name)["Resources"])
@@ -220,13 +221,19 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
             for logical_id in [*profile["add"], *profile["modify"], *profile["iamResources"]]:
                 self.assertIn(logical_id, resources, f"{profile_name}: {logical_id}")
 
-    def test_cd_iam_profile_is_exactly_the_four_worker_statements(self) -> None:
+    def test_cd_iam_profile_is_exactly_the_worker_statements_and_the_queue_attribute_reads(self) -> None:
         profile = preview.load_profile("cd-iam")
         self.assertEqual(
             sorted(entry["sid"] for entry in profile["iam"]),
-            ["PassUnchangedAgentChatWorkerRoleIfRequired", "ReadAndUpdateOnlyAgentChatWorkerCode", "ReadUnchangedAgentChatWorkerRolePolicy", "VerifyOnlyTheAgentChatWorker"],
+            ["PassUnchangedAgentChatWorkerRoleIfRequired", "ReadAndUpdateOnlyAgentChatWorkerCode", "ReadOnlyAgentChatQueueAttributes", "ReadUnchangedAgentChatWorkerRolePolicy", "VerifyOnlyTheAgentChatWorker"],
         )
         self.assertTrue(all(entry["change"] == "added" for entry in profile["iam"]))
+
+    def test_the_rerun_profile_after_the_live_failure_of_2026_11_03_is_the_one_read_statement_and_nothing_else(self) -> None:
+        profile = preview.load_profile("cd-iam-attribute-reads")
+        self.assertEqual([(e["resource"], e["sid"], e["change"]) for e in profile["iam"]], [("CloudFormationExecutionRole", "ReadOnlyAgentChatQueueAttributes", "added")])
+        self.assertEqual((profile["add"], profile["remove"], profile["modify"]), ([], [], {"CloudFormationExecutionRole": ["Policies"]}))
+        self.assertEqual(profile.get("wideAllowed", []), [])
 
 
 class ProfileViolationTests(unittest.TestCase):

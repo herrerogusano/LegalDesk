@@ -204,6 +204,32 @@ class PassRoleSimulationTests(unittest.TestCase):
                 self.assertIn("ContextKeyValues=lambda.amazonaws.com", line, line)
 
 
+class Step9SimulatesTheAttributeReadsTests(unittest.TestCase):
+    """The CD of 2026-11-03 failed on sqs:GetQueueAttributes, an attribute read that step 9 did not simulate."""
+
+    def test_step_9_simulates_the_reads_with_real_arns_from_the_deployed_stack(self) -> None:
+        step_9 = section(RUNBOOK, "Step 9 ")
+        for needle in (
+            'AgentChatQueueArn', 'AgentChatDeadLetterQueueArn', 'describe-stacks --stack-name LegalDeskPhase14PublicEdge',
+            "--action-names sqs:GetQueueAttributes sqs:GetQueueUrl --resource-arns $queueArn $dlqArn",
+            "--action-names iam:GetRole --resource-arns $workerRole",
+            "sqs:SendMessage sqs:ReceiveMessage sqs:SetQueueAttributes sqs:PurgeQueue --resource-arns $queueArn",
+        ):
+            self.assertIn(needle, step_9)
+        # the queue reads are simulated for the code-only role, and denied for a queue outside the two
+        self.assertEqual(step_9.count("--policy-source-arn $cfnRole --action-names sqs:"), 3)
+
+    def test_the_stop_if_names_the_unable_to_retrieve_attribute_error_as_this_case(self) -> None:
+        stop = " ".join(section(RUNBOOK, "Step 9 ").split())
+        for needle in ("Unable to retrieve ... attribute", "stack_update_failed", "is **this case**", "only that read", "tests/test_cd_iam_attribute_reads.py", "do not widen with a wildcard"):
+            self.assertIn(needle, stop)
+
+    def test_an_already_executed_step_9_is_rerun_with_the_current_template(self) -> None:
+        step_9 = " ".join(section(RUNBOOK, "Step 9 ").split())
+        self.assertIn("run **this step again**", step_9)
+        self.assertIn("ReadOnlyAgentChatQueueAttributes", step_9)
+
+
 class ProfilesAndCommandsExistTests(unittest.TestCase):
     def test_every_profile_the_runbook_names_exists(self) -> None:
         names = set(re.findall(r"--profile ([a-z0-9-]+)", RUNBOOK)) | set(re.findall(r"profile `([a-z0-9-]+)`", RUNBOOK))

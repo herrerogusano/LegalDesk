@@ -144,10 +144,15 @@ IAM (`infra/cloudformation/cd-iam.yaml`), added for that one function and nothin
 | CloudFormation service | `ReadAndUpdateOnlyAgentChatWorkerCode` | the same two plus `lambda:UpdateFunctionCode` | the worker function ARN |
 | CloudFormation service | `ReadUnchangedAgentChatWorkerRolePolicy` | `iam:GetRole`, `iam:ListRolePolicies`, `iam:ListAttachedRolePolicies`, `iam:GetRolePolicy` | the worker execution role ARN |
 | CloudFormation service | `PassUnchangedAgentChatWorkerRoleIfRequired` | `iam:PassRole` to `lambda.amazonaws.com` | the worker execution role ARN |
+| CloudFormation service | `ReadOnlyAgentChatQueueAttributes` | `sqs:GetQueueAttributes`, `sqs:GetQueueUrl` | the agent chat queue and its dead-letter queue, by exact name |
 
-The last two mirror the statements that the application function needed in the verified
+The role-read and `PassRole` rows mirror the statements that the application function needed in the verified
 release (the failed runs of 2026-10-05 were IAM read handlers). They give no way to write
-IAM. Two new required parameters, `AgentChatWorkerFunctionArn` and
+IAM. The queue row exists because CloudFormation resolves the `!GetAtt`/`!Ref` of the neighbours with the **service role**
+when it updates a function's `Code`: the first CD of the worker failed on 2026-11-03 with "Unable to retrieve Arn attribute for
+AWS::SQS::Queue ... not authorized to perform: sqs:getqueueattributes" (stack rolled back, nothing lost). It is read-only, on exactly
+the two queue ARNs, and `tests/test_cd_iam_attribute_reads.py` derives the needed reads from the Public Edge template so that a new
+neighbour of the updated resources fails the tests until it is reviewed. Two new required parameters, `AgentChatWorkerFunctionArn` and
 `AgentChatWorkerExecutionRoleArn`, have no default and the function ARN pattern admits only
 `LegalDeskPhase14PublicEdge-agent-chat-worker`, so the template cannot be pointed at another function.
 
