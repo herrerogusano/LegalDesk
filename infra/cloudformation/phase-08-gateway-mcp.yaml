@@ -705,7 +705,7 @@ Resources:
     Properties:
       FunctionName: LegalDeskSearchDocumentsPhase15
       Runtime: python3.12
-      Handler: legaldesk.search_documents_lambda.search_documents_lambda_handler
+      Handler: legaldesk.search_documents_lambda.search_documents_gateway_handler
       Role: !GetAtt SearchDocumentsExecutionRole.Arn
       Code:
         S3Bucket: !Ref SearchDocumentsCodeBucket

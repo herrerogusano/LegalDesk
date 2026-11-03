@@ -24,6 +24,8 @@ Boundaries:
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import os
 import time
@@ -53,6 +55,7 @@ from .gateway_interceptor import (
     gateway_grant_partition_key,
 )
 from .observability import (
+    TelemetryErrorCode,
     TelemetryEventType,
     TelemetryOutcome,
     TelemetrySink,
@@ -60,6 +63,7 @@ from .observability import (
 )
 from .prompts import FileSystemSystemPromptProvider, SystemPromptProvider
 
+_LOGGER = logging.getLogger(__name__)
 LEGALDESK_GRANT_ARGUMENT = "_legaldeskGrantId"
 # ADR-021 D4: 25 s per tool call. Equal to the Lambda ``Timeout`` in
 # ``phase-08-gateway-mcp.yaml`` (asserted in the tests).
@@ -291,11 +295,15 @@ def run_search_documents(
         )
         return {"error": "timeout"}
     result = _result(response, passages)
+    failed = result["operationStatus"] != "ok"
+    closed = {code.value for code in TelemetryErrorCode}
     emit_telemetry(
         service.telemetry_sink, TelemetryEventType.TOOL,
         correlation_id,
-        TelemetryOutcome.SUCCEEDED if result["operationStatus"] == "ok" else TelemetryOutcome.ERROR,
+        TelemetryOutcome.ERROR if failed else TelemetryOutcome.SUCCEEDED,
         started_at=started_at, operation="search_documents", count=len(result["citations"]),  # type: ignore[arg-type]
+        # the pipeline's own closed code (retrieval_failed, guardrail_error...), so a failed search says where it failed
+        error_code=response.error_code if failed and response.error_code in closed else None,
     )
     return result
 
@@ -429,12 +437,61 @@ def search_documents_lambda_handler(
         return {"error": "service_unavailable"}
 
 
+class SearchToolError(Exception):
+    """A failed search, raised so that Gateway reports the tool call as an ERROR (``isError``), not as a success.
+
+    The Lambda used to return ``{"error": "..."}`` or an ``operationStatus: "error"`` payload as a normal result. Gateway reports
+    that as a SUCCESSFUL tool call, so the model and the worker saw a "successful" search whose content was a failure
+    (T9 step 12, 2026-11-03: eighteen failed searches, all reported as successes). The message is a closed code, never content.
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+_CLOSED_CODE = {"timeout", "service_unavailable", "access_denied", "invalid_request"}
+
+
+def _failure_code(result: object) -> str | None:
+    """Closed code of a failed result, or ``None`` for a result the model can use (``ok``, or ``blocked``: a fixed backend sentence)."""
+
+    if not isinstance(result, Mapping):
+        return "invalid_result"
+    error = result.get("error")
+    if error is not None:
+        return error if isinstance(error, str) and error in _CLOSED_CODE else "service_unavailable"
+    if result.get("operationStatus") == "error":
+        return "pipeline_error"
+    return None
+
+
+def search_documents_gateway_handler(
+    event: Mapping[str, object], lambda_context: object, *, clock: Callable[[], float] = time.monotonic
+) -> dict[str, object]:
+    """Entry point of the Gateway target: the handler above, but a failure is raised instead of returned.
+
+    Gateway turns an unhandled function error into an MCP ``isError`` result, so the agent loop sees the search as failed and
+    the worker's call log shows ``ERROR``; a returned payload is always a success to it. The closed code goes to the log
+    (WARNING, so it survives the default log level) and is the exception message; nothing from the question or the documents does.
+    """
+
+    result = search_documents_lambda_handler(event, lambda_context, clock=clock)
+    code = _failure_code(result)
+    if code is None:
+        return result
+    _LOGGER.warning("search_documents failed %s", json.dumps({"code": code}, sort_keys=True))
+    raise SearchToolError(code)
+
+
 __all__ = [
     "SAFETY_MARGIN_SECONDS",
     "SEARCH_TOOL_BUDGET_SECONDS",
     "SearchDeadline",
     "SearchDeadlineExceeded",
     "SearchDocumentsService",
+    "SearchToolError",
     "run_search_documents",
+    "search_documents_gateway_handler",
     "search_documents_lambda_handler",
 ]

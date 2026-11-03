@@ -170,8 +170,19 @@ class HarnessToolResult:
 # arguments or document content, so only a label chosen by fixed keywords survives (T9 step 11, 2026-11-03: a failed
 # search_documents call whose reason could not be told apart).
 ERROR_HINTS = (
-    "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text", "unclassified",
+    "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text",
+    "tool_reported_error", "unclassified",
 )
+
+
+def _reports_its_own_failure(payload: Mapping[str, object]) -> bool:
+    """A tool that FAILED but answered like a success: ``{"error": "<code>"}`` or an ``operationStatus`` of ``error``.
+
+    Gateway reports a returned payload as a successful call, whatever it says. The search tool did exactly that eighteen times in the
+    T9 step 12 run; it now raises instead, but the call log must not depend on every target doing so: such a result is an ERROR here.
+    """
+
+    return isinstance(payload.get("error"), str) or payload.get("operationStatus") == "error"
 
 
 def _tool_error_hint(text: str) -> str:
@@ -637,6 +648,9 @@ def _structured_tool_results(
             # One unusable result must not discard the others in the loop.
             parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}, error_hint=_tool_error_hint(joined)))
             continue
+        if raw and record["status"] == "SUCCESS" and payload and _reports_its_own_failure(payload):
+            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}, error_hint="tool_reported_error"))
+            continue
         if record["status"] == "SUCCESS" and not payload:
             if raw:
                 parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}, error_hint="no_text"))
@@ -816,12 +830,18 @@ class HarnessInvoker:
                 raise ValueError("correlation_id conflicts with invocation scope")
             correlation_id = invocation_scope.correlation_id
         if memory_scope is not None and session_id is not None:
-            if validate_session_id(session_id) != memory_scope.session_id:
-                raise ValueError("session_id conflicts with memory scope")
+            raise ValueError("session_id cannot be combined with a memory scope: the runtime session of a scoped call is always new")
+        # A call made for a binding (memory scope or invocation scope) gets a NEW runtimeSessionId, like the agent chat (T9 step 11,
+        # 2026-11-03): Harness keeps the history of a runtimeSessionId in its microVM even with memory disabled, so reusing the binding's
+        # session id would build, outside the backend, a hidden per-session history of tool results (metadata, extracted fields, review
+        # tasks). The binding's memory scope is NOT the runtime session: it still feeds actorId, the interceptor headers
+        # (x-legaldesk-memory-session-id) and the invocation record. A caller that passes only ``session_id`` (smokes, probes) is
+        # choosing its own session on purpose and keeps it.
         effective_session_id = validate_session_id(
-            memory_scope.session_id if memory_scope is not None else (session_id or new_session_id())
+            new_session_id() if memory_scope is not None else (session_id or new_session_id())
         )
-        effective_correlation_id = correlation_id or effective_session_id
+        # Telemetry joins by the binding's session id when nothing better was given, as before.
+        effective_correlation_id = correlation_id or (memory_scope.session_id if memory_scope is not None else effective_session_id)
         validate_session_id(effective_correlation_id)
         started_at = time.perf_counter()
         _record_agent_event(
@@ -1014,6 +1034,29 @@ class AgentChatResult:
     # How many history messages were actually sent (after trimming); lets the caller tell
     # that a non-empty history was dropped.
     history_messages: int = 0
+    # Closed diagnostics for a loop that did not finish (T9 step 12: nine data/mixed loops ended "failed" after the first tool and the
+    # report could not say why). Short tool names and a label only, never text.
+    unanswered_tools: tuple[str, ...] = ()   # tools the model asked for whose result never arrived
+    stream_error_hint: str | None = None      # one of ERROR_HINTS, from the stream error if there was one
+
+
+def _unanswered_tool_names(events: list[Mapping[str, Any]], allowed_tools: tuple[str, ...] | None) -> tuple[str, ...]:
+    """Short names of the tool uses in the stream that have no tool result (the parser drops them from the call log)."""
+
+    uses: dict[str, str] = {}
+    answered: set[str] = set()
+    for event in events:
+        start = event.get("contentBlockStart")
+        detail = start.get("start") if isinstance(start, Mapping) else None
+        if not isinstance(detail, Mapping):
+            continue
+        tool_use, tool_result = detail.get("toolUse"), detail.get("toolResult")
+        if isinstance(tool_use, Mapping) and isinstance(tool_use.get("toolUseId"), str):
+            canonical = _canonical_tool_name(tool_use.get("name"), allowed_tools)
+            uses[tool_use["toolUseId"]] = canonical.rsplit("___", 1)[-1] if canonical else "other"
+        if isinstance(tool_result, Mapping) and isinstance(tool_result.get("toolUseId"), str):
+            answered.add(tool_result["toolUseId"])
+    return tuple(name for tool_id, name in uses.items() if tool_id not in answered)
 
 
 def _final_message_text(events: list[Mapping[str, Any]]) -> str:
@@ -1210,6 +1253,8 @@ def invoke_agent_chat(
         tool_calls=tuple(AgentToolCall(call.tool_use_id, call.name, call.status, call.payload, call.error_hint) for call in calls),
         usage=usage_records[0] if len(usage_records) == 1 else None,
         history_messages=len(history_messages),
+        unanswered_tools=_unanswered_tool_names(events, invocation_scope.allowed_tools),
+        stream_error_hint=_tool_error_hint(error) if error is not None else None,
     )
 
 

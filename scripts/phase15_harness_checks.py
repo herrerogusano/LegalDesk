@@ -80,7 +80,8 @@ ALLOWED_TOOLS = (
 WORKER_USES_A_FRESH_SESSION_PER_INVOCATION = True
 # Closed reasons of a failed tool result; identical to legaldesk_agent.client.ERROR_HINTS (a test compares them).
 ERROR_HINTS = (
-    "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text", "unclassified",
+    "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text",
+    "tool_reported_error", "unclassified",
 )
 # Verdicts after which the cut-loop check is not run (it would fail the same way and spend two paid calls).
 REJECTED_VERDICTS = frozenset({"request_rejected", "tool_use_rejected", "client_parser_rejected"})

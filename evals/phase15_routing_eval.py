@@ -217,6 +217,74 @@ class Observation:
     usage: dict[str, object] = field(default_factory=dict)
     latency_ms: int = 0
     error: str | None = None
+    # Closed diagnostics (T9 step 12: 29 of 30 cases fell back and the report could not say why). Labels and enums only.
+    plan_error: str | None = None                                # AgentContractError code of an unparsable plan
+    omitted_errors: list[str] = field(default_factory=list)      # BlockError value of each dropped block
+    stop_reason: str | None = None                               # Harness stop reason, if it has a safe shape
+    tool_statuses: list[str] = field(default_factory=list)
+    tool_error_hints: list[str] = field(default_factory=list)
+    unanswered_tools: list[str] = field(default_factory=list)    # asked for, no result ever arrived (the loop died on them)
+    stream_error_hint: str | None = None
+    invalid_tool_results: int = 0                                # results that failed their contract (e.g. an unparsable listing)
+    source_id_matches: list[str] = field(default_factory=list)   # per plan block: exact | similar | none (did the model copy the id?)
+
+
+_SAFE_LABEL = re.compile(r"^[a-z0-9_.-]{1,40}$")
+
+
+def _label(value: object) -> str | None:
+    """A Harness-provided label only if it has a safe shape, so a diagnostic can never carry free text."""
+
+    if not isinstance(value, str) or not value:
+        return None
+    return value if _SAFE_LABEL.fullmatch(value) else "other"
+
+
+def _source_ids(plan_text: str | None) -> list[str]:
+    """The ``source.toolUseId`` of each plan block, in memory only (they are never stored)."""
+
+    text = (plan_text or "").strip()
+    if text.startswith("```") and text.endswith("```") and chr(10) in text:
+        text = text[text.index(chr(10)) + 1:-3]
+    try:
+        node = json.loads(text)
+    except (ValueError, TypeError):
+        return []
+    blocks = node.get("blocks") if isinstance(node, dict) else None
+    ids = []
+    for block in blocks if isinstance(blocks, list) else []:
+        source = block.get("source") if isinstance(block, dict) else None
+        value = source.get("toolUseId") if isinstance(source, dict) else None
+        if isinstance(value, str):
+            ids.append(value)
+    return ids
+
+
+def _id_match(candidate: str, actual: list[str]) -> str:
+    """exact: a real call id. similar: a mis-copied one (case, a cut or an extra tail). none: not an id of this loop at all."""
+
+    if candidate in actual:
+        return "exact"
+    low = candidate.lower()
+    for real in actual:
+        r = real.lower()
+        if low == r or (len(low) >= 8 and (r.startswith(low) or low.startswith(r))) or (len(low) == len(r) and sum(a != b for a, b in zip(low, r)) <= 2):
+            return "similar"
+    return "none"
+
+
+def _diagnose(obs: "Observation", loop: Any, output: Any, invalid: int = 0) -> None:
+    obs.plan_error = _label(getattr(output, "plan_error", None))
+    obs.omitted_errors = [str(_label(getattr(getattr(item, "error", None), "value", None)) or "other") for item in getattr(output, "omitted", ())]
+    obs.stop_reason = _label(getattr(loop, "stop_reason", None))
+    calls = tuple(getattr(loop, "tool_calls", ()))
+    obs.tool_statuses = [status if status in {"SUCCESS", "ERROR"} else "other" for status in (getattr(c, "status", None) for c in calls)]
+    obs.tool_error_hints = [str(_label(getattr(c, "error_hint", None)) or "other") for c in calls if getattr(c, "status", None) != "SUCCESS"]
+    obs.unanswered_tools = [name if name in AGENT_TOOLS else "other" for name in getattr(loop, "unanswered_tools", ())]
+    obs.stream_error_hint = _label(getattr(loop, "stream_error_hint", None))
+    obs.invalid_tool_results = int(invalid)
+    ids = [c.tool_use_id for c in calls if isinstance(getattr(c, "tool_use_id", None), str)]
+    obs.source_id_matches = [_id_match(value, ids) for value in _source_ids(getattr(loop, "text", None))]
 
 
 def _plan_block_count(plan_text: str | None) -> int | None:
@@ -357,6 +425,8 @@ def run_offline_case(dataset: Mapping[str, Any], case: Mapping[str, Any]) -> Obs
     obs.output_path = str(meta["outputPath"])
     obs.fallback_reason = meta.get("fallbackReason")
     obs.omitted_blocks = len(meta.get("omittedBlocks") or [])
+    obs.omitted_errors = [str(_label(item.get("error")) or "other") for item in (meta.get("omittedBlocks") or []) if isinstance(item, dict)]
+    obs.plan_error, obs.stop_reason = _label(meta.get("planError")), _label(meta.get("stopReason"))
     obs.loop_outcome, obs.iterations = meta.get("loopOutcome"), meta.get("iterations")
     plan = case["simulation"].get("plan")
     obs.plan_blocks = _plan_block_count(json.dumps(plan)) if plan is not None else None
@@ -417,7 +487,8 @@ class WorkerLoopClient:
                 obs.called_tools.append(call.short_name)
             else:
                 obs.violations.append("observed_tool_outside_allowlist")
-        output, outcome, _ = worker.resolve_loop(loop)
+        output, outcome, invalid = worker.resolve_loop(loop)
+        _diagnose(obs, loop, output, invalid)
         obs.output_path, obs.fallback_reason = output.path.value, output.fallback_reason.value if output.fallback_reason else None
         obs.omitted_blocks, obs.plan_blocks = len(output.omitted), _plan_block_count(loop.text)
         obs.loop_outcome, obs.iterations = outcome.value, loop.iterations
@@ -454,6 +525,12 @@ def score_case(case: Mapping[str, Any], obs: Observation, *, offline: bool) -> d
         "omittedBlocks": obs.omitted_blocks, "deniedAttempts": sorted(obs.denied), "allowlistViolations": sorted(obs.violations),
         "invalidBlocksAccepted": invalid_plan_blocks_accepted(case, obs), "loopOutcome": obs.loop_outcome,
         "iterations": obs.iterations, "latencyMs": obs.latency_ms, "error": obs.error,
+        "diagnostics": {
+            "planError": obs.plan_error, "omittedErrors": list(obs.omitted_errors), "stopReason": obs.stop_reason,
+            "toolStatuses": list(obs.tool_statuses), "toolErrorHints": list(obs.tool_error_hints),
+            "unansweredTools": list(obs.unanswered_tools), "streamErrorHint": obs.stream_error_hint,
+            "invalidToolResults": obs.invalid_tool_results, "sourceIdMatches": list(obs.source_id_matches),
+        },
         **({"tokens": obs.usage.get("tokens"), "estimatedLoopCostUsd": obs.usage.get("estimatedLoopCostUsd")} if obs.usage else {}),
     }
 

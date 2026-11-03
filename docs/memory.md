@@ -43,6 +43,20 @@ The BYO attachment requests `messagesCount=10` so the Harness can re-inject a
 bounded short-term window; this is separate from the Runtime session ID and
 does not enable long-term retrieval.
 
+**Status since T9 (2026-11-03): the Harness runs with this memory disabled, and a
+call made for a binding no longer reuses the binding's session id as its
+`runtimeSessionId`.** Harness keeps the history of a `runtimeSessionId` in its
+microVM even with memory disabled (found live), so reusing the id would build a
+hidden per-session history of tool results outside the backend. `HarnessInvoker.invoke`
+and `invoke_agent_chat` use a new runtime session per call; the binding's memory
+scope still feeds `actorId`, `x-legaldesk-memory-session-id` and the invocation
+record. The continuity described above (same actor and session id on the Harness
+and in the Memory resource) therefore only existed while the Harness memory was
+attached; attaching it again (`EnablePhase09Memory=true`) would not give continuity
+until that path is reunited with the memory session id, which is an ADR decision
+(ADR-021 D7). The backend's own Memory events (`memory.py`) are keyed by the memory
+scope and are not affected.
+
 ## Cleanup and production gaps
 
 The dedicated Memory resource has explicit `DeletionPolicy: Delete` and

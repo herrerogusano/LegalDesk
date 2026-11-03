@@ -257,7 +257,11 @@ class Phase09MemoryTests(unittest.TestCase):
         harness_scope = HarnessMemoryScope.from_derived(scope)
         invoker.invoke("hello", memory_scope=harness_scope)
         self.assertEqual(fake.calls[0]["actorId"], scope.actor_id)
-        self.assertEqual(fake.calls[0]["runtimeSessionId"], scope.session_id)
+        # The runtime session is NOT the memory session (T9 step 11, 2026-11-03: Harness keeps hidden history per runtimeSessionId);
+        # the memory session keeps feeding the backend's own memory events and the interceptor headers.
+        self.assertNotEqual(fake.calls[0]["runtimeSessionId"], scope.session_id)
+        invoker.invoke("hello", memory_scope=harness_scope)
+        self.assertNotEqual(fake.calls[0]["runtimeSessionId"], fake.calls[1]["runtimeSessionId"])
         self.assertNotIn("tenant", fake.calls[0])
         with self.assertRaises(TypeError):
             HarnessMemoryScope("usr_alice", scope.session_id)
