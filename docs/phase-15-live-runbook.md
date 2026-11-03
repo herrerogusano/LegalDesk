@@ -627,6 +627,32 @@ the run, and the report is written even if something fails after a paid call. It
 needs the **worker environment** (the Lambda's variables, with `LEGALDESK_HARNESS_ARN` equal to `--harness-arn`) and the test user's short-lived token in
 `LEGALDESK_EVAL_ACCESS_TOKEN`, never on the command line.
 
+**Before steps 11 and 12 (once): the repository, the worker environment and the token.** The tools run the worker's own code locally, so three things must be right or the
+report is about something else:
+
+1. **The repository is at the released commit** (`git -C $Repo checkout $commit`): the report pins the agent prompt version and hash and the artifact; a different checkout gives
+   a different prompt than the one deployed.
+2. **The worker's environment variables, with the prompt paths mapped to the repo.** The Lambda holds `LEGALDESK_AGENT_PROMPT_PATH=/var/task/prompts/legaldesk-agent.md` and
+   `LEGALDESK_SYSTEM_PROMPT_PATH=/var/task/prompts/legaldesk-system.md`; those paths do not exist on a laptop, so they must be pointed at the repository's files (same content as the artifact at that commit).
+3. **The token of the test user's session**, written to a file **outside the repository** with an ACL restricted to you, never printed, deleted afterwards.
+
+```powershell
+git -C $Repo checkout $commit
+$worker = aws lambda get-function-configuration --function-name LegalDeskPhase14PublicEdge-agent-chat-worker --query Environment.Variables --output json
+if ($LASTEXITCODE -ne 0) { throw "could not read the worker configuration" }
+foreach ($entry in ($worker | ConvertFrom-Json).PSObject.Properties) { Set-Item -Path "Env:$($entry.Name)" -Value ([string]$entry.Value) }
+$env:LEGALDESK_AGENT_PROMPT_PATH  = "$Repo\prompts\legaldesk-agent.md"      # the Lambda's /var/task/... path would not exist here
+$env:LEGALDESK_SYSTEM_PROMPT_PATH = "$Repo\prompts\legaldesk-system.md"
+$tokenFile = "$HOME\legaldesk-t9\eval-token.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -File $Repo\scripts\phase15_get_eval_token.ps1 -OutFile $tokenFile   # asks for the legaldesk_session cookie without echo
+$env:LEGALDESK_EVAL_ACCESS_TOKEN = (Get-Content $tokenFile -Raw).Trim()
+# ... steps 11 and 12 ...
+Remove-Item $tokenFile -Force; Remove-Item Env:LEGALDESK_EVAL_ACCESS_TOKEN                                          # and log out of the beta to end the session
+```
+
+`scripts/phase15_get_eval_token.ps1` does one Lambda configuration read and one DynamoDB **point read** (no scan): the session record is keyed by the SHA-256 of the cookie
+(`LEGALDESK#P14#STATE#SESSION#<digest>`), so the cookie value is only used to compute that key. It refuses an `-OutFile` inside the repository and a session with less than 30 minutes left.
+
 | Check | Calls | Question it answers | Verdicts |
 |---|---|---|---|
 | `allowed_tools` (pre-check, PLAN_15 T9.5 risk) | 1 | Does Harness reject the per-invocation `tools`/`allowedTools` that name `search_documents` and `get_extracted_fields`, which the template's `AllowedTools` does not list? Also read after the cut-loop check, which makes the model *use* a new tool | `accepted`, `request_rejected`, `tool_use_rejected`, `client_parser_rejected`, `request_accepted_tool_use_not_exercised`, `inconclusive` |
@@ -725,6 +751,46 @@ the expiry is removed (Phase 02), the reconciliation Lambda reports each ghost w
 record and KB consistent, and an operator tool plus runbook repairs it (`docs/phase-14-data-governance-runbook.md`, "Ghost documents"). **The routing eval and the golden set do not depend on those documents**: their expectations
 are tool sets, output paths and closed reasons (never a document id, name or count of the live matter), and the golden real mode has not uploaded its corpus yet. **Order matters for that upload:** deploy the Phase 02 change first,
 or the new corpus would expire in 30 days too. After the cleanup the live inventory loses the removed records (the three FAILED ones show up in `list_matter_documents` today, with status Failed).
+
+### Step 12, second real run (2026-11-03): what the data says and what was changed
+
+Report `phase15-routing-20261103-b.json`: toolAccuracy 25/30 (0.833, gate 0.9), pathAccuracy 0.467, 0 violations, 0 errors, 0.086 USD of Harness loop. Not re-run. The search works now (18 of 18 `Retrieve`).
+
+**1. The four failed `search_documents` calls.** `search_documents` started 18 times and succeeded 14. The report shows three ERROR results (`text-02` twice, `amb-01` once, hint `unclassified`: with debugging off Gateway hides the reason, the
+closed code is in the Lambda's log) and `mix-01` most likely accounts for the fourth (a `search_documents` left unanswered when its loop was cut by `max_tokens`, point 3). The Lambda log has the code of each ERROR; to read it (read-only), Logs Insights on `/aws/lambda/LegalDeskSearchDocumentsPhase15`,
+window 2026-11-03 21:29Z to 21:45Z:
+
+```
+fields @timestamp, @message
+| filter @message like /search_documents failed/ or @message like /"error_code"/ or @message like /retrieval_/
+| sort @timestamp asc
+```
+
+`search_documents failed {"code": ...}` is the closed code the Lambda raised (`pipeline_error`, `timeout`, `service_unavailable`...); a TOOL event with `error_code` (`retrieval_failed`, `guardrail_error`, `model_failed`...) names the stage. Not readable from here.
+
+**2. Main cause of the low path accuracy: the model cannot copy the tool-use id.** 14 of 14 plans with a text or inventory block named an id that matched no call of the stream (`sourceIdMatches: none`: not equal, not
+case-equal, not a prefix, not within two characters), with valid JSON, `end_turn` and no `planError`. The data blocks, which point at a `documentId` and a field name that are written in the tool results, rendered every time (`data-01/02/03/05`, and `mix-04`'s data block).
+The contract asked the model for a random string it does not control. The plan now names the source by **tool and position** (`{"tool": "search_documents", "call": 1}`), resolved on the server against the call log of the same loop
+(ADR-021 D3-bis, prompt 1.4.0). The text is still printed verbatim from the tool result; nothing the model writes is ever content. In the report, `diagnostics.sourceIdMatches` now says `ordinal_in_range` or `ordinal_out_of_range` for a position, and keeps `exact`/`similar`/`none` for an id; the block errors `unknown_source_call` (the plan counts past the last call) and
+`source_call_unusable` (the call failed or its result broke its contract) are new closed values of `omittedErrors`. Two things in the numbers are the same in both runs and are not caused by this: the three cases that were cut by `max_tokens` (point 3) and the dataset-versus-corpus misses (point 4).
+
+**3. `max_tokens` with unanswered tools** (`mix-01`, `mix-02`, `amb-01`). The Harness template caps each model call at **256** tokens in two places (`Model.BedrockModelConfig.MaxTokens` and the Harness `MaxTokens`); the worker sends `maxTokens: 2048` per invocation.
+The API reference says the invocation field "overrides the harness default", the model configuration is a separate per-call cap, and the three cut loops are exactly the ones whose messages carry several parallel tool uses or the longest plans. So the template wins for the model call. This is the
+reading that explains the data, **not documented behaviour**: confirm it with the rerun (the three cases should stop ending in `max_tokens`). Fix: the Harness stack parameter `MaxTokensPerIteration` (default 2048) feeds both places.
+Change set (stack `LegalDeskPhase01`, profile `harness-max-tokens`; `EnablePhase08Gateway=true`, `EnablePhase09Memory=false` and `EnableManagedAdot=false` as deployed, `MaxTokensPerIteration` new with its default):
+one `Modify` of `MinimalHarness`, properties `MaxTokens` and `Model`, `Replacement` `False`, nothing else, no IAM. Neither property is createOnly (the recorded createOnly paths of the Harness are `HarnessName` and `Memory/ManagedMemoryConfiguration/EncryptionKeyArn`).
+**STOP if `Replacement` is anything but `False`**: it would change the `HarnessArn` and goes to the platform review. Cost: `docs/phase-15-t9-cost-estimate.md` ("Raising the per-call output cap").
+
+**4. The routing misses left** (`text-05`, `data-04`, `mix-03`). Not prompt problems, and the gate stays as it is. `mix-03` ("el contrato Zeta"): no fixture of `tests/fixtures/idp` (18 documents) has a party called Zeta, so the live matter cannot hold that document; a model that lists the documents,
+finds none and then searches is behaving sensibly. `data-04` ("el NDA con Meridia"): that party exists in the fixture `contract-03-en-mixed-nda`, but the live matter holds only four INDEXED documents after the cleanup and the reports store no names, so whether that one is among them cannot be told offline
+(a read-only listing of the matter's document names would settle it; if it is not there, the same reasoning applies; the final answer of that case was prose, `invalid_json`). `text-05` ("de todos los contratos") listed first and then searched, which is defensible for "all the contracts" and costs one cheap call.
+These are expectation-versus-corpus mismatches of a frozen dataset, not behaviour to tune against: changing the prompt to make them pass would be tuning to the test.
+
+**Housekeeping in the same change.** `AWS::Lambda::Permission` has a createOnly list now and the gate accepts a createOnly property whose value is inherited from an attribute of a resource modified in place in the same change set
+(`SourceArn` <- the schedule's `Arn`, verified live); the token and the local-environment steps are written down (before the table of step 11); `fixture_loader.test_identity` is marked as not-a-test for pytest.
+
+**A clean rerun** needs **35** Harness invocations (step 11: 5; step 12: 30), or **30** if step 11 is skipped (its checks are about Harness behaviour that this change does not touch). 91 of the 120 approved are used: **29 are left, one short of the 30 of step 12**, so a new approval is needed
+either way. The Harness stack change (point 3) and a release carrying prompt 1.4.0 must be in place first.
 
 ## Step 13 · Browser smoke (◆ paid: ≈ 10 questions through the worker)
 

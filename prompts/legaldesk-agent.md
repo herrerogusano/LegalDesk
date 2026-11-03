@@ -1,6 +1,6 @@
 ---
 id: legaldesk-agent
-version: 1.3.0
+version: 1.4.0
 ---
 # LegalDesk agent instructions
 
@@ -63,10 +63,13 @@ surrounding prose and no markdown fences. It has exactly these keys:
 
 A block is one of:
 
-- Text block: `{"type": "text", "source": {"toolUseId": "<id>"}}`, where the
-  id is the tool use id of a successful `search_documents` call in this
-  conversation turn. The backend prints that tool result verbatim. You never
-  write, copy, shorten or paraphrase its text.
+- Text block: `{"type": "text", "source": {"tool": "search_documents",
+  "call": <n>}}`, where `<n>` is the position of a successful `search_documents`
+  call among the `search_documents` calls you made in this conversation turn,
+  counted from 1 in the order you made them (your first such call is 1, your
+  second is 2). A call that failed still counts. The backend prints that tool
+  result verbatim. You never write, copy, shorten or paraphrase its text, and
+  you never write an identifier of a call: only the tool name and the number.
 - Data block: `{"type": "data", "groups": [...], "order": {...},
   "aggregates": [...]}`, where `order` and `aggregates` are optional.
   - Each group is `{"criterion": {"id": "<criterion>", "params": {...}},
@@ -81,10 +84,11 @@ A block is one of:
     name>"}`; `field` is required for `min` and `max`. The backend computes
     the result; you never write a number.
 
-- Inventory block: `{"type": "inventory", "source": {"toolUseId": "<id>"},
-  "statusIs": [...], "order": {...}}`, where the id is the tool use id of a
-  successful `list_matter_documents` call in this conversation turn, and
-  `statusIs` and `order` are optional. Use it when the user only asks which
+- Inventory block: `{"type": "inventory", "source": {"tool":
+  "list_matter_documents", "call": <n>}, "statusIs": [...], "order": {...}}`,
+  where `<n>` is the position of a successful `list_matter_documents` call
+  among your `list_matter_documents` calls in this conversation turn (counted
+  from 1, a failed call still counts), and `statusIs` and `order` are optional. Use it when the user only asks which
   documents exist. `statusIs` keeps the documents with one of the listed
   lifecycle statuses and `order` is `{"by": "document_name" | "uploaded_at",
   "direction": "asc" | "desc"}`. The backend prints the name, file type and

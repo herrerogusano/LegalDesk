@@ -534,9 +534,21 @@ def analyze_change_set(described: Mapping[str, Any], profile: Mapping[str, Any],
                   and d["Target"].get("RequiresRecreation") == "Always"]
         for name in always:
             extra_problems.append(f"replacement risk (Conditional): {logical_id}.{name} always requires recreation")
-        conditional = [d["Target"]["Name"] for d in change.get("Details") or [] if isinstance(d, Mapping) and isinstance(d.get("Target"), Mapping)
-                       and d["Target"].get("RequiresRecreation") == "Conditionally"]
-        if not conditional and not always:
+        conditional = []
+        explained_by_inheritance = False
+        for detail in change.get("Details") or []:
+            if not (isinstance(detail, Mapping) and isinstance(detail.get("Target"), Mapping) and detail["Target"].get("RequiresRecreation") == "Conditionally"):
+                continue
+            cause = _causing_root(detail.get("CausingEntity"))
+            if detail.get("Evaluation") == "Dynamic" and detail.get("ChangeSource") == "ResourceAttribute" and cause in stable and cause != logical_id:
+                # A createOnly property whose value comes from an attribute of a resource that this same change set modifies IN PLACE (not
+                # replaced): its ARN/id cannot change, so the property cannot change and the conditional replacement cannot happen
+                # (verified live 2026-11-03: AWS::Lambda::Permission.SourceArn <- the schedule's Arn, permission not replaced). Surfaced, not silent.
+                # (Already listed under ``inherited`` by the pass above, so it is surfaced to the operator, not silent.)
+                explained_by_inheritance = True
+                continue
+            conditional.append(detail["Target"]["Name"])
+        if not conditional and not always and not explained_by_inheritance:
             extra_problems.append(f"replacement risk (Conditional): {logical_id}: no property explains it; stop")
         for name in conditional:
             whole = name in paths

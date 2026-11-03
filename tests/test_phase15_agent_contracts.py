@@ -31,7 +31,7 @@ from legaldesk_agent import HarnessInvocationScope, HarnessInvoker
 AGENT_PROMPT_PATH = ROOT / "prompts" / "legaldesk-agent.md"
 # Changing a template or the prompt is a reviewed, versioned change: update the
 # version and these pins together.
-PINNED_AGENT_PROMPT_SHA256 = "6251b8989e36da5f10429f9bd701f6b488cd004f84feba2d1ad1f02450b86f52"
+PINNED_AGENT_PROMPT_SHA256 = "cfb50c1ec5d941282d34b5a65d6e3f400d72d642e86844426a68312979bf0d5a"
 PINNED_TEMPLATES_SHA256 = "9808f766ee3898c7bea74210d903479baae55f6c1430399f61c56235a742442a"
 
 
@@ -390,7 +390,7 @@ class AgentPromptTests(unittest.TestCase):
         cls.prompt = " ".join(cls.artifact.content.split())
 
     def test_prompt_is_versioned_and_pinned_by_hash(self) -> None:
-        self.assertEqual((self.artifact.prompt_id, self.artifact.version), ("legaldesk-agent", "1.3.0"))
+        self.assertEqual((self.artifact.prompt_id, self.artifact.version), ("legaldesk-agent", "1.4.0"))
         self.assertEqual(self.artifact.sha256, PINNED_AGENT_PROMPT_SHA256)
         self.assertNotIn(b"\r", AGENT_PROMPT_PATH.read_bytes())
 
@@ -424,7 +424,7 @@ class AgentPromptTests(unittest.TestCase):
             self.assertIn(expected, text)
 
     def test_prompt_mentions_every_plan_key_the_parser_accepts(self) -> None:
-        for key in ("version", "intro", "blocks", "source", "toolUseId",
+        for key in ("version", "intro", "blocks", "source", "tool", "call",
                     "groups", "criterion", "params", "refs", "documentId", "field", "order", "by",
                     "direction", "aggregates", "type", "transitionBefore"):
             self.assertTrue(f'"{key}"' in self.prompt or f"`{key}`" in self.prompt, key)
