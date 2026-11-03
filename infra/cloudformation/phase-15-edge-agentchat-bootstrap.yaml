@@ -196,6 +196,18 @@ Resources:
                 - !Ref AWS::NoValue
               - !If
                 - IncludeAgentChat
+                # CloudFormation tags the resources it creates; creating a mapping with tags needs lambda:TagResource on it,
+                # and a mapping has no tag condition key. Tag-only, on mappings: no other Lambda action reaches them.
+                - Sid: TagOnlyEventSourceMappings
+                  Effect: Allow
+                  Action:
+                    - lambda:TagResource
+                    - lambda:UntagResource
+                    - lambda:ListTags
+                  Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*"
+                - !Ref AWS::NoValue
+              - !If
+                - IncludeAgentChat
                 - Sid: CreateTheEventSourceMappingForTheWorkerOnly
                   Effect: Allow
                   Action: lambda:CreateEventSourceMapping
@@ -206,12 +218,16 @@ Resources:
                 - !Ref AWS::NoValue
               - !If
                 - IncludeAgentChat
+                # CloudFormation names this role itself and cuts BOTH the stack name and the logical id to fit 64 characters:
+                # the live block of 2026-11-03 created LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-bzFuZq7zur6f (25 + 25 + 12),
+                # so the pattern spells the cut names (scripts/phase15_changeset_preview.py: cfn_generated_name, tested against it).
                 - Sid: ManageOnlyTheWorkerExecutionRole
                   Effect: Allow
                   Action:
                     - iam:CreateRole
                     - iam:DeleteRole
                     - iam:GetRole
+                    - iam:ListRoleTags
                     - iam:ListRolePolicies
                     - iam:ListAttachedRolePolicies
                     - iam:GetRolePolicy
@@ -219,14 +235,14 @@ Resources:
                     - iam:DeleteRolePolicy
                     - iam:TagRole
                     - iam:UntagRole
-                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorker*"
+                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-*"
                 - !Ref AWS::NoValue
               - !If
                 - IncludeAgentChat
                 - Sid: PassOnlyTheWorkerRoleToLambda
                   Effect: Allow
                   Action: iam:PassRole
-                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorker*"
+                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-*"
                   Condition:
                     StringEquals:
                       iam:PassedToService: lambda.amazonaws.com
@@ -251,7 +267,7 @@ Resources:
                     - cloudwatch:TagResource
                     - cloudwatch:UntagResource
                     - cloudwatch:ListTagsForResource
-                  Resource: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:LegalDeskPhase14PublicEdge-AgentChat*"
+                  Resource: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:LegalDeskPhase14PublicEd*-AgentChat*"
                 - !Ref AWS::NoValue
               - !If
                 - IncludeAgentChat
