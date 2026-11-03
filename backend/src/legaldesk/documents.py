@@ -102,6 +102,10 @@ class ObjectStorage(Protocol):
 
     def get_object_tagging(self, *, key: str) -> Mapping[str, str]: ...
 
+    def object_exists(self, *, key: str) -> bool: ...
+
+    def lifecycle_rules(self) -> Sequence[Mapping[str, Any]]: ...
+
 
 class DocumentMetadataRepository(Protocol):
     def save(self, document: Document) -> None: ...
@@ -652,8 +656,10 @@ class InMemoryObjectStorage:
     fail_delete: bool = False
     presigned_urls: dict[str, str] = field(default_factory=dict)
     presigned_content_lengths: dict[str, int] = field(default_factory=dict)
+    lifecycle: tuple[Mapping[str, Any], ...] = ()
 
     def __init__(self, *, fail: bool = False, fail_delete: bool = False) -> None:
+        self.lifecycle = ()
         self.objects = {}
         self.metadata = {}
         self.tags = {}
@@ -760,6 +766,16 @@ class InMemoryObjectStorage:
         if len(body) > max_bytes:
             raise DocumentStorageError("object content exceeds the read limit")
         return body
+
+    def object_exists(self, *, key: str) -> bool:
+        if self.fail:
+            raise RuntimeError("fictional storage failure")
+        return key in self.objects
+
+    def lifecycle_rules(self) -> tuple[Mapping[str, Any], ...]:
+        if self.fail:
+            raise RuntimeError("fictional storage failure")
+        return tuple(self.lifecycle)
 
 
 @dataclass(slots=True)
@@ -941,6 +957,33 @@ class Boto3S3ObjectStorage:
 
     def head_object(self, *, key: str) -> Mapping[str, Any]:
         return self.client.head_object(Bucket=self.bucket_name, Key=key)
+
+    def object_exists(self, *, key: str) -> bool:
+        """Existence by listing the exact key, not by HEAD.
+
+        A HEAD of a missing key answers 403 (not 404) to a caller without ``s3:ListBucket`` on the whole bucket, so a
+        missing object and a denied one would be indistinguishable. The list is authorised by ``s3:ListBucket`` with an
+        ``s3:prefix`` condition, which a HEAD request cannot satisfy. ``key`` sorts before every longer key that starts
+        with it, so with ``MaxKeys=1`` the first result is the object itself if it exists.
+        """
+
+        response = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=key, MaxKeys=1)
+        contents = response.get("Contents", ()) if isinstance(response, Mapping) else ()
+        return any(isinstance(item, Mapping) and item.get("Key") == key for item in contents)
+
+    def lifecycle_rules(self) -> tuple[Mapping[str, Any], ...]:
+        """The bucket's lifecycle rules as S3 reports them; none configured is an empty tuple (any other error propagates)."""
+
+        try:
+            response = self.client.get_bucket_lifecycle_configuration(Bucket=self.bucket_name)
+        except Exception as exc:
+            error = getattr(exc, "response", None)
+            code = error.get("Error", {}).get("Code") if isinstance(error, Mapping) else None
+            if code == "NoSuchLifecycleConfiguration":
+                return ()
+            raise
+        rules = response.get("Rules", ()) if isinstance(response, Mapping) else ()
+        return tuple(rule for rule in rules if isinstance(rule, Mapping))
 
     def read_object_bytes(self, *, key: str, max_bytes: int) -> bytes:
         if (

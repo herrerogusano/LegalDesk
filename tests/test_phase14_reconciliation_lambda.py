@@ -64,6 +64,7 @@ class Phase14ReconciliationLambdaTests(unittest.TestCase):
             "uploads": {"examined": 1, "changed": 1, "skipped": 0, "ambiguous": 0, "failed": 0},
             "ingestion": {"examined": 2, "changed": 0, "skipped": 2, "ambiguous": 0, "failed": 0},
             "gateway": {"examined": 3, "changed": 0, "skipped": 0, "ambiguous": 1, "failed": 0},
+        "objects": {"examined": 0, "missing": 0, "failed": 0, "skipped": 0},
         })
 
     def test_config_rejects_unbounded_or_malformed_scope_input(self) -> None:

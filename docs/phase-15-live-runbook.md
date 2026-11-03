@@ -718,6 +718,14 @@ and a model that gets an error sentence as an "answer" may answer in prose (`pla
 whole run, so the other calls never reached Gateway; `data-05` shows the path works). The next report records, per case and as closed labels: `diagnostics.sourceIdMatches` (`exact`/`similar`/`none` for each plan source id), `invalidToolResults`,
 `planError`, `omittedErrors`, `stopReason`, `toolStatuses`, `toolErrorHints`, `unansweredTools` (tools the model asked for whose result never arrived) and `streamErrorHint`. No text, no ids.
 
+**5. Root cause, pinned read-only by the owner (2026-11-03).** The document bucket had the Phase 02 lifecycle rule `ExpireFictionalOriginals` (`tenants/`, 30 days, no versioning), so S3 deleted everything uploaded
+on 2026-09-28 without telling the metadata records or the Knowledge Base. Two INDEXED documents of `mat_phase14_a_20260928` (`31073a29…`, `be50cac0…`) and three FAILED records had no object, and retrieval's fail-closed
+check turned that one stale vector into 18 failed searches out of 18. The fail-closed behaviour is **kept** (it is what makes a ghost safe); what changes is that a ghost can no longer appear silently or by configuration:
+the expiry is removed (Phase 02), the reconciliation Lambda reports each ghost with its probable cause and alarms (including while any canonical expiry exists), a test refuses to reintroduce an expiry without the code that keeps
+record and KB consistent, and an operator tool plus runbook repairs it (`docs/phase-14-data-governance-runbook.md`, "Ghost documents"). **The routing eval and the golden set do not depend on those documents**: their expectations
+are tool sets, output paths and closed reasons (never a document id, name or count of the live matter), and the golden real mode has not uploaded its corpus yet. **Order matters for that upload:** deploy the Phase 02 change first,
+or the new corpus would expire in 30 days too. After the cleanup the live inventory loses the removed records (the three FAILED ones show up in `list_matter_documents` today, with status Failed).
+
 ## Step 13 · Browser smoke (◆ paid: ≈ 10 questions through the worker)
 
 Use the synthetic user in the real browser against the CloudFront origin. Questions are the synthetic ones of the dataset; no real data. One tab, one question at a time.

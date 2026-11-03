@@ -47,7 +47,9 @@ class Phase14ReconciliationInfrastructureTests(unittest.TestCase):
         ):
             self.assertIn(value, text)
         self.assertNotIn("dynamodb:Scan", text)
-        self.assertNotIn("s3:ListBucket", text)
+        # s3:ListBucket is allowed in exactly one place: existence of the exact canonical key (T9 step 12), conditioned on the prefix
+        self.assertEqual(text.count("Action: s3:ListBucket"), 1)
+        self.assertIn("CheckBetaCanonicalObjectsExistByListingTheExactKey", text)
         self.assertNotIn('Resource: "*"', text)
         self.assertNotIn("bedrock:StartIngestionJob", text)
 
