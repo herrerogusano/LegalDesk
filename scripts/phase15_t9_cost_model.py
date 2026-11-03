@@ -101,11 +101,21 @@ HARD_CAP = {
     # bound of the model with a 25 % margin; the total ceiling is checked in Billing afterwards.
     "stop_eval_if_loop_usd_exceeds": 2.20,
 }
+# Fixed monthly cost while EnableAgentChat=true. The job alarms read NATIVE metrics (free): SQS age of the oldest
+# message and DLQ depth, Lambda Errors, Duration and Invocations of the worker. Only two signals have no native
+# equivalent and are custom metrics, both without dimensions (a dimension value would be one more billable metric):
+# AgentChatFallbacks (a fallback is a successful invocation to Lambda) and AgentChatJobFailures (a job the handler
+# marks failed returns normally and its message is consumed: neither Errors nor the DLQ sees it).
 MONTHLY_FIXED = {
-    "alarm_metrics": 6,  # DLQ, duration, failure, queue age (1 each) + fallback rate (2: metric math)
-    "custom_metrics_typical": 8,
-    "custom_metrics_upper": 14,
+    # 1 each: DLQ, queue age, duration, errors, job failures; 2 for the fallback-rate math (fallbacks + invocations).
+    "alarm_metrics": 7,
+    "custom_metrics_typical": 2,
+    "custom_metrics_upper": 2,
 }
+# QuotaHarnessPerMonth of the deployment (owner decision, 2026-11-03). The code default of ADR-021 D8 stays 300.
+# The browser smoke consumes 10 of them in the month of the block (the eval and the checks use no quota).
+QUOTA_HARNESS_PER_MONTH = 50
+JOB_STATE_USD = 0.00003  # ~25 DynamoDB writes + ~40 reads + 3 SQS requests per job
 
 
 def _tokens_cost(calls: tuple[Call, ...] | list[Call], *, upper: bool, input_factor: float = 1.0) -> tuple[int, int, float]:
@@ -125,6 +135,43 @@ def _runtime_cost(seconds: float, *, upper: bool) -> float:
     key = "upper" if upper else "typical"
     vcpu, gb = RUNTIME_SIZE[key]
     return seconds / 3600 * (vcpu * RUNTIME_CPU_PER_VCPU_HOUR[key] + gb * RUNTIME_MEM_PER_GB_HOUR[key])
+
+
+def job_cost_usd(name: str, *, upper: bool) -> float:
+    """Whole cost of one question through the worker (the path of a real user), every component included."""
+
+    key = 1 if upper else 0
+    cls = CLASSES[name]
+    _tin, _tout, tokens = _tokens_cost(cls.calls, upper=upper, input_factor=SMOKE_HISTORY_INPUT_FACTOR)
+    guardrail_units = GUARDRAIL_UNITS["worker_input"][key] + cls.searches * GUARDRAIL_UNITS["per_search"][key]
+    lambda_gb_s = (
+        SMOKE_WORKER_SECONDS[key] + cls.searches * (25 if upper else 8) + cls.tool_calls * 0.5 * (3 if upper else 1.5)
+        + cls.gateway_ops[key] * 0.25 * (0.6 if upper else 0.3)
+    )
+    lambda_requests = 1 + cls.searches + cls.tool_calls + cls.gateway_ops[key] / 2
+    return (
+        tokens
+        + _runtime_cost(cls.seconds[key], upper=upper)
+        + cls.gateway_ops[key] / 1000 * GATEWAY_PER_1000_OPS
+        + 1 / 1000 * IDENTITY_PER_1000_TOKENS
+        + cls.searches / 1000 * KB_RETRIEVE_PER_1000
+        + guardrail_units / 1000 * GUARDRAIL_PER_1000_UNITS
+        + lambda_gb_s * LAMBDA_PER_GB_SECOND + lambda_requests / 1_000_000 * LAMBDA_PER_MILLION_REQUESTS
+        + JOB_STATE_USD
+    )
+
+
+def monthly_usage_at_quota(quota: int = QUOTA_HARNESS_PER_MONTH) -> dict[str, float]:
+    """Usage cost of a month in which every Harness job of the quota is used.
+
+    Typical: the mix of the eval dataset. Upper bound: every job is the most expensive class at its upper assumptions.
+    """
+
+    weights = BLOCK["eval"]
+    total = sum(weights.values())
+    typical = quota * sum(job_cost_usd(name, upper=False) * count for name, count in weights.items()) / total
+    upper = quota * max(job_cost_usd(name, upper=True) for name in CLASSES)
+    return {"quota": quota, "typicalUsd": round(typical, 2), "upperUsd": round(upper, 2)}
 
 
 def estimate(upper: bool) -> dict[str, object]:
@@ -204,7 +251,17 @@ def estimate(upper: bool) -> dict[str, object]:
 
 
 def report() -> dict[str, object]:
-    return {"prices": {"inputPerMillion": INPUT_PER_M, "outputPerMillion": OUTPUT_PER_M}, "hardCap": HARD_CAP, "typical": estimate(False), "upper": estimate(True)}
+    usage = monthly_usage_at_quota()
+    typical, upper = estimate(False), estimate(True)
+    return {
+        "prices": {"inputPerMillion": INPUT_PER_M, "outputPerMillion": OUTPUT_PER_M}, "hardCap": HARD_CAP,
+        "typical": typical, "upper": upper,
+        "monthlyUsageAtQuota": usage,
+        "monthlyWithAllQuotaUsedUsd": {
+            "typical": round(typical["monthly_while_enabled_usd"] + usage["typicalUsd"], 2),
+            "upper": round(upper["monthly_while_enabled_usd"] + usage["upperUsd"], 2),
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,7 +278,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n[{label}] Harness invocations={part['harness_invocations']} tokens={part['tokens']}")
         for name, value in part["breakdown_usd"].items():
             print(f"  {name:<38} ${value:>8.4f}")
-        print(f"  {'BLOCK TOTAL (one-off)':<38} ${part['block_total_usd']:>8.2f}   + monthly while enabled ${part['monthly_while_enabled_usd']:.2f}")
+        print(f"  {'BLOCK TOTAL (one-off)':<38} ${part['block_total_usd']:>8.2f}   + fixed monthly while enabled ${part['monthly_while_enabled_usd']:.2f}")
+    usage = result["monthlyUsageAtQuota"]
+    print(f"\nQuota {usage['quota']} Harness jobs/month: usage typical ${usage['typicalUsd']:.2f}, upper ${usage['upperUsd']:.2f}; "
+          f"with the fixed cost: typical ${result['monthlyWithAllQuotaUsedUsd']['typical']:.2f}, upper ${result['monthlyWithAllQuotaUsedUsd']['upper']:.2f}")
     return 0
 
 
