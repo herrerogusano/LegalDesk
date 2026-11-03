@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 from scripts import phase15_harness_checks as checks
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "agent" / "src"))
+from legaldesk_agent import HarnessInvocationError  # noqa: E402
+from legaldesk_agent.client import ClientStreamParserError  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 ARN = "arn:aws:bedrock-agentcore:eu-west-1:123456789012:harness/LegalDeskPhase01-abc"
@@ -31,7 +36,13 @@ def loop(*calls, outcome: str = "iterations_exhausted", stop: str = "tool_use"):
 def ack_reply(message: str) -> str:
     """What a compliant model answers to turn 1: exactly the acknowledgement token it was given."""
 
-    return message.split("exactly: ")[1].strip()
+    return re.search(r"LDACK[0-9a-f]+", message).group(0)
+
+
+def word_of(message: str) -> str:
+    """The word that only turn 1 carries."""
+
+    return re.search(r"LDWORD[0-9a-f]+", message).group(0)
 
 
 class FakeError(Exception):
@@ -111,7 +122,7 @@ class VerdictTests(ChecksTestCase):
 
     def test_session_that_keeps_history_is_a_finding(self) -> None:
         recorder = Recorder()
-        recorder.plain_script[:] = [ack_reply, lambda message: "The word was " + recorder.plain_calls[0][0].split("later: ")[1].split(".")[0]]
+        recorder.plain_script[:] = [ack_reply, lambda message: "The word was " + word_of(recorder.plain_calls[0][0])]
         report = self.run_with(recorder)
         self.assertEqual(report["checks"]["session"]["verdict"], "history_retained")
         self.assertEqual(report["verdict"], "findings")
@@ -126,8 +137,8 @@ class VerdictTests(ChecksTestCase):
         self.run_with(recorder)
         (first, session_1), (second, session_2) = recorder.plain_calls
         self.assertEqual(session_1, session_2)
-        word = first.split("later: ")[1].split(".")[0]
-        token_1, token_2 = first.split("check ")[1].split(".")[0], second.split("check ")[1].split(".")[0]
+        word = word_of(first)
+        token_1, token_2 = re.search(r"LDCHKA[0-9a-f]+", first).group(0), re.search(r"LDCHKB[0-9a-f]+", second).group(0)
         ack = ack_reply(first)
         self.assertEqual(len({word, token_1, token_2, ack}), 4)
         self.assertNotIn(ack, second)
@@ -165,14 +176,33 @@ class AllowedToolsTests(ChecksTestCase):
         self.assertEqual(report["checks"]["session"]["verdict"], "history_not_retained")
         self.assertEqual((recorder.paid_calls, report["verdict"]), (3, "findings"))
 
-    def test_a_refused_tool_use_in_the_stream_is_reported(self) -> None:
-        stream_error = RuntimeError("AgentCore returned an invalid event stream")
-        report = self.run_with(Recorder(agent=[loop(), stream_error, stream_error]))
+    def test_a_tool_use_that_harness_itself_refused_is_reported_as_such(self) -> None:
+        refused = HarnessInvocationError("tool search_documents is not in the allowedTools list")
+        report = self.run_with(Recorder(agent=[loop(), refused, refused]))
         self.assertEqual(report["checks"]["allowed_tools"]["verdict"], "tool_use_rejected")
         self.assertEqual(report["verdict"], "findings")
 
-    def test_a_stream_refusal_already_in_the_precheck_skips_the_tool_check(self) -> None:
-        report = self.run_with(Recorder(agent=[RuntimeError("AgentCore returned an invalid event stream")]))
+    def test_a_stream_that_OUR_parser_rejected_is_not_reported_as_a_harness_rejection(self) -> None:
+        """Live 2026-11-03: the parser did not know Harness's tool-name format and the report said Harness had refused the tools."""
+
+        for parser_error in (ClientStreamParserError("AgentCore returned an invalid event stream"), RuntimeError("AgentCore returned an invalid event stream")):
+            with self.subTest(type(parser_error).__name__):
+                report = self.run_with(Recorder(agent=[loop(), parser_error, parser_error]))
+                self.assertEqual(report["checks"]["allowed_tools"]["verdict"], "client_parser_rejected")
+                self.assertEqual(report["verdict"], "findings")
+                self.assertIn("OUR stream parser", report["interpretation"]["allowed_tools"])
+                self.assertIn("Do not change the Harness AllowedTools", report["interpretation"]["allowed_tools"])
+                self.output.unlink()
+
+    def test_a_parser_rejection_already_in_the_precheck_skips_the_tool_check_but_not_the_session(self) -> None:
+        recorder = Recorder(agent=[ClientStreamParserError("AgentCore returned an invalid event stream")])
+        report = self.run_with(recorder)
+        self.assertEqual(report["checks"]["allowed_tools"]["verdict"], "client_parser_rejected")
+        self.assertEqual(report["checks"]["tool_results"]["verdict"], "skipped_tools_rejected")
+        self.assertEqual((report["checks"]["session"]["verdict"], recorder.paid_calls), ("history_not_retained", 3))
+
+    def test_a_harness_refusal_already_in_the_precheck_skips_the_tool_check(self) -> None:
+        report = self.run_with(Recorder(agent=[HarnessInvocationError("tool not in allowedTools")]))
         self.assertEqual(report["checks"]["allowed_tools"]["verdict"], "tool_use_rejected")
         self.assertEqual(report["checks"]["tool_results"]["verdict"], "skipped_tools_rejected")
 
@@ -243,7 +273,7 @@ class ReportContentTests(ChecksTestCase):
         self.run_with(recorder, cut_question="SYNTHETIC-CUT-QUESTION-TEXT")
         text = self.output.read_text()
         forbidden = [ANSWER_SECRET, PAYLOAD_SECRET, "SYNTHETIC-CUT-QUESTION-TEXT", checks.ALLOWED_TOOLS_QUESTION, "mat_synthetic", ARN]
-        forbidden += [message.split("later: ")[1].split(".")[0] for message, _ in recorder.plain_calls[:1]]
+        forbidden += [word_of(message) for message, _ in recorder.plain_calls[:1]]
         forbidden += [ack_reply(message) for message, _ in recorder.plain_calls[:1]]
         for secret in forbidden:
             self.assertNotIn(secret, text)
