@@ -39,9 +39,10 @@ from typing import Any, Callable, Mapping, Protocol
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-for _path in ("backend/src", "agent/src", "tests"):
-    sys.path.insert(0, str(ROOT / _path))
+for _path in ("backend/src", "agent/src", "tests", "."):
+    sys.path.insert(0, str(ROOT / _path))  # "." makes `evals` importable when run as a script
 
+from evals.residual_state import ResidualState  # noqa: E402
 from fixture_loader import load_authorization_store, test_identity  # noqa: E402
 from legaldesk import agent_contracts as contracts  # noqa: E402
 from legaldesk.agent_chat import AgentChatRuntime, AgentChatWorker, InputDecision, submit_agent_chat  # noqa: E402
@@ -56,7 +57,9 @@ from legaldesk.gateway_interceptor import (  # noqa: E402
     GatewayTarget, InMemoryGatewayGrantRepository, transform_gateway_request,
 )
 from legaldesk.observability import NullTelemetrySink  # noqa: E402
-from legaldesk.memory import InMemoryConversationBindingStore, InMemoryShortTermMemory  # noqa: E402
+from legaldesk.memory import (  # noqa: E402
+    InMemoryConversationBindingStore, InMemoryShortTermMemory, conversation_binding_partition_key,
+)
 from legaldesk.quota import InMemoryQuotaLedger, QuotaLimits  # noqa: E402
 from legaldesk.state import InMemoryEphemeralStateStore, SessionRecord  # noqa: E402
 from legaldesk_agent import AgentChatResult, AgentToolCall  # noqa: E402
@@ -375,6 +378,9 @@ class WorkerLoopClient:
 
     def __init__(self, worker: AgentChatWorker, *, access_token: str, matter_id: str) -> None:
         self.worker, self.access_token, self.matter_id = worker, access_token, matter_id
+        # Every case writes a conversation binding (no TTL, no sweeper) and a 5-minute grant, exactly like a job.
+        # They are listed in the report (ids and a hash of the key) and deleted in step 14 of the T9 runbook.
+        self.residual = ResidualState()
 
     def run(self, case: Mapping[str, Any]) -> Observation:
         worker, obs, started = self.worker, Observation(), time.perf_counter()
@@ -382,6 +388,8 @@ class WorkerLoopClient:
         context = build_request_context(identity, self.matter_id, worker.authorization_store)
         conversation_id, selector = f"eval-{uuid4()}", f"eval-{uuid4()}"
         worker.conversation_store.bind(context, conversation_id=conversation_id, session_selector=selector)
+        # Noted before anything that can fail or be interrupted after the bind.
+        entry = self.residual.conversation_bound(conversation_id, selector, conversation_binding_partition_key(context, conversation_id))
         job = new_job(
             job_id=str(uuid4()), subject=identity.subject, tenant_id=context.tenant_id, matter_id=self.matter_id,
             conversation_id=conversation_id, session_selector=selector, correlation_id=context.correlation_id,
@@ -389,6 +397,7 @@ class WorkerLoopClient:
         )
         try:
             binding = worker._bind(job, self.access_token)  # noqa: SLF001 - same binding as production
+            entry["invocationId"] = binding.invocation_id  # the grant _bind wrote (expires in 5 minutes)
             loop = worker.invoke_agent(binding, case["question"], ())
         except Exception as exc:  # noqa: BLE001 - no retries: the case is recorded as failed
             obs.error = type(exc).__name__.lower()[:64]
@@ -521,28 +530,53 @@ def real_plan(cases: int) -> dict[str, object]:
 def run_real(
     dataset: Mapping[str, Any], dataset_sha256: str, client: RealAgentClient, *, approval_ref: str,
     release_commit: str, artifact_sha256: str, prompt_identity: tuple[str, str] | None,
+    sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    """One Harness invocation per case, never more, no retries.
+
+    The report is built (and handed to ``sink``, which writes it) **whatever happens** after the first paid call:
+    an exception or an interrupt in the middle of the run ends in a report with the cases done so far, the cases
+    not run counted as failed (so an interrupted run can never pass) and the residual state the run created. The
+    exception is then raised again.
+    """
+
     cases = dataset["cases"]
     used, consecutive_errors, rows = 0, 0, []
-    for case in cases:
-        if used >= len(cases):  # budget guard: one invocation per case, never more
-            raise RuntimeError("invocation budget exhausted")
-        used += 1
-        obs = client.run(case)
-        rows.append(score_case(case, obs, offline=False))
-        consecutive_errors = consecutive_errors + 1 if obs.error else 0
-        if consecutive_errors >= MAX_CONSECUTIVE_REAL_ERRORS:
-            break  # a systemic failure: stop spending
+    interrupted: BaseException | None = None
+    try:
+        for case in cases:
+            if used >= len(cases):  # budget guard: one invocation per case, never more
+                raise RuntimeError("invocation budget exhausted")
+            used += 1
+            obs = client.run(case)
+            rows.append(score_case(case, obs, offline=False))
+            consecutive_errors = consecutive_errors + 1 if obs.error else 0
+            if consecutive_errors >= MAX_CONSECUTIVE_REAL_ERRORS:
+                break  # a systemic failure: stop spending
+    except BaseException as exc:  # noqa: BLE001 - leave evidence of what was spent and what was created, then re-raise
+        interrupted = exc
     completed = len(rows)
     for case in cases[completed:]:  # unrun cases count as failed so an aborted run can never pass
         rows.append(score_case(case, Observation(error="not_run"), offline=False))
-    return build_report("real", rows, dataset_sha256, {
+    residual = getattr(client, "residual", None)
+    report = build_report("real", rows, dataset_sha256, {
         "approvalRef": approval_ref, "releaseCommit": release_commit, "artifactSha256": artifact_sha256,
         "agentPromptVersion": prompt_identity[0] if prompt_identity else None,
         "agentPromptSha256": prompt_identity[1] if prompt_identity else None,
         "budget": {"harnessInvocationsPlanned": len(cases), "harnessInvocationsUsed": used, "retries": 0},
         "aborted": completed < len(cases),
+        "interruptedBy": type(interrupted).__name__ if interrupted is not None else None,
+        "residualState": (residual if isinstance(residual, ResidualState) else ResidualState()).as_report(),
     })
+    if sink is not None:
+        try:
+            sink(report)
+        except Exception:
+            print(json.dumps(report, sort_keys=True), file=sys.stderr)  # holds ids and counts only: safe to print
+            raise
+    if interrupted is not None:
+        raise interrupted
+    return report
 
 
 # ----------------------------------------------------------------- reports
@@ -607,8 +641,8 @@ def main(argv: list[str] | None = None) -> int:
     worker, _queue_arn, _visibility = build_worker_from_environment()
     report = run_real(dataset, digest, WorkerLoopClient(worker, access_token=token, matter_id=args.matter_id),
                       approval_ref=args.approval_ref, release_commit=args.release_commit,
-                      artifact_sha256=args.artifact_sha256, prompt_identity=worker.prompt_identity)
-    write_report_create_only(path, report)
+                      artifact_sha256=args.artifact_sha256, prompt_identity=worker.prompt_identity,
+                      sink=lambda finished: write_report_create_only(path, finished))  # written even if the run is interrupted
     print(json.dumps(report["summary"] | {"verdict": report["verdict"]}, indent=2, sort_keys=True))
     return 0 if report["verdict"]["passed"] else 1
 

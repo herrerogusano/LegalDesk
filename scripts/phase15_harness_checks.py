@@ -57,6 +57,10 @@ REPORT_PREFIX = "phase15-harness-checks-"
 RESULTS_ROOT = ROOT / "evals" / "results"
 REGION = "eu-west-1"
 
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))  # run as `python scripts/phase15_harness_checks.py`: make `evals` importable
+from evals.residual_state import GRANT_TTL_SECONDS, ResidualState  # noqa: E402,F401 - shared with the routing eval
+
 # Tools the agent chat sends per invocation that the Harness template's AllowedTools does not list.
 NEW_TOOLS = frozenset({"search_documents", "get_extracted_fields"})
 KNOWN_TOOL_NAMES = NEW_TOOLS | {"list_matter_documents", "get_document_metadata"}
@@ -117,38 +121,6 @@ class CallBudget:
         if self.used >= self.limit:
             raise BudgetExceeded("invocation budget exhausted")
         self.used += 1
-
-
-GRANT_TTL_SECONDS = 300  # GATEWAY_INVOCATION_TTL_SECONDS: invocation and tool grants expire by themselves
-
-
-class ResidualState:
-    """The synthetic state the checks leave in the metadata table: random ids only, never content.
-
-    Each agent call does what the worker does: it writes a conversation binding (no TTL, and the project has
-    no sweeper for it) and an invocation grant (``ttl`` = 5 minutes, deleted by DynamoDB TTL and by the
-    reconciliation sweep). The interceptor adds one self-expiring grant per tool call. Nothing else is written:
-    the job exists only in memory, and no memory event, quota counter or CHATJOB item is touched.
-    """
-
-    def __init__(self) -> None:
-        self.bindings: list[dict[str, object]] = []
-
-    def conversation_bound(self, conversation_id: str, session_selector: str, partition_key: str) -> dict[str, object]:
-        entry: dict[str, object] = {
-            "conversationId": conversation_id, "sessionSelector": session_selector,
-            "bindingPkSha256": _sha(partition_key), "invocationId": None,
-        }
-        self.bindings.append(entry)  # recorded before the call, so a failure after the bind still leaves the ids
-        return entry
-
-    def as_report(self) -> dict[str, object]:
-        return {
-            "conversationBindings": [dict(item) for item in self.bindings],
-            "invocationGrantsWritten": sum(1 for item in self.bindings if item["invocationId"]),
-            "grantTtlSeconds": GRANT_TTL_SECONDS,
-            "cleanup": "delete the conversation bindings (no TTL); grants expire by themselves (docs/phase-15-live-runbook.md step 11)",
-        }
 
 
 @dataclass(frozen=True)

@@ -68,3 +68,10 @@ The report is immutable (create-only, `evals/results/phase15-routing-*.json`) an
 counts, latency, tokens and the estimated loop cost (`pricingVersion` says which price table). It pins the
 dataset hash, the thresholds hash, release commit, artifact hash and the agent prompt version and hash.
 A rerun needs new approval and a new file name.
+
+### Residual state of a real run
+
+Each real case builds the worker's sealed binding, so it writes a conversation binding (`eval-<uuid>`, no TTL, nothing sweeps it) and a 5-minute grant. The report carries
+`residualState` (random ids and the SHA-256 of the partition key, never the key), the same block as `scripts/phase15_harness_checks.py`. Each binding is noted **before** its case's
+call, and the report is written even if the run errors or is interrupted (`interruptedBy`; the cases not run count as failed, so an interrupted run cannot pass). Deleting those
+bindings is mandatory: step 14 of [`phase-15-live-runbook.md`](phase-15-live-runbook.md).
