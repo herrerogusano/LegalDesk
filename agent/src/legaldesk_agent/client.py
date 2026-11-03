@@ -162,6 +162,43 @@ class HarnessToolResult:
     name: str
     status: str
     payload: Mapping[str, object] = field(default_factory=dict)
+    # Closed label (see ERROR_HINTS) of WHY an unusable result failed, computed from its text and never keeping it.
+    error_hint: str | None = None
+
+
+# Closed vocabulary for the reason of a failed tool result. The text of an error is never stored or logged: it can echo
+# arguments or document content, so only a label chosen by fixed keywords survives (T9 step 11, 2026-11-03: a failed
+# search_documents call whose reason could not be told apart).
+ERROR_HINTS = (
+    "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text", "unclassified",
+)
+
+
+def _tool_error_hint(text: str) -> str:
+    lowered = text.lower()
+    if not lowered.strip():
+        return "no_text"
+    # Most specific first: an access error whose text also says "required" is still an access error (PullBeacon PB-001).
+    if (
+        "access denied" in lowered or "forbidden" in lowered or "unauthorized" in lowered or "-32001" in lowered
+        or re.search(r"\b(?:http|status|statuscode|code)\W{0,3}403\b", lowered)
+    ):
+        return "access_denied"
+    if "required" in lowered or "missing" in lowered:
+        return "missing_required_argument"
+    # "not found" alone would also match a missing document; only a tool that is unknown or not found counts here.
+    if (
+        "not allowed" in lowered or "not permitted" in lowered or "allowedtools" in lowered or "unknown tool" in lowered
+        or re.search(r"\btool\b[^.\n]{0,80}\bnot found\b", lowered)
+    ):
+        return "tool_not_allowed"
+    if "validation" in lowered or "schema" in lowered or "invalid" in lowered:
+        return "invalid_arguments"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "timeout"
+    if "throttl" in lowered or "rate exceeded" in lowered or "too many requests" in lowered:
+        return "throttled"
+    return "unclassified"
 
 
 # HarnessToolUseStatus is an SDK enum: ``success`` or ``error``.
@@ -587,21 +624,22 @@ def _structured_tool_results(
         if record is None:
             continue  # the loop was cut before this call returned: nothing to reuse
         if record.get("bad"):
-            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}))
+            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}, error_hint="unclassified"))
             continue
         fragments = record["fragments"]
         assert isinstance(fragments, list)
+        joined = "".join(fragments)
         try:
-            payload = _safe_tool_payload("".join(fragments), raw=raw)
+            payload = _safe_tool_payload(joined, raw=raw)
         except ValueError:
             if not raw:
                 raise
             # One unusable result must not discard the others in the loop.
-            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}))
+            parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}, error_hint=_tool_error_hint(joined)))
             continue
         if record["status"] == "SUCCESS" and not payload:
             if raw:
-                parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}))
+                parsed.append(HarnessToolResult(tool_use_id=tool_id, name=name, status="ERROR", payload={}, error_hint="no_text"))
                 continue
             raise ValueError("successful Harness tool result has no structured payload")
         if (
@@ -617,6 +655,7 @@ def _structured_tool_results(
                 name=name,
                 status=str(record["status"]),
                 payload=payload,
+                error_hint=_tool_error_hint(joined) if record["status"] != "SUCCESS" else None,
             )
         )
     return tuple(parsed)
@@ -953,6 +992,7 @@ class AgentToolCall:
     name: str
     status: str
     payload: Mapping[str, object]
+    error_hint: str | None = None  # closed label (ERROR_HINTS) of why a failed call failed; never the text
 
     @property
     def short_name(self) -> str:
@@ -1051,6 +1091,25 @@ def _agent_history(history: tuple[tuple[str, str], ...]) -> list[dict[str, Any]]
     return [{"role": role, "content": [{"text": text}]} for role, text in cleaned]
 
 
+_MATTER_SELECTOR = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def matter_selector_instruction(matter_id: str) -> str:
+    """The server-built system instruction that tells the model the value of ``matterId``.
+
+    Every Gateway tool of the agent requires ``matterId`` (the target schemas and the interceptor's raw-body check). The model was told
+    never to pass it and was never given it, so its calls had no valid ``matterId``. The value is a selector, not authority: the interceptor
+    compares it with the signed-in user's access and with the invocation record, so a model that passes another matter is refused.
+    """
+
+    if not isinstance(matter_id, str) or _MATTER_SELECTOR.fullmatch(matter_id) is None:
+        raise ValueError("matter_id is not a safe selector")
+    return (
+        f"Matter selector for every tool call: {matter_id}. Pass exactly this value as the `matterId` argument of each tool you call. "
+        "It is a selector, not an authorization: the backend checks it, and any other value makes the call fail."
+    )
+
+
 def invoke_agent_chat(
     invoker: "HarnessInvoker",
     message: str,
@@ -1078,7 +1137,12 @@ def invoke_agent_chat(
         raise TypeError("invocation_scope must be a server-derived HarnessInvocationScope")
     if not isinstance(system_prompt, tuple) or not system_prompt:
         raise ValueError("the agent system prompt is required")
-    session_id = validate_session_id(invocation_scope.memory_scope.session_id)
+    # A NEW runtimeSessionId on every call (every job and every retry of a job). Harness keeps the conversation of a runtimeSessionId
+    # in its microVM even with memory disabled (T9 step 11, 2026-11-03: history_retained), which would hold, outside the backend, the
+    # previous turns and their tool results (document fragments). The backend is the only owner of conversation memory (ADR-021 D7)
+    # and sends its own history. The binding's memory scope is NOT the runtime session: it still feeds the interceptor header
+    # x-legaldesk-memory-session-id and the invocation record, whose check compares header and record, never the runtime session.
+    session_id = validate_session_id(new_session_id())
     correlation_id = invocation_scope.correlation_id
     history_messages = _agent_history(history)
     request: dict[str, Any] = {
@@ -1088,7 +1152,7 @@ def invoke_agent_chat(
         "tools": [invocation_scope.remote_mcp_tool()],
         "allowedTools": list(invocation_scope.allowed_tools),
         "baggage": f"legaldesk.correlation_id={correlation_id}",
-        "systemPrompt": list(system_prompt),
+        "systemPrompt": [*system_prompt, {"text": matter_selector_instruction(invocation_scope.matter_id)}],
         "maxIterations": AGENT_CHAT_MAX_ITERATIONS,
         "maxTokens": AGENT_CHAT_MAX_TOKENS,
         "timeoutSeconds": AGENT_CHAT_TIMEOUT_SECONDS,
@@ -1143,7 +1207,7 @@ def invoke_agent_chat(
     return AgentChatResult(
         session_id=session_id, correlation_id=correlation_id, text=_final_message_text(events),
         loop_outcome=outcome, iterations=max(1, iterations), stop_reason=stop_reason,
-        tool_calls=tuple(AgentToolCall(call.tool_use_id, call.name, call.status, call.payload) for call in calls),
+        tool_calls=tuple(AgentToolCall(call.tool_use_id, call.name, call.status, call.payload, call.error_hint) for call in calls),
         usage=usage_records[0] if len(usage_records) == 1 else None,
         history_messages=len(history_messages),
     )

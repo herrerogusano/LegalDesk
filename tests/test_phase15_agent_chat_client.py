@@ -18,7 +18,7 @@ from legaldesk.authorization import build_request_context
 from legaldesk.gateway_interceptor import InMemoryGatewayGrantRepository
 from legaldesk.memory import InMemoryConversationBindingStore
 from legaldesk_agent import HarnessInvocationError, HarnessInvocationScope, HarnessInvoker, invoke_agent_chat
-from legaldesk_agent.client import classify_loop
+from legaldesk_agent.client import classify_loop, matter_selector_instruction
 
 HARNESS_ARN = "arn:aws:bedrock-agentcore:eu-west-1:123456789012:harness/legaldesk"
 SEARCH = "@legaldesk_gateway/search-documents___search_documents"
@@ -110,8 +110,9 @@ class AgentChatInvocationTests(unittest.TestCase):
         validate_parameters(call, Session().get_service_model("bedrock-agentcore").operation_model("InvokeHarness").input_shape)
         self.assertNotIn("actorId", call)  # Harness memory is not attached (ADR-021 D7)
         self.assertEqual((call["maxIterations"], call["timeoutSeconds"]), (3, 90))
-        self.assertEqual(call["runtimeSessionId"], scope.memory_scope.session_id)
-        self.assertEqual(call["systemPrompt"], list(PROMPT))
+        self.assertNotEqual(call["runtimeSessionId"], scope.memory_scope.session_id)  # a fresh one per call: see the tests of the session
+        self.assertEqual(call["systemPrompt"][:-1], list(PROMPT))  # the pinned prompt, then the server-built matter selector
+        self.assertEqual(call["systemPrompt"][-1], {"text": matter_selector_instruction("mat_sundial")})
         self.assertEqual(set(call["allowedTools"]), {SEARCH, FIELDS, "@legaldesk_gateway/metadata-mcp___list_matter_documents"})
         self.assertNotIn(REVIEW, call["allowedTools"])
         self.assertEqual(call["tools"][0]["config"]["remoteMcp"]["headers"]["x-legaldesk-invocation-id"], scope.invocation_id)

@@ -251,6 +251,28 @@ class Step11ParserVersusHarnessTests(unittest.TestCase):
                 self.assertIn(f"`{verdict}`", row)
 
 
+class Step11SecondReportTests(unittest.TestCase):
+    """The findings of the second step 11 run: a hidden Harness session and a search call that never reached its target."""
+
+    def test_the_session_and_selector_findings_are_documented_with_their_closed_labels(self) -> None:
+        step_11 = " ".join(section(RUNBOOK, "Step 11 ").split())
+        for needle in (
+            "a new `runtimeSessionId` on every agent call", "sessionPolicy", "toolErrorHints", "missing_required_argument", "denyStage",
+            "raw_matter_selector", "tool_not_in_invocation", "matter_selector_instruction", "Not proven without AWS", "It is a selector, not authority",
+        ):
+            self.assertIn(needle, step_11)
+
+    def test_every_deny_stage_of_the_interceptor_is_documented(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT / "backend" / "src"))
+        from legaldesk import gateway_interceptor
+
+        step_11 = section(RUNBOOK, "Step 11 ")
+        for stage in gateway_interceptor._DENY_STAGES:
+            self.assertIn(f"`{stage}`", step_11)
+
+
 class ProfilesAndCommandsExistTests(unittest.TestCase):
     def test_every_profile_the_runbook_names_exists(self) -> None:
         names = set(re.findall(r"--profile ([a-z0-9-]+)", RUNBOOK)) | set(re.findall(r"profile `([a-z0-9-]+)`", RUNBOOK))

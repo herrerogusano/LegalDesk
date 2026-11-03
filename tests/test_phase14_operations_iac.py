@@ -115,6 +115,47 @@ class Phase14OperationsInfrastructureTests(unittest.TestCase):
         self.assertIn("Threshold: 100", text)
         self.assertIn("not a billing hard cap", text)
 
+    def test_budget_measures_usage_before_credits_and_refunds(self) -> None:
+        budget = self.template.split("  MonthlyBudget:\n", 1)[1].split("\nOutputs:", 1)[0]
+        cost_types = budget.split("        CostTypes:\n", 1)[1].split(
+            "      NotificationsWithSubscribers:", 1
+        )[0]
+        self.assertEqual(
+            dict(re.findall(r"^          (\w+): (true|false)$", cost_types, re.MULTILINE)),
+            {
+                "IncludeTax": "true",
+                "IncludeSubscription": "true",
+                "UseBlended": "false",
+                "IncludeRefund": "false",
+                "IncludeCredit": "false",
+                "IncludeUpfront": "true",
+                "IncludeRecurring": "true",
+                "IncludeOtherSubscription": "true",
+                "IncludeSupport": "true",
+                "IncludeDiscount": "true",
+                "UseAmortized": "false",
+            },
+        )
+        self.assertIn('BudgetName: !Sub "${AWS::StackName}-monthly"', budget)
+        self.assertIn("Amount: !Ref MonthlyBudgetLimitUsd\n          Unit: USD", budget)
+        self.assertIn("BudgetType: COST\n        TimeUnit: MONTHLY", budget)
+        self.assertNotIn("CostFilters:", budget)
+        notifications = budget.split("        - Notification:\n")[1:]
+        self.assertEqual(len(notifications), 2)
+        for notification, (kind, threshold) in zip(
+            notifications, (("ACTUAL", 80), ("ACTUAL", 100))
+        ):
+            with self.subTest(kind=kind, threshold=threshold):
+                self.assertIn("ComparisonOperator: GREATER_THAN\n", notification)
+                self.assertIn(f"NotificationType: {kind}\n", notification)
+                self.assertIn(f"Threshold: {threshold}\n", notification)
+                self.assertIn("ThresholdType: PERCENTAGE\n", notification)
+                self.assertIn(
+                    "Subscribers:\n            - SubscriptionType: EMAIL\n"
+                    "              Address: !Ref BudgetEmail",
+                    notification,
+                )
+
     def test_resource_names_are_parameterized_not_recreated(self) -> None:
         text = self.template
         for parameter in (
