@@ -15,13 +15,101 @@ from time import time
 from typing import Any, Callable, Mapping, Sequence
 
 from .documents import DocumentMetadataRepository, ObjectStorage
-from .domain.models import DocumentStatus
+from .domain.models import DocumentStatus, MalwareScanStatus
 from .gateway_interceptor import GatewayGrantRepository
 from .ingestion import AsyncKnowledgeBaseIngestionService
 from .state import EphemeralStateStore
 
 
 MAX_RECONCILIATION_BATCH = 100
+# Contract flag, read by tests/test_phase15_document_retention.py. It is True only when the repository contains the code that keeps
+# the metadata record and the Knowledge Base consistent when an S3 lifecycle rule expires a canonical original. Today it does not
+# (and the Phase 02 template has no such rule), so reintroducing an expiry on ``tenants/`` fails that test until this is built.
+CANONICAL_EXPIRY_KEEPS_RECORDS_CONSISTENT = False
+CANONICAL_PREFIX = "tenants/"
+_SECONDS_PER_DAY = 86_400
+
+# Closed probable-cause labels of a missing canonical object. Only facts the reconciler can read are used: the age of the record and the
+# lifecycle rules S3 reports. Every label that does not start with ``s3_lifecycle`` says the cause is UNKNOWN.
+CAUSE_S3_LIFECYCLE = "s3_lifecycle_expiration"
+CAUSE_YOUNGER_THAN_WINDOW = "unknown_younger_than_lifecycle_window"
+CAUSE_NO_EXPIRY = "unknown_no_lifecycle_expiry"
+CAUSE_DATE_RULE = "unknown_lifecycle_date_rule"
+CAUSE_LIFECYCLE_UNREADABLE = "unknown_lifecycle_unreadable"
+CAUSE_AGE_UNREADABLE = "unknown_age_unreadable"
+PROBABLE_CAUSES = (
+    CAUSE_S3_LIFECYCLE, CAUSE_YOUNGER_THAN_WINDOW, CAUSE_NO_EXPIRY, CAUSE_DATE_RULE, CAUSE_LIFECYCLE_UNREADABLE, CAUSE_AGE_UNREADABLE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalExpiry:
+    """What the bucket's lifecycle rules say about the canonical originals (``tenants/``)."""
+
+    state: str                    # "configured" | "none" | "unreadable"
+    window_days: int | None = None  # the shortest ``Expiration.Days`` that can apply; None for a date rule or no rule
+
+    @property
+    def configured(self) -> bool:
+        return self.state == "configured"
+
+
+def _rule_prefixes(rule: Mapping[str, Any]) -> list[str] | None:
+    """Prefix(es) a lifecycle rule is limited to, or ``None`` when it is not limited by prefix (it applies to every key)."""
+
+    filt = rule.get("Filter")
+    if isinstance(filt, Mapping):
+        prefix = filt.get("Prefix")
+        if prefix is None and isinstance(filt.get("And"), Mapping):
+            prefix = filt["And"].get("Prefix")
+        return [prefix] if isinstance(prefix, str) else None
+    legacy = rule.get("Prefix")
+    return [legacy] if isinstance(legacy, str) else None
+
+
+def canonical_expiry(rules: Sequence[Mapping[str, Any]]) -> CanonicalExpiry:
+    """Whether an ENABLED rule can expire objects under ``tenants/``.
+
+    Conservative on purpose: a rule limited by tag or size, or without a prefix, is assumed to apply (we cannot prove it does not), and a
+    rule with an expiration DATE counts as configured with an unknown window. Delete-marker clean-up and abort-multipart rules never remove
+    a current object and are ignored.
+    """
+
+    days: list[int] = []
+    date_rule = False
+    for rule in rules:
+        if not isinstance(rule, Mapping) or rule.get("Status") != "Enabled":
+            continue
+        expiration = rule.get("Expiration")
+        if not isinstance(expiration, Mapping) or not ("Days" in expiration or "Date" in expiration):
+            continue
+        prefixes = _rule_prefixes(rule)
+        if prefixes is not None and not any(
+            prefix == "" or CANONICAL_PREFIX.startswith(prefix) or prefix.startswith(CANONICAL_PREFIX) for prefix in prefixes
+        ):
+            continue
+        value = expiration.get("Days")
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            days.append(value)
+        else:
+            date_rule = True
+    if not days and not date_rule:
+        return CanonicalExpiry("none")
+    return CanonicalExpiry("configured", min(days) if days else None)
+
+
+def probable_cause(expiry: CanonicalExpiry, age_days: int | None) -> str:
+    """The closed label for a missing object: ``s3_lifecycle_expiration`` is the only one that names a cause; the rest say it is unknown."""
+
+    if expiry.state == "unreadable":
+        return CAUSE_LIFECYCLE_UNREADABLE
+    if not expiry.configured:
+        return CAUSE_NO_EXPIRY
+    if expiry.window_days is None:
+        return CAUSE_DATE_RULE
+    if age_days is None:
+        return CAUSE_AGE_UNREADABLE
+    return CAUSE_S3_LIFECYCLE if age_days >= expiry.window_days else CAUSE_YOUNGER_THAN_WINDOW
 _MAX_PENDING_DOCUMENT_PAGES = 3
 _INGESTION_STALE_STATUSES = frozenset({"STARTING", "RECOVERY_PENDING", "PENDING"})
 
@@ -101,6 +189,16 @@ class ReconciliationItem:
     outcome: str
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectFinding:
+    """One document whose canonical object is missing. Opaque id and closed values only: no key, tenant or content."""
+
+    document_id: str
+    status: str
+    age_days: int | None
+    probable_cause: str
+
+
 @dataclass(slots=True)
 class ReconciliationReport:
     examined: int = 0
@@ -109,6 +207,8 @@ class ReconciliationReport:
     ambiguous: int = 0
     failed: int = 0
     items: list[ReconciliationItem] = field(default_factory=list)
+    findings: list[ObjectFinding] = field(default_factory=list)
+    canonical_expiry: CanonicalExpiry | None = None
 
     def record(self, identifier: str, outcome: str) -> None:
         self.items.append(ReconciliationItem(identifier, outcome))
@@ -173,6 +273,91 @@ class ReconciliationService:
             report.changed += min(limit, len(recovered))
             report.record(identifier, "idp_recovered" if recovered else "idp_no_candidates")
         return report
+
+    def reconcile_missing_objects(
+        self,
+        *,
+        scopes: Sequence[ReconciliationScope],
+        limit_per_scope: int | None = None,
+        has_budget: Callable[[], bool] | None = None,
+    ) -> ReconciliationReport:
+        """Report INDEXED, malware-CLEAN documents whose canonical object is gone. Report only: nothing is changed.
+
+        Why it does not tombstone the record: the stale vector would stay in the Knowledge Base (this role cannot delete from it), so
+        retrieval would still hit it, and the alarm would go quiet while the inconsistency remained. The repair is the governance
+        delete (record + objects) followed by a Knowledge Base sync, an operator step with a runbook.
+
+        Bounded and keyed: the same one-partition document Query per explicit scope as the upload pass (at most ``limit`` documents),
+        one existence check per INDEXED+CLEAN document and one lifecycle read per run. No scan. The lifecycle read only lets the finding
+        state its probable cause; an unreadable lifecycle never hides a missing object.
+        """
+
+        exists = getattr(self.object_storage, "object_exists", None)
+        if not callable(exists):
+            raise ValueError("object existence is not configured")
+        scopes = self._bounded(scopes, "object scopes")
+        limit = self._limit(limit_per_scope or self.max_batch)
+        report = ReconciliationReport()
+        try:
+            rules = self.object_storage.lifecycle_rules()  # type: ignore[attr-defined]
+            report.canonical_expiry = canonical_expiry(tuple(rules))
+        except Exception:
+            report.canonical_expiry = CanonicalExpiry("unreadable")
+        now = self.clock()
+        for scope in scopes:
+            if has_budget is not None and not has_budget():
+                break
+            try:
+                documents = self.metadata_repository.list_for_scope(
+                    tenant_id=scope.tenant_id, matter_id=scope.matter_id, limit=limit
+                )
+            except Exception:
+                report.failed += 1
+                report.record(f"{scope.tenant_id}/{scope.matter_id}", "query_failed")
+                continue
+            for document in documents:
+                identifier = f"{scope.tenant_id}/{scope.matter_id}/{getattr(document, 'document_id', '')}"
+                if document.tenant_id != scope.tenant_id or document.matter_id != scope.matter_id:
+                    report.skipped += 1
+                    report.record(identifier, "scope_mismatch")
+                    continue
+                if document.status is not DocumentStatus.INDEXED or document.malware_scan_status is not MalwareScanStatus.CLEAN:
+                    report.skipped += 1
+                    report.record(identifier, "not_indexed_and_clean")
+                    continue
+                prefix = f"tenants/{scope.tenant_id}/matters/{scope.matter_id}/documents/{document.document_id}/"
+                key = document.s3_key
+                if not isinstance(key, str) or not key.startswith(prefix):
+                    report.ambiguous += 1
+                    report.record(identifier, "non_canonical_key")
+                    continue
+                if has_budget is not None and not has_budget():
+                    break
+                report.examined += 1
+                try:
+                    present = exists(key=key)
+                except Exception:
+                    report.failed += 1
+                    report.record(identifier, "check_failed")
+                    continue
+                if present:
+                    report.skipped += 1
+                    report.record(identifier, "object_present")
+                    continue
+                age_days = self._age_days(document, now)
+                report.findings.append(ObjectFinding(
+                    document.document_id, document.status.value, age_days, probable_cause(report.canonical_expiry, age_days),
+                ))
+                report.record(identifier, "object_missing")
+        return report
+
+    @staticmethod
+    def _age_days(document: Any, now: float) -> int | None:
+        try:
+            age = now - document.uploaded_at.timestamp()
+        except (AttributeError, OverflowError, OSError, ValueError):
+            return None
+        return max(0, int(age // _SECONDS_PER_DAY)) if math.isfinite(age) else None
 
     def reconcile_pending_uploads(
         self,
@@ -640,6 +825,13 @@ class ReconciliationService:
 
 
 __all__ = [
+    "CANONICAL_EXPIRY_KEEPS_RECORDS_CONSISTENT",
+    "CAUSE_S3_LIFECYCLE",
+    "PROBABLE_CAUSES",
+    "CanonicalExpiry",
+    "ObjectFinding",
+    "canonical_expiry",
+    "probable_cause",
     "GatewayReconciliationCandidate",
     "IngestionReconciliationCandidate",
     "IngestionReconciliationScope",

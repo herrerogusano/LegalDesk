@@ -19,6 +19,9 @@ aws cloudformation delete-stack --stack-name legaldesk-phase-02 --region eu-west
 
 The bucket and table use `Retain` policies in the current template, so stack
 deletion does not remove them; any separate owner-approved resource deletion
-must first empty the bucket. Lifecycle expiration is a cost-conscious safety
-net, not a substitute for deliberate teardown. These operations are
+must first empty the bucket. Only the one-day quarantine prefix expires by
+lifecycle; canonical originals (`tenants/`) never do, because an expiry deletes
+the object but not the metadata record nor the Knowledge Base entry (ghost
+documents, T9 step 12). Deliberate teardown or deletion goes through the
+data-governance operation. These operations are
 intentionally not run by the Phase 02 worker.

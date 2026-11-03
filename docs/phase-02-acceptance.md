@@ -40,8 +40,9 @@ ingestion, or retrieval was created or invoked.
   sidecar leaves the document in `PENDING_UPLOAD`.
 - In-memory fakes support deterministic local tests; boto3 adapters are lazy
   and injectable and were not called in this phase.
-- IaC defines encrypted, private, TLS-only S3 with a one-day quarantine and
-  30-day canonical lifecycle,
+- IaC defines encrypted, private, TLS-only S3 with a one-day quarantine lifecycle
+  (the 30-day canonical expiry of this phase was removed on 2026-11-03: it left
+  records and Knowledge Base entries without objects),
   on-demand encrypted DynamoDB, and a least-privilege pipeline role with
   prefix-restricted object management for original files and Bedrock sidecars
   (including `GetObject` only for upload confirmation). The bucket and table are

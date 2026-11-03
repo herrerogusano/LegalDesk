@@ -372,6 +372,51 @@
       "iam": [],
       "remove": []
     },
+    "phase02-no-canonical-expiry": {
+      "description": "LegalDeskPhase02Documents: the ExpireFictionalOriginals lifecycle rule (tenants/, 30 days) is removed; the one-day quarantine rule stays. Only the bucket's LifecycleConfiguration changes, in place. The registry schema of AWS::S3::Bucket is not recorded in createOnly (describe-type must be read first, see the runbook), so an offline preview reports the replacement as UNKNOWN; the live change set's Replacement must be False.",
+      "add": [],
+      "modify": {
+        "DocumentBucket": [
+          "LifecycleConfiguration"
+        ]
+      },
+      "iamResources": [],
+      "iam": [],
+      "remove": []
+    },
+    "reconciliation-object-integrity": {
+      "description": "LegalDeskPhase14Reconciliation: the reconciliation Lambda detects INDEXED documents whose canonical object is missing (new code), its role gains s3:ListBucket on the bucket conditioned on the beta canonical key prefix and s3:GetLifecycleConfiguration on the bucket, and a log metric filter plus an alarm are added. No existing resource is replaced.",
+      "add": [
+        "DocumentIntegrityAlarm",
+        "DocumentIntegrityMetricFilter"
+      ],
+      "modify": {
+        "ReconciliationExecutionRole": [
+          "Policies"
+        ],
+        "ReconciliationFunction": [
+          "Code"
+        ]
+      },
+      "iamResources": [
+        "ReconciliationExecutionRole"
+      ],
+      "iam": [
+        {
+          "resource": "ReconciliationExecutionRole",
+          "policy": "LegalDeskReconciliationDataPlane",
+          "sid": "CheckBetaCanonicalObjectsExistByListingTheExactKey",
+          "change": "added"
+        },
+        {
+          "resource": "ReconciliationExecutionRole",
+          "policy": "LegalDeskReconciliationDataPlane",
+          "sid": "ReadBucketLifecycleRulesToExplainMissingObjects",
+          "change": "added"
+        }
+      ],
+      "remove": []
+    },
     "public-edge-agent-chat-rollback": {
       "description": "Rollback of EnableAgentChat to false: queue, DLQ, worker, role, event source mapping, log group, metric filters and alarms are removed; the application function environment and role policy go back.",
       "add": [],

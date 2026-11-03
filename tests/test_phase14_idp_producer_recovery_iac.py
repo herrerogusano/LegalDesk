@@ -89,10 +89,17 @@ class Phase14ProducerRecoveryIaCTests(unittest.TestCase):
             "AWS::SQS::Queue", "AWS::SQS::QueuePolicy", "AWS::Lambda::Function",
             "AWS::Events::Rule", "AWS::Lambda::Permission",
         })
+        # The IDP opt-ins add no resource type. The document-integrity metric filter and alarm (T9 step 12) are the only addition, both behind
+        # their own switch (EnableDocumentIntegrityAlarm), unrelated to the IDP switches.
         self.assertEqual(reconciliation_types, {
             "AWS::Logs::LogGroup", "AWS::SQS::Queue", "AWS::SQS::QueuePolicy",
             "AWS::IAM::Role", "AWS::Lambda::Function", "AWS::Events::Rule", "AWS::Lambda::Permission",
+            "AWS::Logs::MetricFilter", "AWS::CloudWatch::Alarm",
         })
+        resources = _resources(self.reconciliation)
+        self.assertEqual({name for name, value in resources.items() if value["Type"] in {"AWS::Logs::MetricFilter", "AWS::CloudWatch::Alarm"}},
+                         {"DocumentIntegrityMetricFilter", "DocumentIntegrityAlarm"})
+        self.assertTrue(all(resources[name].get("Condition") == "DocumentIntegrityAlarmEnabled" for name in ("DocumentIntegrityMetricFilter", "DocumentIntegrityAlarm")))
 
     def test_malware_producer_uses_exact_conditional_job_and_queue_permissions(self) -> None:
         conditional = _conditional_statements(self.security, "MalwareScanExecutionRole")

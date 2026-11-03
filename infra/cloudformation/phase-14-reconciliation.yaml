@@ -133,6 +133,19 @@ Parameters:
     Type: Number
     Default: 30
     AllowedValues: [7, 14, 30, 60, 90]
+  EnableDocumentIntegrityAlarm:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Creates the log metric filter (one custom metric, DocumentIntegrityFindings) and the alarm over it. Together about
+      0.40 USD a month (0.30 custom metric + 0.10 alarm), 0 inside the CloudWatch free tier. "false" keeps the per-document
+      log lines and removes the metric and the alarm.
+  DocumentIntegrityAlarmTopicArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:]+:sns:[^:]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$"
+    Description: Optional existing SNS topic for the document integrity alarm; empty keeps the alarm console-only.
   ReconciliationReservedConcurrency:
     Type: Number
     Default: 1
@@ -145,6 +158,8 @@ Parameters:
 Conditions:
   HasReconciliationReservedConcurrency: !Not [!Equals [!Ref ReconciliationReservedConcurrency, 0]]
   IDPEnabled: !Equals [!Ref EnableIDPProcessing, "true"]
+  DocumentIntegrityAlarmEnabled: !Equals [!Ref EnableDocumentIntegrityAlarm, "true"]
+  HasDocumentIntegrityAlarmTopic: !Not [!Equals [!Ref DocumentIntegrityAlarmTopicArn, ""]]
   IDPReviewEnabled: !And
     - !Equals [!Ref EnableIDPProcessing, "true"]
     - !Equals [!Ref EnableIDPReviewDispatch, "true"]
@@ -223,6 +238,23 @@ Resources:
                   - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf.metadata.json"
                   - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
                   - !Sub "${SourceBucketArn}/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.txt.metadata.json"
+              # Detect canonical objects that are gone while their record and Knowledge Base entry remain (T9 step 12).
+              # A HEAD of a missing key answers 403 without bucket-wide s3:ListBucket, so existence is checked by listing
+              # the exact key, which this prefix-conditioned permission allows and nothing else: no object is read.
+              - Sid: CheckBetaCanonicalObjectsExistByListingTheExactKey
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Ref SourceBucketArn
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - !Sub "tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                      - !Sub "tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+              # Read-only: lets a finding say whether an S3 lifecycle rule could have expired the object.
+              - Sid: ReadBucketLifecycleRulesToExplainMissingObjects
+                Effect: Allow
+                Action: s3:GetLifecycleConfiguration
+                Resource: !Ref SourceBucketArn
               - Sid: ReadOnlyIngestionStatus
                 Effect: Allow
                 # Per-document status isolates one unparseable document
@@ -342,6 +374,46 @@ Resources:
           RetryPolicy:
             MaximumEventAgeInSeconds: 3600
             MaximumRetryAttempts: 2
+
+  # One structured line per ghost document plus a summary line (reconciliation_lambda._emit_object_findings). `findings` is the
+  # number of canonical objects missing, plus one while an S3 lifecycle rule can expire canonical originals at all.
+  DocumentIntegrityMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Condition: DocumentIntegrityAlarmEnabled
+    Properties:
+      LogGroupName: !Ref ReconciliationLogGroup
+      FilterPattern: '{ $.event = "document_objects_check" && $.findings > 0 }'
+      MetricTransformations:
+        - MetricName: DocumentIntegrityFindings
+          MetricNamespace: LegalDesk/Phase14Reconciliation
+          MetricValue: $.findings
+          Unit: Count
+
+  DocumentIntegrityAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: DocumentIntegrityAlarmEnabled
+    Properties:
+      AlarmDescription: >-
+        Document integrity: a document record that is INDEXED has no object in the source bucket (it is still in the
+        Knowledge Base, so every search over its matter fails closed), or an S3 lifecycle rule exists that can expire
+        canonical originals. Nothing was repaired automatically. Per-document log lines (event document_object_missing:
+        documentId, status, ageDays, probableCause) are in the reconciliation log group. To confirm the cause and repair
+        (governance delete + Knowledge Base sync) follow docs/phase-14-data-governance-runbook.md, section
+        "Ghost documents: confirm the cause and repair".
+      Namespace: LegalDesk/Phase14Reconciliation
+      MetricName: DocumentIntegrityFindings
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasDocumentIntegrityAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasDocumentIntegrityAlarmTopic
+        - - !Ref DocumentIntegrityAlarmTopicArn
+        - !Ref AWS::NoValue
 
   ReconciliationInvokePermission:
     Type: AWS::Lambda::Permission

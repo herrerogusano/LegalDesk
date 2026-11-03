@@ -24,6 +24,12 @@ and uses document-partition queries or point reads. It never scans the shared
 DynamoDB table. The scheduler supplies the candidate partitions from
 deployment configuration; this module does not infer scope from browser input.
 
+## Document integrity check (T9 step 12, 2026-11-03)
+
+Each run also reports INDEXED, malware-clean documents whose canonical object is missing, one structured line per document with a closed
+`probableCause`, and alarms through `DocumentIntegrityAlarm`. It only reports. Causes, commands and repair:
+`docs/phase-14-data-governance-runbook.md`, section "Ghost documents: confirm the cause and repair".
+
 ## Completed synthetic evidence — 2026-09-28
 
 The supervised exercise invoked the deployed reconciler exactly once and
