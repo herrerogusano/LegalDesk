@@ -178,11 +178,19 @@ def _tool_error_hint(text: str) -> str:
     lowered = text.lower()
     if not lowered.strip():
         return "no_text"
+    # Most specific first: an access error whose text also says "required" is still an access error (PullBeacon PB-001).
+    if (
+        "access denied" in lowered or "forbidden" in lowered or "unauthorized" in lowered or "-32001" in lowered
+        or re.search(r"\b(?:http|status|statuscode|code)\W{0,3}403\b", lowered)
+    ):
+        return "access_denied"
     if "required" in lowered or "missing" in lowered:
         return "missing_required_argument"
-    if "access denied" in lowered or "forbidden" in lowered or "unauthorized" in lowered or "-32001" in lowered or "403" in lowered:
-        return "access_denied"
-    if "not allowed" in lowered or "not permitted" in lowered or "allowedtools" in lowered or "unknown tool" in lowered or "not found" in lowered:
+    # "not found" alone would also match a missing document; only a tool that is unknown or not found counts here.
+    if (
+        "not allowed" in lowered or "not permitted" in lowered or "allowedtools" in lowered or "unknown tool" in lowered
+        or re.search(r"\btool\b[^.\n]{0,80}\bnot found\b", lowered)
+    ):
         return "tool_not_allowed"
     if "validation" in lowered or "schema" in lowered or "invalid" in lowered:
         return "invalid_arguments"

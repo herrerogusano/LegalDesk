@@ -144,6 +144,14 @@ class AFailedToolResultSaysWhyWithAClosedLabelTests(unittest.TestCase):
             "The request timed out": "timeout",
             "ThrottlingException: Rate exceeded": "throttled",
             "something we have never seen": "unclassified",
+            # PB-001: precedence and narrow matches
+            "access denied: a valid matter is required": "access_denied",
+            "HTTP 403": "access_denied",
+            "Status code: 403": "access_denied",
+            "document doc_4031 has 403 pages": "unclassified",
+            "matched 1403 passages, nothing usable": "unclassified",
+            "document doc_7 not found": "unclassified",
+            "Tool search_documents not found": "tool_not_allowed",
         }
         for text, expected in cases.items():
             with self.subTest(text):
