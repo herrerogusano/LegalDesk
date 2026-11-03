@@ -581,14 +581,14 @@ def run_real(
 
 # ----------------------------------------------------------------- reports
 
-def assert_report_path(path: Path) -> Path:
+def assert_report_path(path: Path, prefix: str = REPORT_PREFIX) -> Path:
     resolved = path.resolve()
     try:
         resolved.relative_to(RESULTS_ROOT.resolve())
     except ValueError as exc:
         raise ValueError("reports must stay under evals/results") from exc
-    if not resolved.name.startswith(REPORT_PREFIX) or resolved.suffix != ".json":
-        raise ValueError(f"report name must start with {REPORT_PREFIX!r} and end in .json")
+    if not resolved.name.startswith(prefix) or resolved.suffix != ".json":
+        raise ValueError(f"report name must start with {prefix!r} and end in .json")
     if path.is_symlink() or resolved.exists():
         raise FileExistsError("reports are immutable and cannot be overwritten")
     return resolved
