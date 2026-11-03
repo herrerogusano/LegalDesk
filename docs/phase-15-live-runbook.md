@@ -51,6 +51,14 @@ or a cost reading above the stop value of the cost estimate. **Nothing is retrie
 
 ## Fixed facts (re-read them at step 1; do not trust this table)
 
+**Runtime platform review from 2026-11-12:** the [V2 impact assessment](agentcore-runtime-v2-impact.md)
+verified the existing managed runtime on V1; the AWS Health notice changes the default for new runtimes.
+Harness currently has no platform pin. Before an approved Harness update, STOP for Add/Remove, actual
+replacement, unresolved `Conditional` replacement or stack recreation until the supervisor reviews
+platform choice. Resolve conditionals against the live create-only paths (step 2); compare Harness ID,
+runtime ID and explicit platform before/after, and STOP on an unexpected change. Use a current SDK:
+the installed CLI omitted the platform field. This is an operator review note, not a new automated gate.
+
 | | |
 |---|---|
 | Region / account | `eu-west-1` / `344774635844` |
