@@ -191,6 +191,17 @@ $0.35/GB). The cost is not the issue; **content in logs is**, which is why ADOT 
 again right after the probe unless the owner accepts the residual risk of ADR-021 D9. Transaction
 Search (account-wide span indexing) is not enabled by this plan.
 
+## Raising the per-call output cap from 256 to 2048 (T9 step 12, 2026-11-03)
+
+The Harness template had `MaxTokens: 256` in two places (the model configuration and the Harness default) while the worker sends `maxTokens: 2048` per invocation. The documentation says the
+invocation field overrides the Harness default, not the model configuration, and the second real run ended three loops with `stopReason: max_tokens` on messages that carry several tool uses or the
+longest plans. The stack change (`MaxTokensPerIteration`, default 2048, one parameter for both places) makes 2048 the cap that is actually in force, which is what this model already assumed (`OUTPUT_CAP["H"] = 2048`).
+
+* A cap is not a target: calls that fit in 256 tokens cost exactly the same. **Typical cost does not move** (the 30 cases of run b cost 0.086 USD of Harness loop).
+* Cases that used to be cut now finish: about 3 of 30, each with one or two more iterations of about 4 000 input and 600 output tokens (about 0.02 USD each): **+0.1 to +0.2 USD per 30-case run**, far inside the 2.20 USD stop rule.
+* Worst case per call rises from 256 to 2 048 output tokens (0.004 to 0.034 USD); per invocation (3 iterations) from 0.013 to 0.10 USD; a 30-invocation run could in theory reach 3.0 USD if every call used the whole cap, which no
+  observed call does. The eval's own stop rule (2.20 USD of `estimatedLoopCostUsd`) bounds it.
+
 ## What would change the numbers
 
 | If… | Effect |

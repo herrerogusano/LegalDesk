@@ -417,6 +417,19 @@
       ],
       "remove": []
     },
+    "harness-max-tokens": {
+      "description": "LegalDeskPhase01 (Harness): the output-token cap of each model call goes from 256 to 2048 in the two places the Harness reads one (Model.BedrockModelConfig.MaxTokens and the Harness MaxTokens). Only MinimalHarness changes, in place (neither property is createOnly: HarnessName and Memory/ManagedMemoryConfiguration/EncryptionKeyArn are the only ones). A Replacement other than False would change the HarnessArn: STOP and take it to the platform review.",
+      "add": [],
+      "modify": {
+        "MinimalHarness": [
+          "MaxTokens",
+          "Model"
+        ]
+      },
+      "iamResources": [],
+      "iam": [],
+      "remove": []
+    },
     "public-edge-agent-chat-rollback": {
       "description": "Rollback of EnableAgentChat to false: queue, DLQ, worker, role, event source mapping, log group, metric filters and alarms are removed; the application function environment and role policy go back.",
       "add": [],
@@ -700,6 +713,16 @@
     }
   },
   "createOnly": {
+    "AWS::Lambda::Permission": [
+      "Action",
+      "EventSourceToken",
+      "FunctionName",
+      "FunctionUrlAuthType",
+      "Principal",
+      "PrincipalOrgID",
+      "SourceAccount",
+      "SourceArn"
+    ],
     "AWS::BedrockAgentCore::Harness": [
       "HarnessName",
       "Memory/ManagedMemoryConfiguration/EncryptionKeyArn"

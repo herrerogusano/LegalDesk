@@ -26,6 +26,8 @@ from typing import Iterable, Mapping
 
 from . import agent_templates as tpl
 from .agent_contracts import (
+    LIST_MATTER_DOCUMENTS,
+    SEARCH_DOCUMENTS,
     AgentContractError,
     AggregateRequest,
     AnswerPlan,
@@ -85,6 +87,8 @@ class BlockError(StrEnum):
     """Why a block was omitted (closed vocabulary, safe as metadata)."""
 
     UNKNOWN_TOOL_USE_ID = "unknown_tool_use_id"
+    UNKNOWN_SOURCE_CALL = "unknown_source_call"        # the plan names call n of a tool and the loop made fewer calls
+    SOURCE_CALL_UNUSABLE = "source_call_unusable"      # the call exists but failed or returned a result that fails its contract
     DUPLICATE_TEXT_BLOCK = "duplicate_text_block"
     DUPLICATE_INVENTORY_BLOCK = "duplicate_inventory_block"
     MISSING_CITATION = "missing_citation"
@@ -119,6 +123,9 @@ class LoopEvidence:
     search_results: Mapping[str, SearchDocumentsResult] = field(default_factory=dict)
     documents: Mapping[str, DocumentFields] = field(default_factory=dict)
     inventories: Mapping[str, InventoryResult] = field(default_factory=dict)
+    # Every call of the loop, whatever its outcome, in stream order, per short tool name. The position of a call in this list is what a plan's
+    # ``{"tool": ..., "call": n}`` source means, so a failed call still counts: the model counts the calls it made.
+    call_order: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     @classmethod
     def from_results(
@@ -126,6 +133,7 @@ class LoopEvidence:
         search_results: Iterable[tuple[str, SearchDocumentsResult]] = (),
         extracted: Iterable[ExtractedFieldsResult] = (),
         inventories: Iterable[tuple[str, InventoryResult]] = (),
+        call_order: Mapping[str, Iterable[str]] | None = None,
     ) -> "LoopEvidence":
         """Collect results in call order; later field values replace earlier ones."""
 
@@ -135,7 +143,7 @@ class LoopEvidence:
                 previous = merged.get(document_id)
                 fields = {**previous.fields, **document.fields} if previous else dict(document.fields)
                 merged[document_id] = DocumentFields(document_id, document.document_name, document.document_type, fields)
-        return cls(dict(search_results), merged, dict(inventories))
+        return cls(dict(search_results), merged, dict(inventories), {tool: tuple(ids) for tool, ids in (call_order or {}).items()})
 
 
 # ------------------------------------------------------------------- output
@@ -493,13 +501,29 @@ def render_data_block(block: DataBlock, evidence: LoopEvidence) -> tuple[OutputB
     )
 
 
+def source_id(block: TextBlock | InventoryBlock, evidence: LoopEvidence, tool: str) -> str:
+    """The tool-use id a block's source stands for, resolved against the call log of THIS loop; never anything the model typed.
+
+    An exact id is returned as given (its existence is checked by the caller against the results). A position is looked up in the
+    stream-ordered calls of the tool: past the last call is ``unknown_source_call``.
+    """
+
+    if block.call is None:
+        return block.tool_use_id
+    ids = evidence.call_order.get(tool, ())
+    if not 1 <= block.call <= len(ids):
+        raise _BlockInvalid(BlockError.UNKNOWN_SOURCE_CALL)
+    return ids[block.call - 1]
+
+
 def render_text_block(
     block: TextBlock, evidence: LoopEvidence, used: set[str]
 ) -> tuple[OutputBlock, list[RenderedCitation]]:
-    result = evidence.search_results.get(block.tool_use_id)
+    source = source_id(block, evidence, SEARCH_DOCUMENTS)
+    result = evidence.search_results.get(source)
     if result is None:
-        raise _BlockInvalid(BlockError.UNKNOWN_TOOL_USE_ID)
-    if block.tool_use_id in used:
+        raise _BlockInvalid(BlockError.SOURCE_CALL_UNUSABLE if block.call is not None else BlockError.UNKNOWN_TOOL_USE_ID)
+    if source in used:
         raise _BlockInvalid(BlockError.DUPLICATE_TEXT_BLOCK)
     return _text_output(result)
 
@@ -529,10 +553,11 @@ def render_inventory_block(
     document content, so it carries no passage citations.
     """
 
-    result = evidence.inventories.get(block.tool_use_id)
+    source = source_id(block, evidence, LIST_MATTER_DOCUMENTS)
+    result = evidence.inventories.get(source)
     if result is None:
-        raise _BlockInvalid(BlockError.UNKNOWN_TOOL_USE_ID)
-    if block.tool_use_id in used:
+        raise _BlockInvalid(BlockError.SOURCE_CALL_UNUSABLE if block.call is not None else BlockError.UNKNOWN_TOOL_USE_ID)
+    if source in used:
         raise _BlockInvalid(BlockError.DUPLICATE_INVENTORY_BLOCK)
     documents = [item for item in result.documents if not block.statuses or item.status in block.statuses]
     if block.order_by == "uploaded_at":
@@ -598,9 +623,9 @@ def render_plan(plan: AnswerPlan, evidence: LoopEvidence) -> AnswerOutput | None
             omitted.append(OmittedBlock(index, invalid.error))
             continue
         if isinstance(block, TextBlock):
-            used_text.add(block.tool_use_id)
+            used_text.add(source_id(block, evidence, SEARCH_DOCUMENTS))
         elif isinstance(block, InventoryBlock):
-            used_inventory.add(block.tool_use_id)
+            used_inventory.add(source_id(block, evidence, LIST_MATTER_DOCUMENTS))
         rendered.append((block.transition_before, output))
         citations.update({c.citation_id: c for c in block_citations})
     if not rendered:
@@ -672,10 +697,10 @@ def _all_errors(plan: AnswerPlan, evidence: LoopEvidence) -> list[tuple[int, Blo
         try:
             if isinstance(block, TextBlock):
                 render_text_block(block, evidence, used_text)
-                used_text.add(block.tool_use_id)
+                used_text.add(source_id(block, evidence, SEARCH_DOCUMENTS))
             elif isinstance(block, InventoryBlock):
                 render_inventory_block(block, evidence, used_inventory)
-                used_inventory.add(block.tool_use_id)
+                used_inventory.add(source_id(block, evidence, LIST_MATTER_DOCUMENTS))
             else:
                 render_data_block(block, evidence)
         except _BlockInvalid as invalid:

@@ -240,7 +240,7 @@ def _label(value: object) -> str | None:
     return value if _SAFE_LABEL.fullmatch(value) else "other"
 
 
-def _source_ids(plan_text: str | None) -> list[str]:
+def _source_ids(plan_text: str | None) -> list:
     """The ``source.toolUseId`` of each plan block, in memory only (they are never stored)."""
 
     text = (plan_text or "").strip()
@@ -254,9 +254,12 @@ def _source_ids(plan_text: str | None) -> list[str]:
     ids = []
     for block in blocks if isinstance(blocks, list) else []:
         source = block.get("source") if isinstance(block, dict) else None
-        value = source.get("toolUseId") if isinstance(source, dict) else None
-        if isinstance(value, str):
-            ids.append(value)
+        if not isinstance(source, dict):
+            continue
+        if isinstance(source.get("toolUseId"), str):
+            ids.append(source["toolUseId"])
+        elif isinstance(source.get("tool"), str) and isinstance(source.get("call"), int) and not isinstance(source.get("call"), bool):
+            ids.append((source["tool"], source["call"]))  # type: ignore[arg-type]
     return ids
 
 
@@ -284,7 +287,14 @@ def _diagnose(obs: "Observation", loop: Any, output: Any, invalid: int = 0) -> N
     obs.stream_error_hint = _label(getattr(loop, "stream_error_hint", None))
     obs.invalid_tool_results = int(invalid)
     ids = [c.tool_use_id for c in calls if isinstance(getattr(c, "tool_use_id", None), str)]
-    obs.source_id_matches = [_id_match(value, ids) for value in _source_ids(getattr(loop, "text", None))]
+    per_tool: dict[str, int] = {}
+    for call in calls:
+        per_tool[call.short_name] = per_tool.get(call.short_name, 0) + 1
+    obs.source_id_matches = [
+        # a position (the documented form): in range of the calls the loop made, or not; an exact id: exact / similar / none
+        (("ordinal_in_range" if 1 <= value[1] <= per_tool.get(value[0], 0) else "ordinal_out_of_range") if isinstance(value, tuple) else _id_match(value, ids))
+        for value in _source_ids(getattr(loop, "text", None))
+    ]
 
 
 def _plan_block_count(plan_text: str | None) -> int | None:

@@ -46,3 +46,7 @@ def test_identity(subject: str) -> VerifiedIdentity:
         scopes=frozenset({"legaldesk/use"}),
         _factory_token=_IDENTITY_FACTORY_TOKEN,
     )
+
+
+# A helper, not a test: pytest collects any imported ``test_*`` callable unless told otherwise (unittest never does).
+test_identity.__test__ = False  # type: ignore[attr-defined]
