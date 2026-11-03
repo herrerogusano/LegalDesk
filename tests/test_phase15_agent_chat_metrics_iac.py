@@ -150,7 +150,10 @@ class AgentChatMetricsTemplateTests(unittest.TestCase):
     def test_six_alarms_seven_billed_alarm_metrics(self) -> None:
         # 1 each: DLQ, queue age, duration, errors, job failures; 2 for the fallback-rate math (fallbacks + invocations).
         self.assertEqual(self.template.count("AWS::CloudWatch::Alarm"), len(ALARMS))
-        self.assertEqual(len(ALARMS) - 1 + 2, 7)
+        billed = {name: len(re.findall(r"MetricName: \w+", self.block(name))) for name in ALARMS}
+        self.assertEqual(billed["AgentChatFallbackRateAlarm"], 2)
+        self.assertTrue(all(count == 1 for name, count in billed.items() if name != "AgentChatFallbackRateAlarm"), billed)
+        self.assertEqual(sum(billed.values()), 7)
 
 
 class FiltersMatchWhatTheWorkerPrintsTests(unittest.TestCase):
