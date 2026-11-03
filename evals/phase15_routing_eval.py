@@ -676,7 +676,7 @@ def run_real(
         "agentPromptVersion": prompt_identity[0] if prompt_identity else None,
         "agentPromptSha256": prompt_identity[1] if prompt_identity else None,
         "budget": {"harnessInvocationsPlanned": len(cases), "harnessInvocationsUsed": used, "retries": 0},
-        "aborted": completed < len(cases), "abortedBy": aborted_by, "loopCostStopUsd": LOOP_COST_STOP_USD,
+        "aborted": completed < len(cases), "abortedBy": aborted_by if completed < len(cases) else None, "loopCostStopUsd": LOOP_COST_STOP_USD,
         "interruptedBy": type(interrupted).__name__ if interrupted is not None else None,
         "residualState": (residual if isinstance(residual, ResidualState) else ResidualState()).as_report(),
     })

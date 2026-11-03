@@ -1274,7 +1274,8 @@ def invoke_agent_chat(
         loop_outcome=outcome, iterations=max(1, iterations), stop_reason=stop_reason,
         tool_calls=tuple(AgentToolCall(call.tool_use_id, call.name, call.status, call.payload, call.error_hint) for call in calls),
         usage=sum_usage(usage_records),
-        model_calls=iterations,
+        # At least one: the invocation was made and answered, so a stream cut before its first message may still have billed a model call.
+        model_calls=max(1, iterations),
         usage_records_count=len(usage_records),
         history_messages=len(history_messages),
         unanswered_tools=_unanswered_tool_names(events, invocation_scope.allowed_tools),

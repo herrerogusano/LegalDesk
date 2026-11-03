@@ -153,6 +153,11 @@ class AMissingUsageIsUnknownAndPricedAtAnUpperBoundTests(unittest.TestCase):
         self.assertEqual(meta["estimatedLoopCostUsd"], round(cost(6100, 250) + unknown_call_cost_usd(), 6))
         self.assertEqual(meta["tokens"], 6100 + 250)
 
+    def test_a_stream_cut_before_its_first_message_is_priced_as_one_call_not_free(self) -> None:
+        result = run([])  # PullBeacon PB-002: data-05 ended like this, an answered invocation with no model message
+        self.assertEqual((result.usage, result.model_calls, result.usage_records_count), (None, 1, 0))
+        self.assertEqual(loop_usage_metadata(result)["estimatedLoopCostUsd"], round(unknown_call_cost_usd(), 6))
+
     def test_the_upper_bound_of_a_call_is_a_full_context_and_the_output_cap(self) -> None:
         price = PRICE_PER_MILLION_TOKENS
         self.assertAlmostEqual(unknown_call_cost_usd(), (UNKNOWN_CALL_INPUT_TOKENS * price["input"] + UNKNOWN_CALL_OUTPUT_TOKENS * price["output"]) / 1e6)
