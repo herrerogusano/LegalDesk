@@ -56,12 +56,15 @@ class MCPMetadataTests(unittest.TestCase):
         self.repository.save(document())
         self.server = MCPServer(self.repository)
 
-    def test_tools_list_exposes_only_two_strict_metadata_tools(self) -> None:
+    def test_tools_list_exposes_only_the_strict_read_only_tools(self) -> None:
         response = self.server.handle_jsonrpc(
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
             request_context=context(),
         )
-        self.assertEqual([tool["name"] for tool in response["result"]["tools"]], [LIST_MATTER_DOCUMENTS, GET_DOCUMENT_METADATA])
+        self.assertEqual(
+            [tool["name"] for tool in response["result"]["tools"]],
+            [LIST_MATTER_DOCUMENTS, GET_DOCUMENT_METADATA, "get_extracted_fields"],
+        )
         self.assertEqual(response["result"]["_meta"], {"correlationId": CORRELATION_ID})
         self.assertTrue(all(tool["inputSchema"]["additionalProperties"] is False for tool in response["result"]["tools"]))
         self.assertEqual(response["result"]["tools"][0]["inputSchema"]["required"], ["matterId"])

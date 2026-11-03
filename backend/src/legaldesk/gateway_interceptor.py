@@ -40,6 +40,7 @@ from .observability import (
 class GatewayTarget(StrEnum):
     REVIEW_LAMBDA = "review-task-lambda"
     METADATA_MCP = "metadata-mcp"
+    SEARCH_DOCUMENTS = "search-documents"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +67,15 @@ _APPLICATION_ALLOWED_TOOL_NAMES = frozenset(
     {
         "@legaldesk_gateway/metadata-mcp___list_matter_documents",
         "@legaldesk_gateway/metadata-mcp___get_document_metadata",
+        "@legaldesk_gateway/metadata-mcp___get_extracted_fields",
+        "@legaldesk_gateway/search-documents___search_documents",
         "@legaldesk_gateway/review-task-lambda___create_review_task",
         "@legaldesk_gateway/review-task-lambda___list_review_tasks",
         "@legaldesk_gateway/review-task-lambda___get_review_task",
         "@legaldesk_gateway/review-task-lambda___update_review_task",
     }
 )
+_PHASE15_TOOLS = frozenset({"search_documents", "get_extracted_fields"})
 MAX_RAW_GATEWAY_BODY_BYTES = 64 * 1024
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,6 +122,14 @@ def _target_for_gateway_tool(tool_name: object) -> GatewayTarget:
             GatewayTarget.METADATA_MCP
         ),
         "get_document_metadata": GatewayTarget.METADATA_MCP,
+        f"{GatewayTarget.METADATA_MCP.value}{GATEWAY_TOOL_DELIMITER}get_extracted_fields": (
+            GatewayTarget.METADATA_MCP
+        ),
+        "get_extracted_fields": GatewayTarget.METADATA_MCP,
+        f"{GatewayTarget.SEARCH_DOCUMENTS.value}{GATEWAY_TOOL_DELIMITER}search_documents": (
+            GatewayTarget.SEARCH_DOCUMENTS
+        ),
+        "search_documents": GatewayTarget.SEARCH_DOCUMENTS,
     }
     try:
         return expected[tool_name]
@@ -1182,6 +1194,14 @@ def transform_gateway_request(
         raise AuthorizationDenied("access denied")
     started_at = time.perf_counter()
     operation = _local_gateway_tool_name(params.get("name"))
+    # The Phase 15 tools are valid only on their own target, never on another
+    # one and never with another target's tool. (The AWS handler derives the
+    # target from the tool name, so this guards direct callers.)
+    if (
+        target is GatewayTarget.SEARCH_DOCUMENTS
+        or operation in _PHASE15_TOOLS
+    ) and _target_for_gateway_tool(operation) is not target:
+        raise AuthorizationDenied("access denied")
     application_tool_name = (
         f"@legaldesk_gateway/{target.value}{GATEWAY_TOOL_DELIMITER}{operation}"
     )
@@ -1287,6 +1307,38 @@ def transform_gateway_request(
             del exc
             fail_after_start()
         # Overwrite, never honor, a client/model supplied grant selector.
+        transformed_arguments["_legaldeskGrantId"] = grant_id
+    elif target is GatewayTarget.SEARCH_DOCUMENTS:
+        # An LLM-backed, billable tool: it exists only inside an application
+        # Harness invocation whose server-side record allows it. A bare user
+        # token (no invocation record) never reaches this target.
+        if grant_repository is None or invocation_record is None:
+            fail_after_start()
+        # Each call gets its own short-lived grant; the invocation id is not
+        # reused because one agent loop may call the tool more than once.
+        grant_id = str(grant_id_factory())
+        try:
+            UUID(grant_id)
+        except (ValueError, AttributeError):
+            fail_after_start()
+        invocation_expiry = invocation_record.get("expiresAt")
+        grant_expiry = int(time.time()) + GATEWAY_GRANT_TTL_SECONDS
+        if isinstance(invocation_expiry, (int, float, Decimal)) and not isinstance(invocation_expiry, bool):
+            grant_expiry = min(grant_expiry, int(invocation_expiry))
+        try:
+            grant_repository.put(GatewayAuthorizationGrant(
+                grant_id=grant_id,
+                verified_subject=envelope.verifiedSubject,
+                requested_matter_id=envelope.requestedMatterId,
+                correlation_id=envelope.correlationId,
+                tool_name=operation,
+                expires_at=grant_expiry,
+            ))
+        except Exception:
+            fail_after_start()
+        # The Lambda target schema requires the selector for validation only;
+        # the handler drops it. Overwrite, never honor, a model-supplied grant.
+        transformed_arguments["matterId"] = raw_matter_id
         transformed_arguments["_legaldeskGrantId"] = grant_id
     elif target is GatewayTarget.METADATA_MCP:
         grant_id: str | None = None

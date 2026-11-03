@@ -59,6 +59,8 @@ class TelemetryOperation(StrEnum):
     GATEWAY_REQUEST = "gateway_request"
     LIST_MATTER_DOCUMENTS = "list_matter_documents"
     GET_DOCUMENT_METADATA = "get_document_metadata"
+    GET_EXTRACTED_FIELDS = "get_extracted_fields"
+    SEARCH_DOCUMENTS = "search_documents"
     INPUT = "input"
     OUTPUT = "output"
 
@@ -73,6 +75,7 @@ class TelemetryErrorCode(StrEnum):
     RETRIEVAL_INVALID_RESPONSE = "retrieval_invalid_response"
     MODEL_FAILED = "model_failed"
     SERVICE_UNAVAILABLE = "service_unavailable"
+    TIMEOUT = "timeout"
     INVALID_REQUEST = "invalid_request"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     GUARDRAIL_ERROR = "guardrail_error"

@@ -93,7 +93,7 @@ The public application also has a server-side monthly quota ledger before each
 potentially billable operation. It keys one DynamoDB counter item by the
 authorized tenant and UTC month (using the existing metadata table, never a
 scan) and reserves with one conditional `UpdateItem`: 50 uploads/500 MiB, 300 chats, 50
-ingestion starts, 100 Harness calls, and 500 Gateway calls by default. The
+ingestion starts, 300 Harness calls (raised from 100 in Phase 15 so it matches `chats`, ADR-021 D8), and 500 Gateway calls by default. The
 limits are server-side environment configuration and are strictly validated;
 the Lambda template exposes bounded parameters for them. Uploads reserve both
 count and bytes. Ingestion reservations use the request idempotency key so a

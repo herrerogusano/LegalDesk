@@ -180,7 +180,7 @@ Parameters:
     MaxValue: 10000000
   QuotaHarnessPerMonth:
     Type: Number
-    Default: 100
+    Default: 300
     MinValue: 1
     MaxValue: 10000000
   QuotaGatewayPerMonth:
@@ -188,8 +188,32 @@ Parameters:
     Default: 500
     MinValue: 1
     MaxValue: 10000000
+  EnableAgentChat:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Safety gate for the asynchronous read-only agentic chat (ADR-021). While
+      "false" no queue, DLQ, worker Lambda, event source mapping or alarm exists
+      and POST /api/chat stays fully synchronous.
+  AgentChatMaxConcurrency:
+    Type: Number
+    Default: 2
+    MinValue: 2
+    MaxValue: 10
+    Description: >-
+      MaximumConcurrency of the worker event source mapping (SQS minimum is 2).
+      The excess waits in the queue; reserved Lambda concurrency is deliberately
+      not used.
+  AgentChatAlarmTopicArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:[^:]+:sns:[^:]+:[0-9]{12}:[A-Za-z0-9_-]+$"
+    Description: Optional SNS topic notified when a job lands in the agent chat DLQ
 
 Conditions:
+  AgentChatEnabled: !Equals [!Ref EnableAgentChat, "true"]
+  HasAgentChatAlarmTopic: !Not [!Equals [!Ref AgentChatAlarmTopicArn, ""]]
   HasCustomViewerDomain: !Not [!Equals [!Ref ViewerDomainName, ""]]
   HasIDPArtifactBucket: !Not [!Equals [!Ref IDPArtifactBucketName, ""]]
 
@@ -334,6 +358,10 @@ Resources:
                       - GATEWAY#*
                       - LEGALDESK#P14#STATE#*
                       - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
+                      - !If
+                        - AgentChatEnabled
+                        - !Sub "LEGALDESK#P15#CHATJOB#${BetaTenantId}#MATTER#*"
+                        - !Ref AWS::NoValue
               - Sid: WriteOnlyApplicationOwnedState
                 Effect: Allow
                 Action: [dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
@@ -347,6 +375,10 @@ Resources:
                       - GATEWAY#*
                       - LEGALDESK#P14#STATE#*
                       - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
+                      - !If
+                        - AgentChatEnabled
+                        - !Sub "LEGALDESK#P15#CHATJOB#${BetaTenantId}#MATTER#*"
+                        - !Ref AWS::NoValue
               - Sid: SourceDocumentObjectsOnly
                 Effect: Allow
                 Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:GetObjectTagging]
@@ -390,6 +422,13 @@ Resources:
                 Effect: Allow
                 Action: [bedrock-agentcore:CreateEvent, bedrock-agentcore:ListEvents]
                 Resource: !Ref MemoryArn
+              - !If
+                - AgentChatEnabled
+                - Sid: PublishAgentChatJobIds
+                  Effect: Allow
+                  Action: sqs:SendMessage
+                  Resource: !GetAtt AgentChatQueue.Arn
+                - !Ref AWS::NoValue
 
   ApplicationFunction:
     Type: AWS::Lambda::Function
@@ -443,6 +482,452 @@ Resources:
           LEGALDESK_QUOTA_GATEWAY_PER_MONTH: !Ref QuotaGatewayPerMonth
           LEGALDESK_TRUSTED_EDGE_VALUE: !Ref TrustedEdgeSecret
           LEGALDESK_SYSTEM_PROMPT_PATH: /var/task/prompts/legaldesk-system.md
+          LEGALDESK_AGENT_CHAT_ENABLED: !Ref EnableAgentChat
+          LEGALDESK_AGENT_CHAT_QUEUE_URL: !If [AgentChatEnabled, !Ref AgentChatQueue, ""]
+
+  # ---------------------------------------------------------------------------
+  # Asynchronous agentic chat (ADR-021 D4). Everything below exists only when
+  # EnableAgentChat is "true". Deployed through a reviewed change set; the
+  # code-only CD never touches it.
+  # ---------------------------------------------------------------------------
+  AgentChatDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Condition: AgentChatEnabled
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-agent-chat-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "15"
+        - Key: Component
+          Value: AgentChat
+
+  AgentChatQueue:
+    Type: AWS::SQS::Queue
+    Condition: AgentChatEnabled
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-agent-chat"
+      # At least six times the 150 s worker timeout (AWS guidance for Lambda sources).
+      VisibilityTimeout: 900
+      ReceiveMessageWaitTimeSeconds: 20
+      # A job is dead after 5 minutes; nothing is gained by keeping its message longer.
+      MessageRetentionPeriod: 3600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AgentChatDeadLetterQueue.Arn
+        # One delivery plus the single retry the job state machine allows.
+        maxReceiveCount: 2
+      Tags:
+        - Key: Project
+          Value: LegalDesk
+        - Key: Phase
+          Value: "15"
+        - Key: Component
+          Value: AgentChat
+
+  AgentChatWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-agent-chat-worker"
+      RetentionInDays: !Ref LogRetentionDays
+
+  AgentChatWorkerExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: AgentChatEnabled
+    Properties:
+      Description: >-
+        Least-privilege agent chat worker. It loads the stored session, builds
+        the sealed read-only binding, calls Harness and the direct RAG path, and
+        writes only job, citation, history, quota and Gateway-grant state.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LegalDeskAgentChatWorkerDataPlane
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteWorkerLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${AgentChatWorkerLogGroup.Arn}:*"
+              - Sid: ConsumeJobMessages
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource: !GetAtt AgentChatQueue.Arn
+              - Sid: ReadAuthorizationSessionAndJobState
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query]
+                Resource: !Ref MetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - AUTH#USER#*
+                      - AUTH#MATTER#*
+                      - !Sub "TENANT#${BetaTenantId}#MATTER#*"
+                      - !Sub "CONVERSATION#${BetaTenantId}#*"
+                      - GATEWAY#*
+                      - LEGALDESK#P14#STATE#*
+                      - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
+                      - !Sub "LEGALDESK#P15#CHATJOB#${BetaTenantId}#MATTER#*"
+              - Sid: WriteJobGrantCitationHistoryAndQuotaState
+                Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !Ref MetadataTableArn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - GATEWAY#*
+                      - LEGALDESK#P14#STATE#*
+                      - !Sub "LEGALDESK#P14#QUOTA#TENANT#${BetaTenantId}#MONTH#*"
+                      - !Sub "LEGALDESK#P15#CHATJOB#${BetaTenantId}#MATTER#*"
+              - Sid: HeadCanonicalSourceDocumentsOnly
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf"
+                  - !Sub "${SourceBucketArn}/tenants/${BetaTenantId}/matters/*/documents/*/original.txt"
+              - Sid: BedrockKnowledgeBaseRetrieveOnly
+                Effect: Allow
+                Action: bedrock:Retrieve
+                Resource: !Ref KnowledgeBaseArn
+              - Sid: GuardrailDataPlane
+                Effect: Allow
+                Action: bedrock:ApplyGuardrail
+                Resource: !Ref GuardrailArn
+              - Sid: ApprovedModelDataPlane
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Ref ResolverModelArn
+                  - !Ref WriterModelArn
+                  - !Ref ResolverFoundationModelArn
+                  - !Ref WriterFoundationModelArn
+              - Sid: InvokeTheAgentHarnessOnly
+                Effect: Allow
+                Action: bedrock-agentcore:InvokeHarness
+                Resource: !Ref HarnessArn
+              - Sid: ConversationMemory
+                Effect: Allow
+                Action: [bedrock-agentcore:CreateEvent, bedrock-agentcore:ListEvents]
+                Resource: !Ref MemoryArn
+
+  AgentChatWorkerFunction:
+    Type: AWS::Lambda::Function
+    Condition: AgentChatEnabled
+    DependsOn: AgentChatWorkerLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-agent-chat-worker"
+      Description: Asynchronous read-only agentic chat worker (ADR-021); one SQS message per invocation
+      Runtime: python3.12
+      Handler: legaldesk.agent_chat_lambda.lambda_handler
+      Role: !GetAtt AgentChatWorkerExecutionRole.Arn
+      # Harness loop 90 s + direct RAG fallback + margin (ADR-021 D4).
+      Timeout: 150
+      MemorySize: 1024
+      # No reserved concurrency on purpose: concurrency is bounded by the event source
+      # mapping so that the excess waits in the queue instead of being throttled
+      # into receives and the DLQ.
+      Code:
+        S3Bucket: !Ref ApplicationCodeBucket
+        S3Key: !Ref ApplicationCodeKey
+        S3ObjectVersion: !Ref ApplicationCodeVersion
+      Environment:
+        Variables:
+          AWS_MAX_ATTEMPTS: "1"
+          AWS_RETRY_MODE: standard
+          LEGALDESK_AGENT_CHAT_ENABLED: "true"
+          LEGALDESK_AGENT_CHAT_QUEUE_URL: !Ref AgentChatQueue
+          LEGALDESK_AGENT_CHAT_QUEUE_ARN: !GetAtt AgentChatQueue.Arn
+          LEGALDESK_AGENT_PROMPT_PATH: /var/task/prompts/legaldesk-agent.md
+          LEGALDESK_SYSTEM_PROMPT_PATH: /var/task/prompts/legaldesk-system.md
+          LEGALDESK_METADATA_TABLE_NAME: !Ref MetadataTableName
+          LEGALDESK_SOURCE_BUCKET: !Ref SourceBucketName
+          LEGALDESK_IDP_ARTIFACT_BUCKET: !Ref IDPArtifactBucketName
+          LEGALDESK_KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+          LEGALDESK_DATA_SOURCE_ID: !Ref DataSourceId
+          LEGALDESK_GUARDRAIL_ID: !Ref GuardrailIdentifier
+          LEGALDESK_GUARDRAIL_VERSION: !Ref GuardrailVersion
+          LEGALDESK_RESOLVER_MODEL_ID: !Ref ResolverModelArn
+          LEGALDESK_WRITER_MODEL_ID: !Ref WriterModelArn
+          LEGALDESK_HARNESS_ARN: !Ref HarnessArn
+          LEGALDESK_GATEWAY_URL: !Ref GatewayUrl
+          LEGALDESK_MEMORY_ID: !Ref MemoryId
+          LEGALDESK_JWKS_URL: !Ref OidcJwksUrl
+          LEGALDESK_OIDC_ISSUER: !Ref OidcIssuer
+          LEGALDESK_OIDC_CLIENT_ID: !Ref CognitoClientId
+          LEGALDESK_OIDC_AUTHORIZATION_ENDPOINT: !Ref OidcAuthorizationEndpoint
+          LEGALDESK_OIDC_TOKEN_ENDPOINT: !Ref OidcTokenEndpoint
+          LEGALDESK_OIDC_AUDIENCE: !Ref OidcAudience
+          LEGALDESK_MATTER_CATALOG: !Join [",", !Ref MatterCatalog]
+          LEGALDESK_PUBLIC_BASE_URL: !Ref PublicOrigin
+          LEGALDESK_REDIRECT_URI: !Join ["", [!Ref PublicOrigin, "/callback"]]
+          LEGALDESK_ALLOWED_HOSTS: !Sub "${PublicApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+          LEGALDESK_ALLOWED_ORIGINS: !Ref PublicOrigin
+          LEGALDESK_SECURE_COOKIES: "true"
+          # Public mode selects the DynamoDB quota ledger. The worker serves no HTTP
+          # request, so it gets a fixed placeholder instead of the edge secret.
+          LEGALDESK_PUBLIC_MODE: "true"
+          LEGALDESK_TRUSTED_EDGE_VALUE: not-used-by-the-worker
+          LEGALDESK_QUOTA_UPLOADS_PER_MONTH: !Ref QuotaUploadsPerMonth
+          LEGALDESK_QUOTA_UPLOAD_BYTES_PER_MONTH: !Ref QuotaUploadBytesPerMonth
+          LEGALDESK_QUOTA_CHATS_PER_MONTH: !Ref QuotaChatsPerMonth
+          LEGALDESK_QUOTA_INGESTION_STARTS_PER_MONTH: !Ref QuotaIngestionStartsPerMonth
+          LEGALDESK_QUOTA_HARNESS_PER_MONTH: !Ref QuotaHarnessPerMonth
+          LEGALDESK_QUOTA_GATEWAY_PER_MONTH: !Ref QuotaGatewayPerMonth
+
+  AgentChatEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: AgentChatEnabled
+    Properties:
+      EventSourceArn: !GetAtt AgentChatQueue.Arn
+      FunctionName: !Ref AgentChatWorkerFunction
+      Enabled: true
+      BatchSize: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      ScalingConfig:
+        MaximumConcurrency: !Ref AgentChatMaxConcurrency
+
+  AgentChatDeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        A chat job message failed twice and is in the agent chat DLQ. The job has
+        already been marked failed by its deadline; inspect the worker logs by job id.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AgentChatDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  # ---------------------------------------------------------------------------
+  # Job metrics and alarms (PLAN_15 T7, reworked to native metrics). Every signal that
+  # CloudWatch already publishes for free is used as is: SQS (age of the oldest message,
+  # messages visible in the DLQ) and Lambda (Errors, Duration, Invocations of the worker).
+  # Only the two signals with NO native equivalent are custom metrics, both from the
+  # allowlisted JSON line the worker prints per job (event "agent_chat_job"; no question,
+  # answer, passage or token), both without dimensions (a dimension value is a new billable
+  # metric; the split by reason or failure code stays in the logs, see
+  # docs/phase-15-observability.md):
+  #   * AgentChatFallbacks    an answer that did not come from the agent's plan. Lambda has
+  #                           no notion of it: the invocation succeeds either way.
+  #   * AgentChatJobFailures  a job the worker marked failed and deleted (deadline exceeded,
+  #                           attempts exhausted, agent failed...). The handler returns
+  #                           normally and the message is consumed, so neither Lambda Errors
+  #                           nor the DLQ ever sees it.
+  # The API p95 <= 3 s alarm does not apply to a job: a job is asynchronous and takes 15-60 s.
+  # ---------------------------------------------------------------------------
+
+  # Failures worth a look: everything marked failed except session_closed, which is the user
+  # logging out with a question in flight (by design, not a fault). An unclassified "error"
+  # is redelivered once and then lands in the DLQ, which has its own alarm.
+  AgentChatJobFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && $.action = "failed" && $.failure = * && $.failure != "session_closed" }'
+      MetricTransformations:
+        - MetricName: AgentChatJobFailures
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "1"
+          Unit: Count
+
+  # Any answer that did not come from the plan of the agent: a reused tool result or the
+  # direct RAG path. The worker omits fallbackReason when there was none.
+  AgentChatFallbackMetric:
+    Type: AWS::Logs::MetricFilter
+    Condition: AgentChatEnabled
+    Properties:
+      LogGroupName: !Ref AgentChatWorkerLogGroup
+      FilterPattern: '{ $.event = "agent_chat_job" && $.action = "completed" && $.fallbackReason = * }'
+      MetricTransformations:
+        - MetricName: AgentChatFallbacks
+          MetricNamespace: LegalDesk/Phase15AgentChat
+          MetricValue: "1"
+          Unit: Count
+
+  # Native Lambda Duration of the worker = the time of one job (BatchSize 1), cold start included.
+  AgentChatJobDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        p95 of the agent chat worker duration above 90 s (the Harness loop limit) in two
+        consecutive 15-minute periods. Typical jobs take 15-35 s, 40-60 s when cold. The
+        Lambda timeout is 150 s.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AgentChatWorkerFunction
+      ExtendedStatistic: p95
+      Period: 900
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 90000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  # Native Lambda Errors: the function itself failed (uncaught exception or timeout). A job
+  # the handler marks failed is NOT an error to Lambda: see AgentChatJobFailureAlarm.
+  AgentChatWorkerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        Three or more invocations of the agent chat worker failed (uncaught exception or
+        timeout) within 15 minutes. Read the worker log group by job id.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AgentChatWorkerFunction
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  AgentChatJobFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        Three or more agent chat jobs were marked failed (deadline exceeded, attempts
+        exhausted, agent failed, internal error; not a closed session) within 15 minutes.
+        Split by code in Logs Insights (docs/phase-15-observability.md).
+      Namespace: LegalDesk/Phase15AgentChat
+      MetricName: AgentChatJobFailures
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  # A rate, not a count: a quiet beta would never reach a count threshold. The denominator is
+  # the native Lambda Invocations of the worker (one per job message, so it also counts
+  # redeliveries: the rate can only read lower, never raise a false alarm). The IF keeps a
+  # single fallback among very few jobs from alarming, and FILL turns "no fallback datapoint"
+  # (the custom metric publishes nothing when there is none) into 0.
+  AgentChatFallbackRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        At least half of the agent chat worker invocations in the last hour (and at least
+        five of them) ended in a fallback instead of the answer plan of the agent. The
+        routing is not working; split by reason in Logs Insights (fallbackReason).
+      Metrics:
+        - Id: rate
+          Expression: IF(invocations >= 5, 100 * FILL(fallbacks, 0) / invocations, 0)
+          Label: FallbackPercent
+          ReturnData: true
+        - Id: fallbacks
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: LegalDesk/Phase15AgentChat
+              MetricName: AgentChatFallbacks
+            Period: 3600
+            Stat: Sum
+        - Id: invocations
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Invocations
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref AgentChatWorkerFunction
+            Period: 3600
+            Stat: Sum
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 50
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
+
+  # Queue wait: the excess over MaximumConcurrency waits in the queue (ADR-021 D4). A job
+  # is declared dead 5 minutes after creation, so waiting 2 minutes is already too long.
+  AgentChatQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AgentChatEnabled
+    Properties:
+      AlarmDescription: >-
+        The oldest message in the agent chat queue is older than 120 s for two
+        consecutive minutes: the worker concurrency is too low for the traffic.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AgentChatQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 120
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: !If [HasAgentChatAlarmTopic, true, false]
+      AlarmActions: !If
+        - HasAgentChatAlarmTopic
+        - - !Ref AgentChatAlarmTopicArn
+        - !Ref AWS::NoValue
 
   PublicApiIntegration:
     Type: AWS::ApiGatewayV2::Integration
@@ -668,3 +1153,12 @@ Outputs:
     Value: !Ref FrontendBucket
   ApplicationFunctionArn:
     Value: !GetAtt ApplicationFunction.Arn
+  AgentChatQueueArn:
+    Condition: AgentChatEnabled
+    Value: !GetAtt AgentChatQueue.Arn
+  AgentChatDeadLetterQueueArn:
+    Condition: AgentChatEnabled
+    Value: !GetAtt AgentChatDeadLetterQueue.Arn
+  AgentChatWorkerFunctionName:
+    Condition: AgentChatEnabled
+    Value: !Ref AgentChatWorkerFunction

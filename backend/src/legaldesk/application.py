@@ -22,7 +22,7 @@ from .documents import Boto3DynamoDocumentMetadataRepository, Boto3S3ObjectStora
 from .evidence import ConverseAnswerWriter, ConverseEvidenceResolver
 from .gateway_interceptor import Boto3DynamoGatewayGrantRepository
 from .gateway_client import DirectGatewayInvoker
-from .guardrails import GuardrailConfig, GuardrailGroundingValidator
+from .guardrails import GuardrailConfig, GuardrailGroundingValidator, GuardrailProcessor
 from .http_app import ApplicationComposition, ApplicationTelemetrySink
 from .identity import (
     OidcTokenVerifier,
@@ -43,6 +43,9 @@ from .observability import DEFAULT_TELEMETRY_SINK
 from .smoke_budget import BudgetedSdkClient, SmokeBudget
 from .state import DynamoDBEphemeralStateStore
 from .quota import DisabledQuotaLedger, DynamoDBQuotaLedger, QuotaLimits
+from .agent_chat import AgentChatRuntime, InputDecision
+from .agent_chat_lambda import Boto3AgentChatQueue
+from .agent_jobs import DynamoDBChatJobStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,7 +503,36 @@ def build_aws_composition(
 
     composition.chat_service = chat_service
     composition.chat_accepts_evidence_sink = True
+    if os.environ.get("LEGALDESK_AGENT_CHAT_ENABLED", "false").strip().lower() == "true":
+        composition.agent_chat = _agent_chat_runtime(
+            client_factory, sdk_config, resource_config, runtime, guardrail_config, telemetry_sink, table,
+        )
     return composition
+
+
+def _agent_chat_runtime(client_factory: Any, sdk_config: Any, config: AWSResourceConfig, bedrock_runtime: Any,
+                        guardrail_config: GuardrailConfig, telemetry_sink: Any, table: Any) -> AgentChatRuntime:
+    """Asynchronous agentic chat (ADR-021): jobs in the metadata table, ids on an SQS queue."""
+
+    from .retrieval import MAX_QUERY_LENGTH
+
+    queue_url = os.environ.get("LEGALDESK_AGENT_CHAT_QUEUE_URL", "").strip()
+    if not queue_url:
+        raise ValueError("LEGALDESK_AGENT_CHAT_QUEUE_URL is required when the agentic chat is enabled")
+    guardrails = GuardrailProcessor(bedrock_runtime, guardrail_config, telemetry_sink=telemetry_sink)
+
+    def input_check(question: str, correlation_id: str) -> InputDecision:
+        result = guardrails.check_input(question, correlation_id=correlation_id)
+        if not result.can_proceed:
+            return InputDecision("error" if result.outcome.value == "error" else "blocked")
+        checked = result.content[0]
+        return InputDecision("allowed", checked) if len(checked) <= MAX_QUERY_LENGTH else InputDecision("blocked")
+
+    return AgentChatRuntime(
+        job_store=DynamoDBChatJobStore(config.metadata_table_name, table=table),
+        queue=Boto3AgentChatQueue(client_factory("sqs", region_name=config.region, config=sdk_config), queue_url=queue_url),
+        input_check=input_check,
+    )
 
 
 __all__ = ["AWSResourceConfig", "build_aws_composition"]

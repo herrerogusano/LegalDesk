@@ -1,0 +1,32 @@
+{
+  "_note": "Real describe-change-set output of the T9 live block, 2026-11-03, trimmed and anonymised (see scripts/make_fixtures in the PR).",
+  "StackName": "legaldesk-phase-01",
+  "Status": "CREATE_COMPLETE",
+  "ExecutionStatus": "AVAILABLE",
+  "Changes": [
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "MinimalHarness",
+        "PhysicalResourceId": "<physical-id>",
+        "ResourceType": "AWS::BedrockAgentCore::Harness",
+        "Replacement": "False",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "EnvironmentVariables",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "DirectModification"
+          }
+        ]
+      }
+    }
+  ]
+}

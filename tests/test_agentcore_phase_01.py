@@ -123,7 +123,8 @@ class AgentCorePhase01Tests(unittest.TestCase):
         )
         self.assertIn("EnvironmentVariables:", template)
         self.assertIn('AWS_GENAI_CONTENT_EXTRACTION_OPT_OUT: "true"', template)
-        self.assertIn('DISABLE_ADOT_OBSERVABILITY: "true"', template)
+        # Disabled by default; the T9 probe may remove the switch through EnableManagedAdot.
+        self.assertIn('DISABLE_ADOT_OBSERVABILITY: !If [ManagedAdotEnabled, !Ref AWS::NoValue, "true"]', template)
         self.assertIn("ADOT Python instrumentation >= 0.17.1", template)
 
 

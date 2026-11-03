@@ -25,3 +25,14 @@ directly. The page remains dependency-free, responsive, keyboard navigable,
 uses visible focus styles and live status announcements, and renders all
 backend values as text. Citation inspection receives an expiring server handle
 and does not expose source URIs or storage paths.
+
+## Agentic chat (Phase 15)
+
+When the backend has the agentic chat enabled, an open question returns `202` with a `jobId`.
+`app.js` polls `GET /api/matters/{matterId}/chat-jobs/{jobId}` (shows "Pensando…" and, after about
+45 s, "Está tardando más de lo habitual…"), and `citations.js` renders the `text`, `data` and
+`inventory` blocks as text with their citation handles. Polling stops when the job ends, when the
+matter changes, and on logout. Data lines link to the document's extracted-data panel (accepted
+values) or to its pending IDP review (pending values); the agentic chat offers no review of its own
+answers. With the feature off, the synchronous answer path is unchanged. Behavior test:
+`tests/phase15_agent_chat_frontend.cjs`.

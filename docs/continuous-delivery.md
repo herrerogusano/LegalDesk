@@ -4,8 +4,10 @@ This repository contains a fail-closed CD path for the existing
 `LegalDeskPhase14PublicEdge` stack. It is an application-code release path,
 not an infrastructure migration: the checked-in public-edge template must
 match the deployed template before a change set is created, and the change set
-may contain only `ApplicationFunction` code and the dependent
-`PublicApiIntegration` URI, both without replacement.
+may contain only `ApplicationFunction` code, the dependent
+`PublicApiIntegration` URI and, when `EnableAgentChat` is `"true"`, the code of
+`AgentChatWorkerFunction` (see [Agent chat worker](#agent-chat-worker-adr-021)),
+all without replacement.
 
 The separately reviewed IAM bootstrap has been applied as stack
 `LegalDeskProductionCD`; its change set contained only the OIDC deployment role
@@ -106,3 +108,73 @@ the stack, buckets, documents, or shared data-plane resources to recover a
 release. The only expected costs are existing-beta S3 versioned-storage/
 request, CloudFormation/Lambda update, and one CloudFront invalidation costs;
 no inference, ingestion, retrieval, or new capacity is part of CD.
+
+## Agent chat worker (ADR-021)
+
+Decision of the owner, 2026-11-02: the asynchronous agentic-chat worker lives in the
+`LegalDeskPhase14PublicEdge` stack and runs the **same package** as
+`ApplicationFunction`, so the code-only CD releases both in one change set. API and
+worker share the job contract and never run different releases.
+
+What changed in the command (`scripts/deploy_release.py`):
+
+- The allowed change set is `ApplicationFunction.Code`, `PublicApiIntegration.IntegrationUri`
+  and `AgentChatWorkerFunction.Code`, each `Modify` without replacement and with no other
+  property. Any other resource of the agent chat stack (queue, DLQ, role, event source
+  mapping, alarms, log group) is a `change_set_scope_violation`.
+- The worker is **required** in the change set when the deployed stack has
+  `EnableAgentChat=true` (`change_set_worker_missing` otherwise) and **forbidden** when it
+  does not. With `EnableAgentChat` not `"true"` the worker does not exist and the command
+  behaves exactly as before.
+- After the stack update the command compares the base64 `CodeSha256` of **both** Lambdas
+  with the release artifact before touching the frontend. A worker output
+  (`AgentChatWorkerFunctionName`) that is missing on an enabled stack, a read failure or a
+  different hash fail closed (`agent_chat_worker_output_missing`,
+  `agent_chat_worker_verification_failed`, `agent_chat_worker_code_hash_mismatch`). A
+  `NO_OP` retry verifies both as well.
+- The metadata record gains `agentChatWorker` (`VERIFIED`, `DISABLED` or `NOT_CHECKED`).
+  The rollback reference is unchanged: both functions take their code from the same
+  `ApplicationCodeKey`/`ApplicationCodeVersion` parameters, so `previousLambda` restores both.
+
+IAM (`infra/cloudformation/cd-iam.yaml`), added for that one function and nothing else:
+
+| Role | Statement | Grants | Resource |
+|---|---|---|---|
+| Release (OIDC) | `VerifyOnlyTheAgentChatWorker` | `lambda:GetFunction`, `lambda:GetFunctionConfiguration` | the worker function ARN |
+| CloudFormation service | `ReadAndUpdateOnlyAgentChatWorkerCode` | the same two plus `lambda:UpdateFunctionCode` | the worker function ARN |
+| CloudFormation service | `ReadUnchangedAgentChatWorkerRolePolicy` | `iam:GetRole`, `iam:ListRolePolicies`, `iam:ListAttachedRolePolicies`, `iam:GetRolePolicy` | the worker execution role ARN |
+| CloudFormation service | `PassUnchangedAgentChatWorkerRoleIfRequired` | `iam:PassRole` to `lambda.amazonaws.com` | the worker execution role ARN |
+
+The last two mirror the statements that the application function needed in the verified
+release (the failed runs of 2026-10-05 were IAM read handlers). They give no way to write
+IAM. Two new required parameters, `AgentChatWorkerFunctionArn` and
+`AgentChatWorkerExecutionRoleArn`, have no default and the function ARN pattern admits only
+`LegalDeskPhase14PublicEdge-agent-chat-worker`, so the template cannot be pointed at another function.
+
+**This role is deployed by an operator in T9, not by CD**, after the Public Edge change set
+that creates the worker (the ARNs do not exist before) and before the next promotion to
+`prod`. Until then a promotion fails closed with `deployed_template_scope_changed`, because the
+checked-in Public Edge template differs from the deployed one. See
+[`phase-15-live-runbook.md`](phase-15-live-runbook.md) for the order, the change-set review and
+the `iam simulate-principal-policy` check of the result.
+
+## Operator changes to the Public Edge stack outside the code-only scope
+
+The `LegalDeskPhase14PublicEdge` stack is bound to `LegalDeskProductionCloudFormation`, the code-only role of this document. CloudFormation uses the stack's stored role for **every** update, including
+an operator's: a change set that changes the function environment or creates resources fails on `lambda:UpdateFunctionConfiguration` (found in the T9 live block of 2026-11-03), and so does its
+rollback. The code-only role is not widened. An operator change outside the code-only scope passes a **temporary, stack-scoped service role** with `--role-arn`, as in the Phase 14 trusted-edge rotation
+(D-054): for Phase 15, `infra/cloudformation/phase-15-edge-agentchat-bootstrap.yaml` (stage `code-and-quota`, then `agent-chat`), derived from the deployed stack by
+`scripts/phase15_changeset_preview.py bootstrap-params`. The stack then stores the temporary role.
+
+The role is sensitive in one respect: it can write **inline policies** (`iam:PutRolePolicy`, and in the `agent-chat` stage `iam:CreateRole` and the deletes) in exactly two roles, the worker role it creates and the
+application role. It cannot attach managed policies, create users or keys, or change trust or boundaries. It can be used only by a principal with `iam:PassRole` on it, today the account administrators; the OIDC
+release role can pass only `LegalDeskProductionCloudFormation`, its `CreateChangeSet` is conditioned on that role, and the code-only CloudFormation role passes only the application and worker roles to Lambda
+(`tests/test_phase15_edge_bootstrap_access.py` pins all of it). A permissions boundary was assessed and not adopted; the reasons and the compensating controls are in the runbook, step 8.0.
+
+Because of that, the role **lives only for the block**. Right after the step that makes the code-only role able to update the worker (`cd-iam.yaml`, step 9), a `developer` → `prod` promotion that carries only
+documentation (or the T9 closing commit) runs the CD, which passes the code-only role explicitly on every run and so restores the stack's stored `RoleARN`. The restoration is proven with `describe-stacks` and, in the same
+session, the temporary stack is deleted (step 9b). A temporary role that cannot be deleted blocks the close of T9; it is not an open item.
+
+Order for the agentic chat (`docs/phase-15-live-runbook.md`, step 8): operator change with the agent off (new code, quota) → promotion (the CD publishes the new frontend and works with `EnableAgentChat=false`:
+`agentChatWorker: DISABLED`, no worker permission needed) → operator change that switches the agent on → `cd-iam.yaml` (step 9) → the closing promotion of step 9b (first release with `agentChatWorker: VERIFIED`; it restores the code-only role). Do not promote between the
+switch-on and `cd-iam.yaml`: the change set would include the worker's code, which the code-only role cannot update yet.

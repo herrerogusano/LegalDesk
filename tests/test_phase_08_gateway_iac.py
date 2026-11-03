@@ -15,7 +15,7 @@ class Phase08GatewayInfrastructureTests(unittest.TestCase):
 
     def test_gateway_has_lambda_and_remote_mcp_targets(self) -> None:
         self.assertIn("Type: AWS::BedrockAgentCore::Gateway", self.template)
-        self.assertEqual(self.template.count("Type: AWS::BedrockAgentCore::GatewayTarget"), 2)
+        self.assertEqual(self.template.count("Type: AWS::BedrockAgentCore::GatewayTarget"), 3)
         self.assertIn("Name: review-task-lambda", self.template)
         self.assertIn("Name: metadata-mcp", self.template)
         self.assertIn("Handler: legaldesk.mcp_server.mcp_lambda_handler", self.template)
@@ -32,7 +32,9 @@ class Phase08GatewayInfrastructureTests(unittest.TestCase):
         )[0]
         self.assertIn("CredentialProviderType: GATEWAY_IAM_ROLE", review_target)
         self.assertNotIn("IamCredentialProvider:", review_target)
-        metadata_target = self.template.split("  MetadataMcpGatewayTarget:", 1)[1]
+        metadata_target = self.template.split("  MetadataMcpGatewayTarget:", 1)[1].split(
+            "  SearchDocumentsLogGroup:", 1
+        )[0]
         self.assertIn("IamCredentialProvider:", metadata_target)
         self.assertIn("Service: lambda", metadata_target)
 

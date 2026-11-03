@@ -26,6 +26,7 @@ Cada fase agrega una capacidad y deja tests que protegen lo aprendido.
 | 13 | `PLAN_13_INTEGRATION_RELEASE.md` | integración E2E local y preparación de release | 00–12 |
 | 14 | `PLAN_14_PUBLIC_BETA.md` | arquitectura y gates para beta pública autenticada | 13 |
 | 14-IDP extension | `PHASE_14_IDP_PLAN.md` | independent intelligent document processing; accepted (bounded constrained-beta scope) 2026-10-13 | existing public beta |
+| 15 | `PLAN_15_AGENTIC_CHAT.md` | chat agentic de solo lectura con Harness (ADR-021); planificada, no iniciada | 14 + IDP |
 
 ## Milestones
 
