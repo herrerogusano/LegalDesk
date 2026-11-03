@@ -542,10 +542,12 @@ is made **now**, right after step 9: a `developer` → `prod` promotion that car
 
 ```powershell
 $edgeRole = aws cloudformation describe-stacks --stack-name LegalDeskPhase14PublicEdge --query "Stacks[0].RoleARN" --output text; Assert-Aws "describe-stacks"
-$edgeRole    # must be arn:aws:iam::<account>:role/LegalDeskProductionCloudFormation; anything else: STOP, do not delete the temporary stack
+if ($edgeRole -notmatch '/LegalDeskProductionCloudFormation$') { throw "stored role is $edgeRole, not the code-only role: STOP, do not delete the temporary stack" }
 aws cloudformation delete-stack --stack-name $Boot;                                    Assert-Aws "delete-stack"
 aws cloudformation wait stack-delete-complete --stack-name $Boot;                      Assert-Aws "wait stack-delete-complete"
-aws iam get-role --role-name (Split-Path $tempRole -Leaf) 2>$null;                      if ($LASTEXITCODE -eq 0) { throw "the temporary role still exists: the block is blocked" }
+$getRole = aws iam get-role --role-name (Split-Path $tempRole -Leaf) 2>&1 | Out-String
+if ($LASTEXITCODE -eq 0) { throw "the temporary role still exists: the block is blocked" }
+if ($getRole -notmatch "NoSuchEntity") { throw "could not confirm the temporary role is gone (not NoSuchEntity): the block is blocked" }
 ```
 
 **After.**

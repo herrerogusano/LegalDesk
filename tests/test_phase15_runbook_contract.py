@@ -42,8 +42,9 @@ def strip_strings(code: str) -> str:
 
 def section(text: str, heading: str, level: str = "##") -> str:
     start = text.index(f"{level} {heading}")
-    match = re.search(rf"(?m)^{level} (?!#)", text[start + 5:])
-    return text[start:start + 5 + match.start()] if match else text[start:]
+    # Ends at the next heading of the same or a higher level ("###" stops at "##" too).
+    match = re.search(rf"(?m)^#{{2,{len(level)}}} (?!#)", text[start + len(level) + 1:])  # "# " lines inside code blocks are comments
+    return text[start:start + len(level) + 1 + match.start()] if match else text[start:]
 
 
 def powershell_blocks(text: str) -> list[str]:
@@ -128,7 +129,7 @@ class OrderOfStepEightTests(unittest.TestCase):
         self.assertLess(closing.index('--query "Stacks[0].RoleARN"'), closing.index("aws cloudformation delete-stack"))
         self.assertIn("NoSuchEntity", closing)
         self.assertIn("does not count", closing)
-        self.assertIn("anything else: STOP, do not delete the temporary stack", closing)
+        self.assertIn("STOP, do not delete the temporary stack", closing)
 
     def test_the_rollback_of_8a_uses_the_backup_and_the_temporary_role(self) -> None:
         back = section(RUNBOOK, "8a ", "###").split("**Back.**")[1]
@@ -136,6 +137,25 @@ class OrderOfStepEightTests(unittest.TestCase):
         self.assertIn("--role-arn $tempRole", back)
         self.assertIn("continue-update-rollback", back)
         self.assertIn("Never skip a resource whose state you have not read", back)
+
+
+class SectionHelperAndStep9bGuardTests(unittest.TestCase):
+    def test_section_stops_at_a_same_or_higher_level_heading(self) -> None:
+        doc = "## A\n### B\nb text\n## C\nc text\n"
+        self.assertNotIn("c text", section(doc, "B", "###"))
+        self.assertTrue(section(doc, "A").startswith("## A"))
+        self.assertNotIn("c text", section(doc, "A"))
+
+    def test_step_9b_enforces_the_restored_role_before_deleting_the_temporary_stack(self) -> None:
+        block = "\n".join(powershell_blocks(section(RUNBOOK, "Step 9b ")))
+        guard = block.index("-notmatch '/LegalDeskProductionCloudFormation$'")
+        self.assertLess(guard, block.index("delete-stack"))
+        self.assertIn("throw", block[guard:block.index("delete-stack")])
+
+    def test_step_9b_requires_no_such_entity_for_the_temporary_role(self) -> None:
+        block = "\n".join(powershell_blocks(section(RUNBOOK, "Step 9b ")))
+        self.assertIn('-notmatch "NoSuchEntity"', block)
+        self.assertNotIn("get-role --role-name (Split-Path $tempRole -Leaf) 2>$null", block)
 
 
 class ProfilesAndCommandsExistTests(unittest.TestCase):
@@ -174,7 +194,8 @@ class ByteOrderMarkAndChecksTests(unittest.TestCase):
                 for cmdlet in ("Tee-Object", "Export-Csv", "Export-Clixml", "Out-Printer"):
                     self.assertNotRegex(code, rf"\b{cmdlet}\b", logical.strip())
                 for redirection in re.finditer(r"(?<![-<])(\*|\d)?>{1,2}(?!=)\s*([^\s;)]*)", code):
-                    self.assertEqual(redirection.group(2), "$null", f"file redirection (UTF-16 with BOM by default): {logical.strip()}")
+                    # "2>&1" merges streams into the pipeline; it writes no file.
+                    self.assertIn(redirection.group(2), ("$null", "&1"), f"file redirection (UTF-16 with BOM by default): {logical.strip()}")
 
     def test_dotnet_writes_go_only_through_the_one_helper_with_the_no_bom_encoding(self) -> None:
         writes = [line for block in powershell_blocks(RUNBOOK) for line in block.splitlines() if re.search(r"\[(System\.)?IO\.File\]::(Write|Append|Create)", line) and not line.lstrip().startswith("#")]
