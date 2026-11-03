@@ -158,6 +158,52 @@ class SectionHelperAndStep9bGuardTests(unittest.TestCase):
         self.assertNotIn("get-role --role-name (Split-Path $tempRole -Leaf) 2>$null", block)
 
 
+class GeneratedNamesInTheRunbookTests(unittest.TestCase):
+    """Step 8b failed on 2026-11-03 because the pattern of the worker role assumed the wrong name; the runbook now carries the rule and checks it."""
+
+    def test_the_rule_its_provenance_and_both_observed_names_are_documented(self) -> None:
+        eight_zero = " ".join(section(RUNBOOK, "8.0 ", "###").split())
+        for needle in (
+            "inferred from two names observed on 2026-11-03", "not AWS documentation",
+            "LegalDeskPhase14PublicEdge-ApplicationExecutionRole-X3hgVtmlHWXr", "LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-bzFuZq7zur6f",
+            "**both cut**", "UPDATE_ROLLBACK_COMPLETE", "iam:DeleteRolePolicy", "cfn_generated_name",
+            "LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-*", "LegalDeskPhase14PublicEd*-AgentChat*",
+        ):
+            self.assertIn(needle, eight_zero)
+
+    def test_the_old_pattern_survives_only_as_the_explanation_of_the_failure(self) -> None:
+        old = "LegalDeskPhase14PublicEdge-AgentChatWorker*"
+        self.assertEqual(RUNBOOK.count(old), 1)
+        self.assertIn("assumed that only the logical id is cut", RUNBOOK[RUNBOOK.index(old) - 200:RUNBOOK.index(old) + 100])
+        template = (ROOT / "infra" / "cloudformation" / "phase-15-edge-agentchat-bootstrap.yaml").read_text(encoding="utf-8")
+        cd_iam = (ROOT / "infra" / "cloudformation" / "cd-iam.yaml").read_text(encoding="utf-8")
+        for text in (template, cd_iam):
+            self.assertNotIn("LegalDeskPhase14PublicEdge-AgentChatWorker", text.replace("LegalDeskPhase14PublicEdge-AgentChatWorker.", ""))
+
+    def test_8b_simulates_with_the_name_cloudformation_will_generate_not_an_example(self) -> None:
+        eight_b = section(RUNBOOK, "8b ", "###")
+        self.assertIn("phase15_changeset_preview.py generated-name --stack LegalDeskPhase14PublicEdge --logical-id AgentChatWorkerExecutionRole", eight_b)
+        self.assertIn("--logical-id ApplicationExecutionRole", eight_b)  # and the application role's name must be denied
+        self.assertIn("--logical-id AgentChatWorkerErrorsAlarm --limit 255", eight_b)
+        for action in ("iam:CreateRole", "iam:TagRole", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:DeleteRole", "iam:PassRole"):
+            self.assertIn(action, eight_b)
+        self.assertNotIn("AgentChatWorkerExecution-X", RUNBOOK)  # the old example name is gone
+        self.assertIn("If the worker-role line above is not all **allowed**, stop", eight_b)
+
+    def test_the_tagging_access_denied_of_create_role_is_named_as_this_case(self) -> None:
+        eight_b = " ".join(section(RUNBOOK, "8b ", "###").split())
+        self.assertIn("tagging operation of `iam:CreateRole`", eight_b)
+        self.assertIn("compare the role name in the event with `generated-name`", eight_b)
+
+
+class PassRoleSimulationTests(unittest.TestCase):
+    def test_passrole_is_simulated_with_the_passed_to_service_context(self) -> None:
+        for line in RUNBOOK.splitlines():
+            if "simulate-principal-policy" in line and "iam:PassRole" in line:
+                self.assertIn("ContextKeyName=iam:PassedToService", line, line)
+                self.assertIn("ContextKeyValues=lambda.amazonaws.com", line, line)
+
+
 class ProfilesAndCommandsExistTests(unittest.TestCase):
     def test_every_profile_the_runbook_names_exists(self) -> None:
         names = set(re.findall(r"--profile ([a-z0-9-]+)", RUNBOOK)) | set(re.findall(r"profile `([a-z0-9-]+)`", RUNBOOK))
