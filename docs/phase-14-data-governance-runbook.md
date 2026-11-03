@@ -126,8 +126,8 @@ reconciler can read; **only the first value names a cause, every other value say
 | `unknown_lifecycle_unreadable` | the lifecycle rules could not be read (permission or API error): cause unknown |
 | `unknown_age_unreadable` | the record has no readable upload time |
 
-The summary line `document_objects_check` (`examined`, `missing`, `failed`, `canonicalExpiry`, `lifecycleWindowDays`, `findings`) is what the metric
-sums. `failed > 0` means the check itself failed for some document (it is **not** a finding: investigate the role and the bucket).
+The summary line `document_objects_check` (`examined`, `missing`, `failed`, `canonicalExpiry`, `lifecycleWindowDays`, `unverified`, `findings`) is what the metric
+sums. `unverified: true` (`failed > 0`, or `canonicalExpiry: unreadable`) means the check itself could not verify something: it counts as one finding, so **a detector that goes dark raises the alarm**. Investigate the role and the bucket; it does not mean a document is gone.
 
 CloudWatch Logs Insights, to list the ghosts of the last day:
 

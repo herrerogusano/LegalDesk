@@ -330,10 +330,17 @@ class TheLambdaLogsOneClosedLinePerGhostAndAlarmsOnTheSummaryTests(unittest.Test
         summary, lines = self.emit(World([healthy], [healthy.s3_key], []).run())
         self.assertEqual((lines, summary["missing"]), ([], 0))
 
-    def test_a_failing_check_is_reported_without_a_finding(self) -> None:
+    def test_a_failing_check_raises_the_alarm_instead_of_reporting_zero(self) -> None:
         _, lines = self.emit(World([document(1)], [], storage_fail=True).run())
         check = next(line for line in lines if line["event"] == "document_objects_check")
-        self.assertEqual((check["failed"], check["findings"]), (1, 0))
+        self.assertEqual((check["failed"], check["unverified"], check["findings"]), (1, True, 1))
+
+    def test_an_unreadable_lifecycle_raises_the_alarm_instead_of_reporting_zero(self) -> None:
+        unreadable = World([document(1)], [document(1).s3_key], []).run()
+        unreadable.canonical_expiry = rec.CanonicalExpiry("unreadable")
+        _, lines = self.emit(unreadable)
+        check = next(line for line in lines if line["event"] == "document_objects_check")
+        self.assertEqual((check["canonicalExpiry"], check["unverified"], check["findings"]), ("unreadable", True, 1))
 
     def test_the_handler_wires_the_check_and_survives_its_failure(self) -> None:
         source = (ROOT / "backend" / "src" / "legaldesk" / "reconciliation_lambda.py").read_text(encoding="utf-8")

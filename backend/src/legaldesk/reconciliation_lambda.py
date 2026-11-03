@@ -397,7 +397,9 @@ def _emit_object_findings(report: ReconciliationReport) -> dict[str, int]:
 
     Closed codes and values only: an opaque document id (a UUID: not a key, not the tenant, not content), its record status, its age
     in days and the probable-cause label. ``findings`` is what the CloudWatch metric filter sums: the missing objects, plus one while
-    an S3 lifecycle rule can expire canonical originals at all (that configuration is what produces them).
+    an S3 lifecycle rule can expire canonical originals at all (that configuration is what produces them), plus one when the check
+    itself could not verify something (a failed existence check, an unreadable lifecycle): a detector that goes dark must alarm, not
+    report zero (PullBeacon PB-001).
     """
 
     expiry = report.canonical_expiry
@@ -408,12 +410,14 @@ def _emit_object_findings(report: ReconciliationReport) -> dict[str, int]:
             "status": finding.status, "ageDays": finding.age_days, "probableCause": finding.probable_cause,
         }, separators=(",", ":"), sort_keys=True), flush=True)
     expiry_configured = bool(expiry is not None and expiry.configured)
-    if missing or report.failed or expiry_configured or (expiry is not None and expiry.state == "unreadable"):
+    unverified = bool(report.failed or (expiry is not None and expiry.state == "unreadable"))
+    if missing or expiry_configured or unverified:
         print(json.dumps({
             "event": "document_objects_check", "examined": report.examined, "missing": missing, "failed": report.failed,
             "canonicalExpiry": expiry.state if expiry is not None else "unknown",
             "lifecycleWindowDays": expiry.window_days if expiry is not None else None,
-            "findings": missing + (1 if expiry_configured else 0),
+            "unverified": unverified,
+            "findings": missing + (1 if expiry_configured else 0) + (1 if unverified else 0),
         }, separators=(",", ":"), sort_keys=True), flush=True)
     return {"examined": report.examined, "missing": missing, "failed": report.failed, "skipped": report.skipped}
 

@@ -396,7 +396,8 @@ Resources:
       AlarmDescription: >-
         Document integrity: a document record that is INDEXED has no object in the source bucket (it is still in the
         Knowledge Base, so every search over its matter fails closed), or an S3 lifecycle rule exists that can expire
-        canonical originals. Nothing was repaired automatically. Per-document log lines (event document_object_missing:
+        canonical originals, or the check itself could not verify something (a failed existence check or an unreadable
+        lifecycle: see `failed` and `unverified` in the document_objects_check line). Nothing was repaired automatically. Per-document log lines (event document_object_missing:
         documentId, status, ageDays, probableCause) are in the reconciliation log group. To confirm the cause and repair
         (governance delete + Knowledge Base sync) follow docs/phase-14-data-governance-runbook.md, section
         "Ghost documents: confirm the cause and repair".
