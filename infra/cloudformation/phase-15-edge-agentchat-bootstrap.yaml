@@ -3,10 +3,11 @@ Description: >-
   Temporary service role for the Phase 15 (T9) Public Edge change sets. The stack is bound to the
   code-only CD role, which cannot update the function environment or create the AgentChat*
   resources (live block, 2026-11-03). Passed with --role-arn to steps 8a and 8b only, as in the
-  Phase 14 secret rotation (D-054), then deleted after the code-only role is restored. Stage
-  code-and-quota: the existing application function and API integration. Stage agent-chat adds
-  the AgentChat* resources by name pattern and the application role inline policy. Details and
-  procedure: docs/phase-15-live-runbook.md, step 8.
+  Phase 14 secret rotation (D-054), then deleted in step 9b right after the code-only role is
+  restored. Stage code-and-quota: the existing application function and API integration. Stage
+  agent-chat adds the AgentChat* resources by name pattern and may write inline policies in two
+  roles only (the worker role and the application role). Only a principal with iam:PassRole on
+  it can use it: administrators, not the CD roles. Procedure: docs/phase-15-live-runbook.md, step 8.
 
 Parameters:
   Stage:
@@ -218,14 +219,14 @@ Resources:
                     - iam:DeleteRolePolicy
                     - iam:TagRole
                     - iam:UntagRole
-                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorkerExecutionRole-*"
+                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorker*"
                 - !Ref AWS::NoValue
               - !If
                 - IncludeAgentChat
                 - Sid: PassOnlyTheWorkerRoleToLambda
                   Effect: Allow
                   Action: iam:PassRole
-                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorkerExecutionRole-*"
+                  Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/LegalDeskPhase14PublicEdge-AgentChatWorker*"
                   Condition:
                     StringEquals:
                       iam:PassedToService: lambda.amazonaws.com

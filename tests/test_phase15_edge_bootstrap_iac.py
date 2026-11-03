@@ -43,6 +43,17 @@ def _loader() -> type:
     return Loader
 
 
+def generated_name(stack: str, logical_id: str, suffix: str, limit: int = 64) -> str:
+    """The physical name CloudFormation generates: ``<stack>-<logical id>-<suffix>``, the first two parts cut to fit ``limit``.
+
+    The deployed application role (``LegalDeskPhase14PublicEdge-ApplicationExecutionRole-X3hgVtmlHWXr``) is exactly 64 characters,
+    which fits this model; the worker role would be 68 and so gets its logical id cut: it is NOT ``...-AgentChatWorkerExecutionRole-...``.
+    """
+
+    head = f"{stack}-{logical_id}"[: limit - len(suffix) - 1]
+    return f"{head}-{suffix}"
+
+
 def load(path: Path) -> dict[str, Any]:
     return yaml.load(path.read_text(encoding="utf-8"), Loader=_loader())
 
@@ -214,8 +225,11 @@ class CoverageOfTheTemplateTests(unittest.TestCase):
             queue_arn = f"arn:aws:sqs:{REGION}:{ACCOUNT}:{name}"
             self.assertTrue(any(fnmatch.fnmatchcase(queue_arn, r) for s in statements("agent-chat") for r in resources(s)), name)
         # CloudFormation-generated names: <stack>-<logical id>-<random>
-        generated_role = f"arn:aws:iam::{ACCOUNT}:role/{STACK}-AgentChatWorkerExecutionRole-ABCDEF123456"
-        self.assertTrue(any(fnmatch.fnmatchcase(generated_role, r) for s in statements("agent-chat") for r in resources(s)))
+        for generated_role in (
+            f"arn:aws:iam::{ACCOUNT}:role/{STACK}-AgentChatWorkerExecutionRole-ABCDEF123456",  # untruncated form
+            f"arn:aws:iam::{ACCOUNT}:role/{generated_name(STACK, 'AgentChatWorkerExecutionRole', 'ABCDEF123456')}",  # what CloudFormation really makes
+        ):
+            self.assertTrue(any(fnmatch.fnmatchcase(generated_role, r) for s in statements("agent-chat") for r in resources(s)), generated_role)
         alarms = [name for name, spec in self.agent_resources.items() if spec["Type"] == "AWS::CloudWatch::Alarm"]
         self.assertEqual(len(alarms), 6)
         for logical_id in alarms:
@@ -225,6 +239,17 @@ class CoverageOfTheTemplateTests(unittest.TestCase):
         self.assertTrue(any(fnmatch.fnmatchcase(worker, r) for s in statements("agent-chat") for r in resources(s)))
         log_group = f"arn:aws:logs:{REGION}:{ACCOUNT}:log-group:/aws/lambda/{STACK}-agent-chat-worker"
         self.assertTrue(any(fnmatch.fnmatchcase(log_group, r) for s in statements("agent-chat") for r in resources(s)))
+
+    def test_the_generated_name_model_reproduces_the_deployed_role_and_shows_the_worker_role_is_truncated(self) -> None:
+        self.assertEqual(generated_name(STACK, "ApplicationExecutionRole", "X3hgVtmlHWXr"), "LegalDeskPhase14PublicEdge-ApplicationExecutionRole-X3hgVtmlHWXr")
+        worker = generated_name(STACK, "AgentChatWorkerExecutionRole", "ABCDEF123456")
+        self.assertEqual(len(worker), 64)
+        self.assertNotIn("AgentChatWorkerExecutionRole", worker)  # a pattern spelling the full logical id would deny CreateRole at 8b
+        pattern = next(r for s in statements("agent-chat") for r in resources(s) if ":role/" in r and "AgentChatWorker" in r)
+        self.assertTrue(fnmatch.fnmatchcase(f"arn:aws:iam::{ACCOUNT}:role/{worker}", pattern))
+        # the pattern is specific to this stack's worker: the application role and the temporary role do not match it
+        for other in (generated_name(STACK, "ApplicationExecutionRole", "X3hgVtmlHWXr"), generated_name("LegalDeskPhase15EdgeBootstrap", "EdgeAgentChatCloudFormationRole", "ABCDEF123456")):
+            self.assertFalse(fnmatch.fnmatchcase(f"arn:aws:iam::{ACCOUNT}:role/{other}", pattern), other)
 
     def test_the_names_are_generated_so_the_patterns_hold(self) -> None:
         # An explicit RoleName / AlarmName / QueueName would escape the patterns above.
@@ -248,7 +273,7 @@ class CoverageOfTheTemplateTests(unittest.TestCase):
                 # allowed only on the worker role pattern
                 for statement in statements("agent-chat"):
                     if forbidden in actions(statement):
-                        self.assertTrue(all("AgentChatWorkerExecutionRole" in r for r in resources(statement)))
+                        self.assertTrue(all("role/LegalDeskPhase14PublicEdge-AgentChatWorker" in r for r in resources(statement)))
             else:
                 self.assertNotIn(forbidden, granted)
 

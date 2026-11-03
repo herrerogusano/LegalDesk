@@ -164,9 +164,17 @@ The `LegalDeskPhase14PublicEdge` stack is bound to `LegalDeskProductionCloudForm
 an operator's: a change set that changes the function environment or creates resources fails on `lambda:UpdateFunctionConfiguration` (found in the T9 live block of 2026-11-03), and so does its
 rollback. The code-only role is not widened. An operator change outside the code-only scope passes a **temporary, stack-scoped service role** with `--role-arn`, as in the Phase 14 trusted-edge rotation
 (D-054): for Phase 15, `infra/cloudformation/phase-15-edge-agentchat-bootstrap.yaml` (stage `code-and-quota`, then `agent-chat`), derived from the deployed stack by
-`scripts/phase15_changeset_preview.py bootstrap-params`. The stack then stores the temporary role; **the next code-only CD release passes the code-only role explicitly and restores it** (the workflow
-does this on every run), after which the temporary stack is deleted, with `describe-stacks` as proof. Until then the temporary role stays and is recorded as an open item.
+`scripts/phase15_changeset_preview.py bootstrap-params`. The stack then stores the temporary role.
+
+The role is sensitive in one respect: it can write **inline policies** (`iam:PutRolePolicy`, and in the `agent-chat` stage `iam:CreateRole` and the deletes) in exactly two roles, the worker role it creates and the
+application role. It cannot attach managed policies, create users or keys, or change trust or boundaries. It can be used only by a principal with `iam:PassRole` on it, today the account administrators; the OIDC
+release role can pass only `LegalDeskProductionCloudFormation`, its `CreateChangeSet` is conditioned on that role, and the code-only CloudFormation role passes only the application and worker roles to Lambda
+(`tests/test_phase15_edge_bootstrap_access.py` pins all of it). A permissions boundary was assessed and not adopted; the reasons and the compensating controls are in the runbook, step 8.0.
+
+Because of that, the role **lives only for the block**. Right after the step that makes the code-only role able to update the worker (`cd-iam.yaml`, step 9), a `developer` → `prod` promotion that carries only
+documentation (or the T9 closing commit) runs the CD, which passes the code-only role explicitly on every run and so restores the stack's stored `RoleARN`. The restoration is proven with `describe-stacks` and, in the same
+session, the temporary stack is deleted (step 9b). A temporary role that cannot be deleted blocks the close of T9; it is not an open item.
 
 Order for the agentic chat (`docs/phase-15-live-runbook.md`, step 8): operator change with the agent off (new code, quota) → promotion (the CD publishes the new frontend and works with `EnableAgentChat=false`:
-`agentChatWorker: DISABLED`, no worker permission needed) → operator change that switches the agent on → `cd-iam.yaml` (step 9) → releases with `agentChatWorker: VERIFIED`. Do not promote between the
+`agentChatWorker: DISABLED`, no worker permission needed) → operator change that switches the agent on → `cd-iam.yaml` (step 9) → the closing promotion of step 9b (first release with `agentChatWorker: VERIFIED`; it restores the code-only role). Do not promote between the
 switch-on and `cd-iam.yaml`: the change set would include the worker's code, which the code-only role cannot update yet.

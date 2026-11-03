@@ -21,6 +21,7 @@ Owner decisions of 2026-11-03 on the live block:
 | Alarms **in the console only**: `AgentChatAlarmTopicArn` stays empty, no SNS | step 8 |
 | **ADOT is switched off after the probe**, whatever the probe finds (and by default) | steps 5 and 6 |
 | Job alarms use **native, free metrics** (SQS, Lambda); only two custom metrics remain | step 8 |
+| The temporary role **lives only for the block**: it is closed in step 9b, right after step 9, in the same session; if it cannot be deleted the block is blocked | steps 8, 9b, 14 |
 
 Findings of the first live attempt (2026-11-03: steps 3 to 7 done, step 8 failed and was restored) and where this runbook now answers them:
 
@@ -348,10 +349,26 @@ permissions of these change sets is passed with `--role-arn`, and deleted once t
 | Stage | Used by | Grants (all by exact ARN or name pattern; nothing is `*` except two regional read-only listings) |
 |---|---|---|
 | `code-and-quota` | 8a | what the code-only role has (read and `UpdateFunctionCode` on the application function, read of the immutable artifact, `PassRole` and read of the application role, read of the distribution and its dependencies, `GET`/`PATCH` of the one API integration) **plus** `lambda:UpdateFunctionConfiguration` and `lambda:ListTags` on that function. Creates and deletes nothing |
-| `agent-chat` | 8b | the above plus create, update and delete of the AgentChat resources, each by pattern: queues `LegalDeskPhase14PublicEdge-agent-chat*`, the worker log group and its metric filters, the worker function, the mapping of that function, the worker role (`LegalDeskPhase14PublicEdge-AgentChatWorkerExecutionRole-*`) with `PassRole` to Lambda only, the alarms `…-AgentChat*`, and `iam:PutRolePolicy` on the application role only |
+| `agent-chat` | 8b | the above plus create, update and delete of the AgentChat resources, each by pattern: queues `LegalDeskPhase14PublicEdge-agent-chat*`, the worker log group and its metric filters, the worker function, the mapping of that function, the worker role (`LegalDeskPhase14PublicEdge-AgentChatWorker*`) with `PassRole` to Lambda only, the alarms `…-AgentChat*`, and `iam:PutRolePolicy` on the application role only |
 
-It cannot attach policies, create users or keys, touch S3 objects other than reading the artifact, DynamoDB, Bedrock, AgentCore, Cognito, another role or any other Lambda. The tests pin this against the template
-(`tests/test_phase15_edge_bootstrap_iac.py`): every `AgentChat*` resource type is covered, every name pattern matches the names CloudFormation will generate, and nothing else is writable.
+What it cannot do: attach or detach **managed** policies, create users, access keys or policies, change a trust policy or a permissions boundary, touch S3 objects other than reading the artifact, DynamoDB, Bedrock, AgentCore, Cognito,
+any other role or any other Lambda. What it **can** do, and is the sensitive part: **write inline policies** (`iam:PutRolePolicy`, and in the stage `agent-chat` `iam:CreateRole` / `iam:DeleteRole` / `iam:DeleteRolePolicy`) in exactly
+two places: the worker execution role it creates (`LegalDeskPhase14PublicEdge-AgentChatWorker*`) and the application role of the Public Edge stack. Those actions exist only in the stage `agent-chat`, never in `code-and-quota`, and only on those
+ARNs (the tests pin it: `tests/test_phase15_edge_bootstrap_iac.py`, `tests/test_phase15_edge_bootstrap_access.py`). Whatever policy a template carries is therefore applied by this role, which is why the change set is gated by the **exact IAM statements**
+of the profile (`public-edge-agent-chat-on` lists the 10 statements and the trust policy of the worker role and the 3 statement changes of the application role; any other statement, any wildcard or `NotAction`, stops the run).
+
+**Who can use it.** CloudFormation assumes the role only if the caller of the change set passes it (`--role-arn`), which needs `iam:PassRole` on it. The holders today are the account administrators, who can already do everything. It is **not** the OIDC release
+role of the CD (`LegalDeskProductionDeployment`): it can pass only `LegalDeskProductionCloudFormation`, and its `CreateChangeSet` is conditioned on `cloudformation:RoleArn` being that role. Nor is it the code-only CloudFormation role, whose `PassRole` reaches
+only the application and worker roles, towards Lambda. The temporary role itself cannot pass itself, and nothing but CloudFormation can assume it. `tests/test_phase15_edge_bootstrap_access.py` checks every one of these statements against `cd-iam.yaml` and the bootstrap
+template, so a later change that lets the CD (or any role of these templates) pass the temporary role fails the suite.
+
+**Why the window is short.** The role exists only for the block: created in 8.0, closed in step 9b right after step 9 (a docs-only or closing promotion restores the code-only role, which is proven with `describe-stacks`, and the temporary stack is deleted in the
+same session). A role that cannot be deleted blocks the close of T9; it is not an open item.
+
+**Why no permissions boundary** (assessed, not adopted). A boundary on the worker role would need a managed policy created and kept before the change set, a `PermissionsBoundary` property in the Public Edge template (a change to a deployed template that the CD compares for equality), and a
+condition on `iam:PermissionsBoundary` in `CreateRole`. It would not cover the second sensitive write, `PutRolePolicy` on the **existing** application role, which already exists and cannot be bounded retroactively without touching its policy. And a boundary that is slightly wrong denies a
+needed action of the worker at run time, in a live block, where it is hard to tell from a missing permission. What bounds the risk instead: only administrators can pass the role (above), it lives for hours, the exact IAM statements are enforced by the profile before anything is executed, the inline
+policies are read back after 8b (below), and the change sets are reviewed by a person. Revisit it if the role ever has to live longer or be usable by a non-administrator.
 
 **Do** (stage `code-and-quota` first; the parameters are derived from the deployed stack):
 
@@ -445,7 +462,7 @@ keeps them (`UsePreviousValue`), so the worker and the API run the same package.
    # create-change-set --change-set-type UPDATE on $Boot with the same template: exactly ONE change, Modify of the role (Policies), Replacement False, then execute and wait stack-update-complete
    ```
 
-   Simulate again: `sqs:CreateQueue` on `…:LegalDeskPhase14PublicEdge-agent-chat`, `lambda:CreateFunction` on `…:function:LegalDeskPhase14PublicEdge-agent-chat-worker`, `iam:CreateRole` on `…:role/LegalDeskPhase14PublicEdge-AgentChatWorkerExecutionRole-X` and
+   Simulate again: `sqs:CreateQueue` on `…:LegalDeskPhase14PublicEdge-agent-chat`, `lambda:CreateFunction` on `…:function:LegalDeskPhase14PublicEdge-agent-chat-worker`, `iam:CreateRole` on `…:role/LegalDeskPhase14PublicEdge-AgentChatWorkerExecution-X` (CloudFormation truncates a generated role name to 64 characters: the stack name stays, the logical id is cut) and
    `iam:PutRolePolicy` on the application role are **allowed**; the same actions on any other name, `iam:AttachRolePolicy`, `lambda:CreateFunction` on another function and `s3:PutObject` are **implicitDeny**.
 
 2. **The change set** (only `EnableAgentChat` changes; `AgentChatAlarmTopicArn` stays empty by decision: the six alarms are read in the console, they notify nobody; `AgentChatMaxConcurrency` keeps its default 2):
@@ -464,6 +481,7 @@ keeps them (`UsePreviousValue`), so the worker and the API run the same package.
 - Queue attributes: `VisibilityTimeout 900`, `MessageRetentionPeriod 3600`, redrive `maxReceiveCount 2`, SSE on; DLQ empty.
 - `aws lambda list-event-source-mappings --function-name …-agent-chat-worker`: `Enabled`, `BatchSize 1`, `ScalingConfig.MaximumConcurrency 2`, `FunctionResponseTypes [ReportBatchItemFailures]`; worker `Timeout 150`, **no** reserved concurrency (`get-function-concurrency` empty).
 - Worker and application `CodeSha256` = the zip of the release the CD deployed.
+- **The inline policies that the temporary role wrote**: `aws iam get-role-policy` of the worker role and of the application role (`LegalDeskPublicApplicationDataPlane`): the `Sid`s are exactly those of the profile `public-edge-agent-chat-on` (`iam` list), no statement without a `Sid`, no `*` action, no bare `*` resource, no `NotAction`/`NotResource`.
 - **Quota 50**: `describe-stacks` shows `QuotaHarnessPerMonth=50` and both functions show `LEGALDESK_QUOTA_HARNESS_PER_MONTH=50` (`QuotaChatsPerMonth` unchanged).
 - **Alarms and metrics**: six `AgentChat*` alarms (`aws cloudwatch describe-alarms --alarm-name-prefix LegalDeskPhase14PublicEdge`), all `ActionsEnabled=false` with empty `AlarmActions`; the three on Lambda metrics (`Duration`, `Errors`, `Invocations`) have dimension
   `FunctionName` = the worker; exactly **two** metric filters on the worker log group, none with dimensions; no `AgentChatJobDurationMs`, `AgentChatJobsCompleted`, `…ByCode` or `…ByReason` metric exists.
@@ -476,14 +494,7 @@ If the rollback or the creation fails on a missing permission, read the `AccessD
 **Back.** Profile `public-edge-agent-chat-rollback`: set `EnableAgentChat=false` (all other parameters `UsePreviousValue`, `--role-arn $tempRole`). It removes the 14 resources (queue and DLQ are `DeletionPolicy: Delete`; confirm both are empty first), leaves the application on the
 new code and keeps the template identical to the repository's, so the CD keeps working.
 
-### Restoring the code-only role (closes step 8; the temporary stack is deleted only after this)
-
-After 8b the stack's stored `RoleARN` is the temporary role. It goes back the way D-054 did it: **the next code-only CD release passes `LegalDeskProductionCloudFormation` explicitly** (the CD does this on every run). Until then the
-temporary role stays, with its exposure recorded: it can be assumed only by CloudFormation, and used only by someone who may pass it to a change set. Any promotion works; the merge of the T9 fixes is the natural one.
-
-1. After that release: `aws cloudformation describe-stacks --stack-name LegalDeskPhase14PublicEdge --query "Stacks[0].RoleARN"` must be the code-only role. A no-op or an assumed restoration does not count.
-2. Only then delete the temporary stack and read it back: `aws cloudformation delete-stack --stack-name LegalDeskPhase15EdgeBootstrap`, wait `stack-delete-complete`, and `aws iam get-role` on the temporary role must fail with `NoSuchEntity`.
-3. If the next release is far away and the owner wants it closed sooner, promote any commit: the CD's change set is `ApplicationFunction.Code` and the integration, with `agentChatWorker: VERIFIED` once step 9 is done.
+After 8b the stack's stored `RoleARN` is the temporary role. **Do not promote until step 9 is done**; the role is closed by the promotion of step 9b, which comes **after** step 9.
 
 ## Step 9 · CD role (◆ change set on `LegalDeskProductionCD`, by the operator)
 
@@ -518,13 +529,38 @@ aws iam simulate-principal-policy --policy-source-arn $relRole --action-names la
 **Stop if** an "allowed" is denied (the first promotion would fail closed and roll back) or a "denied" is allowed. **Back.** Change set from
 `$BK\LegalDeskProductionCD.template.yaml` with the recorded parameters; the application function's CD path is unchanged either way.
 
-**Next promotion.** `developer → prod` is now the first real use of the new CD path, and the release that restores the code-only role of the Public Edge stack (end of step 8): `scripts/deploy_release.py` dry-run, then the normal workflow.
-Expect a change set of exactly `ApplicationFunction.Code`, `AgentChatWorkerFunction.Code` and `PublicApiIntegration.IntegrationUri`, and `agentChatWorker: VERIFIED` in the
-release record. Any later edit of the Public Edge template needs this operator step first.
+**Next: step 9b, immediately.** The promotion that restores the code-only role is the next one, and it comes **after** this step: the CD's change set now includes the worker's code, which the code-only CloudFormation role can update only once this step has been executed. Do not stop here.
+
+## Step 9b · Close the temporary role: restore the code-only role and delete the temporary stack (right after step 9, same session)
+
+The temporary role must not outlive the block. After 8b the stack's stored `RoleARN` is the temporary role; it goes back the way D-054 did it, with a code-only CD release that passes `LegalDeskProductionCloudFormation` explicitly (the workflow does this on every run). That release
+is made **now**, right after step 9: a `developer` → `prod` promotion that carries only documentation (this runbook's closing changes) or the T9 closing commit. It is also the first real use of the new CD path with the worker.
+
+**Before.** Step 9 executed and its simulation passed (the code-only role may update the worker). The promoted commit contains no code change that has not been reviewed; a docs-only commit is preferred because the release then redeploys the same behaviour.
+
+**Do.** The promotion by pull request. Then, in the same session:
+
+```powershell
+$edgeRole = aws cloudformation describe-stacks --stack-name LegalDeskPhase14PublicEdge --query "Stacks[0].RoleARN" --output text; Assert-Aws "describe-stacks"
+$edgeRole    # must be arn:aws:iam::<account>:role/LegalDeskProductionCloudFormation; anything else: STOP, do not delete the temporary stack
+aws cloudformation delete-stack --stack-name $Boot;                                    Assert-Aws "delete-stack"
+aws cloudformation wait stack-delete-complete --stack-name $Boot;                      Assert-Aws "wait stack-delete-complete"
+aws iam get-role --role-name (Split-Path $tempRole -Leaf) 2>$null;                      if ($LASTEXITCODE -eq 0) { throw "the temporary role still exists: the block is blocked" }
+```
+
+**After.**
+
+- The workflow is green; the release record is `PASS` with `agentChatWorker: VERIFIED` (both Lambdas carry the release); change set of exactly `ApplicationFunction.Code`, `AgentChatWorkerFunction.Code` and `PublicApiIntegration.IntegrationUri`.
+- `describe-stacks` of the Public Edge stack: `RoleARN` is `LegalDeskProductionCloudFormation`. A no-op or an assumed restoration does not count.
+- The temporary stack is gone (`describe-stacks` of it fails with "does not exist") and `iam get-role` of the temporary role returns `NoSuchEntity`.
+- `cd-template-match` is still `true`.
+
+**Stop if** the CD fails closed (do not retry blindly: read the record; the Public Edge stack keeps whatever role it had), the stored role is not the code-only role, or the temporary stack cannot be deleted. **A temporary role that is still there is a blocker, not an open item:** step 11 onwards (live questions)
+and the close of T9 do not proceed until it is deleted, and the owner is told at once. **Back.** The CD's own rollback record; the temporary stack can be created again from 8.0 if a further operator change were ever needed (it would restart the window).
 
 ## Step 10 · Re-read the whole state (AWS read-only)
 
-Re-run the step 1 inventory into `$Root\after\`; compare. Expected: the four stacks `UPDATE_COMPLETE` (and `LegalDeskPhase15EdgeBootstrap` while the code-only role is not yet restored), parameters changed only as in the steps above,
+Re-run the step 1 inventory into `$Root\after\`; compare. Expected: the four stacks `UPDATE_COMPLETE` (`LegalDeskPhase15EdgeBootstrap` is already deleted by step 9b), parameters changed only as in the steps above,
 no resource outside the profiles, the Harness ARN/runtime id equal to step 1, ADOT disabled (unless accepted). **Stop if** anything else moved.
 
 ## Step 11 · Harness checks: allowed tools, session, cut loop (◆ paid: 5 Harness invocations)
@@ -635,7 +671,7 @@ The quota of the deployment is 50 `harness` jobs a month: the ten model calls be
 2. Revoke/let expire the test user's session; unset `LEGALDESK_EVAL_ACCESS_TOKEN`; delete the shell history lines that held it.
 3. Lower (never raise) the retention of any log group created in the block to the lowest the owner accepts (3 days for the Harness runtime groups).
 4. **Mandatory: delete the synthetic conversation bindings of steps 11 and 12** and verify it (section below). It is not optional and the block is not closed until it is done.
-5. **Temporary role**: the code-only role is the stored `RoleARN` of the Public Edge stack again and `LegalDeskPhase15EdgeBootstrap` is deleted (end of step 8). If the next release has not happened yet, the block is **not closed**: record the temporary role as an open item with its owner.
+5. **Temporary role**: the code-only role is the stored `RoleARN` of the Public Edge stack again and `LegalDeskPhase15EdgeBootstrap` is deleted (step 9b, which ran right after step 9). Re-read both here. If either is not true the block is **blocked**, not "open": nothing else of this list counts as done until it is.
 6. Keep `$BK` and `$Root` **outside the repository** until the owner signs off, then archive them; they contain parameter values (ARNs, ids) but no secret
    (`NoEcho` values are masked by CloudFormation and were only ever passed as `UsePreviousValue`). Copy the evidence summary to `docs/phase-15-acceptance.md`.
 7. Check the real cost the next day in the Billing console (not the Cost Explorer API) and record it next to the estimate.
