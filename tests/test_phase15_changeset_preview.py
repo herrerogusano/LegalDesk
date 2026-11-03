@@ -157,7 +157,7 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
 
     def assert_clean(self, result: dict[str, Any], profile: str) -> None:
         self.assertEqual(preview.check_preview(result, preview.load_profile(profile)), [])
-        self.assertTrue(all(item["replacement"] in {"no", "UNKNOWN"} for item in result["modified"]))
+        self.assertTrue(all(item["replacement"] in {"no", "CONDITIONAL"} for item in result["modified"]))
 
     def test_public_edge_enabling_the_agent_chat(self) -> None:
         result = _flip("phase-14-public-edge.yaml", {"EnableAgentChat": "false"}, {"EnableAgentChat": "true"})

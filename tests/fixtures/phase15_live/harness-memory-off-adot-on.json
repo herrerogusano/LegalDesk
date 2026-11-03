@@ -1,0 +1,75 @@
+{
+  "_note": "Real describe-change-set output of the T9 live block, 2026-11-03, trimmed and anonymised (see scripts/make_fixtures in the PR).",
+  "StackName": "legaldesk-phase-01",
+  "Status": "CREATE_COMPLETE",
+  "ExecutionStatus": "AVAILABLE",
+  "Changes": [
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "HarnessExecutionRole",
+        "PhysicalResourceId": "<physical-id>",
+        "ResourceType": "AWS::IAM::Role",
+        "Replacement": "False",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Policies",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "DirectModification"
+          }
+        ]
+      }
+    },
+    {
+      "Type": "Resource",
+      "ResourceChange": {
+        "Action": "Modify",
+        "LogicalResourceId": "MinimalHarness",
+        "PhysicalResourceId": "<physical-id>",
+        "ResourceType": "AWS::BedrockAgentCore::Harness",
+        "Replacement": "Conditional",
+        "Scope": [
+          "Properties"
+        ],
+        "Details": [
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "Memory",
+              "RequiresRecreation": "Conditionally"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "DirectModification"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "ExecutionRoleArn",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Dynamic",
+            "ChangeSource": "ResourceAttribute",
+            "CausingEntity": "HarnessExecutionRole.Arn"
+          },
+          {
+            "Target": {
+              "Attribute": "Properties",
+              "Name": "EnvironmentVariables",
+              "RequiresRecreation": "Never"
+            },
+            "Evaluation": "Static",
+            "ChangeSource": "DirectModification"
+          }
+        ]
+      }
+    }
+  ]
+}

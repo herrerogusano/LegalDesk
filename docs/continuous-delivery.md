@@ -157,3 +157,16 @@ that creates the worker (the ARNs do not exist before) and before the next promo
 checked-in Public Edge template differs from the deployed one. See
 [`phase-15-live-runbook.md`](phase-15-live-runbook.md) for the order, the change-set review and
 the `iam simulate-principal-policy` check of the result.
+
+## Operator changes to the Public Edge stack outside the code-only scope
+
+The `LegalDeskPhase14PublicEdge` stack is bound to `LegalDeskProductionCloudFormation`, the code-only role of this document. CloudFormation uses the stack's stored role for **every** update, including
+an operator's: a change set that changes the function environment or creates resources fails on `lambda:UpdateFunctionConfiguration` (found in the T9 live block of 2026-11-03), and so does its
+rollback. The code-only role is not widened. An operator change outside the code-only scope passes a **temporary, stack-scoped service role** with `--role-arn`, as in the Phase 14 trusted-edge rotation
+(D-054): for Phase 15, `infra/cloudformation/phase-15-edge-agentchat-bootstrap.yaml` (stage `code-and-quota`, then `agent-chat`), derived from the deployed stack by
+`scripts/phase15_changeset_preview.py bootstrap-params`. The stack then stores the temporary role; **the next code-only CD release passes the code-only role explicitly and restores it** (the workflow
+does this on every run), after which the temporary stack is deleted, with `describe-stacks` as proof. Until then the temporary role stays and is recorded as an open item.
+
+Order for the agentic chat (`docs/phase-15-live-runbook.md`, step 8): operator change with the agent off (new code, quota) → promotion (the CD publishes the new frontend and works with `EnableAgentChat=false`:
+`agentChatWorker: DISABLED`, no worker permission needed) → operator change that switches the agent on → `cd-iam.yaml` (step 9) → releases with `agentChatWorker: VERIFIED`. Do not promote between the
+switch-on and `cd-iam.yaml`: the change set would include the worker's code, which the code-only role cannot update yet.

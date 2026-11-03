@@ -22,6 +22,16 @@ Owner decisions of 2026-11-03 on the live block:
 | **ADOT is switched off after the probe**, whatever the probe finds (and by default) | steps 5 and 6 |
 | Job alarms use **native, free metrics** (SQS, Lambda); only two custom metrics remain | step 8 |
 
+Findings of the first live attempt (2026-11-03: steps 3 to 7 done, step 8 failed and was restored) and where this runbook now answers them:
+
+| Finding | Answer |
+|---|---|
+| The Public Edge stack is bound to `LegalDeskProductionCloudFormation` (the code-only role): a change set that changes the function **environment** or creates the AgentChat resources fails on `lambda:UpdateFunctionConfiguration`, and so does its rollback | step 8: a **temporary service role**, passed with `--role-arn`, as in the Phase 14 secret rotation (D-054); never widen the CD role |
+| The new frontend is published only by the CD when `developer` is promoted to `prod`; with the agent on and the old frontend, the free chat box would break | step 8 is split: **8a** (code and quota, agent off) → **promotion** (CD publishes the frontend) → **8b** (agent on) → step 9 |
+| `check-change-set` stopped on changes that are not edits (inherited `RoleArn`, `InterceptorConfigurations`, `ExecutionRoleArn`) and on `Memory` | fixed in the tool: inherited dynamic changes and `Replacement: Conditional` through the createOnly list (step 2, step 4) |
+| `Out-File -Encoding utf8` of Windows PowerShell 5.1 writes a BOM and broke `json.load`; `SHA256SUMS.txt` hashed itself | every file is written with `Save-Text` (no BOM); the tools also read BOMs; the sums are computed before the file exists |
+| The ADOT probe looks only at the Harness runtime log groups | step 5 states what it does and does not prove |
+
 ## How to read a step
 
 Every step has the same five parts. Do not start a step until the previous one's **After** passed.
@@ -43,7 +53,7 @@ or a cost reading above the stop value of the cost estimate. **Nothing is retrie
 | | |
 |---|---|
 | Region / account | `eu-west-1` / `344774635844` |
-| Stacks touched | `legaldesk-phase-01` (Harness), `LegalDeskPhase08Gateway`, `LegalDeskPhase14PublicEdge`, `LegalDeskProductionCD` |
+| Stacks touched | `legaldesk-phase-01` (Harness), `LegalDeskPhase08Gateway`, `LegalDeskPhase14PublicEdge`, `LegalDeskProductionCD`; created and deleted in this block: `LegalDeskPhase15EdgeBootstrap` (the temporary role of step 8) |
 | Not touched | `LegalDeskPhase14IDP`, `…DocumentSecurity`, `…Reconciliation`, `LegalDeskPhase07ReviewTask`, Cognito, KB, Guardrail, Memory, buckets, table |
 | Beta tenant / matters | `tnt_phase14_20260928` · `mat_phase14_a_20260928`, `mat_phase14_b_20260928` (synthetic documents only) |
 | Code-artifact bucket | `legaldeskphase08artifacts-legaldeskphase08artifact-4lbcgkaewrsw` (versioned, immutable keys `phase-14/<40-hex commit>/legaldesk-lambda.zip`) |
@@ -61,6 +71,10 @@ $BK     = "$Root\backup"; New-Item -ItemType Directory -Force $BK | Out-Null
 $Stacks = "legaldesk-phase-01", "LegalDeskPhase08Gateway", "LegalDeskPhase14PublicEdge", "LegalDeskProductionCD"
 $Repo   = "<path of the worktree on the merged developer commit>"
 $Preview = "python $Repo\scripts\phase15_changeset_preview.py"
+# Files are written WITHOUT a byte-order mark: Out-File -Encoding utf8 of PowerShell 5.1 writes one and breaks json.load.
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Save-Text($Path, $Text) { [IO.File]::WriteAllText($Path, (@($Text) -join [Environment]::NewLine), $Utf8NoBom) }
+function Assert-Aws($What) { if ($LASTEXITCODE -ne 0) { throw "$What failed (exit $LASTEXITCODE): stop" } }
 ```
 
 ## Step 0 · Gate (no AWS)
@@ -94,24 +108,32 @@ Read-only calls only; they are free. The backups are the rollback source for ste
 
 ```powershell
 foreach ($s in $Stacks) {
-  aws cloudformation describe-stacks --stack-name $s | Out-File "$BK\$s.describe-stacks.json" -Encoding utf8
-  aws cloudformation get-template --stack-name $s --template-stage Original --query TemplateBody --output text | Out-File "$BK\$s.template.yaml" -Encoding utf8
-  aws cloudformation detect-stack-drift --stack-name $s | Out-Null    # optional; wait and read describe-stack-drift-detection-status
+  $out = aws cloudformation describe-stacks --stack-name $s;                                            Assert-Aws "describe-stacks $s"
+  Save-Text "$BK\$s.describe-stacks.json" $out
+  $out = aws cloudformation get-template --stack-name $s --template-stage Original --query TemplateBody --output text; Assert-Aws "get-template $s"
+  Save-Text "$BK\$s.template.yaml" $out
+  aws cloudformation detect-stack-drift --stack-name $s | Out-Null; Assert-Aws "detect-stack-drift $s"   # optional; wait and read describe-stack-drift-detection-status
 }
-Get-FileHash "$BK\*" -Algorithm SHA256 | Out-File "$BK\SHA256SUMS.txt"
-# Harness, runtime id, ESM and the current counters, for the "before" picture
+# The ids of the Public Edge resources: the temporary role of step 8 is parameterised from them, never typed
+$out = aws cloudformation describe-stack-resources --stack-name LegalDeskPhase14PublicEdge;             Assert-Aws "describe-stack-resources"
+Save-Text "$BK\LegalDeskPhase14PublicEdge.resources.json" $out
+# Harness, runtime id and the current counters, for the "before" picture
 $harnessId = ((Get-Content "$BK\legaldesk-phase-01.describe-stacks.json" -Raw | ConvertFrom-Json).Stacks[0].Outputs | Where-Object OutputKey -eq HarnessId).OutputValue
-aws bedrock-agentcore-control get-harness --harness-id $harnessId | Out-File "$BK\harness.json" -Encoding utf8
-aws s3api list-object-versions --bucket legaldeskphase08artifacts-legaldeskphase08artifact-4lbcgkaewrsw --prefix phase-14/ --max-items 5 | Out-Null
+$out = aws bedrock-agentcore-control get-harness --harness-id $harnessId;                               Assert-Aws "get-harness"
+Save-Text "$BK\harness.json" $out
+# Sums of every backup, computed BEFORE the sums file exists (otherwise it hashes itself) and without a BOM
+$sums = Get-FileHash "$BK\*" -Algorithm SHA256 | Where-Object { $_.Path -notlike "*SHA256SUMS.txt" } | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" }
+Save-Text "$BK\SHA256SUMS.txt" $sums
 # What the code-only CD sees today: expected FALSE, the repository template is ahead of the deployed one
 python $Repo\scripts\phase15_changeset_preview.py cd-template-match --deployed "$BK\LegalDeskPhase14PublicEdge.template.yaml"
 ```
 
-**After.** Four stacks in `CREATE_COMPLETE`/`UPDATE_COMPLETE` (`UPDATE_ROLLBACK_COMPLETE` is stable but ask why);
+**After.** Four stacks in `CREATE_COMPLETE`/`UPDATE_COMPLETE` (`UPDATE_ROLLBACK_COMPLETE` is stable but ask why; it is what a restored step 8 leaves);
+the Public Edge `RoleARN` is `LegalDeskProductionCloudFormation` (the code-only role), which is why step 8 needs the temporary role;
 `Parameters` of the Public Edge stack include `EnableAgentChat` **absent**; the Harness is `READY` with Phase 09
 memory attached (that is what step 4 removes); note `HarnessArn`, `RuntimeArn`, `QuotaHarnessPerMonth` (probably
 100) and the current `ApplicationCodeKey/Version`. The `cd-template-match` answer is `false`: this is the
-`deployed_template_scope_changed` the next promotion would hit, and step 8 removes it.
+`deployed_template_scope_changed` the next promotion would hit, and step 8a removes it. Check the sums: `SHA256SUMS.txt` lists the backups and not itself.
 **Stop if** a stack is `*_IN_PROGRESS`/`*_FAILED`, drift is reported on a resource this runbook modifies, or the
 deployed template of a stack is **newer** than the repository's (someone deployed something else).
 **Back.** Read-only.
@@ -133,9 +155,12 @@ $cf = "$Repo\infra\cloudformation"
 # Harness: memory off + ADOT on (and later ADOT off)
 & python $Repo\scripts\phase15_changeset_preview.py preview --deployed "$BK\legaldesk-phase-01.template.yaml" --local "$cf\phase-01-harness.yaml" `
   --deployed-param EnablePhase08Gateway=true --deployed-param EnablePhase09Memory=true --param EnablePhase08Gateway=true --param EnablePhase09Memory=false --param EnableManagedAdot=true --profile harness-memory-off-adot-on
-# Public Edge: 14 new AgentChat* resources, application function and role
+# Public Edge 8a: new application code and quota 50, agent chat still off
 & python $Repo\scripts\phase15_changeset_preview.py preview --deployed "$BK\LegalDeskPhase14PublicEdge.template.yaml" --local "$cf\phase-14-public-edge.yaml" `
-  --param EnableAgentChat=true --param ApplicationCodeVersion=new --deployed-param ApplicationCodeVersion=old --profile public-edge-agent-chat
+  --param EnableAgentChat=false --param ApplicationCodeVersion=new --param QuotaHarnessPerMonth=50 --deployed-param ApplicationCodeVersion=old --deployed-param QuotaHarnessPerMonth=100 --profile public-edge-code-and-quota
+# Public Edge 8b: the agent chat on (14 new AgentChat* resources, application function environment and role), on top of 8a
+& python $Repo\scripts\phase15_changeset_preview.py preview --deployed "$cf\phase-14-public-edge.yaml" --local "$cf\phase-14-public-edge.yaml" `
+  --deployed-param EnableAgentChat=false --param EnableAgentChat=true --profile public-edge-agent-chat-on
 # CD role: four statements, two roles modified in place
 & python $Repo\scripts\phase15_changeset_preview.py preview --deployed "$BK\LegalDeskProductionCD.template.yaml" --local "$cf\cd-iam.yaml" --profile cd-iam
 ```
@@ -144,10 +169,11 @@ $cf = "$Repo\infra\cloudformation"
 
 | Stack | Added | Modified (properties) | IAM statement-level changes | Replacement |
 |---|---|---|---|---|
-| Harness `legaldesk-phase-01` (memory off + ADOT on) | — | `MinimalHarness` (`EnvironmentVariables`, `Memory`), `HarnessExecutionRole` (`Policies`) | removes `UsePhase09Memory` | none; the preview cannot know the Harness's behaviour, so **the real change set must say `False`** |
-| Harness (ADOT off, step 6) | — | `MinimalHarness` (`EnvironmentVariables`) | none | same as above |
-| Gateway `LegalDeskPhase08Gateway` | `SearchDocumentsLogGroup`, `SearchDocumentsExecutionRole`, `SearchDocumentsFunction`, `SearchDocumentsGatewayTarget` | `MetadataMcpFunction` (`Code`, `Timeout` 10→20), `GatewayRequestInterceptorFunction` (`Code`), `GatewayExecutionRole` (`Policies`) | adds `SearchDocumentsExecutionRole` (6 statements: no `*` action, no bare `*` resource; Retrieve/Guardrail/InvokeModel on the exact ARNs; S3 `GetObject` on the tenant's `original.pdf`/`original.txt` paths only) and one `lambda:InvokeFunction` on the new Lambda in the Gateway role | none |
-| Public Edge `LegalDeskPhase14PublicEdge` | 14: `AgentChatQueue`, `…DeadLetterQueue`, `…WorkerLogGroup`, `…WorkerExecutionRole`, `…WorkerFunction`, `…EventSourceMapping`, 2 metric filters (`AgentChatFallbackMetric`, `AgentChatJobFailureMetric`), 6 alarms (DLQ, queue age, worker duration, worker errors, job failures, fallback rate) | `ApplicationFunction` (`Code`, `Environment`: two new variables), `ApplicationExecutionRole` (`Policies`), `PublicApiIntegration` (`IntegrationUri`, dependency) | adds `AgentChatWorkerExecutionRole` (10 statements); application role: `PublishAgentChatJobIds` added, `ReadAuthorizationAndApplicationState` and `WriteOnlyApplicationOwnedState` widened by one leading key (`LEGALDESK#P15#CHATJOB#<tenant>#MATTER#*`) | none |
+| Harness `legaldesk-phase-01` (memory off + ADOT on) | — | `MinimalHarness` (`EnvironmentVariables`, `Memory`), `HarnessExecutionRole` (`Policies`) | removes `UsePhase09Memory` | `Memory` is **conditional**: the only createOnly paths of the Harness are `HarnessName` and `Memory/ManagedMemoryConfiguration/EncryptionKeyArn` (`describe-type`), and this change touches neither; the profile accepts it explicitly and the real change set is checked against the same list |
+| Harness (ADOT off, step 6) | — | `MinimalHarness` (`EnvironmentVariables`) | none | none |
+| Gateway `LegalDeskPhase08Gateway` | `SearchDocumentsLogGroup`, `SearchDocumentsExecutionRole`, `SearchDocumentsFunction`, `SearchDocumentsGatewayTarget` | `MetadataMcpFunction` (`Code`, `Timeout` 10→20), `GatewayRequestInterceptorFunction` (`Code`), `GatewayExecutionRole` (`Policies`); `LegalDeskGateway` (`RoleArn`, `InterceptorConfigurations`) changes only because the role and the interceptor Lambda of the same change set change (neither is replaced): **inherited**, accepted by rule | adds `SearchDocumentsExecutionRole` (6 statements: no `*` action, no bare `*` resource; Retrieve/Guardrail/InvokeModel on the exact ARNs; S3 `GetObject` on the tenant's `original.pdf`/`original.txt` paths only) and one `lambda:InvokeFunction` on the new Lambda in the Gateway role | none |
+| Public Edge **8a** | — | `ApplicationFunction` (`Code`, `Environment`: the two new variables and the quota), `PublicApiIntegration` (inherited from the function ARN, accepted by rule) | none | none |
+| Public Edge **8b** | 14: `AgentChatQueue`, `…DeadLetterQueue`, `…WorkerLogGroup`, `…WorkerExecutionRole`, `…WorkerFunction`, `…EventSourceMapping`, 2 metric filters (`AgentChatFallbackMetric`, `AgentChatJobFailureMetric`), 6 alarms (DLQ, queue age, worker duration, worker errors, job failures, fallback rate) | `ApplicationFunction` (`Environment` only: the code is already deployed by 8a), `ApplicationExecutionRole` (`Policies`) | adds `AgentChatWorkerExecutionRole` (10 statements); application role: `PublishAgentChatJobIds` added, `ReadAuthorizationAndApplicationState` and `WriteOnlyApplicationOwnedState` widened by one leading key (`LEGALDESK#P15#CHATJOB#<tenant>#MATTER#*`) | none |
 | `LegalDeskProductionCD` | — | both roles (`Policies`; the service role's `Description`) | four statements, all on the one worker function and its unchanged role | none; `RoleName` unchanged |
 
 Also run the same preview with `--json` and keep the output in the ledger; and `cd-template-match` against the
@@ -193,8 +219,9 @@ aws cloudformation validate-template --template-body file://$cf\phase-01-harness
 aws cloudformation create-change-set --stack-name legaldesk-phase-01 --change-set-name $name --change-set-type UPDATE `
   --template-body file://$cf\phase-01-harness.yaml --parameters file://$Root\harness-params.json --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
 aws cloudformation wait change-set-create-complete --stack-name legaldesk-phase-01 --change-set-name $name
-aws cloudformation describe-change-set --stack-name legaldesk-phase-01 --change-set-name $name | Out-File "$Root\harness-cs.json" -Encoding utf8
-python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-json "$Root\harness-cs.json" --profile harness-memory-off-adot-on   # exit 0 or STOP
+$out = aws cloudformation describe-change-set --stack-name legaldesk-phase-01 --change-set-name $name; Assert-Aws "describe-change-set"
+Save-Text "$Root\harness-cs.json" $out
+python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-json "$Root\harness-cs.json" --profile harness-memory-off-adot-on   # exit 0 or STOP; read acceptedAsInherited / acceptedAsConditional
 # ◆ only after exit code 0 and the owner's go:
 aws cloudformation execute-change-set --stack-name legaldesk-phase-01 --change-set-name $name
 aws cloudformation wait stack-update-complete --stack-name legaldesk-phase-01
@@ -225,6 +252,11 @@ review it the same way. If the Harness was replaced, the old ARN is gone: stop a
 | `content_observed` | ADOT goes **off** (step 6). The residual-risk path of ADR-021 D9 (synthetic data, retention of 1–3 days, restricted IAM, `AGENTS.md` §7 qualified in writing) is *not* taken unless the owner reverses this decision |
 | `log_read_failed`, `invoke_failed`, `no_log_groups_found` | no conclusion; **no re-run** without a new approval; step 6 |
 
+**What the probe covers, and what it does not** (the recorded result, `no_content_observed`, is not changed by this): it counts markers in the **CloudWatch log groups of the Harness runtime**
+(`/aws/bedrock-agentcore/runtimes/<runtime id>*`; one group was found on 2026-11-03). It does **not** read spans (X-Ray / CloudWatch `aws/spans`, Transaction Search is not enabled) or any other
+destination of the managed ADOT layer. And when `answerTokenWritten` is `false` (the model did not write the answer token), the answer side has **no conclusion**: only the question side was
+tested. The evidence is bounded, which is why ADOT goes off whatever the verdict.
+
 The session check and the loop-cut check are not here: they need the deployed worker, so they run together in step 11
 (`scripts/phase15_harness_checks.py`), before the eval.
 
@@ -238,7 +270,7 @@ deployed value, so `params` keeps it) and the profile `harness-adot-off`.
 
 ```powershell
 python $Repo\scripts\phase15_changeset_preview.py params --stack-json <fresh describe-stacks of legaldesk-phase-01> --template "$cf\phase-01-harness.yaml" --set EnableManagedAdot=false --output "$Root\harness-params-2.json"
-# create-change-set / wait / describe-change-set as in step 4, then:
+# create-change-set / wait / describe-change-set (Assert-Aws, Save-Text) as in step 4, then:
 python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-json "$Root\harness-cs-2.json" --profile harness-adot-off
 ```
 
@@ -299,49 +331,164 @@ and have no data.
 > (`search_documents`, `get_extracted_fields`), the script reports `request_rejected` or `tool_use_rejected`, and a Harness change set adding
 > those two names (and nothing else) is the fix — a decision for the owner, because it widens the Harness's own default allowlist.
 
-## Step 8 · Public Edge: queue, worker, alarms and the application code (◆ change set; releases the CD blockage)
+## Step 8 · Public Edge, in three moves: 8a code and quota → promotion → 8b agent chat (◆ change sets with a temporary role)
 
-**Before.** Step 7 passed. Read the deployed `QuotaHarnessPerMonth` from the step 1 backup (probably 100). The owner decided **50** for the deployment: a
-parameter of this change set. The default of the template and of the code (300, ADR-021 D8) does not change, and a stack keeps its stored value unless it is set, so
-it is set explicitly here. The 10 browser-smoke jobs of step 13 use 10 of the 50 jobs of that month; the eval and the checks consume no quota.
+**Why the order.** The browser code of the agentic chat is published by the CD when `developer` is promoted to `prod`. With the agent on and the old frontend, the free chat box would break. So the
+application code and the quota go first with the agent **off** (8a), the CD then publishes the new frontend, and only then is the agent switched on (8b). The beta never loses a function.
+
+**Why a temporary role.** The Public Edge stack is bound to `LegalDeskProductionCloudFormation`, the code-only CD role. CloudFormation uses it whenever the stack is updated, also by the operator. It can only
+`UpdateFunctionCode`: any change set that changes the function environment (`QuotaHarnessPerMonth`, the agent chat variables) or creates the AgentChat resources fails on `lambda:UpdateFunctionConfiguration`,
+and so does the rollback. The CD role is not widened. As in the Phase 14 trusted-edge rotation (D-054, [`idp-bootstrap-runbook.md`](idp-bootstrap-runbook.md)), a **temporary service role** with exactly the
+permissions of these change sets is passed with `--role-arn`, and deleted once the code-only role is back.
+
+### 8.0 · The temporary role (◆ stack `LegalDeskPhase15EdgeBootstrap`)
+
+[`infra/cloudformation/phase-15-edge-agentchat-bootstrap.yaml`](../infra/cloudformation/phase-15-edge-agentchat-bootstrap.yaml), one role, two stages:
+
+| Stage | Used by | Grants (all by exact ARN or name pattern; nothing is `*` except two regional read-only listings) |
+|---|---|---|
+| `code-and-quota` | 8a | what the code-only role has (read and `UpdateFunctionCode` on the application function, read of the immutable artifact, `PassRole` and read of the application role, read of the distribution and its dependencies, `GET`/`PATCH` of the one API integration) **plus** `lambda:UpdateFunctionConfiguration` and `lambda:ListTags` on that function. Creates and deletes nothing |
+| `agent-chat` | 8b | the above plus create, update and delete of the AgentChat resources, each by pattern: queues `LegalDeskPhase14PublicEdge-agent-chat*`, the worker log group and its metric filters, the worker function, the mapping of that function, the worker role (`LegalDeskPhase14PublicEdge-AgentChatWorkerExecutionRole-*`) with `PassRole` to Lambda only, the alarms `…-AgentChat*`, and `iam:PutRolePolicy` on the application role only |
+
+It cannot attach policies, create users or keys, touch S3 objects other than reading the artifact, DynamoDB, Bedrock, AgentCore, Cognito, another role or any other Lambda. The tests pin this against the template
+(`tests/test_phase15_edge_bootstrap_iac.py`): every `AgentChat*` resource type is covered, every name pattern matches the names CloudFormation will generate, and nothing else is writable.
+
+**Do** (stage `code-and-quota` first; the parameters are derived from the deployed stack):
+
+```powershell
+$Boot = "LegalDeskPhase15EdgeBootstrap"; $bootTemplate = "$cf\phase-15-edge-agentchat-bootstrap.yaml"
+python $Repo\scripts\phase15_changeset_preview.py bootstrap-params --stack-json "$BK\LegalDeskPhase14PublicEdge.describe-stacks.json" --resources-json "$BK\LegalDeskPhase14PublicEdge.resources.json" --stage code-and-quota --output "$Root\bootstrap-params.json"
+aws cloudformation validate-template --template-body file://$bootTemplate | Out-Null;                                   Assert-Aws "validate-template"
+aws cloudformation create-change-set --stack-name $Boot --change-set-name p15t9-bootstrap-1 --change-set-type CREATE `
+  --template-body file://$bootTemplate --parameters file://$Root\bootstrap-params.json --capabilities CAPABILITY_IAM;     Assert-Aws "create-change-set"
+aws cloudformation wait change-set-create-complete --stack-name $Boot --change-set-name p15t9-bootstrap-1;              Assert-Aws "wait change set"
+$out = aws cloudformation describe-change-set --stack-name $Boot --change-set-name p15t9-bootstrap-1;                  Assert-Aws "describe-change-set"
+Save-Text "$Root\bootstrap-cs-1.json" $out
+# By eye: exactly ONE change, Add of AWS::IAM::Role EdgeAgentChatCloudFormationRole. Then, on the owner's go:
+aws cloudformation execute-change-set --stack-name $Boot --change-set-name p15t9-bootstrap-1;                          Assert-Aws "execute-change-set"
+aws cloudformation wait stack-create-complete --stack-name $Boot;                                                       Assert-Aws "wait stack-create-complete"
+$tempRole = aws cloudformation describe-stacks --stack-name $Boot --query "Stacks[0].Outputs[?OutputKey=='EdgeAgentChatCloudFormationRoleArn'].OutputValue" --output text; Assert-Aws "describe-stacks"
+```
+
+**After.** Prove the stage with IAM simulation (a free read; the role may need ~10 s to propagate). `$fn` is the application function ARN, `$other` any other function of the account:
+
+```powershell
+aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names lambda:UpdateFunctionConfiguration lambda:UpdateFunctionCode --resource-arns $fn   # allowed
+aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names lambda:UpdateFunctionConfiguration --resource-arns $other                          # implicitDeny
+aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names sqs:CreateQueue iam:CreateRole iam:PutRolePolicy lambda:CreateFunction --resource-arns "*"   # all implicitDeny at this stage
+```
+
+**Stop if** the change set has any other change, an "allowed" is denied, or a "denied" is allowed. **Back.** Delete the stack (nothing else uses it yet).
+
+### 8a · New application code and quota 50, agent chat still off (◆ change set on `LegalDeskPhase14PublicEdge`)
+
+**Before.** 8.0 done. Step 7 passed. The step 1 backup is the rollback source. Read the deployed `QuotaHarnessPerMonth` (probably 100): the owner decided **50** for the deployment; the template and code default
+(300, ADR-021 D8) does not change, and a stack keeps its stored value unless it is set. The 10 browser-smoke jobs use 10 of the 50 jobs of that month; the eval and the checks consume no quota.
 
 **Do.**
 
 ```powershell
-$sets = @("EnableAgentChat=true","ApplicationCodeBucket=$bucket","ApplicationCodeKey=$key","ApplicationCodeVersion=$version","QuotaHarnessPerMonth=50")
+$sets = @("EnableAgentChat=false","ApplicationCodeBucket=$bucket","ApplicationCodeKey=$key","ApplicationCodeVersion=$version","QuotaHarnessPerMonth=50")
 $setArgs = $sets | ForEach-Object { "--set"; $_ }
-python $Repo\scripts\phase15_changeset_preview.py params --stack-json "$BK\LegalDeskPhase14PublicEdge.describe-stacks.json" --template "$cf\phase-14-public-edge.yaml" @setArgs --output "$Root\edge-params.json"
-# validate-template, create-change-set (stack LegalDeskPhase14PublicEdge, capabilities as reported), describe-change-set to $Root\edge-cs.json
-python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-json "$Root\edge-cs.json" --profile public-edge-agent-chat
+python $Repo\scripts\phase15_changeset_preview.py params --stack-json "$BK\LegalDeskPhase14PublicEdge.describe-stacks.json" --template "$cf\phase-14-public-edge.yaml" @setArgs --output "$Root\edge-params-8a.json"
+aws cloudformation validate-template --template-body file://$cf\phase-14-public-edge.yaml | Out-Null;                    Assert-Aws "validate-template"
+aws cloudformation create-change-set --stack-name LegalDeskPhase14PublicEdge --change-set-name p15t9-edge-8a --change-set-type UPDATE `
+  --template-body file://$cf\phase-14-public-edge.yaml --parameters file://$Root\edge-params-8a.json --capabilities CAPABILITY_IAM `
+  --role-arn $tempRole;                                                                                                  Assert-Aws "create-change-set"      # <- the temporary role, explicitly
+aws cloudformation wait change-set-create-complete --stack-name LegalDeskPhase14PublicEdge --change-set-name p15t9-edge-8a; Assert-Aws "wait change set"
+$out = aws cloudformation describe-change-set --stack-name LegalDeskPhase14PublicEdge --change-set-name p15t9-edge-8a;  Assert-Aws "describe-change-set"
+Save-Text "$Root\edge-cs-8a.json" $out
+python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-json "$Root\edge-cs-8a.json" --profile public-edge-code-and-quota
 ```
 
-`AgentChatAlarmTopicArn` stays empty by decision: the six alarms exist and are read in the console, they notify nobody (no SNS topic, no subscription). `AgentChatMaxConcurrency` keeps its default 2.
-Then, only on exit 0 and the owner's go, execute and wait.
+Expected (as on 2026-11-03): only `Modify` of `ApplicationFunction` (`Code`, `Environment`) and the dependent `PublicApiIntegration` (inherited from the function ARN; the command reports it under `acceptedAsInherited`), no
+`Add`, no IAM resource, no replacement. On exit 0 and the owner's go: `execute-change-set` (the role was bound at creation) and `wait stack-update-complete`.
+
+**After.**
+
+- `describe-stacks`: `UPDATE_COMPLETE`, `QuotaHarnessPerMonth=50`, `EnableAgentChat=false`; the stack `RoleARN` is now the temporary role (recorded; restored below).
+- Application function: `CodeSha256` = the zip's; environment `LEGALDESK_QUOTA_HARNESS_PER_MONTH=50`, `LEGALDESK_AGENT_CHAT_ENABLED=false`, `LEGALDESK_AGENT_CHAT_QUEUE_URL` empty. No `AgentChat*` resource exists.
+- `cd-template-match --deployed <fresh get-template>` is now **`true`**: the checked-in template equals the deployed one, so the code-only CD can run.
+- Public checks of the CD, by hand: `/` → 200, `/logout` → 302, `/api/me` (no cookie) → 403; the free chat box still works (synchronous path, old frontend).
+
+**Stop if** the profile gate ≠ 0, the stack rolls back, or `/api/me` leaves 403.
+
+**Back.** A change set with the **backup template and the recorded previous parameters** (old code key/version, quota 100), again with `--role-arn $tempRole`. If a failed update leaves `UPDATE_ROLLBACK_FAILED`, as on 2026-11-03:
+confirm that the function was never changed (`CodeSha256`, environment unchanged) and then `aws cloudformation continue-update-rollback --stack-name LegalDeskPhase14PublicEdge --resources-to-skip ApplicationFunction` (and `--role-arn $tempRole`
+if the stored role cannot do the rest), record it, and look at the stack events before any new attempt. Never skip a resource whose state you have not read.
+
+### Promotion · `developer` → `prod` (the CD publishes the new frontend)
+
+By pull request, as always. The CD (`production-cd.yml`) passes `LegalDeskProductionCloudFormation` explicitly, which also restores the stack's stored role.
+
+**Before.** 8a verified; `cd-template-match` = `true`; the CI of the promoted commit is green. Dry run locally (it makes no AWS call): `python scripts/deploy_release.py --commit <sha> --release-dir <dir> --artifact-bucket … --artifact-key …`.
+
+**After** (the record of the run and AWS read-back):
+
+- Workflow green; release record `PASS` with `agentChatWorker: DISABLED` (the flag is off: the worker does not exist and the CD behaves exactly as before). Change set of exactly `ApplicationFunction.Code` and `PublicApiIntegration.IntegrationUri`.
+- The five frontend assets served by CloudFront have the hashes of the release; `/` 200, `/logout` 302, `/api/me` 403.
+- `describe-stacks` of the Public Edge stack: `RoleARN` is **`LegalDeskProductionCloudFormation`** again.
+- **The CD did not need the step 9 role**: the worker does not exist yet, so `LegalDeskProductionCD` is not touched here. `cd-template-match` still `true`.
+- The free chat box works with the new frontend (agent off: synchronous path).
+
+**Stop if** the CD fails closed (`deployed_template_scope_changed`, `change_set_scope_violation`…): do not continue to 8b; read the record and fix on the repository side. **Back.** The CD's own rollback record (previous Lambda and frontend versions).
+
+### 8b · Agent chat on (◆ stage `agent-chat`, then change set on `LegalDeskPhase14PublicEdge`)
+
+**Before.** The promotion verified. Re-take the Public Edge backup into `$BK\after-8a\` (`describe-stacks`, `get-template`, `describe-stack-resources`): the code parameters now point to the **release the CD deployed**, and 8b
+keeps them (`UsePreviousValue`), so the worker and the API run the same package. Note that commit and zip hash: steps 11 and 12 use them as `--release-commit` / `--artifact-sha256`.
+
+1. **Widen the temporary role to stage `agent-chat`** (a reviewed update of the bootstrap stack):
+
+   ```powershell
+   python $Repo\scripts\phase15_changeset_preview.py bootstrap-params --stack-json "$BK\after-8a\LegalDeskPhase14PublicEdge.describe-stacks.json" --resources-json "$BK\after-8a\LegalDeskPhase14PublicEdge.resources.json" --stage agent-chat --output "$Root\bootstrap-params-2.json"
+   # create-change-set --change-set-type UPDATE on $Boot with the same template: exactly ONE change, Modify of the role (Policies), Replacement False, then execute and wait stack-update-complete
+   ```
+
+   Simulate again: `sqs:CreateQueue` on `…:LegalDeskPhase14PublicEdge-agent-chat`, `lambda:CreateFunction` on `…:function:LegalDeskPhase14PublicEdge-agent-chat-worker`, `iam:CreateRole` on `…:role/LegalDeskPhase14PublicEdge-AgentChatWorkerExecutionRole-X` and
+   `iam:PutRolePolicy` on the application role are **allowed**; the same actions on any other name, `iam:AttachRolePolicy`, `lambda:CreateFunction` on another function and `s3:PutObject` are **implicitDeny**.
+
+2. **The change set** (only `EnableAgentChat` changes; `AgentChatAlarmTopicArn` stays empty by decision: the six alarms are read in the console, they notify nobody; `AgentChatMaxConcurrency` keeps its default 2):
+
+   ```powershell
+   python $Repo\scripts\phase15_changeset_preview.py params --stack-json "$BK\after-8a\LegalDeskPhase14PublicEdge.describe-stacks.json" --template "$cf\phase-14-public-edge.yaml" --set EnableAgentChat=true --output "$Root\edge-params-8b.json"
+   # validate-template, create-change-set (--role-arn $tempRole, --capabilities CAPABILITY_IAM), wait, describe-change-set (Save-Text) to $Root\edge-cs-8b.json
+   python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-json "$Root\edge-cs-8b.json" --profile public-edge-agent-chat-on
+   ```
+
+   Then, only on exit 0 and the owner's go, execute and wait.
 
 **After.**
 
 - Outputs: `AgentChatQueueArn`, `AgentChatDeadLetterQueueArn`, `AgentChatWorkerFunctionName` = `LegalDeskPhase14PublicEdge-agent-chat-worker`.
 - Queue attributes: `VisibilityTimeout 900`, `MessageRetentionPeriod 3600`, redrive `maxReceiveCount 2`, SSE on; DLQ empty.
-- `aws lambda list-event-source-mappings --function-name …-agent-chat-worker`: `Enabled`, `BatchSize 1`, `ScalingConfig.MaximumConcurrency 2`,
-  `FunctionResponseTypes [ReportBatchItemFailures]`; worker `Timeout 150`, **no** reserved concurrency (`get-function-concurrency` empty).
-- Worker and application `CodeSha256` = the zip's.
-- **Quota 50**: `describe-stacks` shows `QuotaHarnessPerMonth=50` and `get-function-configuration` of both functions shows `LEGALDESK_QUOTA_HARNESS_PER_MONTH=50`
-  (`QuotaChatsPerMonth` unchanged).
-- **Alarms and metrics**: six `AgentChat*` alarms (`aws cloudwatch describe-alarms --alarm-name-prefix LegalDeskPhase14PublicEdge`), all `ActionsEnabled=false`
-  with empty `AlarmActions`; the three on Lambda metrics (`Duration`, `Errors`, `Invocations`) dimension `FunctionName` = the worker; exactly **two** metric filters on the
-  worker log group, none with dimensions; no `AgentChatJobDurationMs`, `AgentChatJobsCompleted`, `…ByCode` or `…ByReason` metric exists.
-- Public checks of the CD, by hand: `/` → 200, `/logout` → 302, `/api/me` (no cookie) → 403; the five frontend assets unchanged.
-- `cd-template-match --deployed <fresh get-template>` is now `true`.
+- `aws lambda list-event-source-mappings --function-name …-agent-chat-worker`: `Enabled`, `BatchSize 1`, `ScalingConfig.MaximumConcurrency 2`, `FunctionResponseTypes [ReportBatchItemFailures]`; worker `Timeout 150`, **no** reserved concurrency (`get-function-concurrency` empty).
+- Worker and application `CodeSha256` = the zip of the release the CD deployed.
+- **Quota 50**: `describe-stacks` shows `QuotaHarnessPerMonth=50` and both functions show `LEGALDESK_QUOTA_HARNESS_PER_MONTH=50` (`QuotaChatsPerMonth` unchanged).
+- **Alarms and metrics**: six `AgentChat*` alarms (`aws cloudwatch describe-alarms --alarm-name-prefix LegalDeskPhase14PublicEdge`), all `ActionsEnabled=false` with empty `AlarmActions`; the three on Lambda metrics (`Duration`, `Errors`, `Invocations`) have dimension
+  `FunctionName` = the worker; exactly **two** metric filters on the worker log group, none with dimensions; no `AgentChatJobDurationMs`, `AgentChatJobsCompleted`, `…ByCode` or `…ByReason` metric exists.
+- Public checks of the CD, by hand: `/` → 200, `/logout` → 302, `/api/me` (no cookie) → 403; the five frontend assets unchanged. A free chat question now returns a `jobId` and the new frontend polls it.
+- `cd-template-match --deployed <fresh get-template>` is still `true`.
 
-**Stop if** the profile gate ≠ 0 (especially any resource of another stack, `FrontendBucket`, `PublicApi*` other than the integration, or `Replacement`), the stack
-rolls back, or `/api/me` leaves 403.
-**Back.** Profile `public-edge-agent-chat-rollback`: set `EnableAgentChat=false` (all other parameters `UsePreviousValue`). It removes the 14 resources (queue and
-DLQ are `DeletionPolicy: Delete`; confirm both are empty first), leaves the application on the new code, and keeps the template identical to the repository's, so the
-CD keeps working.
+**Stop if** the profile gate ≠ 0 (especially any resource of another stack, `FrontendBucket`, `PublicApi*` other than the integration, or `Replacement`), the stack rolls back, or `/api/me` leaves 403.
+If the rollback or the creation fails on a missing permission, read the `AccessDenied` in the stack events, add exactly that action to the bootstrap template through a reviewed change (with its test), update the bootstrap stack and repeat: never widen the role on the fly.
+
+**Back.** Profile `public-edge-agent-chat-rollback`: set `EnableAgentChat=false` (all other parameters `UsePreviousValue`, `--role-arn $tempRole`). It removes the 14 resources (queue and DLQ are `DeletionPolicy: Delete`; confirm both are empty first), leaves the application on the
+new code and keeps the template identical to the repository's, so the CD keeps working.
+
+### Restoring the code-only role (closes step 8; the temporary stack is deleted only after this)
+
+After 8b the stack's stored `RoleARN` is the temporary role. It goes back the way D-054 did it: **the next code-only CD release passes `LegalDeskProductionCloudFormation` explicitly** (the CD does this on every run). Until then the
+temporary role stays, with its exposure recorded: it can be assumed only by CloudFormation, and used only by someone who may pass it to a change set. Any promotion works; the merge of the T9 fixes is the natural one.
+
+1. After that release: `aws cloudformation describe-stacks --stack-name LegalDeskPhase14PublicEdge --query "Stacks[0].RoleARN"` must be the code-only role. A no-op or an assumed restoration does not count.
+2. Only then delete the temporary stack and read it back: `aws cloudformation delete-stack --stack-name LegalDeskPhase15EdgeBootstrap`, wait `stack-delete-complete`, and `aws iam get-role` on the temporary role must fail with `NoSuchEntity`.
+3. If the next release is far away and the owner wants it closed sooner, promote any commit: the CD's change set is `ApplicationFunction.Code` and the integration, with `agentChatWorker: VERIFIED` once step 9 is done.
 
 ## Step 9 · CD role (◆ change set on `LegalDeskProductionCD`, by the operator)
 
-The worker must exist (ARNs). This stack is **not** deployed by CD and is not reachable from the OIDC role.
+The worker must exist (ARNs): after 8b. This stack is **not** deployed by CD and is not reachable from the OIDC role. Until the worker exists the CD does not need it (the change set has no worker). Between 8b and this step a
+promotion would include `AgentChatWorkerFunction.Code`, which the code-only CloudFormation role cannot update yet: the CD would fail closed and roll back. **Do not promote between 8b and this step.**
 
 **Do.**
 
@@ -371,13 +518,13 @@ aws iam simulate-principal-policy --policy-source-arn $relRole --action-names la
 **Stop if** an "allowed" is denied (the first promotion would fail closed and roll back) or a "denied" is allowed. **Back.** Change set from
 `$BK\LegalDeskProductionCD.template.yaml` with the recorded parameters; the application function's CD path is unchanged either way.
 
-**Next promotion.** `developer → prod` is now the first real use of the new CD path: `scripts/deploy_release.py` dry-run, then the normal workflow.
+**Next promotion.** `developer → prod` is now the first real use of the new CD path, and the release that restores the code-only role of the Public Edge stack (end of step 8): `scripts/deploy_release.py` dry-run, then the normal workflow.
 Expect a change set of exactly `ApplicationFunction.Code`, `AgentChatWorkerFunction.Code` and `PublicApiIntegration.IntegrationUri`, and `agentChatWorker: VERIFIED` in the
 release record. Any later edit of the Public Edge template needs this operator step first.
 
 ## Step 10 · Re-read the whole state (AWS read-only)
 
-Re-run the step 1 inventory into `$Root\after\`; compare. Expected: the four stacks `UPDATE_COMPLETE`, parameters changed only as in the steps above,
+Re-run the step 1 inventory into `$Root\after\`; compare. Expected: the four stacks `UPDATE_COMPLETE` (and `LegalDeskPhase15EdgeBootstrap` while the code-only role is not yet restored), parameters changed only as in the steps above,
 no resource outside the profiles, the Harness ARN/runtime id equal to step 1, ADOT disabled (unless accepted). **Stop if** anything else moved.
 
 ## Step 11 · Harness checks: allowed tools, session, cut loop (◆ paid: 5 Harness invocations)
@@ -488,9 +635,10 @@ The quota of the deployment is 50 `harness` jobs a month: the ten model calls be
 2. Revoke/let expire the test user's session; unset `LEGALDESK_EVAL_ACCESS_TOKEN`; delete the shell history lines that held it.
 3. Lower (never raise) the retention of any log group created in the block to the lowest the owner accepts (3 days for the Harness runtime groups).
 4. **Mandatory: delete the synthetic conversation bindings of steps 11 and 12** and verify it (section below). It is not optional and the block is not closed until it is done.
-5. Keep `$BK` and `$Root` **outside the repository** until the owner signs off, then archive them; they contain parameter values (ARNs, ids) but no secret
+5. **Temporary role**: the code-only role is the stored `RoleARN` of the Public Edge stack again and `LegalDeskPhase15EdgeBootstrap` is deleted (end of step 8). If the next release has not happened yet, the block is **not closed**: record the temporary role as an open item with its owner.
+6. Keep `$BK` and `$Root` **outside the repository** until the owner signs off, then archive them; they contain parameter values (ARNs, ids) but no secret
    (`NoEcho` values are masked by CloudFormation and were only ever passed as `UsePreviousValue`). Copy the evidence summary to `docs/phase-15-acceptance.md`.
-6. Check the real cost the next day in the Billing console (not the Cost Explorer API) and record it next to the estimate.
+7. Check the real cost the next day in the Billing console (not the Cost Explorer API) and record it next to the estimate.
 
 ### Mandatory cleanup of the synthetic conversation bindings (steps 11 and 12)
 
@@ -585,6 +733,7 @@ lists them (it reads the whole table once: a few hundred items); delete only the
 | `EnablePhase09Memory` | `false` | `get-harness`: memory disabled |
 | `cd-template-match` | `true`; the CD releases API and worker together (`agentChatWorker: VERIFIED`) | the command of step 8, on a fresh `get-template` |
 | Conversation bindings of steps 11 and 12 | deleted | the cleanup summary line above |
+| `RoleARN` of the Public Edge stack; temporary stack | `LegalDeskProductionCloudFormation`; `LegalDeskPhase15EdgeBootstrap` deleted | `describe-stacks`; `describe-stacks` of the temporary stack fails; `iam get-role` of the temporary role `NoSuchEntity` |
 | Change sets left over, ADOT window, retention of log groups created in the block | none / closed / lowered | steps 1 to 3 of this list |
 
 Cost of this state, from [`phase-15-t9-cost-estimate.md`](phase-15-t9-cost-estimate.md): **1.30 USD a month fixed** (7 alarm metrics and 2 custom metrics; every other signal is a

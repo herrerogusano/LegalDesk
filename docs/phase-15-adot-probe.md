@@ -68,3 +68,14 @@ and discards them.
 - The probe covers the runtime log groups of this Harness. It does not enable
   Transaction Search, which adds account-wide span-ingestion cost.
 - With real data the rule remains: opt-out verified, or spans of our own without content.
+
+### Scope of the probe, as found in the live block of 2026-11-03
+
+The probe reads only the **CloudWatch log groups of the Harness runtime** (`/aws/bedrock-agentcore/runtimes/<runtime id>*`; one group was found). It does **not** read spans: nothing
+in the managed ADOT layer that goes to X-Ray or to `aws/spans` is searched, and Transaction Search is not enabled, so no span destination is covered either. A `no_content_observed`
+verdict therefore means "the markers were not in the runtime log groups within the window", not "the managed telemetry holds no content".
+
+The two sides of the test are not equally strong. The question token (`<marker>-Q`) is in the prompt, so its absence from the logs is informative whenever the invocation was made. The answer
+token (`<marker>-ANSWER`) exists only if the model writes it: when `answerTokenWritten` is `false` the model did not write it and the answer side has **no conclusion** (`null` means unknown).
+The result recorded on 2026-11-03 (`no_content_observed`) is unchanged and remains bounded evidence; the decision that follows from it is the one of ADR-021 D9 and of the owner: ADOT is switched
+off after the probe whatever the verdict.
