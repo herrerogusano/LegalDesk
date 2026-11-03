@@ -213,6 +213,7 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
             "harness-memory-off-adot-on": "phase-01-harness.yaml",
             "harness-adot-off": "phase-01-harness.yaml",
             "cd-iam": "cd-iam.yaml",
+            "cd-iam-attribute-reads": "cd-iam.yaml",
         }
         for profile_name, template_name in mapping.items():
             resources = set(_real(template_name)["Resources"])
@@ -220,13 +221,19 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
             for logical_id in [*profile["add"], *profile["modify"], *profile["iamResources"]]:
                 self.assertIn(logical_id, resources, f"{profile_name}: {logical_id}")
 
-    def test_cd_iam_profile_is_exactly_the_four_worker_statements(self) -> None:
+    def test_cd_iam_profile_is_exactly_the_worker_statements_and_the_queue_attribute_reads(self) -> None:
         profile = preview.load_profile("cd-iam")
         self.assertEqual(
             sorted(entry["sid"] for entry in profile["iam"]),
-            ["PassUnchangedAgentChatWorkerRoleIfRequired", "ReadAndUpdateOnlyAgentChatWorkerCode", "ReadUnchangedAgentChatWorkerRolePolicy", "VerifyOnlyTheAgentChatWorker"],
+            ["PassUnchangedAgentChatWorkerRoleIfRequired", "ReadAndUpdateOnlyAgentChatWorkerCode", "ReadOnlyAgentChatQueueAttributes", "ReadUnchangedAgentChatWorkerRolePolicy", "VerifyOnlyTheAgentChatWorker"],
         )
         self.assertTrue(all(entry["change"] == "added" for entry in profile["iam"]))
+
+    def test_the_rerun_profile_after_the_live_failure_of_2026_11_03_is_the_one_read_statement_and_nothing_else(self) -> None:
+        profile = preview.load_profile("cd-iam-attribute-reads")
+        self.assertEqual([(e["resource"], e["sid"], e["change"]) for e in profile["iam"]], [("CloudFormationExecutionRole", "ReadOnlyAgentChatQueueAttributes", "added")])
+        self.assertEqual((profile["add"], profile["remove"], profile["modify"]), ([], [], {"CloudFormationExecutionRole": ["Policies"]}))
+        self.assertEqual(profile.get("wideAllowed", []), [])
 
 
 class ProfileViolationTests(unittest.TestCase):
@@ -415,6 +422,42 @@ class CommandLineTests(unittest.TestCase):
 
     def test_unreadable_input_exits_2(self) -> None:
         self.assertEqual(self._run(["preview", "--deployed", "missing.yaml", "--local", str(TEMPLATES / "cd-iam.yaml")])[0], 2)
+
+
+
+class InheritedIamChangeTests(unittest.TestCase):
+    """Step 9 again (2026-11-03): an IAM role whose only change is inherited from an unreplaced role is not 'touched'."""
+
+    @staticmethod
+    def described(release_details: list[dict[str, Any]]) -> dict[str, Any]:
+        def change(logical_id: str, details: list[dict[str, Any]]) -> dict[str, Any]:
+            return {"Type": "Resource", "ResourceChange": {
+                "Action": "Modify", "LogicalResourceId": logical_id, "ResourceType": "AWS::IAM::Role",
+                "Replacement": "False", "Scope": ["Properties"], "Details": details}}
+        direct = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                   "Evaluation": "Static", "ChangeSource": "DirectModification"}]
+        return {"Status": "CREATE_COMPLETE", "Changes": [change("CloudFormationExecutionRole", direct), change("ProductionDeploymentRole", release_details)]}
+
+    def test_inherited_only_change_of_another_role_passes_the_attribute_reads_profile(self) -> None:
+        inherited = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                      "Evaluation": "Dynamic", "ChangeSource": "ResourceAttribute", "CausingEntity": "CloudFormationExecutionRole.Arn"}]
+        analysis = preview.analyze_change_set(self.described(inherited), preview.load_profile("cd-iam-attribute-reads"))
+        self.assertEqual(analysis["violations"], [])
+        self.assertIn("ProductionDeploymentRole.Policies <- CloudFormationExecutionRole.Arn", analysis["inherited"])
+
+    def test_a_replaced_role_with_only_inherited_details_still_stops(self) -> None:
+        inherited = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                      "Evaluation": "Dynamic", "ChangeSource": "ResourceAttribute", "CausingEntity": "CloudFormationExecutionRole.Arn"}]
+        described = self.described(inherited)
+        described["Changes"][1]["ResourceChange"]["Replacement"] = "True"
+        violations = preview.analyze_change_set(described, preview.load_profile("cd-iam-attribute-reads"))["violations"]
+        self.assertIn("IAM resource changed outside the profile: ProductionDeploymentRole", violations)
+
+    def test_a_direct_change_of_that_role_still_stops(self) -> None:
+        direct = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                   "Evaluation": "Static", "ChangeSource": "DirectModification"}]
+        violations = preview.analyze_change_set(self.described(direct), preview.load_profile("cd-iam-attribute-reads"))["violations"]
+        self.assertIn("IAM resource changed outside the profile: ProductionDeploymentRole", violations)
 
 
 if __name__ == "__main__":
