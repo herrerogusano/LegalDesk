@@ -530,7 +530,13 @@ backend escribe el registro de invocación en servidor; su id viaja en
 `x-legaldesk-invocation-id`, una cabecera fija de la configuración MCP que el
 modelo no controla; el interceptor rechaza cualquier tool que no esté en
 `allowedTools` de ese registro (`gateway_interceptor.py`). El límite de
-privilegios del agente no depende del prompt. Las acciones `metadata` y
+privilegios del agente no depende del prompt. Todas las tools del agente exigen
+`matterId` (esquemas de los targets y lectura del cuerpo crudo en el
+interceptor), así que el cliente añade al system prompt anclado una instrucción
+construida en servidor con el selector de la sesión (`matter_selector_instruction`,
+2026-11-03: sin ella el modelo no tenía el valor y las llamadas no llegaban al
+target). El selector no es autoridad: el interceptor lo compara con el acceso del
+usuario y con el registro de invocación, y cualquier otro valor se rechaza. Las acciones `metadata` y
 `review` de la UI y el camino M2M de IDP no cambian.
 
 #### D7. Memoria
@@ -662,10 +668,15 @@ contenido.
     primera prueba en vivo.
   - `InvokeHarness`: `messages` es una lista de `HarnessMessage` con rol
     `user | assistant`, así que el backend puede enviar el historial. La
-    memoria de Harness se puede desactivar (`disabled`). Pendiente de la prueba
-    en vivo: confirmar que, sin memoria, el mismo `runtimeSessionId` no guarda
-    historial propio en el microVM; si lo guarda, se usará un
-    `runtimeSessionId` nuevo por job.
+    memoria de Harness se puede desactivar (`disabled`). **Comprobado en vivo el
+    2026-11-03 (paso 11): Harness SÍ conserva el historial dentro de un mismo
+    `runtimeSessionId` aunque la memoria esté desactivada.** Se aplica la
+    alternativa prevista, afinada: `runtimeSessionId` nuevo en **cada
+    invocación** (cada job y cada reintento de un job), para que un reintento
+    tampoco herede estado oculto. El scope de memoria del binding no cambia: sigue
+    alimentando la cabecera `x-legaldesk-memory-session-id` y el registro de
+    invocación, que el interceptor compara entre sí y no con la sesión de
+    runtime. Esto cumple la condición que ya fijaba este ADR; no lo modifica.
   - La memoria gestionada de Harness guarda eventos en bruto (mensajes y tool
     calls), incluidos resultados de tools con fragmentos de documentos. Eso
     choca con ADR-011 y con la política del backend (`extractionMode=SKIP`,

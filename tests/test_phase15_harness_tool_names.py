@@ -27,6 +27,7 @@ from legaldesk_agent.client import (  # noqa: E402
     _canonical_tool_name,
     _harness_stream_form,
     _structured_tool_results,
+    ERROR_HINTS,
 )
 
 FIXTURE = ROOT / "tests" / "fixtures" / "phase15_live" / "harness-stream-gateway-names.json"
@@ -124,6 +125,43 @@ class OnlyTheExactImageOfAnAllowedEntryIsAcceptedTests(unittest.TestCase):
             _structured_tool_results(events + base.tool_call("tu-1", SEARCH_STREAM, {"answer": "x"}), allowed_tools=AGENT_SCOPE_TOOLS, raw=True)
         with self.assertRaises(ValueError):
             _structured_tool_results(events + base.tool_call("tu-2", "legaldesk_gateway_unknown___tool", {}), allowed_tools=AGENT_SCOPE_TOOLS, raw=True)
+
+
+class AFailedToolResultSaysWhyWithAClosedLabelTests(unittest.TestCase):
+    """T9 step 11 (second report): a failed search_documents call left only status=ERROR; the reason is now a closed label, never the text."""
+
+    def parse(self, status: str, text: str | None):
+        events = base.tool_call("tu-1", SEARCH, text, status=status)
+        (call,) = _structured_tool_results(events, allowed_tools=AGENT_SCOPE_TOOLS, raw=True, allow_incomplete=True)
+        return call
+
+    def test_labels_for_the_reasons_a_gateway_or_harness_would_give(self) -> None:
+        cases = {
+            "Input validation error: 'matterId' is a required property": "missing_required_argument",
+            '{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"access denied"}}': "access_denied",
+            "Tool search_documents is not allowed": "tool_not_allowed",
+            "Arguments failed schema validation": "invalid_arguments",
+            "The request timed out": "timeout",
+            "ThrottlingException: Rate exceeded": "throttled",
+            "something we have never seen": "unclassified",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text):
+                call = self.parse("error", text)
+                self.assertEqual((call.status, call.error_hint), ("ERROR", expected))
+                self.assertIn(call.error_hint, ERROR_HINTS)
+
+    def test_a_successful_call_has_no_hint_and_an_empty_success_is_a_no_text_error(self) -> None:
+        ok = self.parse("success", json.dumps({"content": [{"type": "text", "text": json.dumps({"answer": "x"})}]}))
+        self.assertEqual((ok.status, ok.error_hint), ("SUCCESS", None))
+        empty = self.parse("success", "")
+        self.assertEqual((empty.status, empty.error_hint), ("ERROR", "no_text"))
+
+    def test_the_hint_reaches_the_call_log_of_the_worker(self) -> None:
+        events = base.tool_call("tu-1", SEARCH_STREAM, "Input validation error: 'matterId' is a required property") + base.final_message("{}")
+        result = invoke_agent_chat(HarnessInvoker(base.StreamClient(events), base.HARNESS_ARN), "q", invocation_scope=base.make_scope(), system_prompt=base.PROMPT)
+        (call,) = result.tool_calls
+        self.assertEqual((call.short_name, call.status, call.error_hint), ("search_documents", "ERROR", "missing_required_argument"))
 
 
 class TheParserRejectionHasItsOwnExceptionTests(unittest.TestCase):

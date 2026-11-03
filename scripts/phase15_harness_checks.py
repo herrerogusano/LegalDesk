@@ -51,7 +51,7 @@ from typing import Any, Callable, Iterator, Mapping
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKS_VERSION = "1.1.0"
+CHECKS_VERSION = "1.2.0"
 SCHEMA_VERSION = "phase15-harness-checks-2"
 REPORT_PREFIX = "phase15-harness-checks-"
 RESULTS_ROOT = ROOT / "evals" / "results"
@@ -74,6 +74,14 @@ DEFAULT_CUT_QUESTION = "What does the notice clause of the lease say?"
 ALLOWED_TOOLS = (
     "accepted", "request_rejected", "tool_use_rejected", "client_parser_rejected", "request_accepted_tool_use_not_exercised", "inconclusive", "not_run",
 )
+# The worker (invoke_agent_chat) uses a NEW runtimeSessionId on every call, so Harness keeping the history of one session id is a
+# known, handled behaviour of Harness (found by this check on 2026-11-03), not a defect of the worker. A test pins the claim to the
+# adapter (tests/test_phase15_agent_gateway_selector_and_session.py); if it ever stops being true that test fails first.
+WORKER_USES_A_FRESH_SESSION_PER_INVOCATION = True
+# Closed reasons of a failed tool result; identical to legaldesk_agent.client.ERROR_HINTS (a test compares them).
+ERROR_HINTS = (
+    "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text", "unclassified",
+)
 # Verdicts after which the cut-loop check is not run (it would fail the same way and spend two paid calls).
 REJECTED_VERDICTS = frozenset({"request_rejected", "tool_use_rejected", "client_parser_rejected"})
 # What the report may say about the acknowledgement of turn 1, so that an inconclusive session says WHY without storing any text.
@@ -93,7 +101,7 @@ INTERPRETATION = {
     },
     "session": {
         "history_not_retained": "without memory the session keeps no history of its own (bounded evidence): the worker's session scheme is fine",
-        "history_retained": "the session keeps history: the worker must use a new runtimeSessionId per job (code change) before the eval",
+        "history_retained": "Harness keeps the history of a runtimeSessionId even with memory disabled. The check reuses one id on purpose, so this verdict is expected; the worker uses a new runtimeSessionId on every call (see sessionPolicy), so it is a handled finding, not a defect",
         "inconclusive": "the model did not acknowledge turn 1 as a whole word (see ackDiagnosis for why, without any text): no conclusion; a rerun needs a new approval",
         "invoke_failed": "an invocation failed: no conclusion; a rerun needs a new approval",
         "not_run": "not run",
@@ -101,7 +109,7 @@ INTERPRETATION = {
     "tool_results": {
         "retained": "the completed tool result is in the stream after the loop is cut: ADR-021 D5 holds as written",
         "lost": "the tool result is lost when the loop is cut: the output tree must go straight to the direct RAG fallback (code change)",
-        "inconclusive": "the model did not call a tool, or only one call was conclusive: no conclusion",
+        "inconclusive": "the model did not call a tool, or its tool calls failed or were conclusive in only one call (see toolErrorHints for why a call failed, as a closed label): no conclusion",
         "invoke_failed": "an invocation failed: no conclusion; a rerun needs a new approval",
         "skipped_tools_rejected": "not run because the allowed_tools pre-check was rejected",
         "not_run": "not run",
@@ -340,6 +348,9 @@ def check_tool_results(backends: Backends, state: _State, question: str) -> dict
             "iterations": getattr(loop, "iterations", None), "toolCalls": len(calls),
             "toolNames": [name if name in KNOWN_TOOL_NAMES else "other" for name in (getattr(item, "short_name", None) for item in calls)],
             "toolStatuses": [status if status in {"SUCCESS", "ERROR"} else "other" for status in (getattr(item, "status", None) for item in calls)],
+            "toolErrorHints": [
+                (hint if hint in ERROR_HINTS else "other") for hint in (getattr(item, "error_hint", None) for item in calls if getattr(item, "status", None) != "SUCCESS")
+            ],
             "completedNewToolResults": retained_new, "outputPath": None, "outcome": outcome,
         })
         if outcome == "retained":
@@ -416,9 +427,10 @@ def _final(results: Mapping[str, Mapping[str, object]]) -> tuple[str, str]:
     cut = str(tools.get("verdict", "not_run"))
     if results.get("_aborted", {}).get("verdict") == "aborted_after_errors":
         return allowed, "aborted_after_errors"
-    if allowed == "accepted" and session == "history_not_retained" and cut == "retained":
+    session_ok = session == "history_not_retained" or (session == "history_retained" and WORKER_USES_A_FRESH_SESSION_PER_INVOCATION)
+    if allowed == "accepted" and session_ok and cut == "retained":
         return allowed, "all_passed"
-    findings = allowed in REJECTED_VERDICTS or session == "history_retained" or cut == "lost"
+    findings = allowed in REJECTED_VERDICTS or (session == "history_retained" and not WORKER_USES_A_FRESH_SESSION_PER_INVOCATION) or cut == "lost"
     return allowed, "findings" if findings else "inconclusive"
 
 
@@ -437,6 +449,7 @@ def build_report(results: Mapping[str, Mapping[str, object]], budget: CallBudget
         "approvalRef": approval_ref, "releaseCommit": release_commit, "artifactSha256": artifact_sha256,
         "harnessArnSha256": _sha(harness_arn), "matterIdSha256": _sha(matter_id),
         "budget": {"harnessInvocationsLimit": budget.limit, "harnessInvocationsUsed": budget.used, "retries": 0},
+        "sessionPolicy": "fresh runtimeSessionId on every agent call" if WORKER_USES_A_FRESH_SESSION_PER_INVOCATION else "reuses the binding session id",
         "checks": checks, "residualState": (residual or ResidualState()).as_report(), "internalErrorCode": internal_error, "verdict": overall,
         "interpretation": {name: INTERPRETATION[name].get(str(checks[name]["verdict"]), "") for name in INTERPRETATION},
     }

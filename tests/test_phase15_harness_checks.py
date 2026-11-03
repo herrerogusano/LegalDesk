@@ -120,12 +120,34 @@ class VerdictTests(ChecksTestCase):
         self.assertEqual(json.loads(self.output.read_text())["verdict"], "all_passed")
         self.assertEqual(report["checks"]["tool_results"]["calls"][0]["outputPath"], "tool_result")
 
-    def test_session_that_keeps_history_is_a_finding(self) -> None:
-        recorder = Recorder()
-        recorder.plain_script[:] = [ack_reply, lambda message: "The word was " + word_of(recorder.plain_calls[0][0])]
-        report = self.run_with(recorder)
-        self.assertEqual(report["checks"]["session"]["verdict"], "history_retained")
-        self.assertEqual(report["verdict"], "findings")
+    def test_session_that_keeps_history_is_reported_and_is_a_finding_only_if_the_worker_reuses_the_session(self) -> None:
+        for handled, expected in ((True, "all_passed"), (False, "findings")):
+            with self.subTest(workerUsesAFreshSession=handled):
+                recorder = Recorder()
+                recorder.plain_script[:] = [ack_reply, lambda message: "The word was " + word_of(recorder.plain_calls[0][0])]
+                with mock.patch.object(checks, "WORKER_USES_A_FRESH_SESSION_PER_INVOCATION", handled):
+                    report = self.run_with(recorder)
+                self.assertEqual(report["checks"]["session"]["verdict"], "history_retained")  # Harness behaviour: always reported
+                self.assertEqual(report["verdict"], expected)
+                self.assertEqual(report["sessionPolicy"], "fresh runtimeSessionId on every agent call" if handled else "reuses the binding session id")
+                self.output.unlink()
+
+    def test_a_failed_tool_call_says_why_with_a_closed_label_and_never_the_text(self) -> None:
+        failed = SimpleNamespace(short_name="search_documents", status="ERROR", payload={}, error_hint="missing_required_argument")
+        odd = SimpleNamespace(short_name="search_documents", status="ERROR", payload={}, error_hint="SECRET raw text of an error")
+        report = self.run_with(Recorder(agent=[loop(), loop(failed), loop(odd)]))
+        calls = report["checks"]["tool_results"]["calls"]
+        self.assertEqual([call["toolErrorHints"] for call in calls], [["missing_required_argument"], ["other"]])
+        self.assertNotIn("SECRET raw text", self.output.read_text())
+        ok = SimpleNamespace(short_name="search_documents", status="SUCCESS", payload={"x": 1}, error_hint=None)
+        self.output.unlink()
+        report = self.run_with(Recorder(agent=[loop(), loop(ok), loop(ok)]))
+        self.assertEqual([call["toolErrorHints"] for call in report["checks"]["tool_results"]["calls"]], [[], []])
+
+    def test_the_closed_hints_of_the_script_are_those_of_the_parser(self) -> None:
+        from legaldesk_agent.client import ERROR_HINTS
+
+        self.assertEqual(checks.ERROR_HINTS, ERROR_HINTS)
 
     def test_unacknowledged_first_turn_is_inconclusive_not_a_pass(self) -> None:
         report = self.run_with(Recorder(plain=["hmm", "UNKNOWN"]))
