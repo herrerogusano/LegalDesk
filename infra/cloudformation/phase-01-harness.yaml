@@ -43,6 +43,16 @@ Parameters:
   Phase09MemoryArn:
     Type: String
     Default: ""
+  MaxTokensPerIteration:
+    Type: Number
+    Default: 2048
+    MinValue: 256
+    MaxValue: 4096
+    Description: >-
+      Output-token cap of each model call of the agent loop, in BOTH places the Harness reads one (the model configuration and the
+      Harness default). 256 truncated tool-use blocks and plans (stopReason max_tokens, T9 step 12): a message with several parallel tool
+      calls or a data plan needs more. It is a cap, not a target: typical calls stay far below it, so the cost moves only for calls that
+      used to be cut.
   EnableManagedAdot:
     Type: String
     Default: "false"
@@ -166,7 +176,7 @@ Resources:
         BedrockModelConfig:
           ModelId: !Ref ModelId
           ApiFormat: converse_stream
-          MaxTokens: 256
+          MaxTokens: !Ref MaxTokensPerIteration
           Temperature: 0
       # Requires the managed Harness observability instrumentation to include
       # AWS ADOT Python instrumentation >= 0.17.1.  The first defense opts out
@@ -213,7 +223,7 @@ Resources:
             MessagesCount: 10
         - Disabled: {}
       MaxIterations: !If [AttachPhase08Gateway, 3, 1]
-      MaxTokens: 256
+      MaxTokens: !Ref MaxTokensPerIteration
       TimeoutSeconds: 120
       Tags:
         - Key: Project

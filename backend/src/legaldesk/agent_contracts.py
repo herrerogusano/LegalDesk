@@ -50,6 +50,11 @@ MAX_EVIDENCE_PER_FIELD = 2
 MAX_EVIDENCE_QUOTE_CHARS = 500
 MAX_PLAN_BYTES = 16 * 1024
 MAX_PLAN_BLOCKS = 4
+# A plan names the source of a text or inventory block by the tool and the position of the call among the calls of that tool in the
+# loop (``{"tool": "search_documents", "call": 1}``), not by the tool-use id. The model cannot copy that id: in the T9 step 12 runs
+# every one of its attempts (14 of 14 in the second run) named an id that matched no call, while the data blocks, which point at
+# document ids the model can read in the tool result, worked. Upper bound = what a loop of 3 iterations can possibly hold.
+MAX_SOURCE_CALL = 16
 MAX_INVENTORY_DOCUMENTS = 200
 MAX_GROUPS_PER_BLOCK = 8
 MAX_REFS_PER_GROUP = 100
@@ -491,8 +496,11 @@ class DataBlock:
 
 @dataclass(frozen=True, slots=True)
 class TextBlock:
+    """The verbatim result of one ``search_documents`` call, named by ``tool_use_id`` (exact id) or by ``call`` (its position)."""
+
     tool_use_id: str
     transition_before: str | None = None
+    call: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,6 +515,7 @@ class InventoryBlock:
     order_by: str | None = None
     direction: str = "asc"
     transition_before: str | None = None
+    call: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -626,7 +635,23 @@ def _parse_data_block(node: Mapping[str, Any]) -> DataBlock:
     return DataBlock(tuple(groups), order, tuple(aggregates), None)
 
 
-def _parse_inventory_block(node: Mapping[str, Any], tool_use_id: str, transition: str | None) -> InventoryBlock:
+def _parse_source(raw: object, tool: str) -> tuple[str, int | None]:
+    """``(tool_use_id, call)`` of a block source: exactly one of the two forms, validated closed.
+
+    * ``{"tool": <the tool of this block type>, "call": n}``: the documented form, n a plain integer from 1;
+    * ``{"toolUseId": <id>}``: an exact id (accepted, no longer advertised in the prompt: the model cannot copy it).
+    """
+
+    if isinstance(raw, Mapping) and set(raw) == {"toolUseId"}:
+        return _opaque(raw["toolUseId"]), None
+    source = _keys(raw, required={"tool", "call"})
+    call = source["call"]
+    if source["tool"] != tool or isinstance(call, bool) or not isinstance(call, int) or not 1 <= call <= MAX_SOURCE_CALL:
+        raise AgentContractError("invalid_parameter")
+    return "", call
+
+
+def _parse_inventory_block(node: Mapping[str, Any], tool_use_id: str, transition: str | None, call: int | None = None) -> InventoryBlock:
     statuses: tuple[str, ...] = ()
     if "statusIs" in node:
         raw = node["statusIs"]
@@ -640,7 +665,7 @@ def _parse_inventory_block(node: Mapping[str, Any], tool_use_id: str, transition
         raw_order = _keys(node["order"], required={"by", "direction"})
         order_by = _phrase(raw_order["by"], INVENTORY_ORDER_BY)
         direction = _phrase(raw_order["direction"], ORDER_DIRECTIONS)
-    return InventoryBlock(tool_use_id, statuses, order_by, direction, transition)
+    return InventoryBlock(tool_use_id, statuses, order_by, direction, transition, call)
 
 
 def _json_loads_strict(text: str) -> object:
@@ -700,16 +725,16 @@ def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
             transition = _phrase(raw_block["transitionBefore"], TRANSITION_IDS)
         if kind == "text":
             item = _keys(raw_block, required={"type", "source"}, optional={"transitionBefore"})
-            source = _keys(item["source"], required={"toolUseId"})
-            blocks.append(TextBlock(_opaque(source["toolUseId"]), transition))
+            tool_use_id, call = _parse_source(item["source"], SEARCH_DOCUMENTS)
+            blocks.append(TextBlock(tool_use_id, transition, call))
         elif kind == "data":
             item = _keys(raw_block, required={"type", "groups"}, optional={"transitionBefore", "order", "aggregates"})
             data = _parse_data_block(item)
             blocks.append(DataBlock(data.groups, data.order, data.aggregates, transition))
         elif kind == "inventory":
             item = _keys(raw_block, required={"type", "source"}, optional={"transitionBefore", "order", "statusIs"})
-            source = _keys(item["source"], required={"toolUseId"})
-            blocks.append(_parse_inventory_block(item, _opaque(source["toolUseId"]), transition))
+            tool_use_id, call = _parse_source(item["source"], LIST_MATTER_DOCUMENTS)
+            blocks.append(_parse_inventory_block(item, tool_use_id, transition, call))
         else:
             raise AgentContractError("invalid_shape")
     return AnswerPlan(intro, tuple(blocks))

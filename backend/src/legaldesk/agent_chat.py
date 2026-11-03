@@ -342,6 +342,10 @@ class AgentChatWorker:
         """
 
         search, fields, inventories, invalid = [], [], [], 0
+        # Every call, in stream order, whatever its outcome: a plan names a source by the position of the call (see agent_contracts).
+        call_order: dict[str, list[str]] = {}
+        for call in loop.tool_calls:
+            call_order.setdefault(call.short_name, []).append(call.tool_use_id)
         for call in loop.tool_calls:
             if call.status != "SUCCESS":
                 continue
@@ -354,7 +358,7 @@ class AgentChatWorker:
                     inventories.append((call.tool_use_id, contracts.parse_list_matter_documents_result(call.payload)))
             except contracts.AgentContractError:
                 invalid += 1
-        evidence = LoopEvidence.from_results(search, fields, inventories)
+        evidence = LoopEvidence.from_results(search, fields, inventories, call_order)
         outcome = LoopOutcome(loop.loop_outcome)
         output = resolve_output(loop=outcome, plan=loop.text if outcome is LoopOutcome.COMPLETED else None, evidence=evidence)
         return output, outcome, invalid

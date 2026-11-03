@@ -451,6 +451,32 @@ Tools visibles para el agente, todas por Gateway:
   presentan marcados como "pendiente de revisión humana". Los ausentes o
   rechazados no se rellenan.
 
+#### D3-bis. Cómo nombra el plan la fuente de un bloque de texto o de inventario (enmienda 2026-11-03, para revisar como cambio de arquitectura)
+
+**Qué cambia.** En el plan, un bloque `text` o `inventory` ya no apunta a su fuente con el id de tool use
+(`{"source": {"toolUseId": "<id>"}}`) sino con **la tool y la posición de la llamada** dentro del loop:
+`{"source": {"tool": "search_documents", "call": 1}}` (o `list_matter_documents`), donde `call` cuenta desde 1 las
+llamadas a esa tool en el orden en que el modelo las hizo, **contando también las que fallaron**. El servidor resuelve la
+posición contra el registro de llamadas del mismo loop (`LoopEvidence.call_order`, en orden de stream) y aplica la misma
+validación cerrada de antes. El prompt pasa a la versión 1.4.0.
+
+**Por qué (evidencia).** Con el contrato anterior, 14 de 14 planes de la segunda ejecución real (2026-11-03) citaron un id que
+no coincidía con ninguna llamada del stream (`sourceIdMatches: none`, ni parecido), mientras que los bloques de datos, que
+apuntan a `documentId` y `field` visibles en el texto de los resultados, funcionaron siempre (`data-01/02/03/05`). El modelo no ve, o
+no puede copiar con fiabilidad, el id que genera Harness; un contrato basado en copiarlo no puede funcionar, y el efecto era que
+casi todas las respuestas de texto e inventario caían al resultado de la tool o al RAG.
+
+**Qué NO cambia.** El texto se sigue imprimiendo **tal cual** desde el resultado de `search_documents` (el modelo no aporta
+contenido, solo una posición); los límites de citas (`MAX_OUTPUT_CITATIONS`), los bloques de datos y todas las listas cerradas;
+el fallback D5 (aprovechar el resultado válido y, si no, el RAG directo) y sus motivos; la regla de que ninguna llamada se imprime
+dos veces. La posición solo puede señalar una llamada que **existe en el loop y devolvió un resultado válido**; si no, el bloque se
+omite con un motivo cerrado (`unknown_source_call`, `source_call_unusable`). El modelo no puede señalar nada que el servidor no haya
+recibido de una tool.
+
+**Compatibilidad.** El parser sigue aceptando el id exacto (`{"toolUseId": ...}`), validado igual, pero el prompt ya no lo anuncia y no
+se espera que el modelo lo use. El conjunto de datos congelado del eval de enrutado no se toca (sus planes simulados usan el id
+exacto, que sigue siendo válido); el nuevo formato tiene sus propios tests.
+
 #### D4. Loop y ejecución asíncrona
 
 - **Guardrail de entrada antes del agente**: la pregunta pasa por el Guardrail

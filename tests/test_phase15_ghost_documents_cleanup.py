@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
-from fixture_loader import test_identity  # noqa: E402
+from fixture_loader import test_identity as operator_identity  # noqa: E402 - renamed: pytest would collect it as a test
 from legaldesk.authorization import InMemoryAuthorizationStore  # noqa: E402
 from legaldesk.data_governance import OperatorDataGovernanceService  # noqa: E402
 from legaldesk.documents import InMemoryDocumentMetadataRepository, InMemoryObjectStorage  # noqa: E402
@@ -60,7 +60,7 @@ class World:
             self.verified.append(token)
             if not token_ok:
                 raise ValueError("bad token")
-            return test_identity("idp|op")
+            return operator_identity("idp|op")
 
         return tool.Backends(
             verify_token=verify, authorization_store=self.auth, metadata_repository=self.records, object_storage=self.storage, service=self.service,
