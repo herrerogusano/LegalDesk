@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.test_phase15_edge_bootstrap_iac import (
-    ACCOUNT, BOOTSTRAP, PARAMETERS, REGION, STACK, actions, generated_name, load, resources, statements,
+    ACCOUNT, BOOTSTRAP, OBSERVED_APPLICATION_ROLE, OBSERVED_WORKER_ROLE, PARAMETERS, REGION, STACK, actions, generated_name, load, resources, statements,
 )
 
 ROOT = Path(__file__).parents[1]
@@ -23,7 +23,7 @@ CD_IAM = ROOT / "infra" / "cloudformation" / "cd-iam.yaml"
 TEMP_ROLE_NAME = generated_name("LegalDeskPhase15EdgeBootstrap", "EdgeAgentChatCloudFormationRole", "ABCDEF123456")
 TEMP_ROLE_ARN = f"arn:aws:iam::{ACCOUNT}:role/{TEMP_ROLE_NAME}"
 CODE_ONLY_ROLE_ARN = f"arn:aws:iam::{ACCOUNT}:role/LegalDeskProductionCloudFormation"
-WORKER_ROLE = f"arn:aws:iam::{ACCOUNT}:role/LegalDeskPhase14PublicEdge-AgentChatWorker*"
+WORKER_ROLE = f"arn:aws:iam::{ACCOUNT}:role/LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-*"  # the name CloudFormation really generates (cut stack and logical id)
 APPLICATION_ROLE = PARAMETERS["ExistingApplicationRoleArn"]
 
 SENSITIVE = {
@@ -57,8 +57,9 @@ def render_cd_resource(value: Any) -> str:
 
 class WhoCanPassTheTemporaryRoleTests(unittest.TestCase):
     def test_the_temporary_role_name_model_is_what_the_other_tests_assume(self) -> None:
+        # the temporary role is generated too, with both parts cut (stack 29 and logical id 30 do not fit in 50): the same rule as the worker role
         self.assertEqual(len(TEMP_ROLE_NAME), 64)
-        self.assertTrue(TEMP_ROLE_NAME.startswith("LegalDeskPhase15EdgeBootstrap-"))
+        self.assertTrue(TEMP_ROLE_NAME.startswith("LegalDeskPhase15EdgeBoots-EdgeAgentChatCloudFormati-"))
 
     def test_the_release_role_of_the_cd_can_pass_only_the_code_only_role_and_only_to_cloudformation(self) -> None:
         passes = [s for s in cd_statements("ProductionDeploymentRole") if "iam:PassRole" in (s["Action"] if isinstance(s["Action"], list) else [s["Action"]])]
@@ -127,7 +128,7 @@ class SensitiveActionsTests(unittest.TestCase):
         found: dict[str, set[str]] = {}
         for statement in statements(stage):
             for action in actions(statement):
-                if action in SENSITIVE or action.startswith("iam:") and action not in {"iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:GetRolePolicy"}:
+                if action in SENSITIVE or action.startswith("iam:") and action not in {"iam:GetRole", "iam:ListRoleTags", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:GetRolePolicy"}:
                     found.setdefault(action, set()).update(resources(statement))
         return found
 
@@ -170,6 +171,26 @@ class SensitiveActionsTests(unittest.TestCase):
             self.assertIn(needle, step_8)
         template = " ".join(BOOTSTRAP.read_text(encoding="utf-8").split())
         self.assertIn("inline policies in two roles only", template)
+
+
+class RealNamesTests(unittest.TestCase):
+    """The two role names CloudFormation really generated on 2026-11-03 against the patterns that must accept them."""
+
+    def test_step_nine_parameters_accept_the_real_role_names(self) -> None:
+        parameters = load(CD_IAM)["Parameters"]
+        self.assertIsNotNone(re.fullmatch(parameters["AgentChatWorkerExecutionRoleArn"]["AllowedPattern"], f"arn:aws:iam::{ACCOUNT}:role/{OBSERVED_WORKER_ROLE}"))
+        self.assertIsNotNone(re.fullmatch(parameters["ApplicationExecutionRoleArn"]["AllowedPattern"], f"arn:aws:iam::{ACCOUNT}:role/{OBSERVED_APPLICATION_ROLE}"))
+        # and still refuse the roles they must never name
+        for other in (OBSERVED_APPLICATION_ROLE, TEMP_ROLE_NAME):
+            self.assertIsNone(re.fullmatch(parameters["AgentChatWorkerExecutionRoleArn"]["AllowedPattern"], f"arn:aws:iam::{ACCOUNT}:role/{other}"), other)
+
+    def test_the_bootstrap_role_patterns_accept_the_real_worker_role_and_refuse_the_application_role(self) -> None:
+        for stage_resource in ("iam:CreateRole", "iam:TagRole", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:DeleteRole", "iam:GetRole", "iam:PassRole"):
+            patterns = [r for s in statements("agent-chat") if stage_resource in actions(s) for r in resources(s) if r != APPLICATION_ROLE]
+            self.assertEqual(len(patterns), 1, stage_resource)
+            self.assertTrue(fnmatch.fnmatchcase(f"arn:aws:iam::{ACCOUNT}:role/{OBSERVED_WORKER_ROLE}", patterns[0]), stage_resource)
+            self.assertFalse(fnmatch.fnmatchcase(f"arn:aws:iam::{ACCOUNT}:role/{OBSERVED_APPLICATION_ROLE}", patterns[0]), stage_resource)
+            self.assertFalse(fnmatch.fnmatchcase(f"arn:aws:iam::{ACCOUNT}:role/{TEMP_ROLE_NAME}", patterns[0]), stage_resource)
 
 
 if __name__ == "__main__":

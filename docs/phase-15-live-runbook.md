@@ -349,11 +349,11 @@ permissions of these change sets is passed with `--role-arn`, and deleted once t
 | Stage | Used by | Grants (all by exact ARN or name pattern; nothing is `*` except two regional read-only listings) |
 |---|---|---|
 | `code-and-quota` | 8a | what the code-only role has (read and `UpdateFunctionCode` on the application function, read of the immutable artifact, `PassRole` and read of the application role, read of the distribution and its dependencies, `GET`/`PATCH` of the one API integration) **plus** `lambda:UpdateFunctionConfiguration` and `lambda:ListTags` on that function. Creates and deletes nothing |
-| `agent-chat` | 8b | the above plus create, update and delete of the AgentChat resources, each by pattern: queues `LegalDeskPhase14PublicEdge-agent-chat*`, the worker log group and its metric filters, the worker function, the mapping of that function, the worker role (`LegalDeskPhase14PublicEdge-AgentChatWorker*`) with `PassRole` to Lambda only, the alarms `…-AgentChat*`, and `iam:PutRolePolicy` on the application role only |
+| `agent-chat` | 8b | the above plus create, update and delete of the AgentChat resources, each by pattern: queues `LegalDeskPhase14PublicEdge-agent-chat*`, the worker log group and its metric filters, the worker function, the mapping of that function, the worker role (`LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-*`, the name CloudFormation really generates, see below) with `PassRole` to Lambda only, the alarms `LegalDeskPhase14PublicEd*-AgentChat*`, and `iam:PutRolePolicy` on the application role only |
 
 What it cannot do: attach or detach **managed** policies, create users, access keys or policies, change a trust policy or a permissions boundary, touch S3 objects other than reading the artifact, DynamoDB, Bedrock, AgentCore, Cognito,
 any other role or any other Lambda. What it **can** do, and is the sensitive part: **write inline policies** (`iam:PutRolePolicy`, and in the stage `agent-chat` `iam:CreateRole` / `iam:DeleteRole` / `iam:DeleteRolePolicy`) in exactly
-two places: the worker execution role it creates (`LegalDeskPhase14PublicEdge-AgentChatWorker*`) and the application role of the Public Edge stack. Those actions exist only in the stage `agent-chat`, never in `code-and-quota`, and only on those
+two places: the worker execution role it creates (`LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-*`) and the application role of the Public Edge stack. Those actions exist only in the stage `agent-chat`, never in `code-and-quota`, and only on those
 ARNs (the tests pin it: `tests/test_phase15_edge_bootstrap_iac.py`, `tests/test_phase15_edge_bootstrap_access.py`). Whatever policy a template carries is therefore applied by this role, which is why the change set is gated by the **exact IAM statements**
 of the profile (`public-edge-agent-chat-on` lists the 10 statements and the trust policy of the worker role and the 3 statement changes of the application role; any other statement, any wildcard or `NotAction`, stops the run).
 
@@ -369,6 +369,21 @@ same session). A role that cannot be deleted blocks the close of T9; it is not a
 condition on `iam:PermissionsBoundary` in `CreateRole`. It would not cover the second sensitive write, `PutRolePolicy` on the **existing** application role, which already exists and cannot be bounded retroactively without touching its policy. And a boundary that is slightly wrong denies a
 needed action of the worker at run time, in a live block, where it is hard to tell from a missing permission. What bounds the risk instead: only administrators can pass the role (above), it lives for hours, the exact IAM statements are enforced by the profile before anything is executed, the inline
 policies are read back after 8b (below), and the change sets are reviewed by a person. Revisit it if the role ever has to live longer or be usable by a non-administrator.
+
+**Names that CloudFormation generates (and why the first pattern failed).** Resources with an explicit name (the two queues, the worker function, the worker log group) are matched by that name. The ones CloudFormation names itself are
+`<stack>-<logical id>-<12 random characters>`, and **both** the stack name and the logical id are cut to fit the limit of the resource type (64 for an IAM role). The rule below is **inferred from two names observed on 2026-11-03**, it is not AWS
+documentation:
+
+| Role | Name | Parts |
+|---|---|---|
+| Application role (deployed) | `LegalDeskPhase14PublicEdge-ApplicationExecutionRole-X3hgVtmlHWXr` | stack 26 + logical id 24 + 12 = 64: nothing cut |
+| Worker role (created by 8b) | `LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-bzFuZq7zur6f` | stack 26 -> 25, logical id 28 -> 25, + 12 = 64: **both cut** |
+
+Rule: the first two parts share `limit - 14` characters; if they do not fit, each is cut to half of that, and a part shorter than half keeps its length while the other takes the rest. The first live attempt of 8b assumed that only the logical id is cut (pattern
+`LegalDeskPhase14PublicEdge-AgentChatWorker*`), so `iam:CreateRole` was denied ("permissions error performing a tagging operation … not authorized to perform: iam:CreateRole") and the rollback failed on `iam:DeleteRolePolicy`; it ended
+`UPDATE_ROLLBACK_COMPLETE` with the role absent. The model lives in `scripts/phase15_changeset_preview.py` (`cfn_generated_name`, command `generated-name`), is tested against both names, and the tests check **every** `AgentChat*` resource: queues, function and log group by
+their explicit names (within their limits), the two metric filters by their log group, the mapping by its function plus tag-only access, the six alarms (limit 255: nothing cut, and the pattern `LegalDeskPhase14PublicEd*-AgentChat*` also holds if they were cut like a role),
+the worker role as above.
 
 **Do** (stage `code-and-quota` first; the parameters are derived from the deployed stack):
 
@@ -462,8 +477,22 @@ keeps them (`UsePreviousValue`), so the worker and the API run the same package.
    # create-change-set --change-set-type UPDATE on $Boot with the same template: exactly ONE change, Modify of the role (Policies), Replacement False, then execute and wait stack-update-complete
    ```
 
-   Simulate again: `sqs:CreateQueue` on `…:LegalDeskPhase14PublicEdge-agent-chat`, `lambda:CreateFunction` on `…:function:LegalDeskPhase14PublicEdge-agent-chat-worker`, `iam:CreateRole` on `…:role/LegalDeskPhase14PublicEdge-AgentChatWorkerExecution-X` (CloudFormation truncates a generated role name to 64 characters: the stack name stays, the logical id is cut) and
-   `iam:PutRolePolicy` on the application role are **allowed**; the same actions on any other name, `iam:AttachRolePolicy`, `lambda:CreateFunction` on another function and `s3:PutObject` are **implicitDeny**.
+   Simulate again, with the name CloudFormation will really generate for the worker role (computed with the same model as the tests, not an example name; the random suffix is a placeholder):
+
+   ```powershell
+   $workerRoleName = python $Repo\scripts\phase15_changeset_preview.py generated-name --stack LegalDeskPhase14PublicEdge --logical-id AgentChatWorkerExecutionRole
+   $workerRoleName      # LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-XXXXXXXXXXXX : both the stack name and the logical id are cut
+   $acct = (aws sts get-caller-identity --query Account --output text); Assert-Aws "sts"
+   $roleArn = "arn:aws:iam::${acct}:role/$workerRoleName"
+   aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names iam:CreateRole iam:TagRole iam:PutRolePolicy iam:GetRole iam:DeleteRolePolicy iam:DeleteRole iam:PassRole --resource-arns $roleArn   # all allowed
+   $appRoleLike = "arn:aws:iam::${acct}:role/" + (python $Repo\scripts\phase15_changeset_preview.py generated-name --stack LegalDeskPhase14PublicEdge --logical-id ApplicationExecutionRole)
+   aws iam simulate-principal-policy --policy-source-arn $tempRole --action-names iam:CreateRole iam:DeleteRole iam:DeleteRolePolicy --resource-arns $appRoleLike   # implicitDeny: never the application role's name
+   ```
+
+   Also **allowed**: `sqs:CreateQueue` on `…:LegalDeskPhase14PublicEdge-agent-chat` and `…-agent-chat-dlq`, `lambda:CreateFunction` on `…:function:LegalDeskPhase14PublicEdge-agent-chat-worker`, `lambda:TagResource` on an event source mapping, `cloudwatch:PutMetricAlarm` on
+   `…:alarm:` + `(python …\phase15_changeset_preview.py generated-name --stack LegalDeskPhase14PublicEdge --logical-id AgentChatWorkerErrorsAlarm --limit 255)` (the name with 12 `X`), and `iam:PutRolePolicy` on the application role.
+   **implicitDeny**: the same actions on any other name, `iam:AttachRolePolicy`, `lambda:CreateFunction` on another function and `s3:PutObject`. If the worker-role line above is not all **allowed**, stop: the rule no longer matches what CloudFormation generates and
+   the pattern must be corrected through a reviewed change, as on 2026-11-03.
 
 2. **The change set** (only `EnableAgentChat` changes; `AgentChatAlarmTopicArn` stays empty by decision: the six alarms are read in the console, they notify nobody; `AgentChatMaxConcurrency` keeps its default 2):
 
@@ -489,7 +518,7 @@ keeps them (`UsePreviousValue`), so the worker and the API run the same package.
 - `cd-template-match --deployed <fresh get-template>` is still `true`.
 
 **Stop if** the profile gate ≠ 0 (especially any resource of another stack, `FrontendBucket`, `PublicApi*` other than the integration, or `Replacement`), the stack rolls back, or `/api/me` leaves 403.
-If the rollback or the creation fails on a missing permission, read the `AccessDenied` in the stack events, add exactly that action to the bootstrap template through a reviewed change (with its test), update the bootstrap stack and repeat: never widen the role on the fly.
+An `AccessDenied` on a **tagging operation of `iam:CreateRole`** (CloudFormation words it "permissions error performing a tagging operation … not authorized to perform: iam:CreateRole") is the name-pattern case of 2026-11-03: compare the role name in the event with `generated-name`, it is the first thing to check. If the rollback or the creation fails on a missing permission, read the `AccessDenied` in the stack events, add exactly that action to the bootstrap template through a reviewed change (with its test), update the bootstrap stack and repeat: never widen the role on the fly.
 
 **Back.** Profile `public-edge-agent-chat-rollback`: set `EnableAgentChat=false` (all other parameters `UsePreviousValue`, `--role-arn $tempRole`). It removes the 14 resources (queue and DLQ are `DeletionPolicy: Delete`; confirm both are empty first), leaves the application on the
 new code and keeps the template identical to the repository's, so the CD keeps working.

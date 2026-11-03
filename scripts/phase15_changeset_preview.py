@@ -633,6 +633,36 @@ def build_parameters(template: Mapping[str, Any], stack: Mapping[str, Any], over
 
 BOOTSTRAP_STAGES = ("code-and-quota", "agent-chat")
 
+# --- names that CloudFormation generates ------------------------------------------------------------
+GENERATED_SUFFIX_LENGTH = 12
+IAM_ROLE_NAME_LIMIT = 64
+
+
+def cfn_generated_name(stack: str, logical_id: str, suffix: str, limit: int = IAM_ROLE_NAME_LIMIT) -> str:
+    """The physical name CloudFormation generates for an unnamed resource: ``<stack>-<logical id>-<suffix>``.
+
+    The rule is INFERRED from two names observed in the T9 live block of 2026-11-03, not read from AWS documentation:
+
+    * ``LegalDeskPhase14PublicEdge-ApplicationExecutionRole-X3hgVtmlHWXr``: stack 26 + logical id 24 + 12 = 64, nothing cut;
+    * ``LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-bzFuZq7zur6f``: stack 26 -> 25 and logical id 28 -> 25 + 12 = 64:
+      **both parts are cut**, not only the logical id as first assumed (that wrong assumption denied ``iam:CreateRole``).
+
+    Both fit "the first two parts share a budget of ``limit - 14`` characters; if they do not fit, each is cut to half of it,
+    and a part shorter than half keeps its length while the other takes the rest". The suffix is random: callers must treat only the part
+    before it as stable. The limit is that of the resource type (IAM role 64, CloudWatch alarm 255): a long limit cuts nothing.
+    """
+
+    budget = limit - len(suffix) - 2
+    if len(stack) + len(logical_id) > budget:
+        half = budget // 2
+        if len(stack) <= half:
+            logical_id = logical_id[: budget - len(stack)]
+        elif len(logical_id) <= half:
+            stack = stack[: budget - len(logical_id)]
+        else:
+            stack, logical_id = stack[:half], logical_id[:half]
+    return f"{stack}-{logical_id}-{suffix}"
+
 
 def bootstrap_parameters(resources: Mapping[str, Any], stack: Mapping[str, Any], stage: str) -> list[dict[str, str]]:
     """Parameters of the temporary Public Edge role stack, derived from the deployed stack, never typed by hand.
@@ -694,6 +724,10 @@ def _parser() -> argparse.ArgumentParser:
     boot.add_argument("--resources-json", type=Path, required=True, help="saved `describe-stack-resources --stack-name LegalDeskPhase14PublicEdge`")
     boot.add_argument("--stage", choices=BOOTSTRAP_STAGES, required=True)
     boot.add_argument("--output", type=Path, required=True)
+    gen = sub.add_parser("generated-name", help="the name CloudFormation will generate for an unnamed resource (the rule of cfn_generated_name), with a placeholder suffix")
+    gen.add_argument("--stack", required=True)
+    gen.add_argument("--logical-id", required=True)
+    gen.add_argument("--limit", type=int, default=IAM_ROLE_NAME_LIMIT, help="64 for an IAM role (default), 255 for a CloudWatch alarm")
     match = sub.add_parser("cd-template-match", help="check that the deployed Public Edge template equals the repository one, as the code-only CD requires")
     match.add_argument("--deployed", type=Path, required=True)
     match.add_argument("--local", type=Path, default=Path("infra/cloudformation/phase-14-public-edge.yaml"))
@@ -706,6 +740,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "generated-name":
+            print(cfn_generated_name(args.stack, args.logical_id, "X" * GENERATED_SUFFIX_LENGTH, args.limit))  # only the part before the suffix is stable
+            return 0
         if args.command == "bootstrap-params":
             stacks = json.loads(args.stack_json.read_text(encoding="utf-8-sig")).get("Stacks")
             if not isinstance(stacks, list) or len(stacks) != 1:

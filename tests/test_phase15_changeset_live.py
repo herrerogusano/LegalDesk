@@ -363,5 +363,27 @@ class CodeOnlyCdAfterStep8aTests(unittest.TestCase):
             self.assertNotIn("Default", template["Parameters"][name])
 
 
+class GeneratedNameCommandTests(unittest.TestCase):
+    """The command the runbook calls for the exact simulation names: same rule as the tests, checked against the two real roles."""
+
+    def run_command(self, *arguments: str) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(preview.main(["generated-name", *arguments]), 0)
+        return out.getvalue().strip()
+
+    def test_the_command_prints_the_cut_name_with_a_placeholder_suffix(self) -> None:
+        self.assertEqual(self.run_command("--stack", "LegalDeskPhase14PublicEdge", "--logical-id", "AgentChatWorkerExecutionRole"), "LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-XXXXXXXXXXXX")
+        self.assertEqual(self.run_command("--stack", "LegalDeskPhase14PublicEdge", "--logical-id", "ApplicationExecutionRole"), "LegalDeskPhase14PublicEdge-ApplicationExecutionRole-XXXXXXXXXXXX")
+
+    def test_the_limit_is_that_of_the_resource_type(self) -> None:
+        self.assertEqual(self.run_command("--stack", "LegalDeskPhase14PublicEdge", "--logical-id", "AgentChatWorkerErrorsAlarm", "--limit", "255"),
+                         "LegalDeskPhase14PublicEdge-AgentChatWorkerErrorsAlarm-XXXXXXXXXXXX")
+
+    def test_the_rule_reproduces_the_two_roles_observed_on_2026_11_03(self) -> None:
+        self.assertEqual(preview.cfn_generated_name("LegalDeskPhase14PublicEdge", "ApplicationExecutionRole", "X3hgVtmlHWXr"), "LegalDeskPhase14PublicEdge-ApplicationExecutionRole-X3hgVtmlHWXr")
+        self.assertEqual(preview.cfn_generated_name("LegalDeskPhase14PublicEdge", "AgentChatWorkerExecutionRole", "bzFuZq7zur6f"), "LegalDeskPhase14PublicEdg-AgentChatWorkerExecutionR-bzFuZq7zur6f")
+
+
 if __name__ == "__main__":
     unittest.main()
