@@ -251,8 +251,26 @@ def answer_writer_output_config() -> dict[str, object]:
     }
 
 
+# Closed reasons for a rejected model output. They name the *class* of the failure, never its content, and each is also a
+# ``TelemetryErrorCode`` so the stage event can carry it (T9 step 12, 2026-11-03: three writer failures that all read ``model_failed``).
+REASON_OUTPUT_INVALID = "model_output_invalid"            # no text block, not JSON, not an object, or the wrong shape
+REASON_OUTPUT_TRUNCATED = "model_output_truncated"        # the model stopped at its token limit
+REASON_RESOLUTION_INVALID = "resolution_invalid"          # the resolver's JSON broke the coverage/citation contract
+REASON_ANSWER_INVALID = "writer_answer_invalid"           # empty, or longer than the public answer limit
+REASON_RELATIONSHIP_INVALID = "writer_relationship_invalid"        # the optional relationship's own shape (action ends in a preposition, duplicate...)
+REASON_RELATIONSHIP_MISSING = "writer_relationship_missing"        # the evidence requires a directed relationship and the writer gave none
+REASON_RELATIONSHIP_UNSUPPORTED = "writer_relationship_unsupported"  # the relationship is not in the evidence, in that order
+
+
 class EvidenceContractError(ValueError):
-    """Raised when a model resolution cannot be safely accepted."""
+    """Raised when a model resolution cannot be safely accepted.
+
+    ``reason`` is one of the closed ``REASON_*`` values above; it carries no text from the model or the documents.
+    """
+
+    def __init__(self, message: str, *, reason: str = REASON_OUTPUT_INVALID) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class GroundingContractError(ValueError):
@@ -291,12 +309,12 @@ def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
     """
 
     if not isinstance(value, (list, tuple)) or len(value) > _MAX_WRITER_RELATIONSHIPS:
-        raise EvidenceContractError("writer relationships are invalid")
+        raise EvidenceContractError("writer relationships are invalid", reason=REASON_RELATIONSHIP_INVALID)
     normalized: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
     for item in value:
         if not isinstance(item, Mapping) or set(item) != _WRITER_RELATIONSHIP_FIELDS:
-            raise EvidenceContractError("writer relationship has an unsupported shape")
+            raise EvidenceContractError("writer relationship has an unsupported shape", reason=REASON_RELATIONSHIP_INVALID)
         fields: dict[str, str] = {}
         for field in ("actor", "action", "recipient"):
             field_value = item.get(field)
@@ -306,7 +324,7 @@ def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
                 or len(field_value) > _MAX_WRITER_RELATIONSHIP_VALUE_LENGTH
                 or any(ord(character) < 32 and character not in "\t\n\r" for character in field_value)
             ):
-                raise EvidenceContractError("writer relationship value is invalid")
+                raise EvidenceContractError("writer relationship value is invalid", reason=REASON_RELATIONSHIP_INVALID)
             fields[field] = field_value.strip()
         action_tokens = _relationship_tokens(fields["action"])
         if (
@@ -314,10 +332,10 @@ def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
             or len(action_tokens) > _MAX_WRITER_ACTION_TOKENS
             or action_tokens[-1] in _RELATIONSHIP_TERMINAL_PREPOSITIONS
         ):
-            raise EvidenceContractError("writer relationship action is invalid")
+            raise EvidenceContractError("writer relationship action is invalid", reason=REASON_RELATIONSHIP_INVALID)
         key = tuple(fields[field].casefold() for field in ("actor", "action", "recipient"))
         if key in seen:
-            raise EvidenceContractError("writer relationships must be unique")
+            raise EvidenceContractError("writer relationships must be unique", reason=REASON_RELATIONSHIP_INVALID)
         seen.add(key)
         normalized.append(fields)
     return tuple(normalized)
@@ -389,7 +407,7 @@ def validate_writer_relationships_against_evidence(
             if tokens:
                 evidence_token_sets.append(tokens)
     if not evidence_token_sets:
-        raise EvidenceContractError("writer relationship evidence is unavailable")
+        raise EvidenceContractError("writer relationship evidence is unavailable", reason=REASON_RELATIONSHIP_UNSUPPORTED)
 
     def contains_in_order(evidence_tokens: tuple[str, ...], parts: tuple[tuple[str, ...], ...]) -> bool:
         position = 0
@@ -407,7 +425,7 @@ def validate_writer_relationships_against_evidence(
     for relation in normalized:
         parts = tuple(_relationship_tokens(relation[field]) for field in ("actor", "action", "recipient"))
         if not any(contains_in_order(tokens, parts) for tokens in evidence_token_sets):
-            raise EvidenceContractError("writer relationship is not supported in evidence order")
+            raise EvidenceContractError("writer relationship is not supported in evidence order", reason=REASON_RELATIONSHIP_UNSUPPORTED)
     return tuple(normalized)
 
 
@@ -539,6 +557,13 @@ def build_converse_evidence_resolver_request(
     }
 
 
+def _unparseable_reason(response: object) -> str:
+    """Why a Converse reply had no usable JSON: it ran into its token limit, or it was simply malformed."""
+
+    stop = response.get("stopReason") if isinstance(response, Mapping) else None
+    return REASON_OUTPUT_TRUNCATED if stop == "max_tokens" else REASON_OUTPUT_INVALID
+
+
 class ConverseEvidenceResolver:
     """Concrete provider adapter with server-side contract validation."""
 
@@ -565,7 +590,7 @@ class ConverseEvidenceResolver:
             text = next(item["text"] for item in content if isinstance(item, Mapping) and isinstance(item.get("text"), str))
             parsed = json.loads(text)
         except (KeyError, IndexError, StopIteration, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise EvidenceContractError("Converse resolver returned invalid JSON") from exc
+            raise EvidenceContractError("Converse resolver returned invalid JSON", reason=_unparseable_reason(response)) from exc
         if not isinstance(parsed, Mapping):
             raise EvidenceContractError("Converse resolver returned a non-object")
         return parsed
@@ -644,7 +669,7 @@ class ConverseAnswerWriter:
             text = next(item["text"] for item in content if isinstance(item, Mapping) and isinstance(item.get("text"), str))
             parsed = json.loads(text)
         except (KeyError, IndexError, StopIteration, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise EvidenceContractError("Converse writer returned invalid JSON") from exc
+            raise EvidenceContractError("Converse writer returned invalid JSON", reason=_unparseable_reason(response)) from exc
         return validate_answer_writer_result(parsed)
 
 
@@ -730,35 +755,35 @@ def validate_evidence_resolution(
     """
 
     if not isinstance(result, Mapping) or set(result) != set(EVIDENCE_RESOLUTION_FIELDS):
-        raise EvidenceContractError("evidence resolution has an unsupported shape")
+        raise EvidenceContractError("evidence resolution has an unsupported shape", reason=REASON_RESOLUTION_INVALID)
     try:
         coverage = EvidenceCoverage(result["coverage"])
     except (TypeError, ValueError) as exc:
-        raise EvidenceContractError("coverage is invalid") from exc
+        raise EvidenceContractError("coverage is invalid", reason=REASON_RESOLUTION_INVALID) from exc
     conflict = result["conflict"]
     if type(conflict) is not bool:
-        raise EvidenceContractError("conflict must be a boolean")
+        raise EvidenceContractError("conflict must be a boolean", reason=REASON_RESOLUTION_INVALID)
     raw_ids = result["supportingCitationIds"]
     if not isinstance(raw_ids, (list, tuple)) or any(
         type(item) is not str or not item.strip() for item in raw_ids
     ):
-        raise EvidenceContractError("supportingCitationIds must be non-empty strings")
+        raise EvidenceContractError("supportingCitationIds must be non-empty strings", reason=REASON_RESOLUTION_INVALID)
     citation_ids = tuple(raw_ids)
     if len(citation_ids) != len(set(citation_ids)):
-        raise EvidenceContractError("supportingCitationIds must be unique")
+        raise EvidenceContractError("supportingCitationIds must be unique", reason=REASON_RESOLUTION_INVALID)
     supplied = tuple(supplied_citation_ids)
     if len(supplied) != len(set(supplied)) or any(
         type(item) is not str or not item.strip() for item in supplied
     ):
-        raise EvidenceContractError("supplied citation IDs are invalid")
+        raise EvidenceContractError("supplied citation IDs are invalid", reason=REASON_RESOLUTION_INVALID)
     if any(item not in supplied for item in citation_ids):
-        raise EvidenceContractError("resolution cites an unavailable passage")
+        raise EvidenceContractError("resolution cites an unavailable passage", reason=REASON_RESOLUTION_INVALID)
     if coverage is EvidenceCoverage.NONE and citation_ids:
-        raise EvidenceContractError("none coverage cannot cite supporting passages")
+        raise EvidenceContractError("none coverage cannot cite supporting passages", reason=REASON_RESOLUTION_INVALID)
     if coverage is EvidenceCoverage.NONE and conflict:
-        raise EvidenceContractError("none coverage cannot declare a conflict")
+        raise EvidenceContractError("none coverage cannot declare a conflict", reason=REASON_RESOLUTION_INVALID)
     if coverage is not EvidenceCoverage.NONE and not citation_ids:
-        raise EvidenceContractError("complete or partial coverage requires support")
+        raise EvidenceContractError("complete or partial coverage requires support", reason=REASON_RESOLUTION_INVALID)
     return EvidenceResolution(coverage, conflict, citation_ids)
 
 
@@ -818,6 +843,13 @@ __all__ = [
     "EVIDENCE_RESOLVER_PROMPT_SHA256",
     "EVIDENCE_RESOLVER_SYSTEM_PROMPT",
     "EvidenceContractError",
+    "REASON_ANSWER_INVALID",
+    "REASON_OUTPUT_INVALID",
+    "REASON_OUTPUT_TRUNCATED",
+    "REASON_RELATIONSHIP_INVALID",
+    "REASON_RELATIONSHIP_MISSING",
+    "REASON_RELATIONSHIP_UNSUPPORTED",
+    "REASON_RESOLUTION_INVALID",
     "GroundingContractError",
     "EvidenceCoverage",
     "EvidenceResolution",
