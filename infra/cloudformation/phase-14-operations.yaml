@@ -408,6 +408,19 @@ Resources:
           Unit: USD
         BudgetType: COST
         TimeUnit: MONTHLY
+        # Measure usage before credits/refunds; preserve all other live settings.
+        CostTypes:
+          IncludeTax: true
+          IncludeSubscription: true
+          UseBlended: false
+          IncludeRefund: false
+          IncludeCredit: false
+          IncludeUpfront: true
+          IncludeRecurring: true
+          IncludeOtherSubscription: true
+          IncludeSupport: true
+          IncludeDiscount: true
+          UseAmortized: false
       NotificationsWithSubscribers:
         - Notification:
             ComparisonOperator: GREATER_THAN

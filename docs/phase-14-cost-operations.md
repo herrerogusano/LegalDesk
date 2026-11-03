@@ -117,6 +117,62 @@ the stack can create a project-owned topic only when `CreateAlarmTopic=true`
 using the existing NoEcho `BudgetEmail` confirmation endpoint; both modes
 cannot be selected together. The Budget's direct email is only an alert.
 
+## Monthly budget measures usage before credits
+
+The operations template explicitly sets `CostTypes.IncludeCredit=false` and
+`IncludeRefund=false`. Credits previously offset the account's usage to zero,
+so the alerts could stay silent while AWS resources consumed credit. This
+gross-usage measure excludes those offsets; all other cost-type settings,
+including discounts, remain unchanged. It is account-wide, not LegalDesk-only.
+The deployed limit remains **25 USD/month**, with direct-email ACTUAL alerts
+above 80% and 100%, using the same subscriber.
+Budget figures can take about 24 hours to recompute and are not a billing cap.
+
+[AWS Budgets pricing](https://aws.amazon.com/aws-cost-management/aws-budgets/pricing/)
+(verified 2026-11-03) makes budget monitoring and notifications free, including
+forecast notifications. This change adds no Budget Actions, Budget Reports,
+SNS subscriptions or other paid features. Existing CloudWatch/SNS costs remain.
+
+Read remaining credits separately from usage, using the IAM-user login:
+
+```powershell
+aws freetier get-account-plan-state --region us-east-1
+```
+
+Deploy only through the operations CloudFormation template and a reviewed change
+set, preserving every live parameter with `UsePreviousValue` (in particular the
+25 USD limit and NoEcho email). The resource schema from `describe-type` permits
+`CostTypes` updates in place, but marks `NotificationsWithSubscribers` as
+create-only. A 2026-11-03 change set adding a free FORECASTED 100% email alert
+listed only `MonthlyBudget` Modify, with conditional replacement. On execution,
+the replacement failed because the existing budget had the same name and a
+different internal ID; CloudFormation rolled back successfully. The forecast
+alert is therefore deferred: the final template preserves both existing ACTUAL
+notifications and changes only `CostTypes` in place. Adding the forecast alert
+needs a separately agreed CloudFormation migration; do not rename/delete the
+budget or edit it outside IaC to work around this.
+
+Stop if any resource besides `MonthlyBudget` changes; never edit the stack-owned
+budget in the console or expand IAM to deploy it.
+
+The console-created `My Zero-Spend Budget` and the other project's
+`honda-mapit-mcp-prod-account-wide-monthly` budget are outside this change.
+
+Deployment evidence (2026-11-03): `budget-gross-usage-only-20261103` contained
+only `MonthlyBudget` Modify (conditional replacement in the preview), changed
+only `Budget.CostTypes`, and completed in place with the same budget name
+(only update events, no replacement). AWS advanced `TimePeriod.Start` from
+September 1 to the current month's November 1; the template leaves that start
+implicit. The end date remained unchanged. The stack reached `UPDATE_COMPLETE`
+with no service role attached;
+the operator used an IAM-user `aws login` session, without IAM changes.
+`describe-budget` confirmed both exclusions and the 25 USD limit; calculated
+spend immediately read **0.007 USD actual / 0.38 USD forecast**, pending the next
+cost-data refresh. Both ACTUAL subscribers and the other two budget
+configurations were verified unchanged. The reviewed change-set JSON and
+before/after snapshots are outside the repo under
+`%USERPROFILE%\legaldesk-t9\20261103\budget\` (UTF-8 without BOM).
+
 ## Deployment and rollback expectations
 
 1. Inventory the existing stacks/resources and ownership; do not recreate the
