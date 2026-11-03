@@ -39,6 +39,36 @@ DEFAULT_NUMBER_OF_RESULTS = 5
 MAX_RETRIEVAL_SOURCE_CHARACTERS = 100_000
 
 
+class RetrievalSubstepError(ValueError):
+    """A retrieval post-check failed; ``code`` is a closed ``TelemetryErrorCode`` value and never carries content.
+
+    Still a ``ValueError`` with the same messages as before, so every caller keeps failing closed exactly as it did; only the
+    telemetry can now tell the sub-steps apart.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+_OBJECT_DENIED = frozenset({"403", "accessdenied", "forbidden"})
+_OBJECT_MISSING = frozenset({"404", "nosuchkey", "notfound"})
+
+
+def _object_error_code(exc: BaseException) -> str:
+    """Closed class of an object HEAD failure, from the provider error code only (never the message)."""
+
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, Mapping) else None
+    code = error.get("Code") if isinstance(error, Mapping) else None
+    if isinstance(code, str):
+        if code.lower() in _OBJECT_DENIED:
+            return "retrieval_object_denied"
+        if code.lower() in _OBJECT_MISSING:
+            return "retrieval_object_missing"
+    return "retrieval_object_failed"
+
+
 class BedrockKnowledgeBaseClient(Protocol):
     def retrieve(
         self,
@@ -355,26 +385,36 @@ def _retrieve_with_context(
             error_code="retrieval_invalid_response",
         )
         raise ValueError("retrieval response is malformed")
+    error_code = "retrieval_invalid_response"
     try:
-        results = _normalize_results(
-            response, context, selected_document_id=selected_document_id
-        )
+        try:
+            results = _normalize_results(
+                response, context, selected_document_id=selected_document_id
+            )
+        except Exception as exc:
+            raise RetrievalSubstepError("retrieval_results_malformed", str(exc)) from exc
         if metadata_repository is not None:
             for passage in results:
-                document = metadata_repository.get_for_scope(
-                    tenant_id=context.tenant_id,
-                    matter_id=context.matter_id,
-                    document_id=passage.citation.document_id,
-                )
-                if (
-                    document is None
-                    or document.status is not DocumentStatus.INDEXED
-                    or document.malware_scan_status is not MalwareScanStatus.CLEAN
-                ):
-                    # A stale vector can remain after object/metadata
-                    # deletion until the next KB sync. Never pass it to a
-                    # resolver/writer: fail closed for the whole response.
-                    raise ValueError("retrieval result document is unavailable")
+                try:
+                    document = metadata_repository.get_for_scope(
+                        tenant_id=context.tenant_id,
+                        matter_id=context.matter_id,
+                        document_id=passage.citation.document_id,
+                    )
+                except Exception as exc:
+                    raise RetrievalSubstepError(
+                        "retrieval_document_lookup_failed", "retrieval result document lookup failed"
+                    ) from exc
+                # A stale vector can remain after object/metadata deletion until
+                # the next KB sync. Never pass it to a resolver/writer: fail
+                # closed for the whole response. The closed code says which of
+                # the three conditions it was.
+                if document is None:
+                    raise RetrievalSubstepError("retrieval_document_missing", "retrieval result document is unavailable")
+                if document.status is not DocumentStatus.INDEXED:
+                    raise RetrievalSubstepError("retrieval_document_not_indexed", "retrieval result document is unavailable")
+                if document.malware_scan_status is not MalwareScanStatus.CLEAN:
+                    raise RetrievalSubstepError("retrieval_document_not_clean", "retrieval result document is unavailable")
                 if object_storage is not None:
                     # The provider URI is untrusted retrieval data.  Resolve
                     # the key exclusively from the authorized, live Document
@@ -384,10 +424,12 @@ def _retrieve_with_context(
                         if not isinstance(head, Mapping):
                             raise ValueError("object HEAD response is malformed")
                     except Exception as exc:
-                        raise ValueError(
-                            "retrieval result document object is unavailable"
+                        raise RetrievalSubstepError(
+                            _object_error_code(exc), "retrieval result document object is unavailable"
                         ) from exc
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, RetrievalSubstepError):
+            error_code = exc.code
         # Provider-shaped content is untrusted.  A malformed score/page or
         # another normalization failure must close the started retrieval span
         # before failing closed, rather than leaving an open started event.
@@ -398,7 +440,7 @@ def _retrieve_with_context(
             TelemetryOutcome.ERROR,
             started_at=started_at,
             operation="knowledge_base_retrieve",
-            error_code="retrieval_invalid_response",
+            error_code=error_code,
         )
         emit_telemetry(
             telemetry_sink,
@@ -407,7 +449,7 @@ def _retrieve_with_context(
             TelemetryOutcome.ERROR,
             started_at=started_at,
             operation="knowledge_base_retrieve",
-            error_code="retrieval_invalid_response",
+            error_code=error_code,
         )
         raise
     emit_telemetry(

@@ -353,6 +353,25 @@
       ],
       "remove": []
     },
+    "gateway-search-handler-and-code": {
+      "description": "LegalDeskPhase08Gateway after the search_documents fix (T9 step 12, 2026-11-03): new artifact for the three Lambdas (interceptor with the closed deny stage, MCP server, search Lambda with the closed retrieval sub-step codes) and the search Lambda's Handler changes to the entry point that raises on failure so Gateway reports isError. No IAM, no resource added or removed, no target or Gateway change.",
+      "add": [],
+      "modify": {
+        "GatewayRequestInterceptorFunction": [
+          "Code"
+        ],
+        "MetadataMcpFunction": [
+          "Code"
+        ],
+        "SearchDocumentsFunction": [
+          "Code",
+          "Handler"
+        ]
+      },
+      "iamResources": [],
+      "iam": [],
+      "remove": []
+    },
     "public-edge-agent-chat-rollback": {
       "description": "Rollback of EnableAgentChat to false: queue, DLQ, worker, role, event source mapping, log group, metric filters and alarms are removed; the application function environment and role policy go back.",
       "add": [],

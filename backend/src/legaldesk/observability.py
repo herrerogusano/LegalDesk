@@ -73,6 +73,16 @@ class TelemetryErrorCode(StrEnum):
     MCP_SERVICE_UNAVAILABLE = "mcp_service_unavailable"
     RETRIEVAL_FAILED = "retrieval_failed"
     RETRIEVAL_INVALID_RESPONSE = "retrieval_invalid_response"
+    # The sub-steps that used to be collapsed into retrieval_invalid_response (T9 step 12, 2026-11-03: eighteen search_documents runs
+    # failed with that one code and nothing told the normalisation, the document record and the object HEAD apart).
+    RETRIEVAL_RESULTS_MALFORMED = "retrieval_results_malformed"
+    RETRIEVAL_DOCUMENT_LOOKUP_FAILED = "retrieval_document_lookup_failed"
+    RETRIEVAL_DOCUMENT_MISSING = "retrieval_document_missing"
+    RETRIEVAL_DOCUMENT_NOT_INDEXED = "retrieval_document_not_indexed"
+    RETRIEVAL_DOCUMENT_NOT_CLEAN = "retrieval_document_not_clean"
+    RETRIEVAL_OBJECT_DENIED = "retrieval_object_denied"
+    RETRIEVAL_OBJECT_MISSING = "retrieval_object_missing"
+    RETRIEVAL_OBJECT_FAILED = "retrieval_object_failed"
     MODEL_FAILED = "model_failed"
     SERVICE_UNAVAILABLE = "service_unavailable"
     TIMEOUT = "timeout"
