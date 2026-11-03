@@ -49,6 +49,9 @@ notifications are alerts, not a billing hard cap. It is deliberately
 account-wide because some
 Bedrock/Marketplace charges cannot be reliably attributed by project tag; set
 the threshold with the account's existing non-LegalDesk spend in mind.
+Since 2026-11-03 the Budget excludes credits and refunds so they cannot hide
+resource usage. See [gross-usage budget accounting](phase-14-cost-operations.md#monthly-budget-measures-usage-before-credits)
+for credit-balance lookup, pricing, and the deferred forecast alert.
 
 ## Beta SLOs and alert intent
 
