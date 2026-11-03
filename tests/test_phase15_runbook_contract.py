@@ -230,6 +230,27 @@ class Step9SimulatesTheAttributeReadsTests(unittest.TestCase):
         self.assertIn("ReadOnlyAgentChatQueueAttributes", step_9)
 
 
+class Step11ParserVersusHarnessTests(unittest.TestCase):
+    """Live 2026-11-03: our parser's rejection was reported as a Harness rejection and sent the owner towards the wrong fix."""
+
+    def test_the_closed_code_is_documented_with_its_meaning_and_the_wrong_fix_to_avoid(self) -> None:
+        step_11 = " ".join(section(RUNBOOK, "Step 11 ").split())
+        for needle in (
+            "client_parser_rejected", "ClientStreamParserError", "**our** stream parser", "not** an `AllowedTools` change",
+            "legaldesk_gateway_search-documents___search_documents", "@legaldesk_gateway/search-documents___search_documents",
+            "`@<group>/<rest>` → `<group>_<rest>`", "**Harness itself**", "ackDiagnosis", "inside_longer_token", "never their text",
+        ):
+            self.assertIn(needle, step_11)
+
+    def test_every_verdict_of_the_script_for_allowed_tools_is_in_the_runbook_table(self) -> None:
+        from scripts import phase15_harness_checks as checks
+
+        row = next(line for line in section(RUNBOOK, "Step 11 ").splitlines() if line.startswith("| `allowed_tools` (pre-check"))
+        for verdict in checks.ALLOWED_TOOLS:
+            if verdict != "not_run":
+                self.assertIn(f"`{verdict}`", row)
+
+
 class ProfilesAndCommandsExistTests(unittest.TestCase):
     def test_every_profile_the_runbook_names_exists(self) -> None:
         names = set(re.findall(r"--profile ([a-z0-9-]+)", RUNBOOK)) | set(re.findall(r"profile `([a-z0-9-]+)`", RUNBOOK))
