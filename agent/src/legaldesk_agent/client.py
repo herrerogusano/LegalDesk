@@ -86,6 +86,14 @@ class HarnessInvocationError(RuntimeError):
     """Raised when AgentCore returns a runtime client error."""
 
 
+class ClientStreamParserError(HarnessInvocationError):
+    """OUR stream parser refused what Harness sent (an unknown tool name, a result without its use...).
+
+    It is not Harness refusing anything: the checks and the evals must not report it as a Harness rejection. Found live on
+    2026-11-03 (T9 step 11), when the parser did not know the name format that Harness uses for Gateway tools.
+    """
+
+
 class HarnessDataPlane(Protocol):
     def invoke_harness(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
@@ -343,16 +351,42 @@ def _text_from_events(events: Iterable[Mapping[str, Any]]) -> str:
     return "".join(chunks)
 
 
-def _tool_name_allowed(name: str, allowed_tools: tuple[str, ...] | None) -> bool:
+def _harness_stream_form(entry: str) -> str | None:
+    """The name Harness gives a Gateway tool in its stream: ``@<group>/<rest>`` -> ``<group>_<rest>``.
+
+    Observed live on 2026-11-03 (T9 step 11): ``allowedTools`` holds ``@legaldesk_gateway/search-documents___search_documents``
+    and the stream names the same call ``legaldesk_gateway_search-documents___search_documents``. The mapping is derived
+    from each permitted entry, one to one: a name that is not the image of an entry (another group, another target, another
+    tool, a prefix or a suffix of one) is not recognised.
+    """
+
+    if not entry.startswith("@") or entry.count("/") != 1:
+        return None
+    group, _, rest = entry[1:].partition("/")
+    if not group or not rest:
+        return None
+    return f"{group}_{rest}"
+
+
+def _canonical_tool_name(name: object, allowed_tools: tuple[str, ...] | None) -> str | None:
+    """The allowed name a stream tool name stands for, or ``None``.
+
+    The exact entry and the short name (the segment after ``___``, the form of the local test doubles) are kept as they are;
+    the Harness stream form is normalised to its entry so that everything downstream (call log, output tree, telemetry,
+    allowlist checks) sees one name.
+    """
+
     if not isinstance(name, str) or not name or len(name) > 256:
-        return False
-    if allowed_tools is None:
-        return name in _MCP_TOOL_NAMES or name in {
-            item.rsplit("___", 1)[-1] for item in _MCP_TOOL_NAMES
-        }
-    return name in allowed_tools or any(
-        name == item.rsplit("___", 1)[-1] for item in allowed_tools
-    )
+        return None
+    entries = _MCP_TOOL_NAMES if allowed_tools is None else allowed_tools
+    if name in entries or any(name == entry.rsplit("___", 1)[-1] for entry in entries):
+        return name
+    matches = [entry for entry in entries if _harness_stream_form(entry) == name]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _tool_name_allowed(name: str, allowed_tools: tuple[str, ...] | None) -> bool:
+    return _canonical_tool_name(name, allowed_tools) is not None
 
 
 def _safe_tool_payload(value: object, *, raw: bool = False) -> Mapping[str, object]:
@@ -475,9 +509,10 @@ def _structured_tool_results(
                     or not tool_id
                     or len(tool_id) > 256
                     or not isinstance(name, str)
-                    or not _tool_name_allowed(name, allowed_tools)
+                    or (canonical := _canonical_tool_name(name, allowed_tools)) is None
                 ):
                     raise ValueError("unknown or invalid Harness tool use")
+                name = canonical
                 if tool_id in uses or any(record.get("block_key") == block_key for record in results.values()):
                     raise ValueError("duplicate Harness tool use")
                 if len(uses) >= _MAX_TOOL_RESULTS:
@@ -876,7 +911,7 @@ class HarnessInvoker:
             )
             if exc.__class__.__name__ == "EventStreamError":
                 raise HarnessInvocationError(str(exc)) from exc
-            raise HarnessInvocationError("AgentCore returned an invalid event stream") from exc
+            raise ClientStreamParserError("AgentCore returned an invalid event stream") from exc
         _record_agent_event(
             self.telemetry_sink,
             "agent",
@@ -1099,7 +1134,7 @@ def invoke_agent_chat(
     except ValueError as exc:
         _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "error", operation="invoke_harness",
                             started_at=started_at, error_code="harness_malformed_response")
-        raise HarnessInvocationError("AgentCore returned an invalid event stream") from exc
+        raise ClientStreamParserError("AgentCore returned an invalid event stream") from exc
     iterations, stop_reason = _loop_shape(events)
     outcome = classify_loop(tool_calls=len(calls), stop_reason=stop_reason, error=error)
     _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "succeeded" if error is None else "error",

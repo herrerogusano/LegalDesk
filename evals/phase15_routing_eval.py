@@ -402,8 +402,10 @@ class WorkerLoopClient:
         except Exception as exc:  # noqa: BLE001 - no retries: the case is recorded as failed
             obs.error = type(exc).__name__.lower()[:64]
             if "invalid event stream" in str(exc).lower():
-                # The stream parser fails closed when the model uses a tool outside allowedTools; it cannot
-                # tell that from other malformed streams, so it is counted as a violation (conservative).
+                # Our stream parser fails closed when the model uses a tool outside allowedTools; it cannot
+                # tell that from other malformed streams, so it is counted as a violation (conservative). Since
+                # 2026-11-03 it knows the name format Harness really uses for Gateway tools
+                # (legaldesk_gateway_<target>___<tool>), so a rejection here is no longer the normal case.
                 obs.violations.append("stream_rejected_possible_disallowed_tool")
             obs.latency_ms = int((time.perf_counter() - started) * 1000)
             return obs
@@ -581,14 +583,14 @@ def run_real(
 
 # ----------------------------------------------------------------- reports
 
-def assert_report_path(path: Path) -> Path:
+def assert_report_path(path: Path, prefix: str = REPORT_PREFIX) -> Path:
     resolved = path.resolve()
     try:
         resolved.relative_to(RESULTS_ROOT.resolve())
     except ValueError as exc:
         raise ValueError("reports must stay under evals/results") from exc
-    if not resolved.name.startswith(REPORT_PREFIX) or resolved.suffix != ".json":
-        raise ValueError(f"report name must start with {REPORT_PREFIX!r} and end in .json")
+    if not resolved.name.startswith(prefix) or resolved.suffix != ".json":
+        raise ValueError(f"report name must start with {prefix!r} and end in .json")
     if path.is_symlink() or resolved.exists():
         raise FileExistsError("reports are immutable and cannot be overwritten")
     return resolved

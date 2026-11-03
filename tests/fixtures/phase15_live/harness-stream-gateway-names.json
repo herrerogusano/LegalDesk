@@ -1,0 +1,218 @@
+{
+ "description": "Synthetic Harness stream with the tool-name format observed live on 2026-11-03 (T9 step 11): the stream names a Gateway tool <group>_<target>___<tool> while allowedTools holds @<group>/<target>___<tool>. Payloads are fictional.",
+ "observedFormat": "legaldesk_gateway_search-documents___search_documents",
+ "events": [
+  {
+   "messageStart": {
+    "role": "assistant"
+   }
+  },
+  {
+   "contentBlockStart": {
+    "contentBlockIndex": 0,
+    "start": {
+     "toolUse": {
+      "toolUseId": "tooluse_search",
+      "name": "legaldesk_gateway_search-documents___search_documents",
+      "type": "mcp_tool_use"
+     }
+    }
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStop": {
+    "stopReason": "tool_use"
+   }
+  },
+  {
+   "messageStart": {
+    "role": "user"
+   }
+  },
+  {
+   "contentBlockStart": {
+    "contentBlockIndex": 0,
+    "start": {
+     "toolResult": {
+      "toolUseId": "tooluse_search",
+      "status": "success"
+     }
+    }
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "contentBlockIndex": 0,
+    "delta": {
+     "toolResult": [
+      {
+       "text": "{\"content\": [{\"type\": \"text\", \"text\": \"{\\\"answer\\\": \\\"El plazo es de 30 d\\\\u00edas.\\\", \\\"evidenceStatus\\\": \\\"answerable\\\", \\\"operationStatus\\\": \\\"ok\\\", \\\"citations\\\": [{\\\"citationId\\\": \\\"c1\\\", \\\"documentId\\\": \\\"doc-a\\\", \\\"documentName\\\": \\\"Alfa.pdf\\\", \\\"pageNumber\\\": 2, \\\"section\\\": null, \\\"passage\\\": \\\"El plazo ser\\\\u00e1 de 30 d\\\\u00edas.\\\"}]}\"}]}"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStart": {
+    "role": "assistant"
+   }
+  },
+  {
+   "contentBlockStart": {
+    "contentBlockIndex": 0,
+    "start": {
+     "toolUse": {
+      "toolUseId": "tooluse_fields",
+      "name": "legaldesk_gateway_metadata-mcp___get_extracted_fields",
+      "type": "mcp_tool_use"
+     }
+    }
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStop": {
+    "stopReason": "tool_use"
+   }
+  },
+  {
+   "messageStart": {
+    "role": "user"
+   }
+  },
+  {
+   "contentBlockStart": {
+    "contentBlockIndex": 0,
+    "start": {
+     "toolResult": {
+      "toolUseId": "tooluse_fields",
+      "status": "success"
+     }
+    }
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "contentBlockIndex": 0,
+    "delta": {
+     "toolResult": [
+      {
+       "text": "{\"content\": [{\"type\": \"text\", \"text\": \"{\\\"documents\\\": [{\\\"documentId\\\": \\\"doc-a\\\", \\\"name\\\": \\\"Alfa.pdf\\\", \\\"documentType\\\": \\\"CONTRACT\\\", \\\"fields\\\": [{\\\"name\\\": \\\"explicit_expiration_date\\\", \\\"status\\\": \\\"fact\\\", \\\"value\\\": \\\"2026-03-15\\\", \\\"origin\\\": \\\"LITERAL\\\", \\\"evidence\\\": [{\\\"page\\\": 1, \\\"quote\\\": \\\"Vence el 15 de marzo de 2026\\\"}]}]}], \\\"notFound\\\": []}\"}]}"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStart": {
+    "role": "assistant"
+   }
+  },
+  {
+   "contentBlockStart": {
+    "contentBlockIndex": 0,
+    "start": {
+     "toolUse": {
+      "toolUseId": "tooluse_list",
+      "name": "legaldesk_gateway_metadata-mcp___list_matter_documents",
+      "type": "mcp_tool_use"
+     }
+    }
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStop": {
+    "stopReason": "tool_use"
+   }
+  },
+  {
+   "messageStart": {
+    "role": "user"
+   }
+  },
+  {
+   "contentBlockStart": {
+    "contentBlockIndex": 0,
+    "start": {
+     "toolResult": {
+      "toolUseId": "tooluse_list",
+      "status": "success"
+     }
+    }
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "contentBlockIndex": 0,
+    "delta": {
+     "toolResult": [
+      {
+       "text": "{\"content\": [{\"type\": \"text\", \"text\": \"{\\\"documents\\\": [{\\\"documentId\\\": \\\"doc-a\\\", \\\"name\\\": \\\"Alfa.pdf\\\", \\\"mediaType\\\": \\\"application/pdf\\\", \\\"status\\\": \\\"PROCESSED\\\", \\\"uploadedAt\\\": \\\"2026-01-01T00:00:00Z\\\"}]}\"}]}"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStart": {
+    "role": "assistant"
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "contentBlockIndex": 0,
+    "delta": {
+     "text": "{\"version\": 1, \"blocks\": [{\"type\": \"text\", \"source\": {\"toolUseId\": \"tooluse_search\"}}]}"
+    }
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStop": {
+    "stopReason": "end_turn"
+   }
+  },
+  {
+   "metadata": {
+    "usage": {
+     "inputTokens": 5,
+     "outputTokens": 2,
+     "totalTokens": 7
+    }
+   }
+  }
+ ]
+}

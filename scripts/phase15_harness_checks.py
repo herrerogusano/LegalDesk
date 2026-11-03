@@ -51,8 +51,8 @@ from typing import Any, Callable, Iterator, Mapping
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKS_VERSION = "1.0.0"
-SCHEMA_VERSION = "phase15-harness-checks-1"
+CHECKS_VERSION = "1.1.0"
+SCHEMA_VERSION = "phase15-harness-checks-2"
 REPORT_PREFIX = "phase15-harness-checks-"
 RESULTS_ROOT = ROOT / "evals" / "results"
 REGION = "eu-west-1"
@@ -71,7 +71,13 @@ ALLOWED_TOOLS_QUESTION = "Synthetic availability check. Reply with the single wo
 DEFAULT_CUT_QUESTION = "What does the notice clause of the lease say?"
 
 # Closed vocabularies of the report.
-ALLOWED_TOOLS = ("accepted", "request_rejected", "tool_use_rejected", "request_accepted_tool_use_not_exercised", "inconclusive", "not_run")
+ALLOWED_TOOLS = (
+    "accepted", "request_rejected", "tool_use_rejected", "client_parser_rejected", "request_accepted_tool_use_not_exercised", "inconclusive", "not_run",
+)
+# Verdicts after which the cut-loop check is not run (it would fail the same way and spend two paid calls).
+REJECTED_VERDICTS = frozenset({"request_rejected", "tool_use_rejected", "client_parser_rejected"})
+# What the report may say about the acknowledgement of turn 1, so that an inconclusive session says WHY without storing any text.
+ACK_DIAGNOSES = ("whole_word", "inside_longer_token", "different_case", "empty_answer", "absent")
 SESSION = ("history_not_retained", "history_retained", "inconclusive", "invoke_failed", "not_run")
 TOOL_RESULTS = ("retained", "lost", "inconclusive", "invoke_failed", "skipped_tools_rejected", "not_run")
 OVERALL = ("all_passed", "findings", "inconclusive", "aborted_after_errors")
@@ -79,7 +85,8 @@ INTERPRETATION = {
     "allowed_tools": {
         "accepted": "Harness accepted the per-invocation tools and a new tool completed: the template AllowedTools is not an obstacle",
         "request_rejected": "Harness rejected the per-invocation tools at request time: add search_documents and get_extracted_fields to the Harness AllowedTools (owner decision) before the eval",
-        "tool_use_rejected": "Harness refused the new tools when the model used them: same fix as request_rejected",
+        "tool_use_rejected": "Harness itself refused the new tools when the model used them (an error from Harness that points at the tools): same fix as request_rejected",
+        "client_parser_rejected": "OUR stream parser (legaldesk_agent.client) rejected the stream; Harness did not refuse anything. Do not change the Harness AllowedTools: fix the parser (live 2026-11-03: it did not know the name format Harness uses for Gateway tools)",
         "request_accepted_tool_use_not_exercised": "the request was accepted but no new tool completed: not conclusive; the eval will show it",
         "inconclusive": "the pre-check failed for another reason (errorCode/errorClass; a ValidationException that does not point at the tools lands here): no conclusion",
         "not_run": "not run",
@@ -87,7 +94,7 @@ INTERPRETATION = {
     "session": {
         "history_not_retained": "without memory the session keeps no history of its own (bounded evidence): the worker's session scheme is fine",
         "history_retained": "the session keeps history: the worker must use a new runtimeSessionId per job (code change) before the eval",
-        "inconclusive": "the model did not acknowledge turn 1: no conclusion; a rerun needs a new approval",
+        "inconclusive": "the model did not acknowledge turn 1 as a whole word (see ackDiagnosis for why, without any text): no conclusion; a rerun needs a new approval",
         "invoke_failed": "an invocation failed: no conclusion; a rerun needs a new approval",
         "not_run": "not run",
     },
@@ -176,18 +183,28 @@ def _whole_token(token: str, text: str) -> bool:
 _ALLOWED_TOOLS_HINT = re.compile(r"allowed[\s_-]*tools?|tools?\b.{0,60}\bnot\b.{0,30}\b(?:allowed|permitted|configured|listed)\b")
 
 
+def _is_client_parser_error(exc: BaseException) -> bool:
+    """OUR parser refused the stream. By type when the agent package raised it, by its fixed message for older callers."""
+
+    return any(cls.__name__ == "ClientStreamParserError" for cls in type(exc).__mro__) or "invalid event stream" in str(exc).lower()
+
+
 def classify_agent_error(exc: BaseException) -> str:
     """Attribute a failed invocation, with a closed answer.
 
     ``request_rejected`` only for a ``ValidationException`` whose message points at the allowed tools;
     ``validation_unattributed`` for any other ``ValidationException`` (a bad token limit, a malformed header...);
-    ``stream_rejected`` when the stream parser refused a tool; ``other`` otherwise.
+    ``client_parser_rejected`` when OUR stream parser refused the stream (not a Harness refusal: it used to be reported as one);
+    ``harness_tool_rejected`` when Harness itself failed the invocation with a message that points at the allowed tools;
+    ``other`` otherwise.
     """
 
     if _error_code(exc) == "ValidationException":
         return "request_rejected" if _ALLOWED_TOOLS_HINT.search(str(exc).lower()) else "validation_unattributed"
-    if "invalid event stream" in str(exc).lower():
-        return "stream_rejected"  # the parser fails closed on a tool outside allowedTools; it cannot say which
+    if _is_client_parser_error(exc):
+        return "client_parser_rejected"
+    if any(cls.__name__ in {"HarnessInvocationError", "EventStreamError"} for cls in type(exc).__mro__) and _ALLOWED_TOOLS_HINT.search(str(exc).lower()):
+        return "harness_tool_rejected"  # an error Harness itself put in the stream, pointing at the tools (never a client-side or throttling error)
     return "other"
 
 
@@ -215,7 +232,9 @@ def check_allowed_tools(backends: Backends, state: _State) -> dict[str, object]:
     except Exception as exc:  # noqa: BLE001 - recorded, never retried
         kind = classify_agent_error(exc)
         record["errorCode"], record["errorClass"] = _error_code(exc), kind
-        record["verdict"] = {"request_rejected": "request_rejected", "stream_rejected": "tool_use_rejected"}.get(kind, "inconclusive")
+        record["verdict"] = {
+            "request_rejected": "request_rejected", "harness_tool_rejected": "tool_use_rejected", "client_parser_rejected": "client_parser_rejected",
+        }.get(kind, "inconclusive")
         state.failed()
         return record
     state.ok()
@@ -223,16 +242,44 @@ def check_allowed_tools(backends: Backends, state: _State) -> dict[str, object]:
     return record
 
 
+def ack_diagnosis(ack: str, text: str) -> str:
+    """Why an acknowledgement did or did not count, as a closed label. Computed in memory; the text is never kept."""
+
+    if _whole_token(ack, text):
+        return "whole_word"
+    if not text.strip():
+        return "empty_answer"
+    if ack in text:
+        return "inside_longer_token"
+    if ack.lower() in text.lower():
+        return "different_case"
+    return "absent"
+
+
+def _recalled(core: str, text: str) -> bool:
+    """The random core of the word, in any case, anywhere in the answer. Deliberately loose: a false hit is impossible (64 random bits
+    that only turn 1 carried) and a false miss would be the dangerous error, a wrong 'history not retained'."""
+
+    return core.lower() in text.lower()
+
+
 def check_session(backends: Backends, state: _State) -> dict[str, object]:
-    record: dict[str, object] = {"verdict": "not_run", "invocations": 0, "errorCode": None, "acknowledged": None, "recalled": None}
-    word, token_1, token_2, ack = "LDSESSWORD" + uuid4().hex, "LDSESSA" + uuid4().hex, "LDSESSB" + uuid4().hex, "LDSESSACK" + uuid4().hex
+    record: dict[str, object] = {
+        "verdict": "not_run", "invocations": 0, "errorCode": None, "acknowledged": None, "ackDiagnosis": None, "recalled": None,
+        "turn1Chars": None, "turn2Chars": None,
+    }
+    # Short random cores (the earlier 32-hex-digit tokens are easy for a model to miscopy). The acknowledgement still has to come back as a
+    # whole word with the exact case; only the word of turn 1 is matched loosely (see _recalled).
+    word_core, token_1, token_2, ack = uuid4().hex[:16], "LDCHKA" + uuid4().hex[:12], "LDCHKB" + uuid4().hex[:12], "LDACK" + uuid4().hex[:12]
+    word = "LDWORD" + word_core
     record["markerSha256"] = {"word": _sha(word), "turn1": _sha(token_1), "turn2": _sha(token_2), "ack": _sha(ack)}
     session_id = backends.new_session_id()
     record["sessionIdSha256"] = _sha(session_id)
-    turn_1 = f"Synthetic session check {token_1}. Remember this word for later: {word}. Reply with exactly: {ack}"
+    framing = "This is an automated LegalDesk operations check, not a legal question. Call no tool."
+    turn_1 = f"{framing} Check id {token_1}. Remember this word for later: {word}. Now reply with this token and nothing else: {ack}"
     turn_2 = (
-        f"Synthetic session check {token_2}. What word did I ask you to remember earlier? "
-        "If you do not know, reply exactly: UNKNOWN"
+        f"{framing} Check id {token_2}. What was the word I asked you to remember earlier in this conversation? "
+        "Reply with that word and nothing else. If you do not know it, reply exactly: UNKNOWN"
     )
     answers: list[str] = []
     for message in (turn_1, turn_2):
@@ -250,8 +297,10 @@ def check_session(backends: Backends, state: _State) -> dict[str, object]:
         answers.append(text if isinstance(text, str) else "")
     # Computed in memory, never stored. The acknowledgement is a random, unique token matched as a whole word
     # (so "back" or "acknowledge" can never count, and neither can a partial echo of the token).
-    acknowledged, recalled = _whole_token(ack, answers[0]), word in answers[1]
+    acknowledged, recalled = _whole_token(ack, answers[0]), _recalled(word_core, answers[1])
     record["acknowledged"], record["recalled"] = acknowledged, recalled
+    record["ackDiagnosis"] = ack_diagnosis(ack, answers[0])
+    record["turn1Chars"], record["turn2Chars"] = min(len(answers[0]), 100_000), min(len(answers[1]), 100_000)
     if recalled:
         record["verdict"] = "history_retained"
     elif acknowledged:
@@ -262,7 +311,7 @@ def check_session(backends: Backends, state: _State) -> dict[str, object]:
 
 
 def check_tool_results(backends: Backends, state: _State, question: str) -> dict[str, object]:
-    record: dict[str, object] = {"verdict": "not_run", "invocations": 0, "calls": [], "errorCode": None, "newToolCompleted": False, "streamRejected": False}
+    record: dict[str, object] = {"verdict": "not_run", "invocations": 0, "calls": [], "errorCode": None, "newToolCompleted": False, "clientParserRejected": False, "harnessToolRejected": False}
     outcomes: list[str] = []
     for _ in range(INVOCATIONS["tool_results"]):
         state.budget.spend()
@@ -275,7 +324,8 @@ def check_tool_results(backends: Backends, state: _State, question: str) -> dict
         except Exception as exc:  # noqa: BLE001
             call["errorCode"], call["errorClass"] = _error_code(exc), classify_agent_error(exc)
             record["errorCode"] = call["errorCode"]
-            record["streamRejected"] = bool(record["streamRejected"]) or call["errorClass"] == "stream_rejected"
+            record["clientParserRejected"] = bool(record["clientParserRejected"]) or call["errorClass"] == "client_parser_rejected"
+            record["harnessToolRejected"] = bool(record["harnessToolRejected"]) or call["errorClass"] in {"harness_tool_rejected", "request_rejected"}
             state.failed()
             outcomes.append("invoke_failed")
             record["calls"].append(call)  # type: ignore[union-attr]
@@ -341,7 +391,7 @@ def run_checks(backends: Backends, budget: CallBudget, results: dict[str, dict[s
     results["allowed_tools"] = check_allowed_tools(backends, state)
     if not state.aborted:
         results["session"] = check_session(backends, state)
-    if results["allowed_tools"]["verdict"] in {"request_rejected", "tool_use_rejected"}:
+    if results["allowed_tools"]["verdict"] in REJECTED_VERDICTS:
         results["tool_results"] = {"verdict": "skipped_tools_rejected", "invocations": 0}
     elif not state.aborted:
         results["tool_results"] = check_tool_results(backends, state, cut_question)
@@ -355,8 +405,10 @@ def _final(results: Mapping[str, Mapping[str, object]]) -> tuple[str, str]:
 
     allowed = str(results.get("allowed_tools", {}).get("verdict", "not_run"))
     tools = results.get("tool_results", {})
-    if allowed not in {"request_rejected", "tool_use_rejected"}:
-        if tools.get("streamRejected"):
+    if allowed not in REJECTED_VERDICTS:
+        if tools.get("clientParserRejected"):
+            allowed = "client_parser_rejected"
+        elif tools.get("harnessToolRejected"):
             allowed = "tool_use_rejected"
         elif allowed == "request_accepted_tool_use_not_exercised" and tools.get("newToolCompleted"):
             allowed = "accepted"
@@ -366,7 +418,7 @@ def _final(results: Mapping[str, Mapping[str, object]]) -> tuple[str, str]:
         return allowed, "aborted_after_errors"
     if allowed == "accepted" and session == "history_not_retained" and cut == "retained":
         return allowed, "all_passed"
-    findings = allowed in {"request_rejected", "tool_use_rejected"} or session == "history_retained" or cut == "lost"
+    findings = allowed in REJECTED_VERDICTS or session == "history_retained" or cut == "lost"
     return allowed, "findings" if findings else "inconclusive"
 
 

@@ -10,8 +10,10 @@ from types import SimpleNamespace
 from scripts import phase15_harness_checks as checks
 
 from tests.test_phase15_harness_checks import (
-    ChecksTestCase, FakeError, Recorder, ack_reply, loop, tool_call,
+    ChecksTestCase, FakeError, Recorder, ack_reply, loop, tool_call, word_of,
 )
+from legaldesk_agent import HarnessInvocationError
+from legaldesk_agent.client import ClientStreamParserError
 
 
 class CutLoopClassificationTests(ChecksTestCase):
@@ -105,6 +107,63 @@ class AcknowledgementTests(ChecksTestCase):
         self.assertNotEqual(ack_reply(first.plain_calls[0][0]), ack_reply(second.plain_calls[0][0]))
 
 
+class SessionConclusivenessTests(ChecksTestCase):
+    """Live 2026-11-03: the session check was inconclusive twice (acknowledged=false, no error). It must now say why, without keeping any text,
+    and it must not lose the guarantee that the acknowledgement is a whole word with the exact case."""
+
+    def diagnosis(self, answer) -> dict:
+        report = self.run_with(Recorder(plain=[answer, "UNKNOWN"]))
+        self.output.unlink()
+        return report["checks"]["session"]
+
+    def test_each_reason_for_not_acknowledging_has_its_own_closed_label(self) -> None:
+        cases = {
+            "empty_answer": lambda m: "  ",
+            "absent": lambda m: "I will remember that.",
+            "different_case": lambda m: ack_reply(m).lower(),
+            "inside_longer_token": lambda m: ack_reply(m) + "ff",
+            "whole_word": lambda m: "Done: " + ack_reply(m),
+        }
+        for expected, answer in cases.items():
+            with self.subTest(expected):
+                session = self.diagnosis(answer)
+                self.assertEqual(session["ackDiagnosis"], expected)
+                self.assertIn(expected, checks.ACK_DIAGNOSES)
+                self.assertEqual(session["acknowledged"], expected == "whole_word")
+                self.assertEqual(session["verdict"], "history_not_retained" if expected == "whole_word" else "inconclusive")
+
+    def test_the_diagnosis_adds_counts_and_labels_only_never_text(self) -> None:
+        answer = "SECRET-MODEL-TEXT " + "x" * 40
+        session = self.diagnosis(lambda m: answer)
+        self.assertEqual((session["turn1Chars"], session["turn2Chars"]), (len(answer), len("UNKNOWN")))
+        self.assertNotIn("SECRET-MODEL-TEXT", json.dumps(session))
+
+    def test_the_markers_are_short_enough_to_copy_and_still_unguessable(self) -> None:
+        recorder = Recorder()
+        self.run_with(recorder)
+        first = recorder.plain_calls[0][0]
+        self.assertLessEqual(len(ack_reply(first)), 20)
+        self.assertGreaterEqual(len(word_of(first)) - len("LDWORD"), 16)  # 64 random bits
+        # the prompt says it is an automated check, forbids tools and asks for the token alone
+        for needle in ("automated LegalDesk operations check", "Call no tool", "nothing else"):
+            self.assertIn(needle, first)
+
+    def test_the_word_of_turn_one_is_recognised_loosely_so_a_miscopy_of_case_cannot_hide_retained_history(self) -> None:
+        for wrap in ("{}", "{} ", "the word was {}.", "**{}**", "ld{}x"):
+            with self.subTest(wrap):
+                recorder = Recorder()
+                recorder.plain_script[:] = [ack_reply, lambda m, w=wrap: w.format(word_of(recorder.plain_calls[0][0]).lower())]
+                report = self.run_with(recorder)
+                self.assertEqual(report["checks"]["session"]["verdict"], "history_retained")
+                self.output.unlink()
+
+    def test_a_different_random_core_is_never_a_recall(self) -> None:
+        self.assertFalse(checks._recalled("0123456789abcdef", "LDWORD0123456789abcde"))  # one character short
+        self.assertTrue(checks._recalled("0123456789abcdef", "ldword0123456789ABCDEF"))
+        report = self.run_with(Recorder(plain=[ack_reply, "LDWORD0000000000000000"]))
+        self.assertEqual(report["checks"]["session"]["verdict"], "history_not_retained")
+
+
 class ValidationAttributionTests(ChecksTestCase):
     """PB-003: a ValidationException is a tools rejection only when the message points at the tools."""
 
@@ -120,8 +179,9 @@ class ValidationAttributionTests(ChecksTestCase):
                 FakeError("ValidationException", "Value at runtimeSessionId failed to satisfy constraint"),
                 FakeError("ValidationException", ""),
             ],
-            "stream_rejected": [RuntimeError("AgentCore returned an invalid event stream")],
-            "other": [FakeError("ThrottlingException", "allowedTools"), RuntimeError("boom")],
+            "client_parser_rejected": [RuntimeError("AgentCore returned an invalid event stream"), ClientStreamParserError("AgentCore returned an invalid event stream")],
+            "harness_tool_rejected": [HarnessInvocationError("tool search_documents is not in the allowedTools list")],
+            "other": [FakeError("ThrottlingException", "allowedTools"), RuntimeError("boom"), HarnessInvocationError("model timed out"), RuntimeError("not allowed tools")],
         }
         for expected, errors in cases.items():
             for error in errors:
