@@ -98,15 +98,22 @@ class HarnessDataPlane(Protocol):
     def invoke_harness(self, **kwargs: Any) -> Mapping[str, Any]: ...
 
 
+# How the usage blocks of ONE stream add up. The SDK does not document it. The stream is the model's own (Converse/Strands): one
+# ``metadata.usage`` block after every model call of the loop, holding the tokens of THAT call, so the total of a loop is their sum.
+# A loop of three model calls used to report no usage at all (only a stream with exactly one block did), which made the eval's cost
+# stop rules unable to trip (T9 step 12, run c: 0.089 USD reported for about 1.4 USD spent). If the first live comparison with
+# CloudWatch (AWS/Bedrock InputTokenCount/OutputTokenCount, docs/phase-15-t9-cost-estimate.md) shows the blocks are CUMULATIVE
+# instead, the total is the last block and this constant and ``sum_usage`` change in one place; until then the sum is the
+# conservative reading (it can only over-count, never hide cost).
+USAGE_CADENCE = "per_call"
+
+
 @dataclass(frozen=True, slots=True)
 class HarnessUsage:
-    """Validated numeric usage observed in one InvokeHarness stream.
+    """Validated numeric usage: one block of an InvokeHarness stream, or the total of a loop (see ``sum_usage``).
 
-    The installed SDK describes these as invocation token counts but does not
-    document a repeated-block cadence. The adapter therefore accepts exactly
-    one usage block per stream and rejects an ambiguous repeated block. Smoke
-    aggregation happens across separate invocations, never by guessing how a
-    provider stream should be summed.
+    A stream carries one block per model call (``USAGE_CADENCE``). ``total_tokens`` is the provider's own figure
+    (input + output), kept as reported rather than recomputed.
     """
 
     input_tokens: int = 0
@@ -137,6 +144,18 @@ class HarnessUsage:
         }
 
 
+def sum_usage(records: Iterable[HarnessUsage]) -> HarnessUsage | None:
+    """The total of the usage blocks of one stream, or ``None`` when there is none (usage unknown, never zero)."""
+
+    total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cache_read_input_tokens": 0, "cache_write_input_tokens": 0}
+    seen = 0
+    for record in records:
+        seen += 1
+        for name in total:
+            total[name] += getattr(record, name)
+    return HarnessUsage(**total) if seen else None
+
+
 @dataclass(frozen=True, slots=True)
 class InvokeResult:
     session_id: str
@@ -147,10 +166,9 @@ class InvokeResult:
     # Structured provider tool results.  Text is never used to infer a tool
     # outcome or identifier.
     tool_results: tuple["HarnessToolResult", ...] = ()
-    # Validated numeric usage only; raw provider metadata is never retained.
+    # Validated numeric usage only (the total of the stream's blocks); raw provider metadata is never retained. ``None`` = unknown.
     usage: HarnessUsage | None = None
-    # Preserve each validated provider block when cadence is repeated or
-    # otherwise ambiguous; callers must not fabricate a cross-block total.
+    # Each validated block, so a caller can see how many model calls reported.
     usage_records: tuple[HarnessUsage, ...] = ()
 
 
@@ -913,7 +931,7 @@ class HarnessInvoker:
             text = _text_from_events(events)
             structured_metadata = _safe_structured_metadata(events)
             usage_records = _harness_usages(events)
-            usage = usage_records[0] if len(usage_records) == 1 else None
+            usage = sum_usage(usage_records)
             tool_results = _structured_tool_results(
                 events,
                 allowed_tools=(
@@ -1030,7 +1048,11 @@ class AgentChatResult:
     iterations: int
     stop_reason: str | None
     tool_calls: tuple[AgentToolCall, ...] = ()
-    usage: HarnessUsage | None = None
+    usage: HarnessUsage | None = None   # the TOTAL of the loop (sum of the model calls' blocks); None = unknown, never zero
+    # Model calls the stream shows (assistant messages) and usage blocks it carried. Fewer blocks than calls means the total is a lower
+    # bound (a cut stream, or a call that did not report): the cost estimate then adds an upper bound for the missing ones.
+    model_calls: int = 0
+    usage_records_count: int = 0
     # How many history messages were actually sent (after trimming); lets the caller tell
     # that a non-empty history was dropped.
     history_messages: int = 0
@@ -1251,7 +1273,9 @@ def invoke_agent_chat(
         session_id=session_id, correlation_id=correlation_id, text=_final_message_text(events),
         loop_outcome=outcome, iterations=max(1, iterations), stop_reason=stop_reason,
         tool_calls=tuple(AgentToolCall(call.tool_use_id, call.name, call.status, call.payload, call.error_hint) for call in calls),
-        usage=usage_records[0] if len(usage_records) == 1 else None,
+        usage=sum_usage(usage_records),
+        model_calls=iterations,
+        usage_records_count=len(usage_records),
         history_messages=len(history_messages),
         unanswered_tools=_unanswered_tool_names(events, invocation_scope.allowed_tools),
         stream_error_hint=_tool_error_hint(error) if error is not None else None,

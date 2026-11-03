@@ -21,7 +21,7 @@ LegalDesk's are reported as `other`; nulls are dropped).
 | Output | `outputPath` (`grounded`, `data`, `inventory`, `mixed`, `tool_result`, `rag_fallback`), `fallbackReason`, `planError`, `omittedBlocks`, `blockCount`, `citationCount`, `memoryWritten` |
 | History | `historyMessages`, `historyTrimmed`, `historyUnavailable` |
 | Time | `latencyMs`, `queueWaitMs`, `segmentsMs` (`session`, `bind`, `history`, `agent`, `resolve`, `fallback`, `publish`) |
-| Usage | `usageAvailable`, `tokens`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `estimatedLoopCostUsd`, `pricingVersion` |
+| Usage | `usageAvailable`, `usageComplete`, `modelCalls`, `costBasis`, `tokens`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `estimatedLoopCostUsd`, `pricingVersion` |
 
 `estimatedLoopCostUsd` covers **only the Harness loop** and uses the price table
 of `agent_chat_telemetry.PRICE_PER_MILLION_TOKENS` (`pricingVersion` says which).

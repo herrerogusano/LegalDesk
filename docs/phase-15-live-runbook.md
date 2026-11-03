@@ -704,8 +704,8 @@ python evals/phase15_routing_eval.py real --execute --approval-ref <ref> --relea
 ```
 
 One invocation per case, `maxIterations` 3, no retries, abort after 3 consecutive errors (the cases not run count as failed). **Cost watch:** the report sums
-`estimatedLoopCostUsd` (Harness iterations only, priced at the corrected `estimate-2026-11-eu-regional` table): typical ≈ USD 1.0, upper bound 1.75; **stop the
-run and call the owner if it passes 2.20**.
+`estimatedLoopCostUsd` (Harness iterations only, priced at the corrected `estimate-2026-11-eu-regional` table; a loop's usage is the sum of its model calls and a call that reported none counts at an upper bound): typical ≈ USD 1.0, upper bound 1.75; **the run stops by itself
+(`abortedBy: cost_stop`, the cases not run count as failed) if the sum passes 2.20**, and the figure is cross-checked against CloudWatch afterwards (`docs/phase-15-t9-cost-estimate.md`).
 
 **After.** The report is create-only and immutable; read `summary` (tool accuracy, path accuracy, violations, `estimatedLoopCostUsd`, latency p50/p95, tokens).
 Commit the report, never the questions. **Stop if** < 27/30 or any violation: do **not** re-run to "get a pass" (a rerun needs a new approval and a new file name);
@@ -752,6 +752,10 @@ record and KB consistent, and an operator tool plus runbook repairs it (`docs/ph
 are tool sets, output paths and closed reasons (never a document id, name or count of the live matter), and the golden real mode has not uploaded its corpus yet. **Order matters for that upload:** deploy the Phase 02 change first,
 or the new corpus would expire in 30 days too. After the cleanup the live inventory loses the removed records (the three FAILED ones show up in `list_matter_documents` today, with status Failed).
 
+> **Correction (2026-11-04): every `estimatedLoopCostUsd` and `tokens` figure of the real runs a, b and c undercounted** (0.087, 0.086 and 0.089 USD were the cost of the 7 cases without a tool: loops with more than one model call reported no usage). The real cost of run c was about 1.4 USD
+> (CloudWatch). The adapter now sums the usage of a loop, prices an unknown call at an upper bound, and the eval has its 2.20 USD stop in code; see `docs/phase-15-t9-cost-estimate.md` ("Usage accounting correction and the CloudWatch cross-check") for the method to verify any live run against AWS/Bedrock
+> `InputTokenCount` / `OutputTokenCount` by `ModelId`. A report now says `loopCostBasis` (`reported` or `upper_bound`) and `usageIncompleteCases`.
+
 ### Step 12, second real run (2026-11-03): what the data says and what was changed
 
 Report `phase15-routing-20261103-b.json`: toolAccuracy 25/30 (0.833, gate 0.9), pathAccuracy 0.467, 0 violations, 0 errors, 0.086 USD of Harness loop. Not re-run. The search works now (18 of 18 `Retrieve`).
@@ -791,6 +795,33 @@ These are expectation-versus-corpus mismatches of a frozen dataset, not behaviou
 
 **A clean rerun** needs **35** Harness invocations (step 11: 5; step 12: 30), or **30** if step 11 is skipped (its checks are about Harness behaviour that this change does not touch). 91 of the 120 approved are used: **29 are left, one short of the 30 of step 12**, so a new approval is needed
 either way. The Harness stack change (point 3) and a release carrying prompt 1.4.0 must be in place first.
+
+### Step 12, third real run (2026-11-03): analysis, no change
+
+Report `phase15-routing-20261103-c.json` (prompt 1.4.0, `maxTokens` 2048): toolAccuracy 26/30 (0.867, gate 0.9), pathAccuracy 0.70 (b: 0.467), fallback rate 0.5 (b: 0.83), 0 violations. The positions work (`ordinal_in_range`) and the grounded and inventory paths appear. The tool-set misses:
+
+| Case | Tools in run b | Tools in run c | Expected | What happened |
+|---|---|---|---|---|
+| `text-05` | list + search | list + search | search | same in both runs; the extra tool is the **listing**, not a search; answer path fine (`grounded`) |
+| `data-04` | list + search | list + fields + search | list + fields | the extra call is the search; answer path fine |
+| `inj-05` | list + fields | list + fields + search | list + fields | the extra call is the search; loop ended at `max_iterations_exceeded` |
+| `data-05` | list + fields (data) | none | list + fields | a Harness **stream error** at 41.6 s, no tool called |
+
+**Does prompt 1.4.0 push the model to add searches in general? No evidence of it.** (1) 1.3.0 to 1.4.0 changes only how two block types name their source; no sentence about which tool to use. (2) Cases that called `search_documents`: 13 of 30 (run b), 15 of 30 (run c); the
+two extra are `mix-02` (search expected) and `inj-05`; `data-04` searched in both runs. Searches that the expected set did not contain: 1 of 30 in run b (`data-04`) and 2 in run c (`data-04`, `inj-05`): one more case, and the extra tool of `text-05` is a listing, not a search. (3) The sentence that sends the model to search
+is old and general (present since 1.0.0): "If the request cannot be answered with the available tools, call `search_documents` with the question and let the backend report insufficient evidence." A model that listed the documents and fetched fields without finding what was asked is following
+it, which is also why `data-04` ("el NDA con Meridia") and `inj-05` end in a search. That is the designed behaviour (the backend, not the model, reports insufficient evidence), not a drift from 1.4.0. The answer path still worked in `text-05` and `data-04`. Nothing to tune; changing that sentence to
+make these two cases pass would be tuning to the dataset and would remove the designed fallback.
+
+**What did change with the 2048 cap, and is not caused by the prompt:** three loops (`mix-01`, `mix-04`, `inj-05`) now end with `stopReason: max_iterations_exceeded` after three model calls (list, fields, search) with the final plan still to write: with the cut-off gone, the three-iteration budget
+(`maxIterations` 3, ADR-021 D4) is the next limit for a question that needs all three tools. The worker classifies that stop reason as `failed` (`loop_failed`) rather than `iterations_exhausted`; the output still falls back to the search result (`tool_result`). Not changed here: raising the iterations is a cost and
+latency decision (one more model call of about 4 000 input tokens, about 0.02 USD, per such case) for the owner.
+
+**Does the routing eval define a treatment for a transient Harness stream error? No.** An error raised before the stream starts is an `error` of the case (counts toward the three-consecutive-errors abort); an error inside the stream (the `data-05` case: `harness_stream_error`, 41.1 s, hint `missing_required_argument`,
+no result) comes back as a loop with outcome `failed` and counts as an ordinary miss. There is no retry by design (one invocation per case, `retries: 0`), the production worker's single retry applies only to an error before any event, and the gate is computed over the cases as they ended. So a stream
+error costs a case and nothing in the report separates it from a model miss except `streamErrorHint` and `fallbackReason: loop_failed`. One occurrence cannot say whether it is transient: the same case passed in both earlier runs, but the hint (`required`/`missing` in the error text) is not what a throttle
+or a timeout looks like, so it may be a schema rejection of a tool call. Without touching the gate or the frozen dataset the options are: leave it as a counted miss (today), or record in the report, as a closed flag, which cases ended in a stream error so a reviewer sees how many of the misses are infrastructure; a separately
+approved rerun of only those cases could be attached as an addendum, never as a replacement of the gate. Neither is implemented.
 
 ## Step 13 · Browser smoke (◆ paid: ≈ 10 questions through the worker)
 

@@ -27,7 +27,7 @@ from typing import Any, Callable, Mapping, Protocol
 from uuid import uuid4
 
 from . import agent_contracts as contracts
-from .agent_chat_telemetry import SegmentTimer, usage_metadata
+from .agent_chat_telemetry import SegmentTimer, loop_usage_metadata
 from .agent_citations import build_citation_handles
 from .agent_integration import bind_harness_invocation
 from .agent_jobs import (
@@ -381,7 +381,7 @@ class AgentChatWorker:
             "tools": [call.short_name for call in loop.tool_calls], "toolCalls": len(loop.tool_calls),
             "toolFailures": sum(1 for call in loop.tool_calls if call.status != "SUCCESS"),
             "invalidToolResults": invalid, "historyMessages": sent,
-            **usage_metadata(loop.usage),
+            **loop_usage_metadata(loop),
             "historyUnavailable": history is None or (bool(history) and sent == 0),
             "historyTrimmed": bool(history) and 0 < sent < len(history),
             "correlationId": job.correlation_id,

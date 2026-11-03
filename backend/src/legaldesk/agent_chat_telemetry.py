@@ -40,6 +40,11 @@ REGIONAL_ENDPOINT_PREMIUM = 1.10
 _BASE_PRICE_PER_MILLION_TOKENS = {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75}
 PRICE_PER_MILLION_TOKENS = {name: round(price * REGIONAL_ENDPOINT_PREMIUM, 6) for name, price in _BASE_PRICE_PER_MILLION_TOKENS.items()}
 
+# A model call of the loop that reported no usage is priced at this upper bound instead of at zero, so that an unknown cost can make a
+# stop rule trip but never hide spending: the whole context a call can carry (history, prompts, tool results) and the output cap.
+UNKNOWN_CALL_INPUT_TOKENS = 16_000
+UNKNOWN_CALL_OUTPUT_TOKENS = 2_048
+
 KNOWN_TOOLS = frozenset({contracts.SEARCH_DOCUMENTS, contracts.GET_EXTRACTED_FIELDS, contracts.LIST_MATTER_DOCUMENTS})
 
 SAFE_META_KEYS = frozenset({
@@ -53,7 +58,7 @@ SAFE_META_KEYS = frozenset({
     "historyUnavailable", "historyTrimmed", "historyMessages",
     # latency, usage and cost
     "latencyMs", "segmentsMs", "usageAvailable", "tokens", "inputTokens", "outputTokens", "cacheReadTokens",
-    "cacheWriteTokens", "estimatedLoopCostUsd", "pricingVersion",
+    "cacheWriteTokens", "estimatedLoopCostUsd", "pricingVersion", "usageComplete", "modelCalls", "costBasis",
     # ids and hashes (never the subject, the question or the answer)
     "correlationId", "agentPromptVersion", "agentPromptSha256",
 })
@@ -152,20 +157,58 @@ def estimate_loop_cost_usd(usage: Any) -> float | None:
     return round(cost, 6)
 
 
-def usage_metadata(usage: Any) -> dict[str, object]:
-    """Token counts and estimated cost of a loop, or just ``usageAvailable: False``."""
+def unknown_call_cost_usd() -> float:
+    """Upper bound of one model call that reported no usage."""
 
-    if usage is None:
-        return {"usageAvailable": False}
-    return {
-        "usageAvailable": True, "tokens": usage.total_tokens, "inputTokens": usage.input_tokens,
-        "outputTokens": usage.output_tokens, "cacheReadTokens": usage.cache_read_input_tokens,
-        "cacheWriteTokens": usage.cache_write_input_tokens,
-        "estimatedLoopCostUsd": estimate_loop_cost_usd(usage), "pricingVersion": PRICING_VERSION,
-    }
+    price = PRICE_PER_MILLION_TOKENS
+    return (UNKNOWN_CALL_INPUT_TOKENS * price["input"] + UNKNOWN_CALL_OUTPUT_TOKENS * price["output"]) / 1_000_000
+
+
+def usage_metadata(usage: Any, *, model_calls: int | None = None, usage_records: int | None = None) -> dict[str, object]:
+    """Token counts and estimated cost of a loop.
+
+    ``usage`` is the TOTAL of the loop (the sum of its model calls' blocks). ``model_calls`` and ``usage_records`` say how many model
+    calls the stream showed and how many of them reported usage: every call that did not is priced at an upper bound, never at zero, and
+    the result says so (``usageComplete: False``, ``costBasis: "upper_bound"``) so a stop rule can fail closed. Without ``model_calls``
+    (a caller that cannot know) a present usage is taken as complete and an absent one as unavailable, as before.
+    """
+
+    if model_calls is None:
+        if usage is None:
+            return {"usageAvailable": False}
+        calls, recorded = None, None
+    else:
+        calls = max(0, int(model_calls))
+        recorded = (0 if usage is None else (calls if usage_records is None else max(0, int(usage_records))))
+    missing = 0 if calls is None else max(0, calls - (recorded or 0))
+    reported = estimate_loop_cost_usd(usage) or 0.0
+    complete = missing == 0
+    result: dict[str, object] = {"usageAvailable": usage is not None, "usageComplete": complete, "costBasis": "reported" if complete else "upper_bound"}
+    if calls is not None:
+        result["modelCalls"] = calls
+    if usage is not None:
+        result.update(
+            tokens=usage.total_tokens, inputTokens=usage.input_tokens, outputTokens=usage.output_tokens,
+            cacheReadTokens=usage.cache_read_input_tokens, cacheWriteTokens=usage.cache_write_input_tokens,
+        )
+    if usage is not None or calls:
+        result["estimatedLoopCostUsd"] = round(reported + missing * unknown_call_cost_usd(), 6)
+        result["pricingVersion"] = PRICING_VERSION
+    return result
+
+
+def loop_usage_metadata(loop: Any) -> dict[str, object]:
+    """``usage_metadata`` of an ``AgentChatResult`` (or any object with the same fields)."""
+
+    return usage_metadata(
+        getattr(loop, "usage", None),
+        model_calls=getattr(loop, "model_calls", None) if getattr(loop, "model_calls", 0) else None,
+        usage_records=getattr(loop, "usage_records_count", None) if getattr(loop, "model_calls", 0) else None,
+    )
 
 
 __all__ = [
     "KNOWN_TOOLS", "PRICE_PER_MILLION_TOKENS", "PRICING_VERSION", "SAFE_META_KEYS", "SEGMENTS", "SegmentTimer",
-    "estimate_loop_cost_usd", "sanitize_job_metadata", "usage_metadata",
+    "UNKNOWN_CALL_INPUT_TOKENS", "UNKNOWN_CALL_OUTPUT_TOKENS", "estimate_loop_cost_usd", "loop_usage_metadata", "sanitize_job_metadata",
+    "unknown_call_cost_usd", "usage_metadata",
 ]

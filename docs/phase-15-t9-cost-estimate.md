@@ -191,6 +191,8 @@ $0.35/GB). The cost is not the issue; **content in logs is**, which is why ADOT 
 again right after the probe unless the owner accepts the residual risk of ADR-021 D9. Transaction
 Search (account-wide span indexing) is not enabled by this plan.
 
+> **Read the correction below first:** before 2026-11-04 the `estimatedLoopCostUsd` of the reports counted only the loops with a single model call.
+
 ## Raising the per-call output cap from 256 to 2048 (T9 step 12, 2026-11-03)
 
 The Harness template had `MaxTokens: 256` in two places (the model configuration and the Harness default) while the worker sends `maxTokens: 2048` per invocation. The documentation says the
@@ -201,6 +203,36 @@ longest plans. The stack change (`MaxTokensPerIteration`, default 2048, one para
 * Cases that used to be cut now finish: about 3 of 30, each with one or two more iterations of about 4 000 input and 600 output tokens (about 0.02 USD each): **+0.1 to +0.2 USD per 30-case run**, far inside the 2.20 USD stop rule.
 * Worst case per call rises from 256 to 2 048 output tokens (0.004 to 0.034 USD); per invocation (3 iterations) from 0.013 to 0.10 USD; a 30-invocation run could in theory reach 3.0 USD if every call used the whole cap, which no
   observed call does. The eval's own stop rule (2.20 USD of `estimatedLoopCostUsd`) bounds it.
+
+## Usage accounting correction and the CloudWatch cross-check (2026-11-04)
+
+**Every `estimatedLoopCostUsd` and `tokens` figure recorded before this correction undercounted, and the earlier ones in this block are not to be quoted as cost.** The adapter reported the usage of a stream only when it carried exactly one
+usage block (`usage_records[0] if len(usage_records) == 1 else None`); a loop that makes more than one model call, which is every loop that uses a tool, reported no usage at all, and the eval summed the zero. In the real routing runs only the 7 cases without a tool
+had tokens: run a 0.087 USD, run b 0.086 USD and run c **0.089 USD** of "Harness loop" were the cost of those seven calls. The owner's CloudWatch figures for run c put the real Harness loops at about **1.4 USD**, and the whole day (three eval runs, the checks, the
+resolver and the writer inside `search_documents`) at 809 019 input and 29 303 output tokens of Sonnet, about **3.15 USD**. Consequences that were real: the eval's 2.20 USD stop rule and the golden set's 5.9 USD stop could not trip (the first did not even exist in
+code, only in the runbook), and the worker's job telemetry (`estimatedLoopCostUsd`, `tokens`) undercounted in production the same way.
+
+What the code does now (`agent/.../client.py`, `backend/.../agent_chat_telemetry.py`):
+
+* the usage of a loop is the **sum** of its usage blocks, one per model call (`USAGE_CADENCE = "per_call"`: the stream is the model's own). If the blocks turn out to be cumulative, the sum over-counts (never under-counts) and the cross-check below says so;
+* a loop that made model calls and reported **no** usage, or fewer blocks than calls (a cut stream), is **unknown**, not zero: each missing call is priced at an upper bound (16 000 input and 2 048 output tokens, about 0.087 USD) and the record says
+  `usageComplete: false`, `costBasis: "upper_bound"`, `modelCalls`. An unknown cost can make a stop rule trip; it can no longer hide spending;
+* the routing eval now has the 2.20 USD stop in code (`LOOP_COST_STOP_USD`, equal to `HARD_CAP["stop_eval_if_loop_usd_exceeds"]`), the golden set keeps its 5.9 USD stop, both read the corrected estimate, and the report summary carries `loopCostBasis` and `usageIncompleteCases`.
+
+**Cross-check against CloudWatch for any live run (AWS/Bedrock, by model).** Bedrock publishes `InputTokenCount` and `OutputTokenCount` per `ModelId` (for the pinned model the inference profile id, `eu.anthropic.claude-sonnet-4-6`). Read the window of the run plus 10 minutes (the
+metrics arrive late), per minute, and sum:
+
+```powershell
+$model = "eu.anthropic.claude-sonnet-4-6"; $start = "2026-11-03T23:00:00Z"; $end = "2026-11-03T23:40:00Z"     # the run's window, with margin
+foreach ($metric in "InputTokenCount", "OutputTokenCount") {
+  aws cloudwatch get-metric-statistics --region eu-west-1 --namespace AWS/Bedrock --metric-name $metric --dimensions Name=ModelId,Value=$model `
+    --start-time $start --end-time $end --period 60 --statistics Sum --query "sum(Datapoints[].Sum)" --output text
+}
+```
+
+Compare with the report: CloudWatch counts every call of the model in the window, the report only the Harness loops, so **CloudWatch minus the report's `tokens` should be about the resolver and the writer inside the searches** (about 3 000 input and 150 output tokens
+for the resolver and 3 500 and 250 for the writer, per `search_documents` call that reached them). Report within that difference of CloudWatch = the sum is right (per-call). Report two to three times CloudWatch = the blocks are **cumulative**: change `USAGE_CADENCE` and `sum_usage` to take the last block.
+Use a quiet window (no other model traffic) or take the difference of the account's counters before and after the run. The bill remains the authority (Billing console, next day).
 
 ## What would change the numbers
 
