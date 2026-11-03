@@ -677,6 +677,15 @@ contenido.
     alimentando la cabecera `x-legaldesk-memory-session-id` y el registro de
     invocación, que el interceptor compara entre sí y no con la sesión de
     runtime. Esto cumple la condición que ya fijaba este ADR; no lo modifica.
+    La misma regla vale para toda llamada hecha para un binding con
+    `HarnessInvoker.invoke` (las acciones de botón `metadata` y `review`): su
+    `runtimeSessionId` es nuevo en cada llamada y el scope de memoria solo
+    alimenta `actorId`, las cabeceras y el registro de invocación. Con la memoria
+    de Harness desactivada (paso 4 de T9) nada depende de que ambos ids
+    coincidan; adjuntar de nuevo la memoria de Harness (Fase 09,
+    `EnablePhase09Memory=true`) exigiría volver a unirlos para esa ruta y es una
+    decisión de ADR, no un parámetro de despliegue. Quien llama solo con
+    `session_id` (smokes, sondas) elige su sesión a propósito y la conserva.
   - La memoria gestionada de Harness guarda eventos en bruto (mensajes y tool
     calls), incluidos resultados de tools con fragmentos de documentos. Eso
     choca con ADR-011 y con la política del backend (`extractionMode=SKIP`,
