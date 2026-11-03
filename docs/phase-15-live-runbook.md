@@ -11,6 +11,17 @@ D7 no Harness memory, D9 ADOT probe and residual risk, and the CD consequence of
 D-029 code-only CD ([`continuous-delivery.md`](continuous-delivery.md)), and the frozen T8 gates
 ([`phase-15-routing-eval.md`](phase-15-routing-eval.md)).
 
+Owner decisions of 2026-11-03 on the live block:
+
+| Decision | Where it lands |
+|---|---|
+| **Final state A: the agentic chat stays on** after the tests, for demos | step 14 |
+| **`QuotaHarnessPerMonth` = 50** in the deployment (a T9 parameter; the code default of ADR-021 D8 stays 300) | step 8 |
+| Ceiling of the block **5 USD** and **50 Harness invocations** | cost estimate, budget below |
+| Alarms **in the console only**: `AgentChatAlarmTopicArn` stays empty, no SNS | step 8 |
+| **ADOT is switched off after the probe**, whatever the probe finds (and by default) | steps 5 and 6 |
+| Job alarms use **native, free metrics** (SQS, Lambda); only two custom metrics remain | step 8 |
+
 ## How to read a step
 
 Every step has the same five parts. Do not start a step until the previous one's **After** passed.
@@ -122,7 +133,7 @@ $cf = "$Repo\infra\cloudformation"
 # Harness: memory off + ADOT on (and later ADOT off)
 & python $Repo\scripts\phase15_changeset_preview.py preview --deployed "$BK\legaldesk-phase-01.template.yaml" --local "$cf\phase-01-harness.yaml" `
   --deployed-param EnablePhase08Gateway=true --deployed-param EnablePhase09Memory=true --param EnablePhase08Gateway=true --param EnablePhase09Memory=false --param EnableManagedAdot=true --profile harness-memory-off-adot-on
-# Public Edge: 17 new AgentChat* resources, application function and role
+# Public Edge: 14 new AgentChat* resources, application function and role
 & python $Repo\scripts\phase15_changeset_preview.py preview --deployed "$BK\LegalDeskPhase14PublicEdge.template.yaml" --local "$cf\phase-14-public-edge.yaml" `
   --param EnableAgentChat=true --param ApplicationCodeVersion=new --deployed-param ApplicationCodeVersion=old --profile public-edge-agent-chat
 # CD role: four statements, two roles modified in place
@@ -136,7 +147,7 @@ $cf = "$Repo\infra\cloudformation"
 | Harness `legaldesk-phase-01` (memory off + ADOT on) | — | `MinimalHarness` (`EnvironmentVariables`, `Memory`), `HarnessExecutionRole` (`Policies`) | removes `UsePhase09Memory` | none; the preview cannot know the Harness's behaviour, so **the real change set must say `False`** |
 | Harness (ADOT off, step 6) | — | `MinimalHarness` (`EnvironmentVariables`) | none | same as above |
 | Gateway `LegalDeskPhase08Gateway` | `SearchDocumentsLogGroup`, `SearchDocumentsExecutionRole`, `SearchDocumentsFunction`, `SearchDocumentsGatewayTarget` | `MetadataMcpFunction` (`Code`, `Timeout` 10→20), `GatewayRequestInterceptorFunction` (`Code`), `GatewayExecutionRole` (`Policies`) | adds `SearchDocumentsExecutionRole` (6 statements: no `*` action, no bare `*` resource; Retrieve/Guardrail/InvokeModel on the exact ARNs; S3 `GetObject` on the tenant's `original.pdf`/`original.txt` paths only) and one `lambda:InvokeFunction` on the new Lambda in the Gateway role | none |
-| Public Edge `LegalDeskPhase14PublicEdge` | 17: `AgentChatQueue`, `…DeadLetterQueue`, `…WorkerLogGroup`, `…WorkerExecutionRole`, `…WorkerFunction`, `…EventSourceMapping`, 6 metric filters, 5 alarms | `ApplicationFunction` (`Code`, `Environment`: two new variables), `ApplicationExecutionRole` (`Policies`), `PublicApiIntegration` (`IntegrationUri`, dependency) | adds `AgentChatWorkerExecutionRole` (10 statements); application role: `PublishAgentChatJobIds` added, `ReadAuthorizationAndApplicationState` and `WriteOnlyApplicationOwnedState` widened by one leading key (`LEGALDESK#P15#CHATJOB#<tenant>#MATTER#*`) | none |
+| Public Edge `LegalDeskPhase14PublicEdge` | 14: `AgentChatQueue`, `…DeadLetterQueue`, `…WorkerLogGroup`, `…WorkerExecutionRole`, `…WorkerFunction`, `…EventSourceMapping`, 2 metric filters (`AgentChatFallbackMetric`, `AgentChatJobFailureMetric`), 6 alarms (DLQ, queue age, worker duration, worker errors, job failures, fallback rate) | `ApplicationFunction` (`Code`, `Environment`: two new variables), `ApplicationExecutionRole` (`Policies`), `PublicApiIntegration` (`IntegrationUri`, dependency) | adds `AgentChatWorkerExecutionRole` (10 statements); application role: `PublishAgentChatJobIds` added, `ReadAuthorizationAndApplicationState` and `WriteOnlyApplicationOwnedState` widened by one leading key (`LEGALDESK#P15#CHATJOB#<tenant>#MATTER#*`) | none |
 | `LegalDeskProductionCD` | — | both roles (`Policies`; the service role's `Description`) | four statements, all on the one worker function and its unchanged role | none; `RoleName` unchanged |
 
 Also run the same preview with `--json` and keep the output in the ledger; and `cd-template-match` against the
@@ -210,8 +221,8 @@ review it the same way. If the Harness was replaced, the old ARN is gone: stop a
 
 | Verdict | What happens |
 |---|---|
-| `no_content_observed` | keep ADOT **off** anyway unless the owner decides otherwise (bounded evidence, not proof); step 6 |
-| `content_observed` | the owner chooses: accept the residual risk of ADR-021 D9 **in writing** (synthetic data, runtime log-group retention 1–3 days, restricted IAM, `AGENTS.md` §7 qualified) and skip step 6, **or** step 6 |
+| `no_content_observed` | bounded evidence, not proof; ADOT goes **off** anyway (owner decision of 2026-11-03); step 6 |
+| `content_observed` | ADOT goes **off** (step 6). The residual-risk path of ADR-021 D9 (synthetic data, retention of 1–3 days, restricted IAM, `AGENTS.md` §7 qualified in writing) is *not* taken unless the owner reverses this decision |
 | `log_read_failed`, `invoke_failed`, `no_log_groups_found` | no conclusion; **no re-run** without a new approval; step 6 |
 
 The session check and the loop-cut check are not here: they need the deployed worker, so they run together in step 11
@@ -220,7 +231,7 @@ The session check and the loop-cut check are not here: they need the deployed wo
 **After.** The probe report is saved; call count so far = 1.
 **Stop if** the invocation errors (do not retry; ask). **Back.** Nothing to undo (ADOT is handled in step 6).
 
-## Step 6 · Harness: disable ADOT again (◆ change set) — unless the residual risk was accepted
+## Step 6 · Harness: disable ADOT again (◆ change set) — always, after the probe
 
 **Do.** Same pattern as step 4 with `--set EnableManagedAdot=false` (memory stays off: `EnablePhase09Memory=false` is now the
 deployed value, so `params` keeps it) and the profile `harness-adot-off`.
@@ -235,8 +246,8 @@ python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-
 the probe keep whatever retention they have: **lower** it to 3 days (`aws logs put-retention-policy`) — lowering is allowed, raising is not
 (`AWS_COST_POLICY.md`). **Stop if** `Replacement` ≠ `False`. **Back.** Re-run with `EnableManagedAdot=true` only with a new approval.
 
-If the owner accepted the residual risk: leave ADOT on, set the retention (1–3 days) now, and record the acceptance text for `AGENTS.md` §7
-as a separate reviewed PR before any real data is used.
+This step is not optional: the final state keeps `EnableManagedAdot=false`. (Only if the owner reverses the decision of 2026-11-03 and accepts the residual risk of
+ADR-021 D9 would ADOT stay on, with retention of 1–3 days set now and the `AGENTS.md` §7 text written in a separate reviewed PR before any real data is used.)
 
 ## Step 7 · Gateway: `search-documents` target and the new MCP/interceptor code (◆ change set)
 
@@ -290,20 +301,21 @@ and have no data.
 
 ## Step 8 · Public Edge: queue, worker, alarms and the application code (◆ change set; releases the CD blockage)
 
-**Before.** Step 7 passed. Read the deployed `QuotaHarnessPerMonth`: ADR-021 D8 raises the default from 100 to 300; a stack that stored 100
-explicitly keeps 100 unless it is set.
+**Before.** Step 7 passed. Read the deployed `QuotaHarnessPerMonth` from the step 1 backup (probably 100). The owner decided **50** for the deployment: a
+parameter of this change set. The default of the template and of the code (300, ADR-021 D8) does not change, and a stack keeps its stored value unless it is set, so
+it is set explicitly here. The 10 browser-smoke jobs of step 13 use 10 of the 50 jobs of that month; the eval and the checks consume no quota.
 
 **Do.**
 
 ```powershell
-$sets = @("EnableAgentChat=true","ApplicationCodeBucket=$bucket","ApplicationCodeKey=$key","ApplicationCodeVersion=$version","QuotaHarnessPerMonth=300")
+$sets = @("EnableAgentChat=true","ApplicationCodeBucket=$bucket","ApplicationCodeKey=$key","ApplicationCodeVersion=$version","QuotaHarnessPerMonth=50")
 $setArgs = $sets | ForEach-Object { "--set"; $_ }
 python $Repo\scripts\phase15_changeset_preview.py params --stack-json "$BK\LegalDeskPhase14PublicEdge.describe-stacks.json" --template "$cf\phase-14-public-edge.yaml" @setArgs --output "$Root\edge-params.json"
 # validate-template, create-change-set (stack LegalDeskPhase14PublicEdge, capabilities as reported), describe-change-set to $Root\edge-cs.json
 python $Repo\scripts\phase15_changeset_preview.py check-change-set --change-set-json "$Root\edge-cs.json" --profile public-edge-agent-chat
 ```
 
-`AgentChatAlarmTopicArn` stays empty (alarms exist but notify nobody); see the decisions list. `AgentChatMaxConcurrency` keeps its default 2.
+`AgentChatAlarmTopicArn` stays empty by decision: the six alarms exist and are read in the console, they notify nobody (no SNS topic, no subscription). `AgentChatMaxConcurrency` keeps its default 2.
 Then, only on exit 0 and the owner's go, execute and wait.
 
 **After.**
@@ -313,12 +325,17 @@ Then, only on exit 0 and the owner's go, execute and wait.
 - `aws lambda list-event-source-mappings --function-name …-agent-chat-worker`: `Enabled`, `BatchSize 1`, `ScalingConfig.MaximumConcurrency 2`,
   `FunctionResponseTypes [ReportBatchItemFailures]`; worker `Timeout 150`, **no** reserved concurrency (`get-function-concurrency` empty).
 - Worker and application `CodeSha256` = the zip's.
+- **Quota 50**: `describe-stacks` shows `QuotaHarnessPerMonth=50` and `get-function-configuration` of both functions shows `LEGALDESK_QUOTA_HARNESS_PER_MONTH=50`
+  (`QuotaChatsPerMonth` unchanged).
+- **Alarms and metrics**: six `AgentChat*` alarms (`aws cloudwatch describe-alarms --alarm-name-prefix LegalDeskPhase14PublicEdge`), all `ActionsEnabled=false`
+  with empty `AlarmActions`; the three on Lambda metrics (`Duration`, `Errors`, `Invocations`) dimension `FunctionName` = the worker; exactly **two** metric filters on the
+  worker log group, none with dimensions; no `AgentChatJobDurationMs`, `AgentChatJobsCompleted`, `…ByCode` or `…ByReason` metric exists.
 - Public checks of the CD, by hand: `/` → 200, `/logout` → 302, `/api/me` (no cookie) → 403; the five frontend assets unchanged.
 - `cd-template-match --deployed <fresh get-template>` is now `true`.
 
 **Stop if** the profile gate ≠ 0 (especially any resource of another stack, `FrontendBucket`, `PublicApi*` other than the integration, or `Replacement`), the stack
 rolls back, or `/api/me` leaves 403.
-**Back.** Profile `public-edge-agent-chat-rollback`: set `EnableAgentChat=false` (all other parameters `UsePreviousValue`). It removes the 17 resources (queue and
+**Back.** Profile `public-edge-agent-chat-rollback`: set `EnableAgentChat=false` (all other parameters `UsePreviousValue`). It removes the 14 resources (queue and
 DLQ are `DeletionPolicy: Delete`; confirm both are empty first), leaves the application on the new code, and keeps the template identical to the repository's, so the
 CD keeps working.
 
@@ -432,6 +449,7 @@ written even if the run errors or is interrupted (`interruptedBy` says by what; 
 ## Step 13 · Browser smoke (◆ paid: ≈ 10 questions through the worker)
 
 Use the synthetic user in the real browser against the CloudFront origin. Questions are the synthetic ones of the dataset; no real data. One tab, one question at a time.
+The quota of the deployment is 50 `harness` jobs a month: the ten model calls below use 10, leaving 40 for demos in the month of the block.
 
 | # | Action | Expected | Evidence |
 |---|---|---|---|
@@ -556,19 +574,27 @@ conditional single-item writes (free at this volume).
 the metadata table with the filter `entityType = ConversationBinding AND tenantId = :tenant AND matterId = :matter AND (begins_with(conversationId, "checks-") OR begins_with(conversationId, "eval-"))`
 lists them (it reads the whole table once: a few hundred items); delete only the items whose `userId` is the synthetic test user's, with the same conditional delete.
 
-**Final state to leave** — the owner chooses one (the cost of each is in the estimate):
+**Final state: A, the agentic chat stays on for demos** (owner decision of 2026-11-03). Verify it by reading it back, not by remembering it:
 
-| | A · keep the agentic chat on (demo) | B · switch it off, templates stay deployed (default recommendation) |
+| Parameter or setting | Final value | Read-back |
 |---|---|---|
-| `EnableAgentChat` / `EnableSearchDocuments` | `true` / `true` | `false` / `false` (rollback change sets `public-edge-agent-chat-rollback`, then the Gateway one in reverse; check each with `check-change-set`) |
-| `EnableManagedAdot` | `false` (or `true` only with the written acceptance) | `false` |
-| `EnablePhase09Memory` | `false` | `false` |
-| Cost while idle | ≈ USD 3/month (alarms, custom metrics) + SQS polling ≈ 0.65 M requests/month | ≈ 0 (metrics created in the block still bill their month) |
-| CD | works; releases API and worker together | works; the worker does not exist and `agentChatWorker: DISABLED` |
-| Templates | deployed = repository | deployed = repository (flags are parameters, not template text) |
+| `EnableAgentChat` / `EnableSearchDocuments` | `true` / `true` | `describe-stacks` of `LegalDeskPhase14PublicEdge` and `LegalDeskPhase08Gateway` |
+| `QuotaHarnessPerMonth` | **50** (code default 300 unchanged) | `describe-stacks` and the worker/application environment `LEGALDESK_QUOTA_HARNESS_PER_MONTH=50` |
+| `AgentChatAlarmTopicArn` | empty (alarms in the console only, no SNS) | alarms `ActionsEnabled=false`, `AlarmActions` empty |
+| `EnableManagedAdot` | **`false`** | `get-harness`: `DISABLE_ADOT_OBSERVABILITY=true`, `AWS_GENAI_CONTENT_EXTRACTION_OPT_OUT=true` |
+| `EnablePhase09Memory` | `false` | `get-harness`: memory disabled |
+| `cd-template-match` | `true`; the CD releases API and worker together (`agentChatWorker: VERIFIED`) | the command of step 8, on a fresh `get-template` |
+| Conversation bindings of steps 11 and 12 | deleted | the cleanup summary line above |
+| Change sets left over, ADOT window, retention of log groups created in the block | none / closed / lowered | steps 1 to 3 of this list |
 
-Both states keep `cd-template-match` = `true`, the CD role from step 9, and the immutable artifact. Expected resources outside the profiles: **none**.
-`AWS_COST_POLICY.md` says never to leave continuous polling by default, which is why B is the default recommendation unless a demo needs A.
+Cost of this state, from [`phase-15-t9-cost-estimate.md`](phase-15-t9-cost-estimate.md): **1.30 USD a month fixed** (7 alarm metrics and 2 custom metrics; every other signal is a
+native, free metric) plus the usage of the jobs actually asked, bounded by the quota: **2.86 USD typical and 9.09 USD upper bound** with all 50 used, so **4.16 / 10.39 USD**
+in the worst month, plus the idle SQS polling (≈ 0.65 M requests a month, inside the free tier unless SQS is used elsewhere). `AWS_COST_POLICY.md` says never to leave continuous
+polling on by default; the owner chose to keep the chat on for demos knowing this.
+
+To switch the chat off later (not part of this block): the rollback change sets of the profiles `public-edge-agent-chat-rollback` (14 resources) and, after it, the Gateway one
+in reverse (`EnableSearchDocuments=false`); both stay valid for the CD because the deployed template remains equal to the repository's (flags are parameters, not template text).
+Both flags go together: the agent without `search_documents` is broken.
 
 ## Evidence ledger (fill during the run; copy the summary to `docs/phase-15-acceptance.md`)
 

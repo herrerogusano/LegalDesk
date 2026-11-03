@@ -161,12 +161,12 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
 
     def test_public_edge_enabling_the_agent_chat(self) -> None:
         result = _flip("phase-14-public-edge.yaml", {"EnableAgentChat": "false"}, {"EnableAgentChat": "true"})
-        self.assertEqual(len(result["added"]), 17)
+        self.assertEqual(len(result["added"]), 14)
         self.assert_clean(result, "public-edge-agent-chat")
 
     def test_public_edge_rollback(self) -> None:
         result = _flip("phase-14-public-edge.yaml", {"EnableAgentChat": "true"}, {"EnableAgentChat": "false"})
-        self.assertEqual(len(result["removed"]), 17)
+        self.assertEqual(len(result["removed"]), 14)
         self.assert_clean(result, "public-edge-agent-chat-rollback")
 
     def test_gateway_enabling_search_documents(self) -> None:

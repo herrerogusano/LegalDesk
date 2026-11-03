@@ -16,7 +16,14 @@ python scripts/phase15_t9_cost_model.py --json   # same, machine readable
 | **Block, typical case** (46 Harness invocations, ~460 k input / ~32 k output tokens) | **≈ 2.3** |
 | **Block, upper bound** (inputs ×1.6, outputs ×2 up to each call's token cap, bigger microVM) | **≈ 4.1** |
 | Ceiling proposed for approval | **5.00** |
-| Fixed monthly cost *while `EnableAgentChat=true`* (alarms + custom metrics, upper bound) | ≈ 3.0 typical · ≤ 4.8 upper |
+| Fixed monthly cost *while `EnableAgentChat=true`* (7 alarm metrics + 2 custom metrics; the rest are native, free metrics) | **1.30** (typical = upper) |
+| Usage per month at the deployed `QuotaHarnessPerMonth` = 50 (every job of the quota used) | **2.86** typical · **9.09** upper bound |
+| **Month with the chat left on for demos and the whole quota used** | **4.16** typical · **10.39** upper bound |
+
+Final state chosen by the owner (2026-11-03): **A, the agentic chat stays on for demos**, with `QuotaHarnessPerMonth` = 50 in the
+deployment (a T9 parameter of the Public Edge change set; the code default of ADR-021 D8 stays 300), alarms in the console only (no SNS)
+and ADOT off after the probe. The ceiling of the block is 5 USD and 50 invocations. The 10 browser-smoke jobs of the block use 10 of the
+50 jobs of that month.
 
 PLAN_15 estimated "1–3 USD". The typical case lands inside that range; the upper bound
 does not, so the ceiling asked for is 5 USD. Taxes and the EUR/USD rate are not included.
@@ -32,7 +39,7 @@ Bedrock tokens are 85–90 % of the block; everything else together is about 0.2
 | Per invocation | `maxIterations` 3, `timeoutSeconds` 90, `maxTokens` 2048 per iteration (`AGENT_CHAT_*` in `agent/.../client.py`) |
 | Concurrency | `AgentChatMaxConcurrency` 2 for jobs; the eval and checks run one at a time |
 | Eval stop rule | stop if the sum of the report's `estimatedLoopCostUsd` passes **2.20 USD** (upper bound of the Harness loop for the eval, 1.75, plus 25 %) |
-| Quota | `QuotaHarnessPerMonth` 300, `QuotaChatsPerMonth` 300: a runaway loop cannot go past it through the worker |
+| Quota | `QuotaHarnessPerMonth` **50** (deployed value; code default 300), `QuotaChatsPerMonth` 300: a runaway loop cannot go past it through the worker. The eval and the checks consume no quota |
 
 ## Assumptions
 
@@ -135,22 +142,46 @@ and the read-only inventory calls.
 
 ### Fixed monthly cost while the agent chat stack exists (CloudWatch only)
 
-| Item | Count | USD / month |
-|---|---|---|
-| Alarms: DLQ, duration, failures, queue age (1 metric each) and fallback rate (2 in the expression) | 6 alarm metrics | 0.60 |
-| Custom metrics created from the job log line (duration, completed, failures, failures by code, fallbacks, fallbacks by reason) | 8 typical · 14 upper (each distinct dimension value is a metric) | 2.40 · 4.20 |
-| **Total** | | **≈ 3.0 · ≤ 4.8** |
+The job alarms read **native, free metrics** wherever CloudWatch publishes an equivalent. Only what has no native equivalent is a custom metric:
 
-These are charged even if nobody asks a question, and the metrics created during the block are
-charged for the month they receive data even if the stack is switched off right afterwards
-(whether a metric with no new data keeps billing in later months is not stated on the readable part
-of the page; assume it does not, and check the next bill). The 10 alarm-metric free tier is
+| Signal | Source | Cost / month |
+|---|---|---|
+| Messages waiting too long; DLQ not empty | native SQS `ApproximateAgeOfOldestMessage`, `ApproximateNumberOfMessagesVisible` | alarm only |
+| Worker duration (p95) and crashes or timeouts; job count (fallback-rate denominator) | native Lambda `Duration`, `Errors`, `Invocations` | alarm only |
+| **`AgentChatFallbacks`** (custom) | metric filter on the job line, no dimension | 0.30 |
+| **`AgentChatJobFailures`** (custom) | metric filter on the job line, no dimension, `session_closed` excluded | 0.30 |
+| 6 alarms = 7 alarm metrics (DLQ, queue age, duration, errors, job failures: 1 each; fallback rate: 2 in the expression) | | 0.70 |
+| **Total** | | **1.30** |
+
+Why these two custom metrics stay: a fallback is a *successful* invocation for Lambda (the answer came from the direct RAG path or a reused tool result), and a job
+the handler marks failed returns normally and its message is deleted, so neither Lambda `Errors` nor the DLQ ever sees it. Neither carries a dimension: a dimension
+value is one more billable metric, so the split by `fallbackReason` or `failure` code lives in the job log line and in Logs Insights
+([`phase-15-observability.md`](phase-15-observability.md)). Before this change the same signals were 6 log-derived metrics (8 typical, 14 upper counting dimension
+values) and cost ≈ 3.0 (≤ 4.8) per month.
+
+The metrics created during the block are charged for the month they receive data even if the stack is switched off right afterwards (whether a metric with no new data
+keeps billing in later months is not stated on the readable part of the page; assume it does not, and check the next bill). The 10 alarm-metric free tier is
 account-wide and probably used by the Phase 14 alarms, so no discount is assumed.
+
+### Usage per month at the deployed quota
+
+`QuotaHarnessPerMonth` = 50 bounds the agentic jobs of a month. The whole cost of a question through the worker (model, Runtime, Gateway, Retrieve, Guardrail, Lambda,
+DynamoDB, history in the prompt) is ≈ 0.015 (no tool) · 0.074 (legal text) · 0.032 (inventory) · 0.058 (data) · 0.103 (mixed) USD typical, and ≈ 0.027 · 0.132 · 0.059 ·
+0.103 · 0.182 at the upper assumptions.
+
+| 50 jobs in a month | USD |
+|---|---|
+| Typical (the mix of the eval dataset) | **2.86** |
+| Upper bound (every job is a mixed question at the upper assumptions) | **9.09** |
+| Plus the fixed cost above | **4.16** typical · **10.39** upper bound |
+
+The quota is the cost control of the demo: past 50 jobs the API refuses new questions until the next month. Raising it is a parameter change of the Public Edge stack,
+and the cost scales linearly (300 jobs ≈ 6 times the usage figures).
 
 Idle polling: an SQS event source mapping polls its queue continuously. With 5 pollers and 20-second
 long polls that is up to ≈ 0.65 M `ReceiveMessage` requests a month — inside the 1 M free tier if SQS
 has no other use, and at most about 0.3 USD above it (rate **not confirmed** on the readable page).
-`AWS_COST_POLICY.md` says never to leave continuous polling on by default; see the decision at the end.
+`AWS_COST_POLICY.md` says never to leave continuous polling on by default; the owner chose to keep the chat on for demos knowing this (decision of 2026-11-03).
 
 ## ADOT
 

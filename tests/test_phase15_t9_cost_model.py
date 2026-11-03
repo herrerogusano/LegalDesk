@@ -63,5 +63,58 @@ class CostModelTests(unittest.TestCase):
         self.assertEqual(tokens_out, model.OUTPUT_CAP["R"] + model.OUTPUT_CAP["W"])
 
 
+class FixedAndQuotaCostTests(unittest.TestCase):
+    """The fixed monthly cost follows the template; the usage cost follows the deployed quota."""
+
+    template = (ROOT / "infra" / "cloudformation" / "phase-14-public-edge.yaml").read_text(encoding="utf-8")
+
+    def test_fixed_monthly_cost_counts_what_the_template_really_creates(self) -> None:
+        alarms = self.template.count("Type: AWS::CloudWatch::Alarm")
+        filters = self.template.count("Type: AWS::Logs::MetricFilter")
+        # one alarm metric per alarm, except the fallback-rate math alarm, which bills fallbacks and invocations
+        self.assertEqual(alarms - 1 + 2, model.MONTHLY_FIXED["alarm_metrics"])
+        self.assertEqual(filters, model.MONTHLY_FIXED["custom_metrics_typical"])
+        self.assertEqual(filters, model.MONTHLY_FIXED["custom_metrics_upper"], "no dimensions: the upper bound adds no metric")
+        fixed = model.report()["typical"]["monthly_while_enabled_usd"]
+        self.assertEqual(fixed, round(7 * 0.10 + 2 * 0.30, 2))
+        self.assertEqual(fixed, model.report()["upper"]["monthly_while_enabled_usd"])
+
+    def test_the_fixed_cost_fell_compared_with_the_log_derived_metrics_it_replaces(self) -> None:
+        old_typical = 6 * 0.10 + 8 * 0.30  # 6 alarm metrics + 8 custom metrics (4 filters + dimension values)
+        self.assertLess(model.report()["typical"]["monthly_while_enabled_usd"], old_typical)
+
+    def test_usage_at_the_deployed_quota(self) -> None:
+        self.assertEqual(model.QUOTA_HARNESS_PER_MONTH, 50)
+        usage = model.monthly_usage_at_quota()
+        self.assertEqual(usage["quota"], 50)
+        self.assertLess(usage["typicalUsd"], usage["upperUsd"])
+        # a user question costs about what the model says per class, and the quota bounds the number of them
+        typical_job = usage["typicalUsd"] / 50
+        self.assertTrue(model.job_cost_usd("A_no_tool", upper=False) < typical_job < model.job_cost_usd("E_mixed", upper=False))
+        self.assertAlmostEqual(usage["upperUsd"], 50 * model.job_cost_usd("E_mixed", upper=True), places=2)
+
+    def test_a_larger_quota_costs_proportionally_more(self) -> None:
+        small, large = model.monthly_usage_at_quota(50), model.monthly_usage_at_quota(300)
+        self.assertAlmostEqual(large["typicalUsd"] / small["typicalUsd"], 6, places=1)
+
+    def test_the_all_in_month_is_fixed_plus_usage(self) -> None:
+        report = model.report()
+        self.assertAlmostEqual(report["monthlyWithAllQuotaUsedUsd"]["typical"], report["typical"]["monthly_while_enabled_usd"] + report["monthlyUsageAtQuota"]["typicalUsd"], places=2)
+        self.assertAlmostEqual(report["monthlyWithAllQuotaUsedUsd"]["upper"], report["upper"]["monthly_while_enabled_usd"] + report["monthlyUsageAtQuota"]["upperUsd"], places=2)
+
+    def test_the_documents_quote_the_current_numbers(self) -> None:
+        report = model.report()
+        estimate = (ROOT / "docs" / "phase-15-t9-cost-estimate.md").read_text(encoding="utf-8")
+        for needle in (
+            f"{report['typical']['monthly_while_enabled_usd']:.2f}",
+            f"{report['monthlyUsageAtQuota']['typicalUsd']:.2f}",
+            f"{report['monthlyUsageAtQuota']['upperUsd']:.2f}",
+            f"{report['monthlyWithAllQuotaUsedUsd']['typical']:.2f}",
+            f"{report['monthlyWithAllQuotaUsedUsd']['upper']:.2f}",
+            "QuotaHarnessPerMonth",
+        ):
+            self.assertIn(needle, estimate, needle)
+
+
 if __name__ == "__main__":
     unittest.main()
