@@ -43,10 +43,12 @@ Resources:
             Prefix: quarantine/
             Status: Enabled
             ExpirationInDays: 1
-          - Id: ExpireFictionalOriginals
-            Prefix: tenants/
-            Status: Enabled
-            ExpirationInDays: 30
+          # There is deliberately NO expiration for tenants/ (canonical originals). The 30-day rule that used to be here
+          # (ExpireFictionalOriginals, Phase 02) deleted objects while the metadata record and the Knowledge Base stayed
+          # behind: documents that were INDEXED and had no object (T9 step 12, 2026-11-03). Beta documents are deleted only
+          # through the data-governance operation, which keeps record, objects and KB consistent
+          # (docs/phase-14-data-governance-runbook.md). Reintroducing an expiry here fails
+          # tests/test_phase15_document_retention.py unless the code that keeps them consistent exists.
       Tags:
         - Key: Project
           Value: LegalDesk

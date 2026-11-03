@@ -392,6 +392,36 @@ def _report(report: ReconciliationReport) -> dict[str, int]:
     }
 
 
+def _emit_object_findings(report: ReconciliationReport) -> dict[str, int]:
+    """One structured line per document with a missing object, and one summary line when there is anything to alarm on.
+
+    Closed codes and values only: an opaque document id (a UUID: not a key, not the tenant, not content), its record status, its age
+    in days and the probable-cause label. ``findings`` is what the CloudWatch metric filter sums: the missing objects, plus one while
+    an S3 lifecycle rule can expire canonical originals at all (that configuration is what produces them), plus one when the check
+    itself could not verify something (a failed existence check, an unreadable lifecycle): a detector that goes dark must alarm, not
+    report zero (PullBeacon PB-001).
+    """
+
+    expiry = report.canonical_expiry
+    missing = len(report.findings)
+    for finding in report.findings:
+        print(json.dumps({
+            "event": "document_object_missing", "code": "object_missing", "documentId": finding.document_id,
+            "status": finding.status, "ageDays": finding.age_days, "probableCause": finding.probable_cause,
+        }, separators=(",", ":"), sort_keys=True), flush=True)
+    expiry_configured = bool(expiry is not None and expiry.configured)
+    unverified = bool(report.failed or (expiry is not None and expiry.state == "unreadable"))
+    if missing or expiry_configured or unverified:
+        print(json.dumps({
+            "event": "document_objects_check", "examined": report.examined, "missing": missing, "failed": report.failed,
+            "canonicalExpiry": expiry.state if expiry is not None else "unknown",
+            "lifecycleWindowDays": expiry.window_days if expiry is not None else None,
+            "unverified": unverified,
+            "findings": missing + (1 if expiry_configured else 0) + (1 if unverified else 0),
+        }, separators=(",", ":"), sort_keys=True), flush=True)
+    return {"examined": report.examined, "missing": missing, "failed": report.failed, "skipped": report.skipped}
+
+
 def _get_service(config: ReconciliationConfig) -> ReconciliationService:
     global _service
     if _service is None:
@@ -446,13 +476,24 @@ def lambda_handler(event: Mapping[str, object], _lambda_context: object) -> dict
             limit=config.limit_per_scope,
             allowed_matter_ids=allowed_matters,
         )
+        # Detect, never repair: INDEXED+CLEAN records whose canonical object is gone (see reconcile_missing_objects).
+        try:
+            objects = service.reconcile_missing_objects(
+                scopes=pending_scopes, limit_per_scope=config.limit_per_scope, has_budget=_ingestion_has_budget,
+            ) if pending_scopes and callable(getattr(service, "reconcile_missing_objects", None)) else ReconciliationReport()
+        except Exception:
+            # The new check must never take the rest of the pass down; its failure is itself reported (failed > 0).
+            objects = ReconciliationReport(failed=1)
     except ReconciliationLambdaError:
         _logger.error("reconciliation_unavailable", extra={"error_code": "configuration_or_composition"})
         raise
     except Exception:
         _logger.error("reconciliation_failed", extra={"error_code": "processing_failed"})
         raise ReconciliationLambdaError("reconciliation failed") from None
-    result = {"status": "completed", "uploads": _report(upload), "ingestion": _report(ingestion), "gateway": _report(gateway)}
+    result = {
+        "status": "completed", "uploads": _report(upload), "ingestion": _report(ingestion), "gateway": _report(gateway),
+        "objects": _emit_object_findings(objects),
+    }
     if config.idp_enabled:
         recover = getattr(service, "reconcile_idp_scopes", None)
         if not callable(recover):

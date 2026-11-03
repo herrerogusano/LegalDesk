@@ -34,8 +34,9 @@ teardown is not a live inventory or a guarantee that an account has no
 retained resources.
 
 The deployed Phase 02 source bucket remains unversioned. For the fictional/public
-beta, recovery is therefore re-upload-only: S3 lifecycle bounds current
-objects, while the application does not claim object-version backup coverage.
+beta, recovery is therefore re-upload-only: only quarantine uploads expire by S3
+lifecycle (canonical originals do not: see the data-governance runbook), and the
+application does not claim object-version backup coverage.
 Enabling versioning would add storage cost, require version-aware deletion and
 least-privilege `ListBucketVersions`/`DeleteObjectVersion` permissions, and is
 deferred until that separate design and approval exist.
