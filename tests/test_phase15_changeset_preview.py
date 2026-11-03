@@ -426,3 +426,30 @@ class CommandLineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InheritedIamChangeTests(unittest.TestCase):
+    """Step 9 again (2026-11-03): an IAM role whose only change is inherited from an unreplaced role is not 'touched'."""
+
+    @staticmethod
+    def described(release_details: list[dict[str, Any]]) -> dict[str, Any]:
+        def change(logical_id: str, details: list[dict[str, Any]]) -> dict[str, Any]:
+            return {"Type": "Resource", "ResourceChange": {
+                "Action": "Modify", "LogicalResourceId": logical_id, "ResourceType": "AWS::IAM::Role",
+                "Replacement": "False", "Scope": ["Properties"], "Details": details}}
+        direct = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                   "Evaluation": "Static", "ChangeSource": "DirectModification"}]
+        return {"Status": "CREATE_COMPLETE", "Changes": [change("CloudFormationExecutionRole", direct), change("ProductionDeploymentRole", release_details)]}
+
+    def test_inherited_only_change_of_another_role_passes_the_attribute_reads_profile(self) -> None:
+        inherited = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                      "Evaluation": "Dynamic", "ChangeSource": "ResourceAttribute", "CausingEntity": "CloudFormationExecutionRole.Arn"}]
+        analysis = preview.analyze_change_set(self.described(inherited), preview.load_profile("cd-iam-attribute-reads"))
+        self.assertEqual(analysis["violations"], [])
+        self.assertIn("ProductionDeploymentRole.Policies <- CloudFormationExecutionRole.Arn", analysis["inherited"])
+
+    def test_a_direct_change_of_that_role_still_stops(self) -> None:
+        direct = [{"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                   "Evaluation": "Static", "ChangeSource": "DirectModification"}]
+        violations = preview.analyze_change_set(self.described(direct), preview.load_profile("cd-iam-attribute-reads"))["violations"]
+        self.assertIn("IAM resource changed outside the profile: ProductionDeploymentRole", violations)
