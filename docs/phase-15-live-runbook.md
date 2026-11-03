@@ -689,6 +689,35 @@ the failure is the finding. **Back.** None.
 The report lists them under `residualState` in the same format as step 11 (ids and key hashes only), noting each binding **before** the case's call. The report is
 written even if the run errors or is interrupted (`interruptedBy` says by what; the cases not run count as failed). Their deletion is **mandatory** (step 14).
 
+### Step 12, first real run (2026-11-03): gate failed; what was found offline and what the next run will say
+
+Report `phase15-routing-20261103-a.json`: toolAccuracy 0.667 (gate 0.9), pathAccuracy 0.367, 29 of 30 cases fell back to RAG, 0 violations, 0 errors. Not re-run.
+
+**1. `search_documents` failed 18 times out of 18 and was reported as a success.** CloudWatch: every run ended `knowledge_base_retrieve` `retrieval_invalid_response`. That one code covered four different
+checks after a *successful* `Retrieve` (normalising the results, the document record, the record's status, the object HEAD). Ruled out offline: a missing `LEGALDESK_DATA_SOURCE_ID` (only ingestion uses it, `Retrieve` does not),
+`get_for_scope` needing `Query` (it is a `GetItem`, allowed), the HEAD needing more than `s3:GetObject` (it does not), and the shape of a real Knowledge Base response (a test now feeds one: float page number, `x-amz-bedrock-kb-*` metadata,
+typed location). **Not pinned without AWS** which of the four it was. The codes are closed now (`retrieval_results_malformed`, `retrieval_document_lookup_failed`, `retrieval_document_missing`, `retrieval_document_not_indexed`,
+`retrieval_document_not_clean`, `retrieval_object_denied`, `retrieval_object_missing`, `retrieval_object_failed`), the failing search records the pipeline's code on its own tool event, and the next run says it. The behaviour is unchanged on purpose:
+one unavailable document among the results (a stale vector, a document not `INDEXED`, an unreadable object) still blocks the whole response (fail closed). **If the code turns out to be `retrieval_document_missing`/`not_indexed`
+because the Knowledge Base still holds vectors of documents that are gone or not indexed, the decision to take is whether to skip such a passage instead of failing the answer, or to re-sync/clean the Knowledge Base; that is an owner decision
+(ADR), not made here.** Read-only look to pin it before spending anything: the document records of the eval matter (status and `malwareScanStatus`) against the documents of the Knowledge Base data source.
+
+**2. A failed search must be an ERROR.** Gateway reports a returned payload as a successful call whatever it says. The Gateway entry point of the search Lambda is now `search_documents_gateway_handler`, which raises `SearchToolError(<closed code>)` on
+`timeout`, `service_unavailable`, `access_denied`, `invalid_request` and a pipeline error, so Gateway answers `isError` (with debugging off the model sees a generic error; the code is in the Lambda log, WARNING). `blocked` (a fixed backend sentence) is still returned.
+The worker's call log also marks any result that reports its own failure (`{"error": ...}` or `operationStatus: "error"`) as `ERROR` with the hint `tool_reported_error`, so it does not depend on every target raising.
+
+**3. Gateway change set for the fix (do not execute without the owner).** Same stack `LegalDeskPhase08Gateway`, same parameters as step 7 (`EnableSearchDocuments=true`) with the three code triples pointing at the new artifact. Expected, and checked by
+`check-change-set --profile gateway-search-handler-and-code`: **Modify** `GatewayRequestInterceptorFunction` (`Code`), `MetadataMcpFunction` (`Code`) and `SearchDocumentsFunction` (`Code`, `Handler`), `Replacement` `False` on all three;
+no `Add`, no `Remove`, no IAM statement change, no Gateway or target change. Anything else is a stop. After: `get-function-configuration` of `LegalDeskSearchDocumentsPhase15` shows `Handler` `legaldesk.search_documents_lambda.search_documents_gateway_handler` and the new `CodeSha256`.
+Back: the previous parameters and handler (`search_documents_lambda_handler`, which returns instead of raising).
+
+**4. The agent side, offline.** The answer-plan grammar of prompt 1.3.0 is exactly what `resolve_loop` validates (tests build every block type from the prompt with realistic Harness tool-use ids); the matter-selector instruction did not shift the format; the
+`get_extracted_fields` call the prompt prescribes satisfies the tool schema (limits included). So the plan format is not the cause. What the data explains: every `text`/`mixed` plan points at a `search_documents` call that had no usable result (cause 1),
+and a model that gets an error sentence as an "answer" may answer in prose (`plan_invalid`). What it does **not** explain, and needs live evidence: (i) the three inventory cases and `xm-01` (`list_matter_documents` fine, plan valid, block omitted: only
+`unknown_tool_use_id` can omit an inventory block, so either the model copied the tool-use id wrongly or the listing failed its contract); (ii) nine data/mixed loops that ended `failed` after the first tool (the interceptor saw `get_extracted_fields` once in the
+whole run, so the other calls never reached Gateway; `data-05` shows the path works). The next report records, per case and as closed labels: `diagnostics.sourceIdMatches` (`exact`/`similar`/`none` for each plan source id), `invalidToolResults`,
+`planError`, `omittedErrors`, `stopReason`, `toolStatuses`, `toolErrorHints`, `unansweredTools` (tools the model asked for whose result never arrived) and `streamErrorHint`. No text, no ids.
+
 ## Step 13 · Browser smoke (◆ paid: ≈ 10 questions through the worker)
 
 Use the synthetic user in the real browser against the CloudFront origin. Questions are the synthetic ones of the dataset; no real data. One tab, one question at a time.

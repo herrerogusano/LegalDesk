@@ -43,7 +43,7 @@ class SearchDocumentsInfrastructureTests(unittest.TestCase):
 
     def test_function_has_the_25_second_budget_and_no_sdk_retries(self) -> None:
         function = self.block("SearchDocumentsFunction")
-        self.assertIn("Handler: legaldesk.search_documents_lambda.search_documents_lambda_handler", function)
+        self.assertIn("Handler: legaldesk.search_documents_lambda.search_documents_gateway_handler", function)
         self.assertIn("Timeout: 25", function)
         self.assertIn('AWS_MAX_ATTEMPTS: "1"', function)
         self.assertIn("AWS_RETRY_MODE: standard", function)

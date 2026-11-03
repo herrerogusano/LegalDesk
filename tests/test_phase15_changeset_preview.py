@@ -214,6 +214,7 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
             "harness-adot-off": "phase-01-harness.yaml",
             "cd-iam": "cd-iam.yaml",
             "cd-iam-attribute-reads": "cd-iam.yaml",
+            "gateway-search-handler-and-code": "phase-08-gateway-mcp.yaml",
         }
         for profile_name, template_name in mapping.items():
             resources = set(_real(template_name)["Resources"])
@@ -234,6 +235,40 @@ class ProfilesAgainstTheRealTemplatesTests(unittest.TestCase):
         self.assertEqual([(e["resource"], e["sid"], e["change"]) for e in profile["iam"]], [("CloudFormationExecutionRole", "ReadOnlyAgentChatQueueAttributes", "added")])
         self.assertEqual((profile["add"], profile["remove"], profile["modify"]), ([], [], {"CloudFormationExecutionRole": ["Policies"]}))
         self.assertEqual(profile.get("wideAllowed", []), [])
+
+
+class GatewaySearchFixChangeSetTests(unittest.TestCase):
+    """The change set the owner reviews for the search_documents fix: three code updates and one Handler, nothing else."""
+
+    CODE = ("MetadataMcpCode", "InterceptorCode", "SearchDocumentsCode")
+
+    def result(self) -> dict[str, Any]:
+        new_text = (TEMPLATES / "phase-08-gateway-mcp.yaml").read_text(encoding="utf-8")
+        old_text = new_text.replace("search_documents_gateway_handler", "search_documents_lambda_handler")
+        self.assertNotEqual(old_text, new_text)
+        deployed = {"EnableSearchDocuments": "true", **{f"{name}{part}": value for name in self.CODE for part, value in (("Bucket", "b"), ("Key", "old"), ("Version", "v1"))}}
+        local = {**deployed, **{f"{name}{part}": value for name in self.CODE for part, value in (("Key", "new"), ("Version", "v2"))}}
+        return preview.compare(dict(preview.load_template(old_text)), dict(preview.load_template(new_text)), deployed, local)
+
+    def test_the_expected_change_set_is_exactly_the_profile(self) -> None:
+        result = self.result()
+        self.assertEqual(preview.check_preview(result, preview.load_profile("gateway-search-handler-and-code")), [])
+        self.assertEqual({item["id"]: item["properties"] for item in result["modified"]}, {
+            "GatewayRequestInterceptorFunction": ["Code"], "MetadataMcpFunction": ["Code"], "SearchDocumentsFunction": ["Code", "Handler"],
+        })
+        self.assertEqual((result["added"], result["removed"], result["iam"]), ([], [], []))
+        self.assertTrue(all(item["replacement"] == "no" for item in result["modified"]))
+
+    def test_the_profile_refuses_anything_else_in_the_same_stack(self) -> None:
+        for mutate, expected in (
+            (lambda r: r["modified"].append({"id": "GatewayExecutionRole", "type": "AWS::IAM::Role", "properties": ["Policies"], "replacement": "no", "conditionalProperties": []}), "unexpected modification"),
+            (lambda r: r["modified"][2]["properties"].append("Environment"), "unexpected"),
+            (lambda r: r["added"].append({"id": "Surprise", "type": "AWS::S3::Bucket"}), "unexpected addition"),
+        ):
+            with self.subTest(expected=expected):
+                result = copy.deepcopy(self.result())
+                mutate(result)
+                self.assertTrue(any(expected in problem for problem in preview.check_preview(result, preview.load_profile("gateway-search-handler-and-code"))))
 
 
 class ProfileViolationTests(unittest.TestCase):

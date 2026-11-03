@@ -273,6 +273,35 @@ class Step11SecondReportTests(unittest.TestCase):
             self.assertIn(f"`{stage}`", step_11)
 
 
+class Step12FirstRunFindingsTests(unittest.TestCase):
+    """The first real routing run failed the gate; the runbook says what was found offline, what is open and what the next report will say."""
+
+    def test_the_findings_the_change_set_and_the_open_questions_are_written_down(self) -> None:
+        step_12 = " ".join(section(RUNBOOK, "Step 12 ").split())
+        for needle in (
+            "Not pinned without AWS", "retrieval_object_denied", "search_documents_gateway_handler", "SearchToolError", "tool_reported_error",
+            "check-change-set --profile gateway-search-handler-and-code", "Replacement` `False` on all three", "sourceIdMatches", "unansweredTools",
+            "streamErrorHint", "owner decision", "fail closed",
+        ):
+            self.assertIn(needle, step_12)
+
+    def test_every_retrieval_code_named_in_the_runbook_exists_in_the_telemetry_vocabulary(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT / "backend" / "src"))
+        from legaldesk.observability import TelemetryErrorCode
+
+        step_12 = section(RUNBOOK, "Step 12 ")
+        named = set(re.findall(r"`(retrieval_[a-z_]+)`", step_12))
+        self.assertGreaterEqual(len(named), 8)
+        self.assertTrue(named <= {code.value for code in TelemetryErrorCode}, named)
+
+    def test_the_profile_named_by_the_runbook_exists(self) -> None:
+        from scripts import phase15_changeset_preview as preview
+
+        self.assertEqual(preview.load_profile("gateway-search-handler-and-code")["iam"], [])
+
+
 class ProfilesAndCommandsExistTests(unittest.TestCase):
     def test_every_profile_the_runbook_names_exists(self) -> None:
         names = set(re.findall(r"--profile ([a-z0-9-]+)", RUNBOOK)) | set(re.findall(r"profile `([a-z0-9-]+)`", RUNBOOK))
