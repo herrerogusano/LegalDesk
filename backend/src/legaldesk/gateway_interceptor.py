@@ -103,6 +103,21 @@ class _IDPMachineDenied(AuthorizationDenied):
         super().__init__("access denied")
 
 
+# Closed stages of a denial on the human/application path. The client-visible error stays the generic "access denied";
+# the stage is written only to the interceptor's own log so an operator can tell WHY a tool call was refused (live
+# 2026-11-03: a refused search_documents call left nothing to tell a missing selector from a bad record) without tokens,
+# bodies or document data.
+_DENY_STAGES = frozenset({
+    "raw_matter_selector", "selector_mismatch", "invocation_binding", "tool_target_pair", "tool_not_in_invocation",
+})
+
+
+class _DeniedAt(AuthorizationDenied):
+    def __init__(self, stage: str) -> None:
+        self.stage = stage if stage in _DENY_STAGES else "invocation_binding"
+        super().__init__("access denied")
+
+
 def _target_for_gateway_tool(tool_name: object) -> GatewayTarget:
     """Resolve only the exact Gateway and target-local tool names."""
 
@@ -1137,7 +1152,10 @@ def transform_gateway_request(
         return transform_idp_review_gateway_request(event, grant_repository=grant_repository, machine_client_id=early_client, scope=early_scope, invocation_resolver=_idp_review_invocation_resolver)
     subject = _decode_verified_subject(_header_selector(headers, "authorization"))
     raw_gateway_request = mcp.get("rawGatewayRequest") if isinstance(mcp, Mapping) else None
-    raw_matter_id = _raw_matter_selector(raw_gateway_request)
+    try:
+        raw_matter_id = _raw_matter_selector(raw_gateway_request)
+    except AuthorizationDenied as exc:
+        raise _DeniedAt("raw_matter_selector") from exc  # the call carries no matterId (or an unreadable raw body)
     params = body.get("params")
     arguments_value = params.get("arguments") if isinstance(params, Mapping) else None
     arguments = _normalize_arguments(arguments_value)
@@ -1150,9 +1168,9 @@ def transform_gateway_request(
     # The raw body is the original caller-controlled selector. Any selector
     # that survived into the transformed body or headers must agree with it.
     if body_matter_id is not None and body_matter_id != raw_matter_id:
-        raise AuthorizationDenied("access denied")
+        raise _DeniedAt("selector_mismatch")
     if header_matter_id is not None and header_matter_id != raw_matter_id:
-        raise AuthorizationDenied("access denied")
+        raise _DeniedAt("selector_mismatch")
     matter_id = raw_matter_id
     operation = _local_gateway_tool_name(params.get("name")) if isinstance(params, Mapping) else None
     machine_client_id = os.environ.get("LEGALDESK_IDP_M2M_CLIENT_ID") or os.environ.get("LEGALDESK_IDP_MACHINE_CLIENT_ID")
@@ -1173,12 +1191,17 @@ def transform_gateway_request(
     # Application Harness calls must resolve a server-issued binding before
     # their correlation or Memory headers are accepted. Legacy component
     # calls retain generated correlation when no invocation ID is present.
-    invocation_id, bound_correlation_id, invocation_record = _resolve_invocation_binding(
-        headers,
-        subject=subject,
-        matter_id=matter_id,
-        grant_repository=grant_repository,
-    )
+    try:
+        invocation_id, bound_correlation_id, invocation_record = _resolve_invocation_binding(
+            headers,
+            subject=subject,
+            matter_id=matter_id,
+            grant_repository=grant_repository,
+        )
+    except _DeniedAt:
+        raise
+    except AuthorizationDenied as exc:
+        raise _DeniedAt("invocation_binding") from exc
     correlation_id = bound_correlation_id or str(correlation_id_factory())
     try:
         correlation_id = str(UUID(correlation_id))
@@ -1201,12 +1224,12 @@ def transform_gateway_request(
         target is GatewayTarget.SEARCH_DOCUMENTS
         or operation in _PHASE15_TOOLS
     ) and _target_for_gateway_tool(operation) is not target:
-        raise AuthorizationDenied("access denied")
+        raise _DeniedAt("tool_target_pair")
     application_tool_name = (
         f"@legaldesk_gateway/{target.value}{GATEWAY_TOOL_DELIMITER}{operation}"
     )
     if invocation_record is not None and application_tool_name not in invocation_record["allowedTools"]:
-        raise AuthorizationDenied("access denied")
+        raise _DeniedAt("tool_not_in_invocation")
     emit_telemetry(
         telemetry_sink,
         TelemetryEventType.AGENT,
@@ -1628,6 +1651,8 @@ def gateway_request_interceptor(event: Mapping[str, object], _lambda_context: ob
         audit.update(_safe_decision_metadata(decision="DENY", code=code, target_invoked=False, tool_name=tool_name))
         if isinstance(exc, _IDPMachineDenied):
             audit["machineDenyStage"] = exc.stage
+        elif isinstance(exc, _DeniedAt):
+            audit["denyStage"] = exc.stage
         _LOGGER.warning("gateway authorization denied %s", json.dumps(audit, sort_keys=True))
         return _safe_error(event, authorization_code=code)
     except Exception:

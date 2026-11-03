@@ -239,6 +239,9 @@ class SimulatedAgent:
         self.authorization_store, self.observation = authorization_store, observation
 
     def _gateway_allows(self, binding: Any, tool: str, arguments: dict[str, Any]) -> bool:
+        # The simulated model passes the matter selector the real model is TOLD in the server-built system instruction
+        # (matter_selector_instruction). Without that instruction the raw body has no matterId and the interceptor refuses
+        # the call (live 2026-11-03); tests/test_phase15_agent_gateway_selector_and_session.py reproduces that refusal.
         full = _ALL_TOOL_NAMES.get(tool, f"@legaldesk_gateway/metadata-mcp___{tool}")
         target = _TARGETS[full.split("/", 1)[1].split("___", 1)[0]]
         event = {"mcp": {
