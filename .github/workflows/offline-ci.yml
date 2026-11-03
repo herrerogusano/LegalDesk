@@ -106,6 +106,7 @@ jobs:
           required = {
               "legaldesk/malware_scan_lambda.py", "legaldesk/idp_lambda.py",
               "legaldesk/idp_ocr_lambda.py", "legaldesk/reconciliation_lambda.py",
+              "legaldesk/agent_chat_lambda.py", "prompts/legaldesk-agent.md",
               "prompts/idp-classifier.md", "prompts/idp-extractor.md",
           }
           missing = required - names
@@ -123,9 +124,12 @@ jobs:
           infra/cloudformation/phase-14-reconciliation.yaml
           infra/cloudformation/phase-14-document-security.yaml
           infra/cloudformation/phase-14-public-edge.yaml
+          infra/cloudformation/phase-01-harness.yaml
           infra/cloudformation/cd-iam.yaml
       - name: Run Python unit and integration tests
         run: python -B -m unittest discover -s tests -q
+      - name: Run Phase 15 routing eval (offline, deterministic, no cloud calls)
+        run: python -B evals/phase15_routing_eval.py offline
       - name: Check Node helper contracts
         run: |
           node tests/phase13_live_browser_helpers.test.cjs
@@ -139,6 +143,7 @@ jobs:
           node --check frontend/citations.js
           node --check frontend/diagnostics.js
           node --check tests/phase14_idp_live_browser.cjs
+          node --check tests/phase15_agent_chat_frontend.cjs
       - name: Install local Playwright browser for behavior gate
         run: |
           npm install --prefix "$RUNNER_TEMP/playwright" --no-save --ignore-scripts playwright@1.62.1
@@ -165,6 +170,9 @@ jobs:
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/playwright/node_modules/playwright" \
             PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" \
             node tests/phase14_frontend_behavior.cjs "$base_url"
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/playwright/node_modules/playwright" \
+            PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers" \
+            node tests/phase15_agent_chat_frontend.cjs "$base_url"
       - name: Retain validated Linux Python 3.12 release artifact
         if: ${{ success() }}
         uses: actions/upload-artifact@v4

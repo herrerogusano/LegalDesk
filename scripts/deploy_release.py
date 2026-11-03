@@ -30,12 +30,20 @@ LAMBDA_KEY_RE = re.compile(r"^phase-14/(?P<commit>[0-9a-f]{40})/legaldesk-lambda
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 FRONTEND_FILES = ("index.html", "styles.css", "app.js", "citations.js", "diagnostics.js")
+# The agent chat worker (ADR-021, decision of 2026-11-02) runs the same package as
+# ApplicationFunction, so its Code is released in the same change set.  It exists only
+# when the stack parameter EnableAgentChat is "true".
+WORKER_CHANGE = ("Modify", "AWS::Lambda::Function", "AgentChatWorkerFunction")
+AGENT_CHAT_PARAMETER = "EnableAgentChat"
+WORKER_OUTPUT = "AgentChatWorkerFunctionName"
 ALLOWED_CHANGES = {
     ("Modify", "AWS::Lambda::Function", "ApplicationFunction"),
     ("Modify", "AWS::ApiGatewayV2::Integration", "PublicApiIntegration"),
+    WORKER_CHANGE,
 }
 ALLOWED_PROPERTY_NAMES = {
     ("AWS::Lambda::Function", "ApplicationFunction"): {"Code"},
+    ("AWS::Lambda::Function", "AgentChatWorkerFunction"): {"Code"},
     ("AWS::ApiGatewayV2::Integration", "PublicApiIntegration"): {"IntegrationUri"},
 }
 
@@ -105,6 +113,9 @@ class DeployResult:
     previous_lambda: tuple[str | None, str | None]
     checks: tuple[tuple[str, int], ...]
     previous_frontend_versions: tuple[tuple[str, str | None], ...] = ()
+    # "VERIFIED" (worker code hash checked), "DISABLED" (EnableAgentChat is not "true") or
+    # "NOT_CHECKED" (no verification ran: dry run, or a failure before it).
+    agent_chat_worker: str = "NOT_CHECKED"
 
 
 def _safe_json(path: Path) -> Mapping[str, Any]:
@@ -396,7 +407,14 @@ def _change_properties(change: Mapping[str, Any]) -> set[str]:
     return result
 
 
-def validate_change_set(changes: Iterable[Mapping[str, Any]]) -> None:
+def validate_change_set(changes: Iterable[Mapping[str, Any]], *, expect_worker: bool = False) -> None:
+    """Fail closed unless the change set is exactly the code-only release.
+
+    ``expect_worker`` is True when the stack runs the agent chat worker.  Then the worker's
+    ``Code`` must be in the same change set, so that API and worker never run different
+    releases; otherwise the worker must not appear at all.
+    """
+
     observed: list[tuple[str, str, str]] = []
     for wrapper in changes:
         change = wrapper.get("ResourceChange") if isinstance(wrapper, Mapping) else None
@@ -419,6 +437,10 @@ def validate_change_set(changes: Iterable[Mapping[str, Any]]) -> None:
         raise DeploymentError("change_set_empty")
     if len(observed) != len(set(observed)):
         raise DeploymentError("change_set_duplicate")
+    if expect_worker and WORKER_CHANGE not in observed:
+        raise DeploymentError("change_set_worker_missing")
+    if not expect_worker and WORKER_CHANGE in observed:
+        raise DeploymentError("change_set_scope_violation")
 
 
 def _decode_body(value: Any) -> bytes:
@@ -485,6 +507,7 @@ def _record(path: Path | None, result: DeployResult) -> None:
         "previousLambda": {"key": result.previous_lambda[0], "version": result.previous_lambda[1]},
         "checks": dict(result.checks),
         "previousFrontendVersions": dict(result.previous_frontend_versions),
+        "agentChatWorker": result.agent_chat_worker,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -497,6 +520,25 @@ def _existing_frontend_versions(s3: S3Like, bucket: str) -> tuple[tuple[str, str
         version = current.get("VersionId") if current is not None else None
         result.append((name, version if isinstance(version, str) else None))
     return tuple(result)
+
+
+def _agent_chat_enabled(values: Mapping[Any, Any]) -> bool:
+    return values.get(AGENT_CHAT_PARAMETER) == "true"
+
+
+def _verify_lambda_code(lambda_client: LambdaLike | None, function: Any, expected_sha256: str, *, unavailable: str, failed: str, mismatch: str) -> None:
+    """Compare a function's base64 ``CodeSha256`` with the release artifact's hash."""
+
+    if lambda_client is None or not isinstance(function, str) or not function:
+        raise DeploymentError(unavailable)
+    try:
+        response = lambda_client.get_function(FunctionName=function)
+    except Exception as exc:
+        raise DeploymentError(failed) from exc
+    configuration = response.get("Configuration") if isinstance(response, Mapping) else None
+    code_sha = configuration.get("CodeSha256") if isinstance(configuration, Mapping) else None
+    if code_sha != base64.b64encode(bytes.fromhex(expected_sha256)).decode("ascii"):
+        raise DeploymentError(mismatch)
 
 
 def deploy(
@@ -562,6 +604,7 @@ def deploy(
             old_values.get("ApplicationCodeVersion"),
         )
         target_code = (config.artifact_bucket, config.artifact_key, artifact_version)
+        worker_enabled = _agent_chat_enabled(old_values)
         # A timed-out/restarted run may have completed the code-only update
         # after the caller stopped waiting.  Exact parameter equality is the
         # only safe no-op proof; it avoids an empty change set and still runs
@@ -604,7 +647,7 @@ def deploy(
             changes = described.get("Changes")
             if not isinstance(changes, list):
                 raise DeploymentError("change_set_shape_invalid")
-            validate_change_set(changes)
+            validate_change_set(changes, expect_worker=worker_enabled)
             try:
                 cfn.execute_change_set(StackName=STACK_NAME, ChangeSetName=change_id)
             except Exception as exc:
@@ -637,18 +680,26 @@ def deploy(
             # UPDATE_ROLLBACK_COMPLETE is also safe to verify without polling.
             current = stack
         outputs = {item.get("OutputKey"): item.get("OutputValue") for item in (current or {}).get("Outputs", []) if isinstance(item, Mapping)}
-        function_arn = outputs.get("ApplicationFunctionArn")
-        if lambda_client is None or not isinstance(function_arn, str):
-            raise DeploymentError("lambda_verification_unavailable")
-        try:
-            function = lambda_client.get_function(FunctionName=function_arn)
-        except Exception as exc:
-            raise DeploymentError("lambda_verification_failed") from exc
-        configuration = function.get("Configuration") if isinstance(function, Mapping) else None
-        code_sha = configuration.get("CodeSha256") if isinstance(configuration, Mapping) else None
-        expected_code_sha = base64.b64encode(bytes.fromhex(application.sha256)).decode("ascii")
-        if code_sha != expected_code_sha:
-            raise DeploymentError("lambda_code_hash_mismatch")
+        _verify_lambda_code(
+            lambda_client,
+            outputs.get("ApplicationFunctionArn"),
+            application.sha256,
+            unavailable="lambda_verification_unavailable",
+            failed="lambda_verification_failed",
+            mismatch="lambda_code_hash_mismatch",
+        )
+        if worker_enabled:
+            # EnableAgentChat is "true" and the same package must be live in the worker too.
+            # A missing output is a failure, never a skip.
+            _verify_lambda_code(
+                lambda_client,
+                outputs.get(WORKER_OUTPUT),
+                application.sha256,
+                unavailable="agent_chat_worker_output_missing",
+                failed="agent_chat_worker_verification_failed",
+                mismatch="agent_chat_worker_code_hash_mismatch",
+            )
+        worker_state = "VERIFIED" if worker_enabled else "DISABLED"
         frontend_versions = _put_frontend(s3, frontend_bucket, frontend, config.commit)
         try:
             invalidation = cloudfront.create_invalidation(
@@ -678,7 +729,7 @@ def deploy(
         if isinstance(check_origin, str) and not check_origin.startswith("https://"):
             check_origin = "https://" + check_origin
         checks = _public_checks(check_origin, expected_files, public_opener)
-        result = DeployResult("PASS", config.commit, application.sha256, artifact_version, frontend_versions, effective_change_set_name, invalidation_id, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), checks, rollback_frontend)
+        result = DeployResult("PASS", config.commit, application.sha256, artifact_version, frontend_versions, effective_change_set_name, invalidation_id, (old_values.get("ApplicationCodeKey"), old_values.get("ApplicationCodeVersion")), checks, rollback_frontend, worker_state)
         _record(record_path, result)
         return result
     except DeploymentError:

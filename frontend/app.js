@@ -35,6 +35,7 @@
     idpHistory: null,
     idpHistoryLoading: false,
     idpReviewDecisionBusy: Object.create(null),
+    agentJobActive: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -86,6 +87,27 @@
   const IDP_FIELD_BY_NAME = new Map(IDP_FIELD_CATALOG.map((field) => [field.name, field]));
   const IDP_ACTIONS = Object.freeze({ APPROVE: "Aprobar", CORRECT: "Corregir", REJECT: "Rechazar" });
   const detailsMotion = new WeakMap();
+  // Agent chat jobs (ADR-021 D4). Typical answers take 15-35 s and cold starts 40-60 s; the
+  // backend's 5-minute deadline is only the safety cut-off, so the "slow" notice comes much earlier.
+  const AGENT_JOB_FIRST_POLL_MS = 1500;
+  const AGENT_JOB_POLL_MS = 2000;
+  const AGENT_JOB_SLOW_POLL_MS = 3000;
+  const AGENT_JOB_SLOW_AFTER_POLL_MS = 20000;
+  const AGENT_JOB_SLOW_NOTICE_MS = 45000;
+  const AGENT_JOB_CLIENT_LIMIT_MS = 330000;
+  const AGENT_JOB_MAX_POLL_FAILURES = 3;
+  const AGENT_JOB_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+  const AGENT_JOB_ERRORS = Object.freeze({
+    session_closed: "Tu sesión se cerró mientras se procesaba la pregunta, así que se descartó. Vuelve a enviar la pregunta; si la sesión ha caducado, inicia sesión de nuevo.",
+    deadline_exceeded: "La consulta superó el tiempo máximo y se canceló. Vuelve a enviar la pregunta, si puedes más concreta.",
+    transient_exhausted: "El servicio estaba saturado y no pudo completar la consulta. Vuelve a enviar la pregunta en unos minutos.",
+    attempts_exhausted: "La consulta no se pudo completar tras reintentarla. Vuelve a enviar la pregunta.",
+    agent_failed: "El asistente no pudo responder a esta pregunta. Vuelve a enviarla o reformúlala.",
+    internal_error: "Se produjo un error interno al procesar la pregunta. Vuelve a enviarla; si se repite, avisa al administrador.",
+  });
+  const AGENT_JOB_ERROR_FALLBACK = "La consulta no se pudo completar. Vuelve a enviar la pregunta.";
+  const AGENT_JOB_POLL_ERROR = "No se pudo comprobar el estado de la consulta. Vuelve a enviar la pregunta.";
+  const AGENT_JOB_TIMEOUT_ERROR = "La consulta no ha respondido en el tiempo esperado. Vuelve a enviar la pregunta.";
 
   function reducedMotionPreferred() {
     return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -323,11 +345,13 @@
     if (!response.ok) {
       const publicErrors = {
         quota_exceeded: "Se ha alcanzado el límite mensual de la beta. Contacta con el administrador para continuar.",
+        session_expiring: "Tu sesión está a punto de caducar y la consulta no se puede completar con garantías. Vuelve a iniciar sesión y repite la pregunta.",
       };
       const code = value && typeof value.error === "string" ? value.error : null;
       const message = (code && publicErrors[code]) || `La operación no se pudo completar (${response.status}).`;
       const error = new Error(message);
       error.status = response.status;
+      error.code = code;
       throw error;
     }
     return value;
@@ -411,6 +435,7 @@
     state.reviewUpdates = Object.create(null);
     state.pendingReviewFocus = "";
     state.hasAcceptedAnswer = false;
+    state.agentJobActive = false;
     renderReviews([]);
     setReviewDueDateMinimum();
     resetReviewValidation();
@@ -780,7 +805,9 @@
     renderIdpHistory(state.idpHistory || (state.idpFieldResult && state.idpFieldResult.history));
   }
 
-  function selectDocument(documentId) {
+  // ``fieldName`` (optional) preselects that field and shows its authorized value once the
+  // document's extraction state is loaded: the existing "Ver dato" action, nothing new.
+  function selectDocument(documentId, fieldName) {
     const record = selectedDocumentRecord(documentId);
     if (!record) return;
     state.selectedDocumentId = documentId;
@@ -794,7 +821,13 @@
     state.idpHistory = null;
     renderIdpPanel();
     const generation = currentGeneration();
-    loadSelectedDocumentMetadata(documentId, generation).catch((error) => {
+    loadSelectedDocumentMetadata(documentId, generation).then(() => {
+      if (!fieldName || !isCurrent(generation) || state.selectedDocumentId !== documentId) return;
+      if (!idpFieldCatalogForDocument(state.selectedDocument).some((field) => field.name === fieldName)) return;
+      state.idpFieldName = fieldName;
+      renderIdpPanel();
+      return loadSelectedIdpField({ keepAnswer: true });
+    }).catch((error) => {
       if (error.name !== "AbortError" && isCurrent(generation) && state.selectedDocumentId === documentId) {
         state.idpMetadataLoading = false;
         renderIdpPanel();
@@ -867,7 +900,8 @@
     }
   }
 
-  async function loadSelectedIdpField() {
+  // ``keepAnswer`` (used when opened from an agent answer) leaves the answer panel as it is.
+  async function loadSelectedIdpField(options) {
     const record = state.selectedDocument;
     const fieldName = state.idpFieldName || $("idp-field-select") && $("idp-field-select").value;
     if (!authorized() || !record || !fieldName || state.busy || state.idpFieldLoading) return;
@@ -895,7 +929,7 @@
       }
       state.idpFieldError = "";
       state.idpFieldResult = { ...parsed, fieldName, documentId, citations: response.citations, history: response.idpHistory };
-      if (window.LegalDeskCitationPanel && window.LegalDeskCitationPanel.renderChatResponse) window.LegalDeskCitationPanel.renderChatResponse(response);
+      if (!(options && options.keepAnswer === true) && window.LegalDeskCitationPanel && window.LegalDeskCitationPanel.renderChatResponse) window.LegalDeskCitationPanel.renderChatResponse(response);
       renderSelectedIdpResult();
       renderIdpHistory(state.idpHistory || state.idpFieldResult.history);
       renderIdpState("Resultado cargado; revisa sus páginas y evidencia antes de usarlo.", "success");
@@ -2099,6 +2133,132 @@
     }
   }
 
+  function agentJobNotice(slow) {
+    return slow
+      ? { message: "Está tardando más de lo habitual… Sigo esperando la respuesta; no hace falta volver a enviar la pregunta.", statusLabel: "TARDANDO MÁS DE LO HABITUAL" }
+      : { message: "Pensando…", statusLabel: "PENSANDO" };
+  }
+
+  // Polls the job until it ends. Returns {job} or {error} (closed code), or null when the
+  // view moved on (other matter, logout): nothing may be rendered then.
+  async function followAgentJob(accepted, generation) {
+    const jobId = typeof accepted.jobId === "string" && AGENT_JOB_ID_PATTERN.test(accepted.jobId) ? accepted.jobId : "";
+    if (!jobId) throw new Error(AGENT_JOB_POLL_ERROR);
+    const signal = state.controller.signal;
+    const startedAt = Date.now();
+    const path = `/api/matters/${encodeURIComponent(state.matterId)}/chat-jobs/${encodeURIComponent(jobId)}`;
+    let delay = AGENT_JOB_FIRST_POLL_MS;
+    let failures = 0;
+    let slow = false;
+    state.agentJobActive = true;
+    window.LegalDeskCitationPanel.renderLoadingState(agentJobNotice(false));
+    try {
+      for (;;) {
+        await waitForIngestionPoll(signal, delay);
+        if (!isCurrent(generation)) return null;
+        const elapsed = Date.now() - startedAt;
+        if (elapsed >= AGENT_JOB_CLIENT_LIMIT_MS) return { error: "client_timeout" };
+        if (!slow && elapsed >= AGENT_JOB_SLOW_NOTICE_MS) {
+          slow = true;
+          window.LegalDeskCitationPanel.renderLoadingState(agentJobNotice(true));
+        }
+        let job;
+        try {
+          job = await api(path, { signal });
+        } catch (error) {
+          if (error.name === "AbortError" || !isCurrent(generation)) return null;
+          failures += 1;
+          const permanent = error.status >= 400 && error.status < 500 && error.status !== 429;
+          if (permanent || failures >= AGENT_JOB_MAX_POLL_FAILURES) throw new Error(AGENT_JOB_POLL_ERROR);
+          delay = AGENT_JOB_POLL_MS;
+          continue;
+        }
+        if (!isCurrent(generation)) return null;
+        failures = 0;
+        if (!job || job.jobId !== jobId) throw new Error(AGENT_JOB_POLL_ERROR);
+        if (job.status === "succeeded") return { job };
+        if (job.status === "failed") return { error: typeof job.error === "string" ? job.error : "" };
+        delay = Date.now() - startedAt < AGENT_JOB_SLOW_AFTER_POLL_MS ? AGENT_JOB_POLL_MS : AGENT_JOB_SLOW_POLL_MS;
+      }
+    } finally {
+      if (isCurrent(generation)) state.agentJobActive = false;
+    }
+  }
+
+  function presentAgentOutcome(outcome) {
+    const panel = window.LegalDeskCitationPanel;
+    if (outcome.error !== undefined) {
+      const message = outcome.error === "client_timeout" ? AGENT_JOB_TIMEOUT_ERROR : AGENT_JOB_ERRORS[outcome.error] || AGENT_JOB_ERROR_FALLBACK;
+      panel.renderOperationalState("error", message);
+      setMessage(message, true);
+      return;
+    }
+    const result = outcome.job.result;
+    if (typeof outcome.job.correlationId === "string") state.correlationId = outcome.job.correlationId;
+    if (result && ["error", "blocked", "documents_processing"].includes(result.operationStatus)) {
+      panel.renderOperationalState(result.operationStatus);
+      setMessage(result.operationStatus === "documents_processing"
+        ? "Los documentos todavía se están procesando."
+        : "La consulta terminó con un error operativo; no se ha presentado una respuesta como evidencia.", result.operationStatus !== "documents_processing");
+      return;
+    }
+    try {
+      panel.renderAgentResult(result, { fieldAction: agentFieldAction });
+    } catch (_error) {
+      panel.renderOperationalState("error", AGENT_JOB_ERROR_FALLBACK);
+      setMessage(AGENT_JOB_ERROR_FALLBACK, true);
+      return;
+    }
+    // No review of the answer: the server keeps no candidate for agentic answers.
+    state.hasAcceptedAnswer = false;
+    resetReviewForm();
+    setMessage("Consulta completada.", false);
+  }
+
+  // The user left (logout): stop polling; the server fails the job closed on its own.
+  function cancelAgentJob() {
+    if (!state.agentJobActive) return;
+    state.generation += 1;
+    resetController();
+    state.agentJobActive = false;
+    state.busy = false;
+    setQueryLoadingState(false);
+    window.LegalDeskCitationPanel.renderOperationalState("");
+    refreshControls();
+  }
+
+  // "Ver de dónde sale este dato" on the lines of agent data blocks (owner decision 2026-11-02).
+  // It only opens views that already exist; it creates no correction flow.
+  async function openAgentFieldSource(ref) {
+    if (!authorized()) return;
+    const generation = currentGeneration();
+    if (ref.pending) {
+      // Pending value: its IDP review task lives in the Revisiones panel.
+      try { await loadReviews(generation); } catch (error) { if (error.name === "AbortError") return; }
+      if (!isCurrent(generation)) return;
+      const task = state.reviews.find((item) => item && item.source === "IDP" && item.status !== "closed"
+        && item.idpDocumentId === ref.documentId && Array.isArray(item.idpFieldNames) && item.idpFieldNames.includes(ref.fieldName));
+      if (task && task.reviewTaskId) state.pendingReviewFocus = task.reviewTaskId;
+      setWorkspacePanel("reviews", true);
+      return;
+    }
+    if (!selectedDocumentRecord(ref.documentId)) {
+      setMessage("Ese documento ya no figura entre los documentos autorizados del expediente.", true);
+      return;
+    }
+    setWorkspacePanel("documents", false);
+    selectDocument(ref.documentId, ref.fieldName);
+    const panel = $("idp-panel");
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: reducedMotionPreferred() ? "auto" : "smooth", block: "start" });
+  }
+
+  function agentFieldAction(ref) {
+    return {
+      label: ref.pending ? "Ver la revisión pendiente de este dato" : "Ver de dónde sale este dato",
+      onClick: openAgentFieldSource,
+    };
+  }
+
   async function askQuestion(event) {
     event.preventDefault();
     if (!authorized() || state.busy) return;
@@ -2115,7 +2275,12 @@
       const response = await api("/api/chat", { method: "POST", body: JSON.stringify({ matterId: state.matterId, conversationId: state.conversationId, sessionId: state.sessionId, question }), signal: state.controller.signal });
       if (!isCurrent(generation)) return;
       if (typeof response.correlationId === "string") state.correlationId = response.correlationId;
-      if (response && response.operationStatus === "documents_processing") {
+      if (response && typeof response.jobId === "string") {
+        // 202: the agent decides the sources and answers asynchronously (ADR-021 D4).
+        const outcome = await followAgentJob(response, generation);
+        if (!outcome || !isCurrent(generation)) return;
+        presentAgentOutcome(outcome);
+      } else if (response && response.operationStatus === "documents_processing") {
         window.LegalDeskCitationPanel.renderOperationalState("documents_processing");
         setMessage("Los documentos todavía se están procesando.", false);
       } else if (response && ["error", "blocked"].includes(response.operationStatus)) {
@@ -2340,6 +2505,7 @@
   }
 
   async function logout() {
+    cancelAgentJob();
     try {
       const result = await api("/logout", { method: "POST", body: "{}" });
       // The server constructs and validates the provider URL.  Local fixtures

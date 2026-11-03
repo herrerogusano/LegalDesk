@@ -1,7 +1,9 @@
 """Application-side adapter for the managed LegalDesk AgentCore Harness."""
 
 from .client import (
+    AgentChatResult,
     AgentTelemetryEvent,
+    AgentToolCall,
     HarnessInvocationError,
     HarnessMemoryScope,
     HarnessInvocationScope,
@@ -9,6 +11,7 @@ from .client import (
     HarnessToolResult,
     HarnessUsage,
     InvokeResult,
+    invoke_agent_chat,
     new_session_id,
 )
 from .local_agent import LocalAgent
@@ -20,7 +23,9 @@ from .trace_evidence import (
 )
 
 __all__ = [
+    "AgentChatResult",
     "AgentTelemetryEvent",
+    "AgentToolCall",
     "HarnessInvocationError",
     "HarnessMemoryScope",
     "HarnessInvocationScope",
@@ -28,6 +33,7 @@ __all__ = [
     "HarnessToolResult",
     "HarnessUsage",
     "InvokeResult",
+    "invoke_agent_chat",
     "LocalAgent",
     "new_session_id",
     "LegalDeskTool",

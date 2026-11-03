@@ -46,7 +46,7 @@ class QuotaLimits:
     upload_bytes_per_month: int = 500 * 1024 * 1024
     chats_per_month: int = 300
     ingestion_starts_per_month: int = 50
-    harness_per_month: int = 100
+    harness_per_month: int = 300
     gateway_per_month: int = 500
 
     def __post_init__(self) -> None:
@@ -135,6 +135,16 @@ class QuotaLedger(Protocol):
         self, tenant_id: str, file_size_bytes: int, *, idempotency_key: str | None = None, now: float | None = None
     ) -> None: ...
 
+    def release(self, tenant_id: str, operation: str, *, idempotency_key: str, now: float | None = None) -> None: ...
+
+
+def _validate_release(tenant_id: str, operation: str, idempotency_key: str) -> None:
+    _validate_reservation(tenant_id, operation, 1)
+    if operation not in _COUNTER_FIELDS:
+        raise ValueError("quota operation cannot be released")
+    if not isinstance(idempotency_key, str) or not idempotency_key or len(idempotency_key) > 128:
+        raise ValueError("quota idempotency key is invalid")
+
 
 def _validate_reservation(tenant_id: str, operation: str, amount: int) -> None:
     if not isinstance(tenant_id, str) or not tenant_id or len(tenant_id) > 128:
@@ -155,6 +165,9 @@ class DisabledQuotaLedger:
         return None
 
     def reserve_upload(self, tenant_id: str, file_size_bytes: int, *, idempotency_key: str | None = None, now: float | None = None) -> None:
+        return None
+
+    def release(self, tenant_id: str, operation: str, *, idempotency_key: str, now: float | None = None) -> None:
         return None
 
 
@@ -208,6 +221,20 @@ class InMemoryQuotaLedger:
         month = utc_month(self.clock() if now is None else now)
         with self._lock:
             self._reserve_locked(tenant_id, month, UPLOAD_BYTES, file_size_bytes, idempotency_key)
+
+    def release(self, tenant_id: str, operation: str, *, idempotency_key: str, now: float | None = None) -> None:
+        """Give back one keyed reservation; releasing twice (or never reserved) is a no-op."""
+
+        _validate_release(tenant_id, operation, idempotency_key)
+        month = utc_month(self.clock() if now is None else now)
+        with self._lock:
+            amount = self.reservations.pop((tenant_id, month, operation, idempotency_key), None)
+            if amount is None:
+                return
+            counter = self.counters.get((tenant_id, month))
+            if counter is not None:
+                field_name = _COUNTER_FIELDS[operation]
+                counter[field_name] = max(0, counter[field_name] - amount)
 
 
 class DynamoDBQuotaLedger:
@@ -300,6 +327,33 @@ class DynamoDBQuotaLedger:
                 raise QuotaExceededError("monthly quota exceeded") from exc
             else:
                 raise QuotaUnavailableError("quota reservation unavailable") from exc
+
+    def release(self, tenant_id: str, operation: str, *, idempotency_key: str, now: float | None = None) -> None:
+        """Give back a keyed reservation exactly once.
+
+        The idempotency token is removed in the same conditional update that
+        decrements the counter, so a second release (a retried worker, or the
+        job-expiry path racing the worker) finds no token and changes nothing.
+        ``now`` must be the instant the reservation was made so a job that
+        crosses a month boundary credits the month it was charged to.
+        """
+
+        _validate_release(tenant_id, operation, idempotency_key)
+        month = utc_month(self.clock() if now is None else now)
+        token = self._token(operation, idempotency_key)
+        key = {"pk": self._pk(tenant_id, month), "sk": "COUNTER"}
+        try:
+            self.table.update_item(
+                Key=key,
+                UpdateExpression="ADD #counter :decrement DELETE #tokens :token_set",
+                ConditionExpression="contains(#tokens, :token) AND #counter >= :one",
+                ExpressionAttributeNames={"#counter": _COUNTER_FIELDS[operation], "#tokens": "idempotencyTokens"},
+                ExpressionAttributeValues={":decrement": -1, ":one": 1, ":token": token, ":token_set": {token}},
+            )
+        except Exception as exc:
+            if self._conditional_failure(exc):
+                return  # already released, or never reserved under this key
+            raise QuotaUnavailableError("quota release unavailable") from exc
 
     def reserve_upload(self, tenant_id: str, file_size_bytes: int, *, idempotency_key: str | None = None, now: float | None = None) -> None:
         if isinstance(file_size_bytes, bool) or not isinstance(file_size_bytes, int) or file_size_bytes <= 0:

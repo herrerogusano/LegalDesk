@@ -42,6 +42,7 @@ class ReleasePackagingTests(unittest.TestCase):
             self.assertIn("legaldesk/api_gateway.py", names)
             self.assertIn("legaldesk_agent/client.py", names)
             self.assertIn("prompts/legaldesk-system.md", names)
+            self.assertIn("prompts/legaldesk-agent.md", names)
             self.assertIn("boto3/__init__.py", names)
             self.assertIn("legaldesk/malware_scan_lambda.py", names)
             self.assertIn("legaldesk/idp_lambda.py", names)

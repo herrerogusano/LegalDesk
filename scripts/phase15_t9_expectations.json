@@ -1,0 +1,458 @@
+{
+  "schemaVersion": 1,
+  "note": "Expected outcome of each T9 change set. Used by phase15_changeset_preview.py (preview and check-change-set). Regenerate and review the diff whenever a template changes. wideAllowed lists, per IAM statement, the widening reasons the profile accepts (NotAction/NotResource, action or resource wildcards, partial resource wildcards); anything else fails.",
+  "profiles": {
+    "public-edge-agent-chat": {
+      "description": "LegalDeskPhase14PublicEdge: template catch-up + EnableAgentChat=true + new immutable code. The 17 AgentChat* resources are added; the application function and role are modified; nothing is replaced or removed.",
+      "add": [
+        "AgentChatDeadLetterQueue",
+        "AgentChatDeadLetterQueueAlarm",
+        "AgentChatEventSourceMapping",
+        "AgentChatFallbackMetric",
+        "AgentChatFallbackRateAlarm",
+        "AgentChatJobDurationAlarm",
+        "AgentChatJobFailureAlarm",
+        "AgentChatJobFailureMetric",
+        "AgentChatQueue",
+        "AgentChatQueueAgeAlarm",
+        "AgentChatWorkerErrorsAlarm",
+        "AgentChatWorkerExecutionRole",
+        "AgentChatWorkerFunction",
+        "AgentChatWorkerLogGroup"
+      ],
+      "modify": {
+        "ApplicationExecutionRole": [
+          "Policies"
+        ],
+        "ApplicationFunction": [
+          "Code",
+          "Environment"
+        ],
+        "PublicApiIntegration": [
+          "IntegrationUri"
+        ]
+      },
+      "iamResources": [
+        "AgentChatWorkerExecutionRole",
+        "ApplicationExecutionRole"
+      ],
+      "iam": [
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "AssumeRolePolicyDocument",
+          "sid": "-",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ApprovedModelDataPlane",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "BedrockKnowledgeBaseRetrieveOnly",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ConsumeJobMessages",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ConversationMemory",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "GuardrailDataPlane",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "HeadCanonicalSourceDocumentsOnly",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "InvokeTheAgentHarnessOnly",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ReadAuthorizationSessionAndJobState",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "WriteJobGrantCitationHistoryAndQuotaState",
+          "change": "added"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "WriteWorkerLogs",
+          "change": "added"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "PublishAgentChatJobIds",
+          "change": "added"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "change": "changed"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "WriteOnlyApplicationOwnedState",
+          "change": "changed"
+        }
+      ],
+      "remove": [],
+      "wideAllowed": [
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "sid": "HeadCanonicalSourceDocumentsOnly",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "sid": "WriteWorkerLogs",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        }
+      ]
+    },
+    "gateway-search-documents": {
+      "description": "LegalDeskPhase08Gateway: EnableSearchDocuments=true + new code for the MCP and interceptor Lambdas. Adds the search-documents Lambda, role, log group and Gateway target; the Gateway role may invoke the new Lambda.",
+      "add": [
+        "SearchDocumentsExecutionRole",
+        "SearchDocumentsFunction",
+        "SearchDocumentsGatewayTarget",
+        "SearchDocumentsLogGroup"
+      ],
+      "modify": {
+        "GatewayExecutionRole": [
+          "Policies"
+        ],
+        "GatewayRequestInterceptorFunction": [
+          "Code"
+        ],
+        "MetadataMcpFunction": [
+          "Code",
+          "Timeout"
+        ]
+      },
+      "iamResources": [
+        "GatewayExecutionRole",
+        "SearchDocumentsExecutionRole"
+      ],
+      "iam": [
+        {
+          "resource": "GatewayExecutionRole",
+          "policy": "LegalDeskGatewayTargetsPhase08",
+          "sid": "anon:d3468852",
+          "change": "added"
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "policy": "AssumeRolePolicyDocument",
+          "sid": "-",
+          "change": "added"
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "policy": "LegalDeskSearchDocumentsPhase15",
+          "sid": "ApplyTheVersionedGuardrail",
+          "change": "added"
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "policy": "LegalDeskSearchDocumentsPhase15",
+          "sid": "HeadAuthorizedSourceObjects",
+          "change": "added"
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "policy": "LegalDeskSearchDocumentsPhase15",
+          "sid": "InvokeTheApprovedResolverAndWriterModels",
+          "change": "added"
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "policy": "LegalDeskSearchDocumentsPhase15",
+          "sid": "ReadAuthorizationGrantsAndDocumentRecords",
+          "change": "added"
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "policy": "LegalDeskSearchDocumentsPhase15",
+          "sid": "RetrieveFromTheKnowledgeBase",
+          "change": "added"
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "policy": "LegalDeskSearchDocumentsPhase15",
+          "sid": "anon:6abfb18d",
+          "change": "added"
+        }
+      ],
+      "remove": [],
+      "wideAllowed": [
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "sid": "HeadAuthorizedSourceObjects",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        },
+        {
+          "resource": "SearchDocumentsExecutionRole",
+          "sid": "anon:6abfb18d",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        }
+      ]
+    },
+    "harness-memory-off-adot-on": {
+      "description": "LegalDeskPhase01 (Harness): detach memory (ADR-021 D7) and enable managed ADOT for the probe. MinimalHarness is the only non-IAM resource; its Replacement must be False.",
+      "add": [],
+      "modify": {
+        "HarnessExecutionRole": [
+          "Policies"
+        ],
+        "MinimalHarness": [
+          "EnvironmentVariables",
+          "Memory"
+        ]
+      },
+      "iamResources": [
+        "HarnessExecutionRole"
+      ],
+      "iam": [
+        {
+          "resource": "HarnessExecutionRole",
+          "policy": "LegalDeskHarnessPhase01",
+          "sid": "UsePhase09Memory",
+          "change": "removed",
+          "optional": true
+        }
+      ],
+      "remove": [],
+      "previewReplacementUnknown": [
+        "MinimalHarness"
+      ]
+    },
+    "harness-adot-off": {
+      "description": "LegalDeskPhase01 (Harness): disable managed ADOT again after the probe. Only the environment variables of MinimalHarness change.",
+      "add": [],
+      "remove": [],
+      "modify": {
+        "MinimalHarness": [
+          "EnvironmentVariables"
+        ]
+      },
+      "iamResources": [],
+      "iam": [],
+      "previewReplacementUnknown": [
+        "MinimalHarness"
+      ]
+    },
+    "cd-iam": {
+      "description": "LegalDeskProductionCD: adds the agent chat worker to the release and CloudFormation roles (4 statements, all on the one function and its unchanged role). Roles are modified in place, never replaced.",
+      "add": [],
+      "modify": {
+        "CloudFormationExecutionRole": [
+          "Description",
+          "Policies"
+        ],
+        "ProductionDeploymentRole": [
+          "Policies"
+        ]
+      },
+      "iamResources": [
+        "CloudFormationExecutionRole",
+        "ProductionDeploymentRole"
+      ],
+      "iam": [
+        {
+          "resource": "CloudFormationExecutionRole",
+          "policy": "LegalDeskCodeAndIntegrationUpdate",
+          "sid": "PassUnchangedAgentChatWorkerRoleIfRequired",
+          "change": "added"
+        },
+        {
+          "resource": "CloudFormationExecutionRole",
+          "policy": "LegalDeskCodeAndIntegrationUpdate",
+          "sid": "ReadAndUpdateOnlyAgentChatWorkerCode",
+          "change": "added"
+        },
+        {
+          "resource": "CloudFormationExecutionRole",
+          "policy": "LegalDeskCodeAndIntegrationUpdate",
+          "sid": "ReadUnchangedAgentChatWorkerRolePolicy",
+          "change": "added"
+        },
+        {
+          "resource": "ProductionDeploymentRole",
+          "policy": "LegalDeskProductionRelease",
+          "sid": "VerifyOnlyTheAgentChatWorker",
+          "change": "added"
+        }
+      ],
+      "remove": []
+    },
+    "public-edge-agent-chat-rollback": {
+      "description": "Rollback of EnableAgentChat to false: queue, DLQ, worker, role, event source mapping, log group, metric filters and alarms are removed; the application function environment and role policy go back.",
+      "add": [],
+      "remove": [
+        "AgentChatDeadLetterQueue",
+        "AgentChatDeadLetterQueueAlarm",
+        "AgentChatEventSourceMapping",
+        "AgentChatFallbackMetric",
+        "AgentChatFallbackRateAlarm",
+        "AgentChatJobDurationAlarm",
+        "AgentChatJobFailureAlarm",
+        "AgentChatJobFailureMetric",
+        "AgentChatQueue",
+        "AgentChatQueueAgeAlarm",
+        "AgentChatWorkerErrorsAlarm",
+        "AgentChatWorkerExecutionRole",
+        "AgentChatWorkerFunction",
+        "AgentChatWorkerLogGroup"
+      ],
+      "modify": {
+        "ApplicationExecutionRole": [
+          "Policies"
+        ],
+        "ApplicationFunction": [
+          "Environment"
+        ]
+      },
+      "iamResources": [
+        "AgentChatWorkerExecutionRole",
+        "ApplicationExecutionRole"
+      ],
+      "iam": [
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "AssumeRolePolicyDocument",
+          "sid": "-",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ApprovedModelDataPlane",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "BedrockKnowledgeBaseRetrieveOnly",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ConsumeJobMessages",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ConversationMemory",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "GuardrailDataPlane",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "HeadCanonicalSourceDocumentsOnly",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "InvokeTheAgentHarnessOnly",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "ReadAuthorizationSessionAndJobState",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "WriteJobGrantCitationHistoryAndQuotaState",
+          "change": "removed"
+        },
+        {
+          "resource": "AgentChatWorkerExecutionRole",
+          "policy": "LegalDeskAgentChatWorkerDataPlane",
+          "sid": "WriteWorkerLogs",
+          "change": "removed"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "PublishAgentChatJobIds",
+          "change": "removed"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "change": "changed"
+        },
+        {
+          "resource": "ApplicationExecutionRole",
+          "policy": "LegalDeskPublicApplicationDataPlane",
+          "sid": "WriteOnlyApplicationOwnedState",
+          "change": "changed"
+        }
+      ],
+      "wideAllowed": [
+        {
+          "resource": "ApplicationExecutionRole",
+          "sid": "ReadAuthorizationAndApplicationState",
+          "reasons": [
+            "resource_partial_wildcard"
+          ]
+        }
+      ]
+    }
+  }
+}

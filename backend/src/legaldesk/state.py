@@ -132,6 +132,10 @@ class EphemeralStateStore(Protocol):
 
     def delete_session(self, key: str) -> None: ...
 
+    def session_reference(self, key: str) -> str: ...
+
+    def get_session_by_reference(self, reference: str) -> SessionRecord | None: ...
+
     def put_oauth_state(self, state: str, code_verifier: str, expires_at: float) -> None: ...
 
     def consume_oauth_state(self, state: str) -> tuple[str, float] | None: ...
@@ -202,6 +206,29 @@ def _digest(*parts: object) -> str:
 
 def _now() -> float:
     return time.time()
+
+
+SESSION_REFERENCE_LENGTH = 64
+
+
+def session_reference(key: str) -> str:
+    """Derived, non-reversible handle of a session: the digest the durable store keys it by.
+
+    A job keeps this reference instead of the cookie value, so reading the table never
+    yields something that can be replayed as a session cookie.
+    """
+
+    if not isinstance(key, str) or not key:
+        raise ValueError("session key is required")
+    return _digest(key)
+
+
+def _valid_session_reference(reference: object) -> bool:
+    return (
+        isinstance(reference, str)
+        and len(reference) == SESSION_REFERENCE_LENGTH
+        and all(char in "0123456789abcdef" for char in reference)
+    )
 
 
 class InMemoryEphemeralStateStore:
@@ -282,6 +309,17 @@ class InMemoryEphemeralStateStore:
 
     def delete_session(self, key: str) -> None:
         self.sessions.pop(key, None)
+
+    def session_reference(self, key: str) -> str:
+        return session_reference(key)
+
+    def get_session_by_reference(self, reference: str) -> SessionRecord | None:
+        if not _valid_session_reference(reference):
+            return None
+        for key in tuple(self.sessions):  # bounded: at most 256 live sessions
+            if session_reference(key) == reference:
+                return self.get_session(key)
+        return None
 
     def put_oauth_state(self, state: str, code_verifier: str, expires_at: float) -> None:
         self.oauth_states[state] = (code_verifier, expires_at)
@@ -548,7 +586,9 @@ class DynamoDBEphemeralStateStore:
         )
 
     def get_session(self, key: str) -> SessionRecord | None:
-        response = self.table.get_item(Key=self._key("SESSION", key, "RECORD"), ConsistentRead=True)
+        return self._session_from(self.table.get_item(Key=self._key("SESSION", key, "RECORD"), ConsistentRead=True))
+
+    def _session_from(self, response: object) -> SessionRecord | None:
         item = response.get("Item") if isinstance(response, Mapping) else None
         if not isinstance(item, Mapping):
             return None
@@ -560,6 +600,17 @@ class DynamoDBEphemeralStateStore:
 
     def delete_session(self, key: str) -> None:
         self.table.delete_item(Key=self._key("SESSION", key, "RECORD"))
+
+    def session_reference(self, key: str) -> str:
+        return session_reference(key)
+
+    def get_session_by_reference(self, reference: str) -> SessionRecord | None:
+        """Point read by the stored digest: ``_pk("SESSION", key)`` is ``SESSION#`` + this digest."""
+
+        if not _valid_session_reference(reference):
+            return None
+        return self._session_from(self.table.get_item(
+            Key={"pk": f"{self._PREFIX}SESSION#{reference}", "sk": "RECORD"}, ConsistentRead=True))
 
     def put_oauth_state(self, state: str, code_verifier: str, expires_at: float) -> None:
         self.table.put_item(
@@ -1097,4 +1148,5 @@ __all__ = [
     "InMemoryEphemeralStateStore",
     "ReviewCandidateRecord",
     "SessionRecord",
+    "session_reference",
 ]

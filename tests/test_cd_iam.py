@@ -80,5 +80,56 @@ class CdIamTemplateTests(unittest.TestCase):
         self.assertIsNotNone(re.fullmatch(pattern, "arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskPhase14PublicEdge-application"))
 
 
+    def _statements(self, role: str) -> dict[str, dict]:
+        statements = self.template["Resources"][role]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+        return {statement["Sid"]: statement for statement in statements}
+
+    def test_worker_code_update_is_scoped_to_the_one_worker_function(self) -> None:
+        update = self._statements("CloudFormationExecutionRole")["ReadAndUpdateOnlyAgentChatWorkerCode"]
+        self.assertEqual(set(update["Action"]), {"lambda:GetFunction", "lambda:GetFunctionConfiguration", "lambda:UpdateFunctionCode"})
+        self.assertEqual(update["Resource"], "AgentChatWorkerFunctionArn")
+        # No other Lambda action may be reachable on the worker, and UpdateFunctionCode is
+        # granted on exactly two functions in the whole template (application + worker).
+        granted = [
+            (sid, statement["Resource"])
+            for role in self.template["Resources"]
+            for sid, statement in self._statements(role).items()
+            if "lambda:UpdateFunctionCode" in statement["Action"]
+        ]
+        self.assertEqual(sorted(resource for _, resource in granted), ["AgentChatWorkerFunctionArn", "ApplicationFunctionArn"])
+
+    def test_deployment_role_only_reads_the_worker_for_the_hash_check(self) -> None:
+        verify = self._statements("ProductionDeploymentRole")["VerifyOnlyTheAgentChatWorker"]
+        self.assertEqual(set(verify["Action"]), {"lambda:GetFunction", "lambda:GetFunctionConfiguration"})
+        self.assertEqual(verify["Resource"], "AgentChatWorkerFunctionArn")
+
+    def test_worker_role_is_read_only_for_cloudformation(self) -> None:
+        statements = self._statements("CloudFormationExecutionRole")
+        read = statements["ReadUnchangedAgentChatWorkerRolePolicy"]
+        self.assertEqual(set(read["Action"]), {"iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:GetRolePolicy"})
+        self.assertEqual(read["Resource"], "AgentChatWorkerExecutionRoleArn")
+        passed = statements["PassUnchangedAgentChatWorkerRoleIfRequired"]
+        self.assertEqual(passed["Resource"], "AgentChatWorkerExecutionRoleArn")
+        self.assertEqual(passed["Condition"]["StringEquals"]["iam:PassedToService"], "lambda.amazonaws.com")
+
+    def test_no_iam_write_is_reachable_by_any_cd_role(self) -> None:
+        for role in self.template["Resources"]:
+            for statement in self._statements(role).values():
+                actions = statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+                for action in actions:
+                    if action.startswith("iam:"):
+                        self.assertIn(action, {"iam:PassRole", "iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:GetRolePolicy"})
+
+    def test_worker_arn_contracts(self) -> None:
+        parameters = self.template["Parameters"]
+        pattern = parameters["AgentChatWorkerFunctionArn"]["AllowedPattern"]
+        self.assertIsNotNone(re.fullmatch(pattern, "arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskPhase14PublicEdge-agent-chat-worker"))
+        # Neither the application function nor another function can be passed as the worker.
+        self.assertIsNone(re.fullmatch(pattern, "arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskPhase14PublicEdge-application"))
+        self.assertIsNone(re.fullmatch(pattern, "arn:aws:lambda:eu-west-1:344774635844:function:LegalDeskPhase14PublicEdge-agent-chat-worker-evil"))
+        self.assertNotIn("Default", parameters["AgentChatWorkerFunctionArn"])
+        self.assertNotIn("Default", parameters["AgentChatWorkerExecutionRoleArn"])
+
+
 if __name__ == "__main__":
     unittest.main()
