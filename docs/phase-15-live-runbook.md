@@ -483,7 +483,12 @@ Both live tools write the same block, `residualState`, into their immutable repo
 
 Not created by either tool: the job (memory only), `CHATJOB` items, quota counters, Harness or backend memory events, citation handles. The plain session-check calls write nothing.
 
-The script reads **any number of reports** and deletes only keys it can rebuild and whose hash matches the report. It stops at the first mismatch.
+The script reads **any number of reports** and deletes only keys it can rebuild and whose hash matches the report. It is built so that a failure can never read as success:
+
+- a **pre-check** (account, region, table `ACTIVE`) runs before anything is touched, and every hash of every report is checked before the first delete;
+- `$LASTEXITCODE` is checked after **every** `aws` call and any failure is a `throw` (expired credentials, wrong region or profile, throttling, network, and a `ConditionalCheckFailedException` on the delete when the item changed type);
+- a binding counts as **absent only when the read succeeded and returned no item**, and as **deleted only after a successful delete**; empty output from `aws` is a failure, never "absent";
+- the verification re-reads every key and a failed read stops it, so `remaining=0` can only be printed when every read succeeded and found nothing.
 
 ```powershell
 $reports = Get-ChildItem evals\results\phase15-harness-checks-$Stamp-*.json, evals\results\phase15-routing-$Stamp-*.json   # every report of this block
@@ -491,35 +496,60 @@ $table   = "LegalDeskPhase02Documents-DocumentMetadataTable-1DANFLTX8RW7T"
 $tenant  = "tnt_phase14_20260928"; $matter = "mat_phase14_a_20260928"
 $user    = "<userId of the synthetic test user: the AUTH#USER#<userId> item, not the Cognito username>"
 function Sha($s) { ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))) -replace "-", "").ToLower() }
-Set-Content "$Root\values.json" ('{":t":{"S":"ConversationBinding"}}') -Encoding ascii
-$expected = 0; $deleted = 0; $absent = 0
-foreach ($report in $reports) {
-  $bindings = (Get-Content $report.FullName -Raw | ConvertFrom-Json).residualState.conversationBindings
-  foreach ($b in $bindings) {
-    $expected++
-    $pk = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)"
-    if ((Sha $pk) -ne $b.bindingPkSha256) { throw "key does not match the hash in $($report.Name): stop, do not guess" }
-    Set-Content "$Root\key.json" (@{ pk = @{ S = $pk }; sk = @{ S = "SESSION#$($b.sessionSelector)" } } | ConvertTo-Json -Compress) -Encoding ascii
-    $found = aws dynamodb get-item --table-name $table --key file://$Root\key.json --consistent-read | ConvertFrom-Json
-    if (-not $found.Item) { $absent++; continue }                                   # already gone: counted, not an error
-    if ($found.Item.entityType.S -ne "ConversationBinding") { throw "not a ConversationBinding: stop" }
-    aws dynamodb delete-item --table-name $table --key file://$Root\key.json --condition-expression "entityType = :t" --expression-attribute-values file://$Root\values.json
-    $deleted++
-  }
-}
-# Verification: every listed binding is gone, and the counts add up.
-$remaining = 0
+function KeyFile($b) { Set-Content "$Root\key.json" (@{ pk = @{ S = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)" }; sk = @{ S = "SESSION#$($b.sessionSelector)" } } | ConvertTo-Json -Compress) -Encoding ascii }
+
+# 0. Pre-check: right account, right region, table reachable. Nothing is touched before this passes.
+if (-not $reports) { throw "no report found for stamp ${Stamp}: nothing to clean, or the wrong stamp" }
+if ($env:AWS_REGION -ne "eu-west-1") { throw "AWS_REGION must be eu-west-1" }
+$account = aws sts get-caller-identity --query Account --output text
+if ($LASTEXITCODE -ne 0) { throw "sts get-caller-identity failed (exit $LASTEXITCODE): credentials expired or wrong profile; stop" }
+if ($account -ne "344774635844") { throw "wrong AWS account ($account); stop" }
+$status = aws dynamodb describe-table --table-name $table --query Table.TableStatus --output text
+if ($LASTEXITCODE -ne 0) { throw "describe-table failed (exit $LASTEXITCODE): wrong region, profile or table name; stop" }
+if ($status -ne "ACTIVE") { throw "table $table is $status; stop" }
+
+# 1. Read every report and check every hash BEFORE deleting anything.
+$entries = @()
 foreach ($report in $reports) {
   foreach ($b in (Get-Content $report.FullName -Raw | ConvertFrom-Json).residualState.conversationBindings) {
-    Set-Content "$Root\key.json" (@{ pk = @{ S = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)" }; sk = @{ S = "SESSION#$($b.sessionSelector)" } } | ConvertTo-Json -Compress) -Encoding ascii
-    if ((aws dynamodb get-item --table-name $table --key file://$Root\key.json --consistent-read | ConvertFrom-Json).Item) { $remaining++ }
+    $pk = "CONVERSATION#$tenant#$matter#$user#$($b.conversationId)"
+    if ((Sha $pk) -ne $b.bindingPkSha256) { throw "key does not match the hash in $($report.Name): stop, do not guess" }
+    $entries += $b
   }
+}
+$expected = $entries.Count
+if ($expected -eq 0) { throw "the reports list no binding: stop (a run that made calls always lists them)" }
+
+# 2. Delete. Absent only if the call SUCCEEDED and returned no item; deleted only after a successful delete.
+Set-Content "$Root\values.json" ('{":t":{"S":"ConversationBinding"}}') -Encoding ascii
+$deleted = 0; $absent = 0
+foreach ($b in $entries) {
+  KeyFile $b
+  $out = aws dynamodb get-item --table-name $table --key file://$Root\key.json --consistent-read --query "Item.[pk.S, entityType.S]" --output json
+  if ($LASTEXITCODE -ne 0) { throw "get-item failed (exit $LASTEXITCODE): this is NOT 'absent'; stop" }
+  if (-not $out) { throw "get-item returned nothing: stop" }
+  $item = $out | ConvertFrom-Json
+  if ($null -eq $item) { $absent++; continue }                                      # success and no Item: already gone
+  if ($item[1] -ne "ConversationBinding") { throw "not a ConversationBinding: stop" }
+  aws dynamodb delete-item --table-name $table --key file://$Root\key.json --condition-expression "entityType = :t" --expression-attribute-values file://$Root\values.json
+  if ($LASTEXITCODE -ne 0) { throw "delete-item failed (exit $LASTEXITCODE; a ConditionalCheckFailedException means the item changed type): stop" }
+  $deleted++
+}
+
+# 3. Verification: every listed binding is gone. A failed read is a failure, never a zero.
+$remaining = 0
+foreach ($b in $entries) {
+  KeyFile $b
+  $out = aws dynamodb get-item --table-name $table --key file://$Root\key.json --consistent-read --query "Item.[pk.S, entityType.S]" --output json
+  if ($LASTEXITCODE -ne 0) { throw "verification get-item failed (exit $LASTEXITCODE): the cleanup is NOT verified; stop" }
+  if (-not $out) { throw "verification get-item returned nothing: stop" }
+  if ($null -ne ($out | ConvertFrom-Json)) { $remaining++ }
 }
 "reports=$($reports.Count) expected=$expected deleted=$deleted alreadyAbsent=$absent remaining=$remaining"
 if ($remaining -ne 0 -or ($deleted + $absent) -ne $expected) { throw "cleanup incomplete: do not close the block" }
 ```
 
-**Verification** is the last two lines: `remaining=0` and `deleted + alreadyAbsent = expected`. Paste that line in the evidence ledger. The reads are consistent single-item reads and the deletes are
+**Verification** is the last two lines: the summary with `remaining=0` and `deleted + alreadyAbsent = expected` (a run that threw printed no summary and does not count). Paste that line in the evidence ledger. The reads are consistent single-item reads and the deletes are
 conditional single-item writes (free at this volume).
 
 **If a report is missing** (the process was killed before it could write, or the file was lost) the ids are lost with it. As a last resort, with the owner's go, one read-only scan of
