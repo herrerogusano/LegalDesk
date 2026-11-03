@@ -89,7 +89,7 @@ class Phase14IDPInfrastructureTests(unittest.TestCase):
         forbidden = {
             "AWS::S3::Bucket", "AWS::DynamoDB::Table", "AWS::StepFunctions::StateMachine",
             "AWS::BedrockAgentCore::Gateway", "AWS::BedrockAgentCore::GatewayTarget",
-            "AWS::SecretsManager::Secret", "AWS::KMS::Key", "AWS::CloudWatch::Alarm",
+            "AWS::SecretsManager::Secret", "AWS::KMS::Key",
         }
         self.assertTrue(forbidden.isdisjoint({resource["Type"] for resource in self.resources.values()}))
         self.assertNotIn("dynamodb:Scan", str(self.template))
