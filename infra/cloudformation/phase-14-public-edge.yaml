@@ -398,7 +398,7 @@ Resources:
                 - !Ref AWS::NoValue
               - Sid: BedrockKnowledgeBaseDataPlane
                 Effect: Allow
-                Action: [bedrock:Retrieve, bedrock:StartIngestionJob, bedrock:GetIngestionJob]
+                Action: [bedrock:Retrieve, bedrock:StartIngestionJob, bedrock:GetIngestionJob, bedrock:GetKnowledgeBaseDocuments]
                 Resource: !Ref KnowledgeBaseArn
               - Sid: GuardrailDataPlane
                 Effect: Allow
