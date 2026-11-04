@@ -230,6 +230,35 @@ def _tool_error_hint(text: str) -> str:
     return "unclassified"
 
 
+def _record_stream_error(exc: Exception, correlation_id: str, events_received: int) -> None:
+    """Closed diagnostics only; exception messages/headers may contain request data.
+
+    For EventStreamError, botocore synthesizes status 400 for exception frames;
+    sdk_status is not necessarily the HTTP status of the accepted invocation.
+    """
+    classes = {"EventStreamError", "HarnessInvocationError", "ValueError", "ReadTimeoutError",
+               "TimeoutError", "ConnectionError", "ConnectionClosedError"}
+    codes = {"runtimeClientError", "validationException", "internalServerException",
+             "RuntimeClientError", "ValidationException", "InternalServerException",
+             "ThrottlingException", "ServiceUnavailableException", "ModelTimeoutException"}
+    try:
+        response = getattr(exc, "response", None)
+        response = response if isinstance(response, Mapping) else {}
+        error, metadata = response.get("Error"), response.get("ResponseMetadata")
+        code = error.get("Code") if isinstance(error, Mapping) else None
+        status = metadata.get("HTTPStatusCode") if isinstance(metadata, Mapping) else None
+        kind = type(exc).__name__
+        print(json.dumps({
+            "event_type": "harness_stream_diagnostic", "correlation_id": correlation_id,
+            "exception_class": kind if kind in classes else "other",
+            "aws_error_code": code if isinstance(code, str) and code in codes else "other",
+            "sdk_status": status if type(status) is int and 100 <= status <= 599 else None,
+            "events_received": events_received,
+        }, separators=(",", ":"), sort_keys=True), flush=True)
+    except Exception:
+        pass  # Diagnostics must never change stream recovery or retry behavior.
+
+
 # HarnessToolUseStatus is an SDK enum: ``success`` or ``error``.
 _TOOL_STATUSES = {"SUCCESS", "ERROR"}
 _TOOL_RESULT_KEYS = {
@@ -907,13 +936,13 @@ class HarnessInvoker:
                 error_code="harness_invoke_failed",
             )
             raise
+        events: list[Mapping[str, Any]] = []
         try:
             if not isinstance(response, Mapping):
                 raise ValueError("response must be an object")
             stream = response.get("stream")
             if isinstance(stream, (str, bytes, Mapping)) or not isinstance(stream, Iterable):
                 raise ValueError("stream must be iterable")
-            events: list[Mapping[str, Any]] = []
             stream_bytes = 0
             for event in stream:
                 if not isinstance(event, Mapping):
@@ -959,6 +988,7 @@ class HarnessInvoker:
             )
             raise
         except Exception as exc:
+            _record_stream_error(exc, effective_correlation_id, len(events))
             _record_agent_event(
                 self.telemetry_sink,
                 "agent",
@@ -1249,6 +1279,7 @@ def invoke_agent_chat(
                 raise HarnessInvocationError(str(message_text))
             events.append(event)
     except Exception as exc:
+        _record_stream_error(exc, correlation_id, len(events))
         code = getattr(exc, "response", {}).get("Error", {}).get("Code", "") if isinstance(getattr(exc, "response", None), Mapping) else ""
         if not events and str(code).lower() in _TRANSIENT_STREAM_CODES:
             _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "error", operation="invoke_harness",
