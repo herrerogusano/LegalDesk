@@ -678,7 +678,14 @@ class ConverseAnswerWriter:
             parsed = json.loads(text)
         except (KeyError, IndexError, StopIteration, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise EvidenceContractError("Converse writer returned invalid JSON", reason=_unparseable_reason(response)) from exc
-        return validate_answer_writer_result(parsed)
+        try:
+            return validate_answer_writer_result(parsed)
+        except EvidenceContractError as error:
+            # Only the caller sees the selected evidence and can tell a required relationship from an advisory one (F-01).
+            # It validates this result again, so a malformed relationship is never accepted as it stands.
+            if error.reason in RELATIONSHIP_SHAPE_REASONS:
+                return parsed
+            raise
 
 
 class AnswerWriter(Protocol):
