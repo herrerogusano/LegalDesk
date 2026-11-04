@@ -86,11 +86,11 @@ Use one overall 30-minute deadline after uploads, including scan, ingestion and 
 $deadline = [DateTimeOffset]::UtcNow.AddMinutes(30)
 python scripts/phase15_corpus_operator.py status --manifest $manifest --journal $journal --matter-id $matter --base-url $origin --execute
 python scripts/phase15_corpus_operator.py ingest --manifest $manifest --journal $journal --matter-id $matter --base-url $origin
-# Review ready CLEAN+UPLOADED ids; supervisor executes:
+# Review ready NO_THREATS_FOUND+UPLOADED ids; supervisor executes:
 python scripts/phase15_corpus_operator.py ingest --manifest $manifest --journal $journal --matter-id $matter --base-url $origin --execute
 ```
 
-`confirmed` proves arrival only. Wait for CLEAN and canonical promotion to UPLOADED. Ingestion uses <=20-ID batches and stable per-batch idempotency keys. A second batch may conflict while the first holds the shared KB lease: use its recorded operationId and wait for completion, then dry-run/execute only the remaining UPLOADED records. Never replay a recorded ambiguous operation or index an INDEXED document again. Observe each operation with one-shot `GET /api/matters/$matter/ingestions/<operationId>` using the same cookie/session. Example without outputting credentials:
+`confirmed` proves arrival only. Wait for `NO_THREATS_FOUND` (the clean scan value) and canonical promotion to UPLOADED. Ingestion uses <=20-ID batches and stable per-batch idempotency keys. A second batch may conflict while the first holds the shared KB lease: use its recorded operationId and wait for completion, then dry-run/execute only the remaining UPLOADED records. Never replay a recorded ambiguous operation or index an INDEXED document again. Observe each operation with one-shot `GET /api/matters/$matter/ingestions/<operationId>` using the same cookie/session. Example without outputting credentials:
 
 ```powershell
 $operationId = '<recorded operationId>'
@@ -98,7 +98,7 @@ python -c "import os,json; from scripts.phase15_corpus_operator import transport
 if ([DateTimeOffset]::UtcNow -gt $deadline) { throw '30-minute wait bound reached: investigate' }
 ```
 
-Require all **25 valid primary PDFs** INDEXED, CLEAN, canonical S3 HEAD present, matching hash, and terminal IDP (`IDP_COMPLETED`, `IDP_REVIEW_REQUIRED` or supported UNKNOWN `IDP_SKIPPED`). IDP_FAILED/pending/OCR waiting/missing projection is not ready. The truncated `doc-failed-upload` must reach actual **FAILED** through the real pipeline; invalid PDF is not necessarily malware or guaranteed to fail ingestion. If it indexes or never stabilizes FAILED, stop: `inv-01`, `inv-03`, `inv-04`, `inv-06` depend on the actual failed inventory member. Do not force status, omit it, alter the frozen oracle or claim a full golden run.
+Require all **25 valid primary PDFs** INDEXED, scan `NO_THREATS_FOUND`, canonical S3 HEAD present, matching hash, and terminal IDP (`IDP_COMPLETED`, `IDP_REVIEW_REQUIRED` or supported UNKNOWN `IDP_SKIPPED`). IDP_FAILED/pending/OCR waiting/missing projection is not ready. The truncated `doc-failed-upload` must reach actual **FAILED** through the real pipeline; invalid PDF is not necessarily malware or guaranteed to fail ingestion. If it indexes or never stabilizes FAILED, stop: `inv-01`, `inv-03`, `inv-04`, `inv-06` depend on the actual failed inventory member. Do not force status, omit it, alter the frozen oracle or claim a full golden run.
 
 The public status JSON omits IDP fields. For each confirmed ID, read only selected metadata from its exact Dynamo key:
 

@@ -13,6 +13,11 @@ from legaldesk.authorization import Boto3DynamoAuthorizationStore
 
 
 class CorpusOperatorTests(unittest.TestCase):
+    def test_the_clean_scan_value_is_the_one_the_backend_stores(self):
+        # A live upload read NO_THREATS_FOUND while this script compared with "CLEAN", so ingest would have found nothing ready.
+        from legaldesk.domain.models import MalwareScanStatus
+        self.assertEqual(op.SCAN_CLEAN, MalwareScanStatus.CLEAN.value)
+
     def test_existing_primary_map_is_complete_hash_bound_and_accepted_by_golden_loader(self):
         from evals.phase15_golden_eval import load_dataset, prepare_corpus, build_world, validate_document_map
         with tempfile.TemporaryDirectory() as tmp:
