@@ -55,6 +55,17 @@ class Sink:
             if event.event_type is TelemetryEventType.MODEL and event.outcome is TelemetryOutcome.ERROR and event.operation
         }
 
+    def dropped(self) -> str | None:
+        """The closed reason on the write_answer stage event of an accepted answer whose relationship was dropped."""
+
+        accepted = [
+            event for event in self.events
+            if event.event_type is TelemetryEventType.MODEL and event.outcome is TelemetryOutcome.SUCCEEDED
+            and event.operation and event.operation.value == "write_answer"
+        ]
+        assert len(accepted) == 1, accepted
+        return accepted[0].error_code.value if accepted[0].error_code else None
+
 
 class Writer:
     def __init__(self, written: Any) -> None:
@@ -98,28 +109,53 @@ class StageEventNamesTheReason(unittest.TestCase):
         self.assertEqual(codes[stage], reason)
         self.assertEqual(codes["generate_answer"], "model_failed")
 
-    def test_optional_relationship_with_an_invalid_shape(self) -> None:
-        # "is governed by" ends in a preposition: rejected by the shape check, before any evidence comparison.
+    def test_optional_relationship_with_an_invalid_shape_keeps_the_prose(self) -> None:
+        # F-01, text-02: "is governed by" ends in a preposition and the evidence requires no projection. The prose survives, unrendered.
         response, sink = run(OPTIONAL_PASSAGE, written={
             "answer": "California law governs.",
             "relationships": [{"actor": "This Agreement", "action": "is governed by", "recipient": "California law"}],
         })
+        self.assertEqual(response.answer, "California law governs.")
+        self.assertIsNone(response.error_code)
+        self.assertEqual(sink.dropped(), "writer_relationship_action_preposition")
+        self.assertEqual(sink.codes(), {}, "an accepted answer has no errored model event")
+
+    def test_required_relationship_with_an_invalid_shape_still_fails_closed(self) -> None:
+        response, sink = run(REQUIRED_PASSAGE, written={
+            "answer": "The supplier must send written notice to the buyer.",
+            "relationships": [{"actor": "The supplier", "action": "send written notice to", "recipient": "the buyer"}],
+        })
         self.assert_reason(response, sink, "write_answer", "writer_relationship_action_preposition")
+
+    def test_an_invalid_answer_text_is_never_rescued_by_dropping_the_relationship(self) -> None:
+        response, sink = run(OPTIONAL_PASSAGE, written={
+            "answer": "  ", "relationships": [{"actor": "This Agreement", "action": "is governed by", "recipient": "California law"}],
+        })
+        self.assertEqual(response.error_code, "model_failed")
+        self.assertEqual(sink.codes()["generate_answer"], "model_failed")
+
+    def test_a_dropped_unsupported_relationship_also_leaves_its_reason(self) -> None:
+        response, sink = run(OPTIONAL_PASSAGE, written={
+            "answer": "California law governs.",
+            "relationships": [{"actor": "Somebody else", "action": "governs", "recipient": "California law"}],
+        })
+        self.assertEqual(response.answer, "California law governs.")
+        self.assertEqual(sink.dropped(), "writer_relationship_unsupported")
 
     def test_each_shape_rule_has_its_own_closed_code(self) -> None:
         # F-01: one code hid five rules, so a real rejection could not say which one fired. No text from the model reaches the code.
-        valid = {"actor": "This Agreement", "action": "governs", "recipient": "California law"}
+        valid = {"actor": "The supplier", "action": "send written notice", "recipient": "the buyer"}
         cases = {
             "writer_relationship_list_invalid": [dict(valid, recipient=f"party {index}") for index in range(9)],
-            "writer_relationship_shape_invalid": [{"actor": "This Agreement", "action": "governs"}],
+            "writer_relationship_shape_invalid": [{"actor": "The supplier", "action": "send written notice"}],
             "writer_relationship_value_invalid": [dict(valid, recipient="  ")],
             "writer_relationship_action_length": [dict(valid, action="a b c d e f g h i j k l m")],
-            "writer_relationship_action_preposition": [dict(valid, action="is governed by")],
+            "writer_relationship_action_preposition": [dict(valid, action="send written notice to")],
             "writer_relationship_duplicate": [valid, dict(valid)],
         }
         for reason, relationships in cases.items():
             with self.subTest(reason=reason):
-                response, sink = run(OPTIONAL_PASSAGE, written={"answer": "California law governs.", "relationships": relationships})
+                response, sink = run(REQUIRED_PASSAGE, written={"answer": "The supplier must send written notice to the buyer.", "relationships": relationships})
                 self.assert_reason(response, sink, "write_answer", reason)
 
     def test_required_relationship_omitted(self) -> None:

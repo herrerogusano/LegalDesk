@@ -57,8 +57,10 @@ from .evidence import (
     EvidenceContractError,
     GroundingContractError,
     REASON_ANSWER_INVALID,
+    RELATIONSHIP_SHAPE_REASONS,
     REASON_RELATIONSHIP_INVALID,
     REASON_RELATIONSHIP_MISSING,
+    REASON_RELATIONSHIP_UNSUPPORTED,
     EvidenceResolutionRequest,
     EvidenceResolver,
     EvidenceStatus,
@@ -650,8 +652,17 @@ def answer_question(
                     )
                 )
                 relationships: tuple[Mapping[str, str], ...] = ()
+                relationship_shape_error: EvidenceContractError | None = None
+                dropped_relationship_reason: str | None = None
                 if isinstance(written, Mapping):
-                    normalized_written = validate_answer_writer_result(written)
+                    try:
+                        normalized_written = validate_answer_writer_result(written)
+                    except EvidenceContractError as shape_error:
+                        # The answer text is validated first, so reaching a relationship reason means the answer is usable.
+                        if shape_error.reason not in RELATIONSHIP_SHAPE_REASONS:
+                            raise
+                        relationship_shape_error = shape_error
+                        normalized_written = {"answer": written.get("answer")}
                     answer = normalized_written.get("answer")
                     raw_relationships = normalized_written.get("relationships", ())
                     if not isinstance(raw_relationships, (list, tuple)):
@@ -670,6 +681,14 @@ def answer_question(
                     for item in generation_request.evidence
                     if item.citation_id in resolution.supporting_citation_ids
                 )
+                if relationship_shape_error is not None:
+                    # A valid relationship replaces the answer with a fixed "actor must action to recipient" sentence, so a
+                    # malformed one cannot be repaired into it (F-01). When the evidence requires the projection the answer
+                    # still fails closed; otherwise it is advisory: drop it and keep the prose, which still passes citation
+                    # and grounding validation. The dropped value is never surfaced, only its closed reason.
+                    if evidence_requires_relationship_projection(selected_evidence):
+                        raise relationship_shape_error
+                    dropped_relationship_reason = _contract_reason(relationship_shape_error)
                 if evidence_requires_relationship_projection(selected_evidence) and not relationships:
                     raise EvidenceContractError(
                         "answer writer omitted a required directed relationship",
@@ -690,6 +709,7 @@ def answer_question(
                         # answer, which still passes citation and grounding
                         # validation. The dropped value is never surfaced.
                         relationships = ()
+                        dropped_relationship_reason = REASON_RELATIONSHIP_UNSUPPORTED
                 if relationships:
                     # Structured relationships are the authoritative public
                     # rendering for directional claims; this prevents prose
@@ -702,6 +722,7 @@ def answer_question(
                     TelemetryOutcome.SUCCEEDED,
                     operation=stage_in_progress,
                     count=1,
+                    error_code=dropped_relationship_reason,
                     writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                     writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
                 )
