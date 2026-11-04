@@ -104,7 +104,23 @@ class StageEventNamesTheReason(unittest.TestCase):
             "answer": "California law governs.",
             "relationships": [{"actor": "This Agreement", "action": "is governed by", "recipient": "California law"}],
         })
-        self.assert_reason(response, sink, "write_answer", "writer_relationship_invalid")
+        self.assert_reason(response, sink, "write_answer", "writer_relationship_action_preposition")
+
+    def test_each_shape_rule_has_its_own_closed_code(self) -> None:
+        # F-01: one code hid five rules, so a real rejection could not say which one fired. No text from the model reaches the code.
+        valid = {"actor": "This Agreement", "action": "governs", "recipient": "California law"}
+        cases = {
+            "writer_relationship_list_invalid": [dict(valid, recipient=f"party {index}") for index in range(9)],
+            "writer_relationship_shape_invalid": [{"actor": "This Agreement", "action": "governs"}],
+            "writer_relationship_value_invalid": [dict(valid, recipient="  ")],
+            "writer_relationship_action_length": [dict(valid, action="a b c d e f g h i j k l m")],
+            "writer_relationship_action_preposition": [dict(valid, action="is governed by")],
+            "writer_relationship_duplicate": [valid, dict(valid)],
+        }
+        for reason, relationships in cases.items():
+            with self.subTest(reason=reason):
+                response, sink = run(OPTIONAL_PASSAGE, written={"answer": "California law governs.", "relationships": relationships})
+                self.assert_reason(response, sink, "write_answer", reason)
 
     def test_required_relationship_omitted(self) -> None:
         response, sink = run(REQUIRED_PASSAGE, written={"answer": "The supplier must send notice."})
@@ -186,7 +202,7 @@ class ConverseReplies(unittest.TestCase):
 class ReasonsAreClosed(unittest.TestCase):
     def test_every_reason_is_an_allowlisted_telemetry_code(self) -> None:
         reasons = {getattr(evidence, name) for name in dir(evidence) if name.startswith("REASON_")}
-        self.assertEqual(len(reasons), 7)
+        self.assertEqual(len(reasons), 13)
         self.assertLessEqual(reasons, {code.value for code in TelemetryErrorCode})
 
     def test_a_reason_never_carries_the_message(self) -> None:
