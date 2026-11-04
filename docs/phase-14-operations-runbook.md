@@ -59,6 +59,8 @@ new IDP resources and the chat DLQ description delta below.
 | `LegalDeskPhase14Operations` | None; preserve managed-topic mode and Budget | No changes / no deployment | Existing topic, policy, subscription and Budget unchanged |
 | DocumentSecurity / Reconciliation | None | No changes / no deployment | IAM unchanged |
 
+**Public Edge template and the CD.** `scripts/deploy_release.py` refuses to deploy (`deployed_template_scope_changed`) unless `infra/cloudformation/phase-14-public-edge.yaml` equals the deployed template exactly, comments aside. So any edit to that file, even a description, must ship in the same change as its stack update: do not merge it earlier. The new description of `AgentChatDeadLetterQueueAlarm` (the pointer to `#dlq-email-triage-and-redrive`) and of `AgentChatAlarmTopicArn` is therefore NOT in the template yet; add both in the PR that deploys this email change, and that change set then also shows the description as modified.
+
 Both IDP alarms use native `AWS/SQS` maximum visible-message count **> 0**,
 one five-minute period and `notBreaching` for missing data. This adds two
 standard alarm metrics, zero custom metrics. No OK/insufficient-data emails
