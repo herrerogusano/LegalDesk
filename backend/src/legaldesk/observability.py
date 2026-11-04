@@ -128,6 +128,10 @@ class TelemetryEvent:
     resolver_prompt_sha256: str | None = None
     writer_prompt_version: str | None = None
     writer_prompt_sha256: str | None = None
+    grounding_score: float | None = None
+    grounding_threshold: float | None = None
+    relevance_score: float | None = None
+    relevance_threshold: float | None = None
 
     def __post_init__(self) -> None:
         if type(self.event_type) is not TelemetryEventType:
@@ -154,6 +158,12 @@ class TelemetryEvent:
             raise ValueError("operation is not allowlisted")
         if self.error_code is not None and type(self.error_code) is not TelemetryErrorCode:
             raise ValueError("error_code is not allowlisted")
+        for name in ("grounding_score", "grounding_threshold", "relevance_score", "relevance_threshold"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0
+            ):
+                raise ValueError(f"{name} is invalid")
         for name in (
             "prompt_version", "resolver_prompt_version", "writer_prompt_version"
         ):
@@ -184,6 +194,7 @@ class TelemetryEvent:
             "latency_ms", "operation", "count", "error_code", "prompt_version",
             "prompt_sha256", "resolver_prompt_version", "resolver_prompt_sha256",
             "writer_prompt_version", "writer_prompt_sha256",
+            "grounding_score", "grounding_threshold", "relevance_score", "relevance_threshold",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -258,6 +269,10 @@ def emit_telemetry(
     resolver_prompt_sha256: str | None = None,
     writer_prompt_version: str | None = None,
     writer_prompt_sha256: str | None = None,
+    grounding_score: float | None = None,
+    grounding_threshold: float | None = None,
+    relevance_score: float | None = None,
+    relevance_threshold: float | None = None,
 ) -> None:
     """Record safe metadata, defaulting to the structured application logger."""
 
@@ -293,6 +308,11 @@ def emit_telemetry(
         resolver_prompt_sha256=resolver_prompt_sha256,
         writer_prompt_version=writer_prompt_version,
         writer_prompt_sha256=writer_prompt_sha256,
+        grounding_score=grounding_score,
+        grounding_threshold=grounding_threshold,
+        relevance_score=relevance_score,
+        relevance_threshold=relevance_threshold,
+
     )
     (sink or DEFAULT_TELEMETRY_SINK).record(event)
 
