@@ -59,6 +59,7 @@ from legaldesk.observability import InMemoryTelemetrySink  # noqa: E402
 from legaldesk.prompts import FileSystemSystemPromptProvider  # noqa: E402
 from legaldesk.search_documents_lambda import SearchDocumentsService, run_search_documents  # noqa: E402
 from legaldesk_agent import AgentChatResult  # noqa: E402
+from legaldesk_agent.client import AGENT_CHAT_MAX_ITERATIONS  # noqa: E402
 
 RUNNER_VERSION = "1.0.0"
 DATASET_PATH = ROOT / "evals" / "phase15_golden_dataset.json"
@@ -1558,7 +1559,7 @@ def real_plan(dataset: Mapping[str, Any]) -> dict[str, Any]:
     async_ids = [c["id"] for c in cases if c.get("asyncReal")]
     return {
         "inputChecks": len(cases), "harnessInvocations": len(cases), "probes": len(cases),
-        "maxIterationsPerInvocation": 4,
+        "maxIterationsPerInvocation": AGENT_CHAT_MAX_ITERATIONS,
         "probesExpectedAtLeast": sum(1 for c in cases if c["expected"].get("rag")),
         "asyncJobs": len(async_ids) + 2, "asyncCaseIds": async_ids, "quotaUnitsConsumed": len(async_ids) + 2,
         "retries": 0, "maxConsecutiveErrorsBeforeAbort": MAX_CONSECUTIVE_REAL_ERRORS, "harnessLoopCostStopUsd": HARNESS_LOOP_COST_STOP_USD,
