@@ -1,5 +1,7 @@
 # Phase 15 T9 — searchable scans: F-31 options study
 
+**Owner decision, 2026-11-04: accept the limit for this portfolio project.** Scanned PDFs stay unsearchable by text; IDP still reads them. Nothing in this study is being implemented. The golden retrieval gate is expected to fail (at most 14/16 = 0.875 against 0.90) and is reported with this cause; the frozen dataset and thresholds do not change. The recommendation below stays as the design for a later phase.
+
 Evidence checked **2026-11-04, approximately 17:03–17:16 UTC**, against repository
 `18eec63`, account `344774635844`, Region `eu-west-1`. Documentation only. No
 template, application, dataset, threshold or shared-vault change. No upload,
