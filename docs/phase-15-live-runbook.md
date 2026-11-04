@@ -719,7 +719,7 @@ Gate fixed before the run (T8): acceptable tool set ≥ **27 of 30**, **0** allo
 
 ```powershell
 python evals/phase15_routing_eval.py real                      # preflight, no network
-python evals/phase15_routing_eval.py real --execute --approval-ref <ref> --release-commit $commit --artifact-sha256 $sha `
+python evals/phase15_routing_eval.py real --execute --question-ref <written-question-ref> --approval-ref <ref> --release-commit $commit --artifact-sha256 $sha `
   --matter-id mat_phase14_a_20260928 --output evals/results/phase15-routing-$Stamp-a.json
 ```
 
