@@ -232,7 +232,7 @@ class TheReportCarriesTheClosedDiagnosticsTests(unittest.TestCase):
         row = ev.score_case({"id": "x", "category": "c", "expected": {"toolSets": [[]], "paths": ["rag_fallback"]}}, obs, offline=False)
         diagnostics = row["diagnostics"]
         self.assertEqual(set(diagnostics), {"planError", "omittedErrors", "stopReason", "toolStatuses", "toolErrorHints", "unansweredTools",
-                                            "streamErrorHint", "invalidToolResults", "sourceIdMatches"})
+                                            "streamErrorHint", "invalidToolResults", "sourceIdMatches", "stageErrorCodes", "stageReasonStatus"})
         self.assertEqual((diagnostics["planError"], diagnostics["stopReason"]), ("invalid_json", "other"))
         self.assertNotIn("SECRET", json.dumps(row))
 

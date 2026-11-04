@@ -68,7 +68,7 @@ CLASSES: Mapping[str, QuestionClass] = {
     "B_text": QuestionClass("B_text", (H(2700, 120), R(3000, 150), W(3500, 250), H(3600, 400)), (4, 8), (30, 60), 1, 0),
     "C_inventory": QuestionClass("C_inventory", (H(2700, 120), H(3400, 300)), (5, 9), (20, 45), 0, 1),
     "D_data": QuestionClass("D_data", (H(2700, 120), H(3400, 120), H(4700, 600)), (8, 12), (35, 70), 0, 2),
-    "E_mixed": QuestionClass("E_mixed", (H(2700, 120), R(3000, 150), W(3500, 250), H(3600, 120), H(5000, 800)), (10, 16), (55, 90), 1, 1),
+    "E_mixed": QuestionClass("E_mixed", (H(2700, 120), H(3400, 120), H(4700, 120), R(3000, 150), W(3500, 250), H(6000, 800)), (13, 20), (65, 90), 1, 2),
 }
 # Extra model calls of the direct RAG fallback (resolver + writer) and the cut-loop check.
 RAG_FALLBACK = (R(3000, 150), W(3500, 250))

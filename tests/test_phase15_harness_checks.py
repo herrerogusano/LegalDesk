@@ -353,13 +353,13 @@ class DryRunAndCommandLineTests(unittest.TestCase):
             raise RuntimeError("stream cut")
         self.assertEqual(module.AGENT_CHAT_MAX_ITERATIONS, 3)
 
-    def test_the_production_iteration_limit_is_still_three(self) -> None:
+    def test_the_production_iteration_limit_is_four(self) -> None:
         sys.path[:0] = [str(ROOT / "agent" / "src")]
         try:
             import legaldesk_agent.client as client
         finally:
             sys.path.pop(0)
-        self.assertEqual(client.AGENT_CHAT_MAX_ITERATIONS, 3)
+        self.assertEqual(client.AGENT_CHAT_MAX_ITERATIONS, 4)
 
 
 if __name__ == "__main__":

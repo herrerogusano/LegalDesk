@@ -13,12 +13,12 @@ python scripts/phase15_t9_cost_model.py --json   # same, machine readable
 
 | | USD |
 |---|---|
-| **Block, typical case** (46 Harness invocations, ~460 k input / ~32 k output tokens) | **≈ 2.3** |
-| **Block, upper bound** (inputs ×1.6, outputs ×2 up to each call's token cap, bigger microVM) | **≈ 4.1** |
+| **Block, typical case** (46 Harness invocations, ~488 k input / ~33 k output tokens) | **≈ 2.39** |
+| **Block, upper bound** (inputs ×1.6, outputs ×2 up to each call's token cap, bigger microVM) | **≈ 4.27** |
 | Ceiling proposed for approval | **5.00** |
 | Fixed monthly cost *while `EnableAgentChat=true`* (7 alarm metrics + 2 custom metrics; the rest are native, free metrics) | **1.30** (typical = upper) |
-| Usage per month at the deployed `QuotaHarnessPerMonth` = 50 (every job of the quota used) | **2.86** typical · **9.09** upper bound |
-| **Month with the chat left on for demos and the whole quota used** | **4.16** typical · **10.39** upper bound |
+| Usage per month at the deployed `QuotaHarnessPerMonth` = 50 (every job of the quota used) | **3.02** typical · **10.96** upper bound |
+| **Month with the chat left on for demos and the whole quota used** | **4.32** typical · **12.26** upper bound |
 
 Final state chosen by the owner (2026-11-03): **A, the agentic chat stays on for demos**, with `QuotaHarnessPerMonth` = 50 in the
 deployment (a T9 parameter of the Public Edge change set; the code default of ADR-021 D8 stays 300), alarms in the console only (no SNS)
@@ -36,9 +36,9 @@ Bedrock tokens are 85–90 % of the block; everything else together is about 0.2
 | Harness invocations in the whole block | **50** (46 planned + 4 reserve for one repeat of a failed check) |
 | Retries of an invocation | **0** (the worker's single retry only exists for transient SQS jobs; the eval and checks have none) |
 | Eval real | exactly 30 (one per case), abort after 3 consecutive errors (T8) |
-| Per invocation | `maxIterations` 3, `timeoutSeconds` 90, `maxTokens` 2048 per iteration (`AGENT_CHAT_*` in `agent/.../client.py`) |
+| Per invocation | `maxIterations` 4, `timeoutSeconds` 90, `maxTokens` 2048 per iteration (`AGENT_CHAT_*` in `agent/.../client.py`) |
 | Concurrency | `AgentChatMaxConcurrency` 2 for jobs; the eval and checks run one at a time |
-| Eval stop rule | stop if the sum of the report's `estimatedLoopCostUsd` passes **2.20 USD** (upper bound of the Harness loop for the eval, 1.75, plus 25 %) |
+| Eval stop rule | stop if the sum of the report's `estimatedLoopCostUsd` passes **2.20 USD** (upper bound of the Harness loop for the eval, 1.88, plus about 17%; the existing stop is preserved) |
 | Quota | `QuotaHarnessPerMonth` **50** (deployed value; code default 300), `QuotaChatsPerMonth` 300: a runaway loop cannot go past it through the worker. The eval and the checks consume no quota |
 
 ## Assumptions
@@ -53,7 +53,7 @@ fallback), 1 ADOT probe and the 5 calls of `scripts/phase15_harness_checks.py` (
 | B legal text (`search_documents`) | 9 / 4 | H, R, W, H (the 4 LLM calls of ADR-021) | 12.8 k / 0.92 k | 0.057 | 0.097 |
 | C inventory (`list_matter_documents`; also cross-matter denials) | 5 / 2 | H, H | 6.1 k / 0.42 k | 0.027 | 0.046 |
 | D data (`list` + `get_extracted_fields`) | 7 / 2 | H, H, H | 10.8 k / 0.84 k | 0.050 | 0.085 |
-| E mixed (data + text; reaches `maxIterations` 3) | 4 / 1 | H, R, W, H, H | 17.8 k / 1.44 k | 0.083 | 0.141 |
+| E mixed (list + fields + search + plan; four Harness calls) | 4 / 1 | H, H, H, R, W, H | 23.3 k / 1.56 k | 0.103 | 0.175 |
 
 How the token figures were built (all editable in the script):
 
@@ -119,23 +119,23 @@ sells the model, so treat 3.30 / 16.50 as the conservative reading: if the first
 premium, the estimate was 10 % high, not low. `estimatedLoopCostUsd` still covers only the Harness
 iterations (not the resolver and writer inside `search_documents` nor the direct fallback):
 **expect it to be about half of the Bedrock cost of a text question and about 70 % of the eval's** (eval: ≈ 1.0 USD typical,
-1.75 USD upper bound, against ≈ 1.4 / 2.4 USD of Bedrock in total).
+1.88 USD upper bound, against ≈ 1.47 / 2.49 USD of Bedrock in total).
 
 ## Breakdown (USD, one-off, whole block)
 
 | Component | Typical | Upper bound | Basis |
 |---|---|---|---|
-| Bedrock · eval real (30 questions) | 1.39 | 2.36 | tokens by class × counts |
-| Bedrock · smoke (10 questions + 1 fallback) | 0.56 | 0.94 | same, +15 % history |
-| Bedrock · ADOT probe and the Harness checks script (6 invocations) | 0.10 | 0.17 | no tools for the probe and the session check; tools on for the pre-check; search for the loop-cut check |
-| AgentCore Runtime (Harness sessions) | 0.04 | 0.22 | 15–55 s per question (upper: up to the 90 s timeout), bigger microVM |
-| AgentCore Gateway + Identity | < 0.01 | < 0.01 | 2–16 operations and 1 token per invocation |
+| Bedrock · eval real (30 questions) | 1.47 | 2.49 | tokens by class × counts |
+| Bedrock · smoke (10 questions + 1 fallback) | 0.58 | 0.98 | same, +15 % history |
+| Bedrock · ADOT probe and the Harness checks script (6 invocations) | 0.11 | 0.18 | no tools for the probe and the session check; tools on for the pre-check; search for the loop-cut check |
+| AgentCore Runtime (Harness sessions) | 0.04 | 0.23 | 15–65 s per question (upper: up to the 90 s timeout), bigger microVM |
+| AgentCore Gateway + Identity | < 0.01 | < 0.01 | 2–20 operations and 1 token per invocation |
 | Knowledge Base Retrieve | 0.02 | 0.02 | one call per `search_documents` and per fallback |
 | Guardrail | 0.15 | 0.31 | 2 units for the input check (smoke only) + 12–25 units per grounded answer, four policies |
 | Lambda (worker, search, MCP, interceptor) | 0.01 | 0.02 | GB-seconds and requests; inside the free tier |
 | SQS, DynamoDB, S3 | ≈ 0 | 0.01 | a few hundred requests |
 | CloudWatch logs and spans | 0.01 | 0.03 | < 50 MB; free tier is 5 GB |
-| **Total, one-off** | **≈ 2.3** | **≈ 4.1** | |
+| **Total, one-off** | **≈ 2.39** | **≈ 4.27** | |
 
 Not billable but part of the block: CloudFormation change sets, `ValidateTemplate`, IAM simulation,
 and the read-only inventory calls.
@@ -171,9 +171,9 @@ DynamoDB, history in the prompt) is ≈ 0.015 (no tool) · 0.074 (legal text) ·
 
 | 50 jobs in a month | USD |
 |---|---|
-| Typical (the mix of the eval dataset) | **2.86** |
-| Upper bound (every job is a mixed question at the upper assumptions) | **9.09** |
-| Plus the fixed cost above | **4.16** typical · **10.39** upper bound |
+| Typical (the mix of the eval dataset) | **3.02** |
+| Upper bound (every job is a mixed question at the upper assumptions) | **10.96** |
+| Plus the fixed cost above | **4.32** typical · **12.26** upper bound |
 
 The quota is the cost control of the demo: past 50 jobs the API refuses new questions until the next month. Raising it is a parameter change of the Public Edge stack,
 and the cost scales linearly (300 jobs ≈ 6 times the usage figures).
@@ -201,7 +201,7 @@ longest plans. The stack change (`MaxTokensPerIteration`, default 2048, one para
 
 * A cap is not a target: calls that fit in 256 tokens cost exactly the same. **Typical cost does not move** (the 30 cases of run b cost 0.086 USD of Harness loop).
 * Cases that used to be cut now finish: about 3 of 30, each with one or two more iterations of about 4 000 input and 600 output tokens (about 0.02 USD each): **+0.1 to +0.2 USD per 30-case run**, far inside the 2.20 USD stop rule.
-* Worst case per call rises from 256 to 2 048 output tokens (0.004 to 0.034 USD); per invocation (3 iterations) from 0.013 to 0.10 USD; a 30-invocation run could in theory reach 3.0 USD if every call used the whole cap, which no
+* Worst case per call rises from 256 to 2 048 output tokens (0.004 to 0.034 USD); per invocation (four iterations) from 0.017 to 0.135 USD; a 30-invocation run could in theory reach 4.1 USD if every call used the whole cap, which no
   observed call does. The eval's own stop rule (2.20 USD of `estimatedLoopCostUsd`) bounds it.
 
 ## Usage accounting correction and the CloudWatch cross-check (2026-11-04)
@@ -217,7 +217,7 @@ What the code does now (`agent/.../client.py`, `backend/.../agent_chat_telemetry
 * the usage of a loop is the **sum** of its usage blocks, one per model call (`USAGE_CADENCE = "per_call"`: the stream is the model's own). If the blocks turn out to be cumulative, the sum over-counts (never under-counts) and the cross-check below says so;
 * a loop that made model calls and reported **no** usage, or fewer blocks than calls (a cut stream), is **unknown**, not zero: each missing call is priced at an upper bound (16 000 input and 2 048 output tokens, about 0.087 USD) and the record says
   `usageComplete: false`, `costBasis: "upper_bound"`, `modelCalls`. An unknown cost can make a stop rule trip; it can no longer hide spending;
-* the routing eval now has the 2.20 USD stop in code (`LOOP_COST_STOP_USD`, equal to `HARD_CAP["stop_eval_if_loop_usd_exceeds"]`), the golden set keeps its 5.9 USD stop, both read the corrected estimate, and the report summary carries `loopCostBasis` and `usageIncompleteCases`.
+* the routing eval now has the 2.20 USD stop in code (`LOOP_COST_STOP_USD`, equal to `HARD_CAP["stop_eval_if_loop_usd_exceeds"]`), the golden set derives a 6.3 USD stop for four iterations, both read the corrected estimate, and the report summary carries `loopCostBasis` and `usageIncompleteCases`.
 
 **Cross-check against CloudWatch for any live run (AWS/Bedrock, by model).** Bedrock publishes `InputTokenCount` and `OutputTokenCount` per `ModelId` (for the pinned model the inference profile id, `eu.anthropic.claude-sonnet-4-6`). Read the window of the run plus 10 minutes (the
 metrics arrive late), per minute, and sum:
@@ -251,4 +251,4 @@ Use the Billing console (month-to-date, filtered to Bedrock, AgentCore, CloudWat
 after: charges appear with a delay of hours. Do not use the Cost Explorer API without the owner's
 explicit single-use confirmation (`AWS_COST_POLICY.md`, USD 0.01 per request). Record the observed
 figure next to this estimate in `docs/phase-15-acceptance.md`; if the real Bedrock cost is outside
-the 2.3–4.1 range by more than 25 %, re-read the assumptions above before any new live run.
+the 2.39–4.27 range by more than 25 %, re-read the assumptions above before any new live run.

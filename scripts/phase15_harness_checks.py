@@ -514,7 +514,7 @@ def execute_checks(
 @contextmanager
 def _max_iterations_one(agent_client: Any) -> Iterator[None]:
     previous = agent_client.AGENT_CHAT_MAX_ITERATIONS
-    agent_client.AGENT_CHAT_MAX_ITERATIONS = 1  # this process only; production keeps 3
+    agent_client.AGENT_CHAT_MAX_ITERATIONS = 1  # this process only; production keeps 4
     try:
         yield
     finally:

@@ -56,10 +56,10 @@ the interceptor, the allowlist, the validator and the output tree on purpose and
 
    ```powershell
    python evals/phase15_routing_eval.py real --execute --approval-ref <ref> --release-commit <sha> `
-     --artifact-sha256 <sha256> --matter-id <matter> --output evals/results/phase15-routing-<yyyymmdd>-a.json
+     --artifact-sha256 <sha256> --matter-id <matter> --question-ref <written-question-ref> --output evals/results/phase15-routing-<yyyymmdd>-a.json
    ```
 
-Budget: exactly one Harness invocation per case (30), no retries, `maxIterations` 3 each. Three consecutive
+Budget: exactly one Harness invocation per case (30), no retries, `maxIterations` 4 each (owner approved 2026-11-04). Three consecutive
 errors abort the run; the cases not run count as failed, so an aborted run cannot pass. The direct RAG fallback,
 the input Guardrail, quota and memory are not exercised (the routing decision is what is measured), so a
 `rag_fallback` path is recorded as decided, not executed.
@@ -75,3 +75,42 @@ Each real case builds the worker's sealed binding, so it writes a conversation b
 `residualState` (random ids and the SHA-256 of the partition key, never the key), the same block as `scripts/phase15_harness_checks.py`. Each binding is noted **before** its case's
 call, and the report is written even if the run errors or is interrupted (`interruptedBy`; the cases not run count as failed, so an interrupted run cannot pass). Deleting those
 bindings is mandatory: step 14 of [`phase-15-live-runbook.md`](phase-15-live-runbook.md).
+
+## Targeted diagnosis (F-01, never a gate)
+
+Question written before the next paid run: **Which closed writer/resolver validation code explains `model_failed` on text-02, amb-01 and inj-03,
+and how often does each occur over three independent invocations per case?** This diagnoses F-01; it cannot close it without actual log evidence.
+It does not test the 30-case routing gate or establish the cause of F-04. Confirm the search Lambda contains PR #91 before executing.
+
+```powershell
+# First run without --execute: no network, even with credentials present.
+python evals/phase15_routing_eval.py real --case-ids text-02,amb-01,inj-03 --repeat 3
+# Supervisor only, after fresh cost approval and loading the deployed worker environment/token privately:
+python evals/phase15_routing_eval.py real --execute --case-ids text-02,amb-01,inj-03 --repeat 3 `
+  --question-ref F-01-writer-rejection-20261104 --approval-ref <approval> --release-commit <deployed-sha> `
+  --artifact-sha256 <deployed-artifact-sha256> --matter-id <synthetic-matter> `
+  --search-log-group <search-Lambda-log-group> --output evals/results/phase15-routing-subset-20261104-a.json
+```
+
+Nine Harness invocations, zero retries, four iterations each, same three-consecutive-errors abort and **USD 2.20 loop-cost stop**. At most 12
+invocations including repeats; repeats require explicit subset IDs, which must be unique frozen IDs. Even selecting a good subset can never give
+`passed: true` or `passed: false`: `subset: true`, `caseIds`, `repeat`, `frozenDatasetCases: 30` and `verdict: {gateRun: false, reason: not_a_gate_run,
+passed: null, failedGates: null}` are explicit. Exit 0 means the diagnostic command finished, not that a gate passed. Each repetition has its own
+correlation/binding and numbered row. Only `phase15-routing-subset-*.json` names are accepted for subsets; full gates cannot use that prefix.
+The report budget is the selected invocation count, not 30. Immutable files, interruption reports and residual cleanup still apply.
+
+Typical text path estimate: nine × about USD 0.057–0.097 = **USD 0.51–0.87** including the tools, before tax; additional searches or long context
+can increase this. The loop stop covers Harness tokens only. Approval and total spend review still bound the run.
+
+With `--search-log-group` there is one bounded, non-retried `FilterLogEvents` read per attempted case, max 1000 events, no pagination. The report
+stores only the closed `operation` and `error_code` in `diagnostics.stageErrorCodes`, plus `stageReasonStatus`. CloudWatch lag, missing events,
+denial, or an incomplete page is **unobserved/incomplete**, not proof that a writer succeeded. It never stores raw log messages or model output.
+Each attempted row includes `searchReasonCommand`: a ready `aws logs filter-log-events` command pinned to its UUID and run window ±5 seconds,
+filtering `operation=write_answer|resolve_evidence`. Run that command after log delivery, parse each returned JSON message, and read the **stage's
+`error_code`** (`writer_relationship_*`, `writer_answer_invalid`, `resolution_invalid`, `model_output_*`, etc.). The aggregate `generate_answer`
+code remains `model_failed` and cannot answer F-01. No automatic reread or paid model retry is made. Without a log group, substitute the actual
+group in the report's ready command. Copy only the per-case closed codes/frequencies into the failure ledger, with report path and deployed SHA.
+
+The dedicated corpus and per-case document dependencies are in [`phase-15-corpus-operator.md`](phase-15-corpus-operator.md). Its upload remains
+blocked until the supervisor reviews the M2M matter-scope transition; an F-01 run can use the existing authorized synthetic matter to isolate the
+writer failure, recording that it does not resolve F-03.

@@ -417,6 +417,16 @@
       ],
       "remove": []
     },
+    "harness-max-iterations": {
+      "stackName": "legaldesk-phase-01",
+      "exactModify": true,
+      "description": "legaldesk-phase-01: owner approved 2026-11-04. Preserve every deployed parameter. Only MinimalHarness.MaxIterations 3 -> 4, Replacement False. No IAM or other resource changes.",
+      "add": [],
+      "modify": {"MinimalHarness": ["MaxIterations"]},
+      "iamResources": [],
+      "iam": [],
+      "remove": []
+    },
     "harness-max-tokens": {
       "description": "LegalDeskPhase01 (Harness): the output-token cap of each model call goes from 256 to 2048 in the two places the Harness reads one (Model.BedrockModelConfig.MaxTokens and the Harness MaxTokens). Only MinimalHarness changes, in place (neither property is createOnly: HarnessName and Memory/ManagedMemoryConfiguration/EncryptionKeyArn are the only ones). A Replacement other than False would change the HarnessArn: STOP and take it to the platform review.",
       "add": [],

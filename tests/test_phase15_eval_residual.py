@@ -198,7 +198,7 @@ class CommandLineTests(Base):
                 mock.patch.dict(sys.modules, {"legaldesk.agent_chat_lambda": fake_module}), \
                 mock.patch.dict("os.environ", {"LEGALDESK_EVAL_ACCESS_TOKEN": ev._unsigned_token(ev.SUBJECT)}):
             output = Path(temp) / "phase15-routing-test-a.json"
-            argv = ["real", "--execute", "--approval-ref", "ticket-1", "--release-commit", "a" * 40, "--artifact-sha256", "b" * 64,
+            argv = ["real", "--execute", "--approval-ref", "ticket-1", "--question-ref", "F-01-written-question", "--release-commit", "a" * 40, "--artifact-sha256", "b" * 64,
                     "--matter-id", ev.MATTER, "--output", str(output)]
             with self.assertRaises(KeyboardInterrupt):
                 ev.main(argv)

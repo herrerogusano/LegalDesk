@@ -109,7 +109,7 @@ class AgentChatInvocationTests(unittest.TestCase):
         from botocore.validate import validate_parameters
         validate_parameters(call, Session().get_service_model("bedrock-agentcore").operation_model("InvokeHarness").input_shape)
         self.assertNotIn("actorId", call)  # Harness memory is not attached (ADR-021 D7)
-        self.assertEqual((call["maxIterations"], call["timeoutSeconds"]), (3, 90))
+        self.assertEqual((call["maxIterations"], call["timeoutSeconds"]), (4, 90))
         self.assertNotEqual(call["runtimeSessionId"], scope.memory_scope.session_id)  # a fresh one per call: see the tests of the session
         self.assertEqual(call["systemPrompt"][:-1], list(PROMPT))  # the pinned prompt, then the server-built matter selector
         self.assertEqual(call["systemPrompt"][-1], {"text": matter_selector_instruction("mat_sundial")})
