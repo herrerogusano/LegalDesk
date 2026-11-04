@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Mapping, Protocol, Sequence
@@ -309,6 +310,105 @@ _DIRECTED_ACTION_TERMS = frozenset(
     }
 )
 
+# Closed Spanish morphology, not a stem matcher. Detection folds accents only;
+# evidence matching below preserves them (apart from Unicode composition).
+_SPANISH_ACTION_FORMS = {
+    "pagar": "paga pagan pagara pagaran pague paguen pagando",
+    "abonar": "abona abonan abonara abonaran abone abonen abonando",
+    "notificar": "notifica notifican notificara notificaran notifique notifiquen notificando",
+    "avisar": "avisa avisan avisara avisaran avise avisen avisando",
+    "comunicar": "comunica comunican comunicara comunicaran comunique comuniquen comunicando",
+    "enviar": "envia envian enviara enviaran envie envien enviando",
+    "remitir": "remite remiten remitira remitiran remita remitan remitiendo",
+    "entregar": "entrega entregan entregara entregaran entregue entreguen entregando",
+    "proporcionar": "proporciona proporcionan proporcionara proporcionaran proporcione proporcionen proporcionando",
+    "transferir": "transfiere transfieren transferira transferiran transfiera transfieran transfiriendo",
+    "ceder": "cede ceden cedera cederan ceda cedan cediendo",
+    "devolver": "devuelve devuelven devolvera devolveran devuelva devuelvan devolviendo",
+    "restituir": "restituye restituyen restituira restituiran restituya restituyan restituyendo",
+    "indemnizar": "indemniza indemnizan indemnizara indemnizaran indemnice indemnicen indemnizando",
+    "reembolsar": "reembolsa reembolsan reembolsara reembolsaran reembolse reembolsen reembolsando",
+    "informar": "informa informan informara informaran informe informen informando",
+}
+_SPANISH_ACTIONS = frozenset(
+    form for infinitive, forms in _SPANISH_ACTION_FORMS.items()
+    for form in (infinitive, infinitive + "se", *forms.split())
+)
+_SPANISH_FUTURE_ACTIONS = frozenset(
+    form for forms in _SPANISH_ACTION_FORMS.values()
+    for form in forms.split()[2:4]
+)
+_SPANISH_MODALS = tuple(tuple(phrase.split()) for phrase in (
+    "debera", "deberan", "debe", "deben", "habra de", "habran de",
+    "tendra que", "tendran que", "tiene que", "tienen que",
+    "se obliga a", "se obligan a", "esta obligado a", "esta obligada a",
+    "estan obligados a", "estan obligadas a",
+))
+_SPANISH_ACTION_WINDOW = 8
+MAX_RELATIONSHIP_SENTENCE_LENGTH = 2_000
+MAX_RELATIONSHIP_RENDER_LENGTH = 5_000  # ApplyGuardrail answer-content limit.
+_LIST_LINE = re.compile(r"(?m)^[ \t]*(?:[-*\u2022\u2013\u2014]|\(?\d+(?:\.\d+)*[.)]|\(?[a-zA-Z][.)]|\(?[ivxlcdmIVXLCDM]+[.)])[ \t]+")
+_ABBREVIATION = re.compile(
+    r"\b(?:sr|sra|sres|sras|dr|dra|d|d\u00f1a|ud|uds|art|arts|n\u00fam|num|p\u00e1g|p\u00e1gs|apdo|avda|etc|mr|mrs|ms|no)\.",
+    re.IGNORECASE,
+)
+_MULTIDOT_ABBREVIATION = re.compile(r"\b(?:p\.[ \t]*ej\.|e\.g\.|i\.e\.|EE\.[ \t]*UU\.|S\.[ \t]*[AL]\.|n\.[\u00ba\u00b0])", re.IGNORECASE)
+
+
+def _source_sentences(text: str) -> tuple[tuple[str, bool], ...]:
+    """Exact source slices plus whether their boundaries permit publication.
+
+    Ordinary newlines are OCR/line wraps. Blank lines and new list items are
+    hard boundaries. Known abbreviations, decimals and clause numbers protect
+    their periods; other .!? followed by whitespace/end close a sentence.
+    Semicolons/colons/commas stay inside it to retain conditions. An unfinished
+    fragment, or a list item dependent on a preceding colon header, is unsafe.
+    """
+
+    protected = set()
+    for pattern in (_ABBREVIATION, _MULTIDOT_ABBREVIATION):
+        for match in pattern.finditer(text):
+            protected.update(range(match.start(), match.end()))
+            following = text[match.end():].lstrip()
+            title = match.group().casefold() in {
+                "sr.", "sra.", "sres.", "sras.", "dr.", "dra.", "d.", "d\u00f1a.", "mr.", "mrs.", "ms.",
+            }
+            # A title precedes its name. For other abbreviations, uppercase
+            # continuation can be a new sentence: do not bridge its final dot.
+            if match.group().endswith(".") and (not following or (following[0].isupper() and not title)):
+                protected.discard(match.end() - 1)
+    list_matches = tuple(_LIST_LINE.finditer(text))
+    for match in list_matches:
+        protected.update(range(match.start(), match.end()))
+    hard = {match.start() for match in re.finditer(r"\r?\n[ \t]*\r?\n", text)}
+    hard.update(match.start() for match in list_matches)
+    list_starts = {match.start() for match in list_matches}
+    boundaries: dict[int, bool] = {0: False, len(text): False}
+    for position in hard:
+        boundaries[position] = False
+    for match in re.finditer(r"[.!?]+[\"'\u201d\u2019)\]]*(?=\s|$)", text):
+        if match.start() in protected:
+            continue
+        boundaries[match.end()] = True
+    result: list[tuple[str, bool]] = []
+    start = 0
+    list_dependent = False
+    unfinished_prefix = False
+    for end in sorted(boundaries):
+        if end == 0:
+            continue
+        fragment = text[start:end].strip()
+        if fragment:
+            is_list = _LIST_LINE.match(fragment) is not None
+            if is_list and result and not result[-1][1]:
+                list_dependent = True
+            elif start in hard and start not in list_starts:
+                list_dependent = False
+            result.append((fragment, boundaries[end] and not list_dependent and not unfinished_prefix))
+            unfinished_prefix = not boundaries[end]
+        start = end
+    return tuple(result)
+
 
 def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
     """Validate the optional structured relationship projection.
@@ -365,18 +465,21 @@ def validate_answer_writer_result(result: Mapping[str, object]) -> dict[str, obj
 
 
 def _relationship_tokens(value: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"[a-z0-9]+", value.casefold()))
+    # ASCII-only tokenisation split deberá and año into misleading fragments.
+    return tuple(re.findall(r"[^\W_]+", unicodedata.normalize("NFC", value.casefold())))
+
+
+def _detection_tokens(value: str) -> tuple[str, ...]:
+    folded = "".join(char for char in unicodedata.normalize("NFD", value) if not unicodedata.combining(char))
+    return _relationship_tokens(folded)
 
 
 def evidence_requires_relationship_projection(evidence: Sequence[object]) -> bool:
-    """Detect selected evidence whose directed obligation must be projected.
+    """Conservative safety trigger, not a semantic obligation classifier.
 
-    This is a deliberately conservative, server-side safety trigger. It does
-    not infer the parties; it only prevents a writer from bypassing structured
-    validation when a passage contains a modal and a supported directed legal
-    action with a following object or recipient. English permits direct objects
-    without a linking preposition (for example, ``notify the buyer``), so a
-    preposition is deliberately not required.
+    Keep the established English passage-wide trigger. Spanish modal/action
+    pairs are bounded to eight intervening tokens in one clause; explicit
+    future directed verbs also trigger (legal orders may omit a modal).
     """
 
     for item in evidence:
@@ -385,72 +488,107 @@ def evidence_requires_relationship_projection(evidence: Sequence[object]) -> boo
             continue
         tokens = _relationship_tokens(text)
         for modal_index, token in enumerate(tokens):
-            if token not in _DIRECTED_MODAL_TERMS:
-                continue
-            for action_index in range(modal_index + 1, len(tokens)):
-                if tokens[action_index] not in _DIRECTED_ACTION_TERMS:
-                    continue
-                if action_index + 1 < len(tokens):
+            if token in _DIRECTED_MODAL_TERMS and any(
+                tokens[index] in _DIRECTED_ACTION_TERMS and index + 1 < len(tokens)
+                for index in range(modal_index + 1, len(tokens))
+            ):
+                return True
+        sentences = _source_sentences(text)
+        for sentence_index, (sentence, _) in enumerate(sentences):
+            # A modal-only list header still requires projection. The renderer
+            # rejects dependent items, rather than silently dropping the gate.
+            header = _detection_tokens(sentence.rstrip(":"))
+            if sentence.endswith(":") and any(header[-len(modal):] == modal for modal in _SPANISH_MODALS):
+                for following, _ in sentences[sentence_index + 1:]:
+                    if not _LIST_LINE.match(following):
+                        break
+                    item_tokens = _detection_tokens(following)
+                    if any(token in _SPANISH_ACTIONS and index < _SPANISH_ACTION_WINDOW and index + 1 < len(item_tokens)
+                           for index, token in enumerate(item_tokens)):
+                        return True
+            # A comma/semicolon separates possibly unrelated clauses for the
+            # trigger, but remains in the exact rendered source sentence.
+            for clause in re.split(r"[;,:]|\b(?:pero|sin embargo|mientras que)\b", sentence, flags=re.IGNORECASE):
+                spanish = _detection_tokens(clause)
+                if any(token in _SPANISH_FUTURE_ACTIONS and 0 < index < len(spanish) - 1
+                       for index, token in enumerate(spanish)):
                     return True
+                for index in range(len(spanish)):
+                    for modal in _SPANISH_MODALS:
+                        end = index + len(modal)
+                        if spanish[index:end] != modal:
+                            continue
+                        if any(spanish[action] in _SPANISH_ACTIONS and action + 1 < len(spanish)
+                               for action in range(end, min(len(spanish), end + _SPANISH_ACTION_WINDOW + 1))):
+                            return True
     return False
+
+
+def _contains_relationship(sentence: str, relation: Mapping[str, str]) -> bool:
+    tokens = _relationship_tokens(sentence)
+    position = 0
+    for field in ("actor", "action", "recipient"):
+        part = _relationship_tokens(relation[field])
+        if not part:
+            return False
+        for index in range(position, len(tokens) - len(part) + 1):
+            if tokens[index:index + len(part)] == part:
+                position = index + len(part)
+                break
+        else:
+            return False
+    return True
+
+
+def _relationship_source_sentences(evidence: Sequence[object]) -> tuple[tuple[str, bool], ...]:
+    return tuple(
+        sentence
+        for item in evidence
+        for text in [item.get("text") if isinstance(item, Mapping) else getattr(item, "text", None)]
+        if isinstance(text, str)
+        for sentence in _source_sentences(text)
+    )
 
 
 def validate_writer_relationships_against_evidence(
     relationships: Sequence[Mapping[str, str]],
     evidence: Sequence[object],
 ) -> tuple[Mapping[str, str], ...]:
-    """Require each structured relation to occur in the selected evidence order.
-
-    This is intentionally a bounded evidence check, not an answer-prose
-    classifier.  Reversing actor and recipient therefore fails before the
-    writer answer can reach the public response.
-    """
+    """Validate direction within one source sentence; no prose inference."""
 
     normalized = _validate_writer_relationships(relationships)
-    evidence_token_sets: list[tuple[str, ...]] = []
-    for item in evidence:
-        text = item.get("text") if isinstance(item, Mapping) else getattr(item, "text", None)
-        if isinstance(text, str):
-            tokens = _relationship_tokens(text)
-            if tokens:
-                evidence_token_sets.append(tokens)
-    if not evidence_token_sets:
-        raise EvidenceContractError("writer relationship evidence is unavailable", reason=REASON_RELATIONSHIP_UNSUPPORTED)
-
-    def contains_in_order(evidence_tokens: tuple[str, ...], parts: tuple[tuple[str, ...], ...]) -> bool:
-        position = 0
-        for part in parts:
-            if not part:
-                return False
-            for index in range(position, len(evidence_tokens) - len(part) + 1):
-                if tuple(evidence_tokens[index : index + len(part)]) == part:
-                    position = index + len(part)
-                    break
-            else:
-                return False
-        return True
-
+    sentences = _relationship_source_sentences(evidence)
     for relation in normalized:
-        parts = tuple(_relationship_tokens(relation[field]) for field in ("actor", "action", "recipient"))
-        if not any(contains_in_order(tokens, parts) for tokens in evidence_token_sets):
-            raise EvidenceContractError("writer relationship is not supported in evidence order", reason=REASON_RELATIONSHIP_UNSUPPORTED)
+        if not any(_contains_relationship(sentence, relation) for sentence, _ in sentences):
+            raise EvidenceContractError("writer relationship lacks same-sentence support", reason=REASON_RELATIONSHIP_UNSUPPORTED)
     return tuple(normalized)
 
 
-def render_writer_relationships(relationships: Sequence[Mapping[str, str]]) -> str:
-    """Render a bounded canonical sentence so prose cannot reverse a relation."""
+def render_writer_relationships(
+    relationships: Sequence[Mapping[str, str]],
+    evidence: Sequence[object],
+) -> str:
+    """Publish bounded whole source sentences, never writer prose or a template.
 
-    normalized = _validate_writer_relationships(relationships)
-    sentences: list[str] = []
-    modality_prefixes = ("must ", "shall ", "may ", "can ", "should ")
+    Owner-approved D-024 amendment (2026-11-04): each triple must select exactly
+    one sentence occurrence. Retain conditions, punctuation and line breaks.
+    Unfinished/dependent-list fragments, ambiguity and overlength fail closed.
+    """
+
+    normalized = validate_writer_relationships_against_evidence(relationships, evidence)
+    sources = _relationship_source_sentences(evidence)
+    selected: list[str] = []
     for relation in normalized:
-        actor = relation["actor"]
-        action = relation["action"].rstrip(" .")
-        recipient = relation["recipient"]
-        if not action.casefold().startswith(modality_prefixes):
-            action = f"must {action}"
-        sentences.append(f"{actor} {action} to {recipient}.")
-    return " ".join(sentences)
+        matches = [(sentence, safe) for sentence, safe in sources if _contains_relationship(sentence, relation)]
+        if len(matches) != 1 or not matches[0][1] or len(matches[0][0]) > MAX_RELATIONSHIP_SENTENCE_LENGTH:
+            raise EvidenceContractError("writer relationship source is ambiguous or unbounded", reason=REASON_RELATIONSHIP_UNSUPPORTED)
+        sentence = matches[0][0]
+        if sentence not in selected:
+            selected.append(sentence)
+    answer = " ".join(selected)
+    if not answer or len(answer) > MAX_RELATIONSHIP_RENDER_LENGTH:
+        raise EvidenceContractError("writer relationship source is unbounded", reason=REASON_RELATIONSHIP_UNSUPPORTED)
+    return answer
 
 
 @dataclass(frozen=True, slots=True)

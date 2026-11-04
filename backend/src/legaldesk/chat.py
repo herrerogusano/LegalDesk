@@ -682,15 +682,15 @@ def answer_question(
                     for item in generation_request.evidence
                     if item.citation_id in resolution.supporting_citation_ids
                 )
+                projection_required = evidence_requires_relationship_projection(selected_evidence)
                 if relationship_shape_error is not None:
-                    # A valid relationship replaces the answer with a fixed "actor must action to recipient" sentence, so a
-                    # malformed one cannot be repaired into it (F-01). When the evidence requires the projection the answer
+                    # A malformed relationship cannot select a trusted source sentence. When projection is required the answer
                     # still fails closed; otherwise it is advisory: drop it and keep the prose, which still passes citation
                     # and grounding validation. The dropped value is never surfaced, only its closed reason.
-                    if evidence_requires_relationship_projection(selected_evidence):
+                    if projection_required:
                         raise relationship_shape_error
                     dropped_relationship_reason = _contract_reason(relationship_shape_error)
-                if evidence_requires_relationship_projection(selected_evidence) and not relationships:
+                if projection_required and not relationships:
                     raise EvidenceContractError(
                         "answer writer omitted a required directed relationship",
                         reason=REASON_RELATIONSHIP_MISSING,
@@ -702,7 +702,7 @@ def answer_question(
                             selected_evidence,
                         )
                     except EvidenceContractError:
-                        if evidence_requires_relationship_projection(selected_evidence):
+                        if projection_required:
                             raise
                         # Optional relationships are advisory when the evidence
                         # does not require a directed projection: drop an
@@ -711,11 +711,11 @@ def answer_question(
                         # validation. The dropped value is never surfaced.
                         relationships = ()
                         dropped_relationship_reason = REASON_RELATIONSHIP_UNSUPPORTED
-                if relationships:
+                if relationships and projection_required:
                     # Structured relationships are the authoritative public
                     # rendering for directional claims; this prevents prose
                     # from reversing a validated actor/action/recipient.
-                    answer = render_writer_relationships(relationships)
+                    answer = render_writer_relationships(relationships, selected_evidence)
                 emit_telemetry(
                     telemetry_sink,
                     TelemetryEventType.MODEL,

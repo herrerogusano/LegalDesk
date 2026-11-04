@@ -107,10 +107,21 @@ reported and gated is the **test** split's.
 | `lt-19` | `retrieval` | hypothesis | the answer is on a scanned page of a 7-page lease full of similar clauses |
 | `lt-21` | `writer` | hypothesis | the OCR garbles the number (`6O`) and the writer may repeat or drop it |
 
-A hypothesis is a prediction to confirm, not a measured fact. One more risk is **not** a case because the offline doubles cannot reproduce it: when a selected
-passage contains a modal plus a directed action ("may assign this Agreement…"), the production code requires the writer to project a structured relationship
-and then *replaces* the answer with the canonical sentence, which can drop the fact that was asked. The long documents avoid that boilerplate on purpose; the
-first real run should watch for `model_failed` in `writer` on real contract text.
+A hypothesis is a prediction to confirm, not a measured fact. The relationship
+risk now has an offline reproduction: F-35 detects obligations in Spanish pages
+which the previous English trigger missed. The writer must project a supported
+relationship, and the backend publishes its whole source sentence (owner's
+2026-11-04 D-024 amendment), retaining conditions rather than using the old
+`must ... to` template. The offline `GoldenWriter` emits no relationships, so
+`lt-12`, `lt-20` and `am-05` fail at `write_answer` after this change. These are
+**new failures of the frozen gate**, not additional expected known limits.
+The dataset, thresholds, gate and simulated writer are unchanged.
+
+A selected page can also contain a directed obligation unrelated to the requested
+facts. A valid relationship may recover `lt-20`; the judgment's payment sentence
+alone does not satisfy `lt-12`/`am-05` fact groups. A question-specific projection
+policy or a changed acceptance contract needs a separate owner decision. See
+[the exact census, verification and limitations](phase-15-relationship-safety.md).
 
 ## 3. The asynchronous layer
 
