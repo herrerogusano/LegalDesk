@@ -1063,7 +1063,7 @@ class DeployedAsyncTransportTests(unittest.TestCase):
 def real_ids(prefix: str = "R-") -> dict[str, str]:
     """What the operator writes after the upload: the dataset id of each indexed document -> the id the beta gave it."""
 
-    return {d.document_id: prefix + d.document_id for d in ev.sundial_documents(WORLD) if d.status == "INDEXED"}
+    return {d.document_id: prefix + d.document_id for d in ev.sundial_documents(WORLD)}
 
 
 class DocumentMapTests(unittest.TestCase):

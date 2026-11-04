@@ -222,7 +222,7 @@ Resources:
             Arn: !Ref Phase09MemoryArn
             MessagesCount: 10
         - Disabled: {}
-      MaxIterations: !If [AttachPhase08Gateway, 3, 1]
+      MaxIterations: !If [AttachPhase08Gateway, 4, 1]
       MaxTokens: !Ref MaxTokensPerIteration
       TimeoutSeconds: 120
       Tags:

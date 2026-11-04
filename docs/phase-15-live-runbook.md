@@ -461,6 +461,26 @@ if the stored role cannot do the rest), record it, and look at the stack events 
 
 By pull request, as always. The CD (`production-cd.yml`) passes `LegalDeskProductionCloudFormation` explicitly, which also restores the stack's stored role.
 
+Before opening **every release PR**, run this read-only preflight against the release branch (F-11):
+
+```powershell
+python scripts/release_preflight.py --region eu-west-1
+if ($LASTEXITCODE -ne 0) { throw 'release template does not match deployed Original, or the read failed; stop' }
+```
+
+It uses `deploy_release._templates_code_compatible` and CloudFormation `GetTemplate(TemplateStage=Original)`, with no change set/write. The output
+names differing `Parameters`, `Resources` and other sections; even a description-only edit fails exact equality. A read failure is exit 2, not a
+match. Keep its output in release evidence. With no AWS access CI cannot prove this match. PR #94 restored the two descriptions changed by #93;
+keep `phase-14-public-edge.yaml` unchanged in this work. Run the preflight again if the branch or live template changes.
+
+Other code-only CD preconditions also remain: the deployed stack must be stable; template parameter **names** must match exactly and all previous
+values except immutable artifact bucket/key/version are preserved; a versioned immutable artifact and valid manifest/runtime/hash/file inventory
+must exist; only `ApplicationFunction.Code`, `AgentChatWorkerFunction.Code` when enabled, and integration URI may change, with no replacement.
+Changes in parameter names, resource IDs/types/properties, conditional worker outputs, package layout, runtime/dependency ABI, manifest schema,
+frontend asset paths/hashes or the CD IAM role can invalidate those live assumptions despite repository tests passing. Other stacks' Lambdas
+(search, MCP, interceptor) are not updated by this CD: a cross-stack contract change needs explicit deployment order. `release_preflight.py` proves
+template compatibility only; the existing package checks, change-set scope gate, role/read-back and public hash checks are still required.
+
 **Before.** 8a verified; `cd-template-match` = `true`; the CI of the promoted commit is green. Dry run locally (it makes no AWS call): `python scripts/deploy_release.py --commit <sha> --release-dir <dir> --artifact-bucket … --artifact-key …`.
 
 **After** (the record of the run and AWS read-back):
@@ -699,12 +719,12 @@ Gate fixed before the run (T8): acceptable tool set ≥ **27 of 30**, **0** allo
 
 ```powershell
 python evals/phase15_routing_eval.py real                      # preflight, no network
-python evals/phase15_routing_eval.py real --execute --approval-ref <ref> --release-commit $commit --artifact-sha256 $sha `
+python evals/phase15_routing_eval.py real --execute --question-ref <written-question-ref> --approval-ref <ref> --release-commit $commit --artifact-sha256 $sha `
   --matter-id mat_phase14_a_20260928 --output evals/results/phase15-routing-$Stamp-a.json
 ```
 
-One invocation per case, `maxIterations` 3, no retries, abort after 3 consecutive errors (the cases not run count as failed). **Cost watch:** the report sums
-`estimatedLoopCostUsd` (Harness iterations only, priced at the corrected `estimate-2026-11-eu-regional` table; a loop's usage is the sum of its model calls and a call that reported none counts at an upper bound): typical ≈ USD 1.0, upper bound 1.75; **the run stops by itself
+One invocation per case, `maxIterations` 4 (owner approved 2026-11-04), no retries, abort after 3 consecutive errors (the cases not run count as failed). **Cost watch:** the report sums
+`estimatedLoopCostUsd` (Harness iterations only, priced at the corrected `estimate-2026-11-eu-regional` table; a loop's usage is the sum of its model calls and a call that reported none counts at an upper bound): typical ≈ USD 1.0, upper bound 1.88; **the run stops by itself
 (`abortedBy: cost_stop`, the cases not run count as failed) if the sum passes 2.20**, and the figure is cross-checked against CloudWatch afterwards (`docs/phase-15-t9-cost-estimate.md`).
 
 **After.** The report is create-only and immutable; read `summary` (tool accuracy, path accuracy, violations, `estimatedLoopCostUsd`, latency p50/p95, tokens).
@@ -967,13 +987,72 @@ lists them (it reads the whole table once: a few hundred items); delete only the
 | Change sets left over, ADOT window, retention of log groups created in the block | none / closed / lowered | steps 1 to 3 of this list |
 
 Cost of this state, from [`phase-15-t9-cost-estimate.md`](phase-15-t9-cost-estimate.md): **1.30 USD a month fixed** (7 alarm metrics and 2 custom metrics; every other signal is a
-native, free metric) plus the usage of the jobs actually asked, bounded by the quota: **2.86 USD typical and 9.09 USD upper bound** with all 50 used, so **4.16 / 10.39 USD**
+native, free metric) plus the usage of the jobs actually asked, bounded by the quota: **3.02 USD typical and 10.96 USD upper bound** with all 50 used, so **4.32 / 12.26 USD**
 in the worst month, plus the idle SQS polling (≈ 0.65 M requests a month, inside the free tier unless SQS is used elsewhere). `AWS_COST_POLICY.md` says never to leave continuous
 polling on by default; the owner chose to keep the chat on for demos knowing this.
 
 To switch the chat off later (not part of this block): the rollback change sets of the profiles `public-edge-agent-chat-rollback` (14 resources) and, after it, the Gateway one
 in reverse (`EnableSearchDocuments=false`); both stay valid for the CD because the deployed template remains equal to the repository's (flags are parameters, not template text).
 Both flags go together: the agent without `search_documents` is broken.
+
+## F-01/F-02 follow-up prepared 2026-11-04 (supervisor executes)
+
+F-01's written question, nine-invocation command, closed search-stage reason lookup and subset safeguards are in
+[`phase-15-routing-eval.md#targeted-diagnosis-f-01-never-a-gate`](phase-15-routing-eval.md#targeted-diagnosis-f-01-never-a-gate).
+Every live command now needs `--question-ref` pointing to a question written before execution. A targeted report is never gate evidence.
+F-03's shared corpus procedure and all 30 routing-case dependencies are in [`phase-15-corpus-operator.md`](phase-15-corpus-operator.md).
+
+**F-02, owner approved 2026-11-04, ADR-021 D4:** raise the agentic chat's cap from three to **four** iterations so list → fields → search → plan
+can finish. The stream's exact `max_iterations_exceeded` now maps to the existing `iterations_exhausted` outcome/reason. A failed loop still
+reuses a valid search result or falls back through the same deterministic output tree. Other stream failures remain `failed`.
+
+**Documented versus assumed:** [InvokeHarness API](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeHarness.html)
+documents per-invocation `maxIterations`, `maxTokens` and `timeoutSeconds` as overrides of Harness defaults. Therefore the explicit request with
+4 iterations is sufficient according to the API; no evidence says the template's iteration default wins. The earlier maxTokens-default-cap
+hypothesis is unproven: run c after changing both template token settings showed no truncation, but did not isolate precedence.
+[HarnessBedrockModelConfig](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_HarnessBedrockModelConfig.html) exposes
+a separate model-level token cap; precedence between that nested cap and the top-level request is not established by these references.
+We align the iteration default too for callers that omit it; do not describe this as proof that the template enforces an upper bound.
+[CloudFormation Harness reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-bedrockagentcore-harness.html)
+documents in-place iteration updates. The actual change set, not the offline estimate, decides replacement safety.
+
+**Exact expected change set:** stack **`legaldesk-phase-01`** (verified name, not the older logical label `LegalDeskPhase01`), only
+`MinimalHarness`, action `Modify`, type `AWS::BedrockAgentCore::Harness`, direct property **`MaxIterations`**, **`Replacement: False`**,
+3 → 4 while `EnablePhase08Gateway=true`; no additions/removals/IAM or parameter changes. The detached-Gateway default remains 1.
+All deployed parameter values, including NoEcho values, stay `UsePreviousValue`; do not resupply defaults. Before the operation, back up Original
+and describe-stacks, then produce a params file with the existing `params` command **without any `--set` overrides**. Supervisor creates the
+change set with the same execution role/parameters as the live stack, saves `describe-change-set` JSON and checks:
+
+```powershell
+python scripts/phase15_changeset_preview.py check-change-set --change-set-json <saved-json> --profile harness-max-iterations
+```
+
+The profile requires that exact modification, rejects every other resource/property and every replacement (including Conditional), and checks
+the stack name. Compare `describe-change-set.Parameters` with the backed-up stack too; the profile is a resource gate, not a proof of parameter
+preservation. After separately approved execution read back Harness limits, ARN, status and every parameter; no live invocation is part of this
+change. The worker code must also be released; search/MCP/interceptor updates still use their own reviewed deployments.
+
+**Deadline review:** no timeout increase: loop 90 s total (not per iteration), SDK read timeout 120 s/connect 5 s, worker Lambda 150 s,
+attempt lease 165 s, job deadline 300 s, one transient SQS retry after 30 s; direct evals still zero retries. A nominal 90 s loop plus ~25 s
+fallback fits the worker/lease with margin. Four full 25 s tools plus model time cannot all fit 90 s: the loop may still time out and retain its
+existing safe fallback. This is intentional bounded execution, not a promise of four successful calls. A late retry can run into the absolute
+300 s deadline and be discarded; two maximum-length attempts are not guaranteed to fit. The existing deadline/finalization checks remain
+authoritative. No Public Edge timeout/template change is required or included.
+
+The ~25 s fallback figure is a **nominal planning allowance**, not an enforced aggregate deadline: `build_aws_composition` fixes retries to one
+attempt but leaves KB/Bedrock read timeouts at the SDK default (60 s per request). Several fallback requests can exceed the remaining 150 s Lambda
+window. Lambda termination, lease expiry/redelivery and the absolute job deadline still bound the job; this existing latency limitation is not
+fixed by adding an iteration. S3's separate 15 s config is not a fallback model timeout. Measure this in a separately approved async smoke; the
+targeted routing runner deliberately does not execute direct fallback and cannot verify this timing live.
+
+**Cost review:** `E_mixed` now includes four Harness calls plus resolver/writer, two metadata calls and one search. Reproducible T9 estimate:
+USD **2.39 / 4.27** typical/upper for the original 46-invocation block; monthly 50-job usage **3.02 / 10.96**, with fixed 1.30 totals
+**4.32 / 12.26**. The routing loop stop stays at the already bounded **2.20** (upper estimated loop 1.88, about 17% margin). Golden estimate:
+USD **6.79 / 12.40** excluding corpus, **7.29 / 13.20** including corrected 0.50/0.80 preparation; loop-stop budget becomes **6.3** from its
+existing upper×1.25 rule. New real runs still need their own approval; these estimates do not reuse consumed T9 approvals.
+
+Read-only verification on 2026-11-04: the release preflight matched live Original; comparing the live Harness Original and preserved parameters
+to this branch showed only `MinimalHarness.MaxIterations`, replacement heuristic `no`, no IAM/parameter drift. No change set was created or executed.
 
 ## Evidence ledger (fill during the run; copy the summary to `docs/phase-15-acceptance.md`)
 

@@ -13,6 +13,11 @@ Dataset: `evals/phase15_golden_dataset.json` (synthetic, frozen by SHA-256). Tes
 [`phase-15-golden-set-cost.md`](phase-15-golden-set-cost.md). The routing eval stays as it is (it gates the agent's tool choice); this set does not
 replace it, it reuses its simulated agent, its interceptor crossing and its report conventions.
 
+Both real evals use the same dedicated synthetic corpus. The exact provisioning/upload/scan/index/IDP procedure, corrected one-off cost,
+map construction, denied other matter and governance cleanup are in [`phase-15-corpus-operator.md`](phase-15-corpus-operator.md).
+No corpus was uploaded by this offline preparation. The live M2M review shard currently permits only the two older matters: the supervisor
+must review that scope transition before uploading. The map must include the real failed-upload ID too; confirmation alone does not prove `FAILED`.
+
 ## 1. What is measured, phase by phase
 
 A request crosses the phases below **in this causal order**. Nothing new is added to production: each signal already exists.

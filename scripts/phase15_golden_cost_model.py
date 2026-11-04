@@ -40,9 +40,11 @@ CLASS_OF_KIND = {
 INPUT_UNITS = t9.GUARDRAIL_UNITS["worker_input"]          # (typical, upper) text units of the input Guardrail call
 SESSION_EXPIRED_JOB_USD = t9.JOB_STATE_USD + 2 / 1_000_000 * t9.LAMBDA_PER_MILLION_REQUESTS   # the worker fails closed: no model call
 STOP_MARGIN = 1.25                                          # the stop rule is the upper bound of the Harness loop plus 25 %
-# One-off cost of putting the corpus in the matter (outside the eval): IDP for the generated documents (~USD 0.0163 per document
-# at the T9 token prices, docs/idp-evaluation.md) and Textract for their scanned pages; KB embeddings are a few cents at most.
-CORPUS_PREPARATION_USD = {"typical": 0.2, "upper": 0.8}
+# Whole corpus: 26 valid PDFs (18 fixtures + 8 generated), one truncated PDF, 45 valid pages / 12 scanned.
+# IDP measured fixture average USD 0.0163/document (docs/idp-evaluation.md); 12 OCR pages at USD 0.0015;
+# plus USD 0.02 typical allowance for embeddings, scan, requests, logs/storage. Upper: 1.6x IDP plus USD 0.10
+# service allowance, rounded up. This is a planning range, not a measured bill or universal hard cap.
+CORPUS_PREPARATION_USD = {"typical": 0.5, "upper": 0.8}
 LOGS_USD = {"typical": 0.02 * t9.CLOUDWATCH_LOGS_PER_GB, "upper": 0.05 * t9.CLOUDWATCH_LOGS_PER_GB}
 
 

@@ -59,6 +59,7 @@ from legaldesk.observability import InMemoryTelemetrySink  # noqa: E402
 from legaldesk.prompts import FileSystemSystemPromptProvider  # noqa: E402
 from legaldesk.search_documents_lambda import SearchDocumentsService, run_search_documents  # noqa: E402
 from legaldesk_agent import AgentChatResult  # noqa: E402
+from legaldesk_agent.client import AGENT_CHAT_MAX_ITERATIONS  # noqa: E402
 
 RUNNER_VERSION = "1.0.0"
 DATASET_PATH = ROOT / "evals" / "phase15_golden_dataset.json"
@@ -111,7 +112,7 @@ PROPOSED_THRESHOLDS = {
 # Offline CI gate: the machinery is deterministic, nothing may deviate.
 OFFLINE_REQUIRES = {"casesNotMet": 0, "hardCounters": 0, "asyncScenariosFailed": 0}
 MAX_CONSECUTIVE_REAL_ERRORS = 3
-HARNESS_LOOP_COST_STOP_USD = 5.9   # upper bound of the Harness loops + 25 %: scripts/phase15_golden_cost_model.py, docs/phase-15-golden-set-cost.md
+HARNESS_LOOP_COST_STOP_USD = 6.3   # four-iteration upper bound + 25 %: scripts/phase15_golden_cost_model.py, docs/phase-15-golden-set-cost.md
 
 
 # ====================================================================== text helpers
@@ -1308,7 +1309,7 @@ def validate_document_map(world: Mapping[str, DocTruth], mapping: Mapping[str, s
     """``{golden id: real id}`` from the operator -> ``{real id: golden id}``. The beta assigns its own document ids at upload;
     every oracle of the dataset speaks golden ids, so every id that leaves the deployment is translated at the edge."""
 
-    required = {d.document_id for d in sundial_documents(world) if d.status == "INDEXED"}
+    required = {d.document_id for d in sundial_documents(world)}  # FAILED is a real inventory member too
     if required - set(mapping):
         raise ValueError("the document map misses documents of the matter")
     if set(mapping) - set(world):
@@ -1558,6 +1559,7 @@ def real_plan(dataset: Mapping[str, Any]) -> dict[str, Any]:
     async_ids = [c["id"] for c in cases if c.get("asyncReal")]
     return {
         "inputChecks": len(cases), "harnessInvocations": len(cases), "probes": len(cases),
+        "maxIterationsPerInvocation": AGENT_CHAT_MAX_ITERATIONS,
         "probesExpectedAtLeast": sum(1 for c in cases if c["expected"].get("rag")),
         "asyncJobs": len(async_ids) + 2, "asyncCaseIds": async_ids, "quotaUnitsConsumed": len(async_ids) + 2,
         "retries": 0, "maxConsecutiveErrorsBeforeAbort": MAX_CONSECUTIVE_REAL_ERRORS, "harnessLoopCostStopUsd": HARNESS_LOOP_COST_STOP_USD,
