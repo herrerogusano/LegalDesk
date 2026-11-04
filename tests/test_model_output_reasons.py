@@ -7,6 +7,7 @@ event and the response keep ``model_failed``.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -77,7 +78,7 @@ class Writer:
         return self.written
 
 
-def run(passage: str, *, resolver: Mapping[str, object] = COMPLETE, written: Any = None):
+def run(passage: str, *, resolver: Mapping[str, object] = COMPLETE, written: Any = None, writer: Any = None):
     auth = load_authorization_store()
     bindings = InMemoryConversationBindingStore()
     chat_request = request()
@@ -94,7 +95,7 @@ def run(passage: str, *, resolver: Mapping[str, object] = COMPLETE, written: Any
         knowledge_base_id="kb-fictional", generator=FakeGenerator(),
         guardrail_client=FakeGuardrailClient(), guardrail_config=GUARDRAIL_CONFIG,
         correlation_id=CORRELATION, conversation_binding_store=bindings,
-        evidence_resolver=FakeEvidenceResolver(resolver), answer_writer=Writer(written),  # type: ignore[arg-type]
+        evidence_resolver=FakeEvidenceResolver(resolver), answer_writer=writer or Writer(written),  # type: ignore[arg-type]
         grounding_validator=FakeGroundingValidator(GROUNDED), telemetry_sink=sink,
     )
     return response, sink
@@ -233,6 +234,43 @@ class ConverseReplies(unittest.TestCase):
         with self.assertRaises(evidence.EvidenceContractError) as caught:
             resolver.resolve(evidence.EvidenceResolutionRequest(question="q", evidence=[{"citation_id": "citation-1", "text": "t"}]))
         self.assertEqual(caught.exception.reason, "model_output_truncated")
+
+
+class ThroughTheRealWriterAdapter(unittest.TestCase):
+    """F-01: the fix first reached only fake writers, because the deployed adapter raised before the caller could decide."""
+
+    PREPOSITION = [{"actor": "This Agreement", "action": "is governed by", "recipient": "California law"}]
+
+    def adapter(self, written: Mapping[str, object]) -> evidence.ConverseAnswerWriter:
+        reply = ConverseReplies.reply(json.dumps(written), "end_turn")
+        return evidence.ConverseAnswerWriter(ConverseReplies.Client(reply), model_id="model-fictional")  # type: ignore[arg-type]
+
+    def test_an_advisory_malformed_relationship_keeps_the_prose(self) -> None:
+        written = {"answer": "California law governs.", "relationships": self.PREPOSITION}
+        response, sink = run(OPTIONAL_PASSAGE, writer=self.adapter(written))
+        self.assertEqual(response.operation_status, "ok")
+        self.assertEqual(response.answer, "California law governs.")
+        self.assertEqual(sink.dropped(), "writer_relationship_action_preposition")
+
+    def test_a_required_malformed_relationship_still_fails_closed(self) -> None:
+        written = {"answer": "The supplier must send written notice to the buyer.",
+                   "relationships": [{"actor": "The supplier", "action": "send written notice to", "recipient": "the buyer"}]}
+        response, sink = run(REQUIRED_PASSAGE, writer=self.adapter(written))
+        self.assertEqual(response.error_code, "model_failed")
+        self.assertEqual(sink.codes()["write_answer"], "writer_relationship_action_preposition")
+
+    def test_other_contract_errors_are_still_rejected(self) -> None:
+        for written in (
+            {"answer": "  ", "relationships": self.PREPOSITION},
+            {"answer": "ok", "extra": 1},
+            # PullBeacon PB-001: a malformed relationship never hides another violation. Keys and answer are checked before it.
+            {"answer": "ok", "extra": 1, "relationships": self.PREPOSITION},
+            {"answer": 5, "relationships": self.PREPOSITION},
+        ):
+            with self.subTest(written=written):
+                response, sink = run(OPTIONAL_PASSAGE, writer=self.adapter(written))
+                self.assertEqual(response.error_code, "model_failed")
+                self.assertEqual(sink.codes()["write_answer"], "model_output_invalid")
 
 
 class ReasonsAreClosed(unittest.TestCase):
