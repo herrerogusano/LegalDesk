@@ -11,6 +11,7 @@ Timed-out jobs remain PENDING_INGESTION for reconciliation.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from time import monotonic, sleep, time
@@ -241,6 +242,27 @@ def run_knowledge_base_sync(
     # A completed job with partial failures does not identify which selected
     # documents failed. Leave them pending rather than claim an unproven state.
     return KnowledgeBaseSyncResult(job_id, terminal_status, 0, failed_count)
+
+
+_STATUS_ERROR_CODES = frozenset({
+    "AccessDeniedException", "ThrottlingException", "ValidationException",
+    "ResourceNotFoundException", "InternalServerException", "ServiceQuotaExceededException",
+})
+
+
+def _record_status_unresolved(operation_id: str, exc: Exception) -> None:
+    """A swallowed per-document read leaves the operation pending, so it must say why (F-32). Closed values only."""
+
+    try:
+        response = getattr(exc, "response", None)
+        error = response.get("Error") if isinstance(response, Mapping) else None
+        code = error.get("Code") if isinstance(error, Mapping) else None
+        print(json.dumps({
+            "event_type": "ingestion_status_unresolved", "operation_id": operation_id,
+            "aws_error_code": code if code in _STATUS_ERROR_CODES else "other",
+        }, separators=(",", ":"), sort_keys=True), flush=True)
+    except Exception:
+        pass  # Diagnostics must never change the fail-closed result.
 
 
 class AsyncKnowledgeBaseIngestionService:
@@ -518,7 +540,8 @@ class AsyncKnowledgeBaseIngestionService:
                         found[document_id] = DocumentStatus.FAILED
                     else:
                         return None
-        except Exception:
+        except Exception as exc:
+            _record_status_unresolved(operation.operation_id, exc)
             return None
         return found if len(found) == len(uris) else None
 
