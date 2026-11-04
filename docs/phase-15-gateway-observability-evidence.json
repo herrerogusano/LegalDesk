@@ -1,0 +1,174 @@
+{
+  "verifiedAtUtc": "2026-11-04T11:35:00Z",
+  "account": "344774635844",
+  "region": "eu-west-1",
+  "awsWrites": 0,
+  "invocations": 0,
+  "metricsDateUtc": "2026-11-03",
+  "gatewayRequests": {
+    "initialize": 129,
+    "notifications/initialized": 129,
+    "tools/list": 258,
+    "tools/call": 123,
+    "aggregate": 639
+  },
+  "spanCountModel": {
+    "serverPerRequest": 1,
+    "extraClientPerToolsCall": 1,
+    "documentedCountEstimateDay": 762,
+    "typicalMonthRequests": 248,
+    "typicalMonthToolsCalls": 48,
+    "typicalMonthSpans": 296,
+    "upperPlanningMonthRequests": 1000,
+    "upperPlanningMonthToolsCalls": 800,
+    "upperPlanningMonthSpans": 1800
+  },
+  "byteAssumptions": {
+    "typicalSpanBytes": 1024,
+    "upperPlanningSpanBytes": 8192,
+    "measuredGatewayBytes": null,
+    "typicalSource": "https://aws.amazon.com/cloudwatch/pricing/ (example assumes ~1kB/span; rounded to 1KiB here)",
+    "upperSource": "worker planning sensitivity: 8x typical, not a measured maximum or safety cap"
+  },
+  "traceDelivery": {
+    "logType": "TRACES",
+    "destinationType": "XRAY",
+    "recordFields": [
+      "trace"
+    ],
+    "mandatoryFields": [
+      "trace"
+    ],
+    "nestedAttributeFilter": false
+  },
+  "accountState": {
+    "traceSegmentDestination": "XRay",
+    "destinationStatus": "ACTIVE",
+    "indexingPercentage": 0,
+    "xraySamplingRuleFixedRate": 0.05,
+    "xraySamplingReservoirPerSecond": 1,
+    "deliverySources": 0,
+    "awsSpansLogGroupExists": false,
+    "xrayCloudWatchResourcePolicyExists": false,
+    "EnableManagedAdot": "false"
+  },
+  "priceSource": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudWatch/current/eu-west-1/index.json",
+  "pricePublicationDate": "2026-10-07T11:55:40Z",
+  "priceVersion": "20261007115540",
+  "rates": [
+    {
+      "sku": "UVFHC3WYJQNJUXAZ",
+      "usageType": "EU-VendedLog-Bytes",
+      "prices": [
+        {
+          "unit": "GB",
+          "begin": "0",
+          "end": "10240",
+          "usd": "0.5700000000",
+          "description": "$0.57 per GB of vended logs ingested in Standard log class for the first 10TB - EU (Ireland)"
+        },
+        {
+          "unit": "GB",
+          "begin": "10240",
+          "end": "30720",
+          "usd": "0.2850000000",
+          "description": "$0.285 per GB of vended logs ingested in Standard log class for the next 20TB - EU (Ireland)"
+        },
+        {
+          "unit": "GB",
+          "begin": "30720",
+          "end": "51200",
+          "usd": "0.1140000000",
+          "description": "$0.114 per GB of vended logs ingested in Standard log class for the next 20TB - EU (Ireland)"
+        },
+        {
+          "unit": "GB",
+          "begin": "51200",
+          "end": "Inf",
+          "usd": "0.0570000000",
+          "description": "$0.057 per GB of vended logs ingested in Standard log class over 50TB - EU (Ireland)"
+        }
+      ]
+    },
+    {
+      "sku": "AZ23XA4X5R5WES43",
+      "usageType": "EU-XRay-Spans-Indexed",
+      "prices": [
+        {
+          "unit": "spans indexed",
+          "begin": "0",
+          "end": "Inf",
+          "usd": "0.0000007500",
+          "description": "$0.00000075 per spans indexed for EU-XRay-Spans-Indexed in EU (Ireland)"
+        }
+      ]
+    },
+    {
+      "sku": "M93YPPU987S2T6U9",
+      "usageType": "EU-TimedStorage-ByteHrs",
+      "prices": [
+        {
+          "unit": "GB-Mo",
+          "begin": "0",
+          "end": "Inf",
+          "usd": "0.0300000000",
+          "description": "$0.03 per GB-mo of log storage - EU (Ireland)"
+        }
+      ]
+    },
+    {
+      "sku": "RWPQWFEDFDUKMSDM",
+      "usageType": "EU-Omni-DataScanned-Bytes",
+      "prices": [
+        {
+          "unit": "GB",
+          "begin": "0",
+          "end": "Inf",
+          "usd": "0.0050000000",
+          "description": "$0.005 per GB of log data scanned by CloudWatch Log Analytics and CloudWatch Logs Insights queries - EU (Ireland)"
+        }
+      ]
+    },
+    {
+      "sku": "KMC9E64U7N8R2SMA",
+      "usageType": "EU-Application-Signals-Bytes",
+      "prices": [
+        {
+          "unit": "GB",
+          "begin": "0",
+          "end": "10240",
+          "usd": "0.3500000000",
+          "description": "$0.35 per GB of Application Signals data ingested for the first 10TB - EU (Ireland)"
+        },
+        {
+          "unit": "GB",
+          "begin": "10240",
+          "end": "30720",
+          "usd": "0.2000000000",
+          "description": "$0.20 per GB of Application Signals data ingested for the next 20TB - EU (Ireland)"
+        },
+        {
+          "unit": "GB",
+          "begin": "30720",
+          "end": "Inf",
+          "usd": "0.1500000000",
+          "description": "$0.15 per GB of Application Signals data ingested for over 30TB - EU (Ireland)"
+        }
+      ]
+    },
+    {
+      "sku": "KJBTQPDHW2H92B8Y",
+      "usageType": "EU-DataProcessing-Bytes",
+      "prices": [
+        {
+          "unit": "GB",
+          "begin": "0",
+          "end": "Inf",
+          "usd": "0.5700000000",
+          "description": "$0.57 per GB custom log data ingested in Standard log class - EU (Ireland)"
+        }
+      ]
+    }
+  ],
+  "accountFreeAllowanceVerified": false
+}

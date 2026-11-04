@@ -1070,3 +1070,8 @@ to this branch showed only `MinimalHarness.MaxIterations`, replacement heuristic
 | 12 | | report path | | 30 | |
 | 13 | | | | 10 | |
 | 14 | | cleanup line (`reports=… expected=… deleted=… alreadyAbsent=… remaining=0`) | | 0 | |
+
+
+## F-04 Gateway observability decision (2026-11-04)
+
+Gateway log/trace activation remains blocked under the no-content rule. No template or preview profile is prepared. See [the evidence and cost report](phase-15-gateway-observability.md) for field locations, rejected whitelist, trace-only delivery prerequisites, exact Irish unit rates, estimated traffic costs, synthetic-window exception scope and the unavailable Premium Support route. The closed #96 diagnostic is what remains; no paid support plan or public re:Post question is approved.
