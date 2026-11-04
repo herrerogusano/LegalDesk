@@ -72,7 +72,9 @@ REPORT_PREFIX = "phase15-routing-"
 SUBSET_REPORT_PREFIX = "phase15-routing-subset-"
 MAX_SUBSET_INVOCATIONS = 12
 STAGE_REASONS = frozenset({"model_output_invalid", "model_output_truncated", "resolution_invalid",
-                          "writer_answer_invalid", "writer_relationship_invalid", "writer_relationship_missing",
+                          "writer_answer_invalid", "writer_relationship_invalid", "writer_relationship_list_invalid",
+                          "writer_relationship_shape_invalid", "writer_relationship_value_invalid", "writer_relationship_action_length",
+                          "writer_relationship_action_preposition", "writer_relationship_duplicate", "writer_relationship_missing",
                           "writer_relationship_unsupported", "model_failed", "service_unavailable", "timeout"})
 DATASET_SCHEMA = "phase15-routing-dataset-1"
 REPORT_SCHEMA = "phase15-routing-report-1"
