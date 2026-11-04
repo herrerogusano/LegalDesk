@@ -11,6 +11,7 @@ Timed-out jobs remain PENDING_INGESTION for reconciliation.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from time import monotonic, sleep, time
@@ -92,9 +93,16 @@ def _validate_document_refs(document_refs: Sequence[DocumentScopeRef]) -> None:
 
 def validate_ingestion_documents(
     *, object_verifier: S3ObjectVerifier, metadata_repository: DocumentMetadataRepository,
-    document_refs: Sequence[DocumentScopeRef],
+    document_refs: Sequence[DocumentScopeRef], retry_pending_uploaded_before: float | None = None,
+    open_document_ids: frozenset[str] = frozenset(),
 ) -> tuple[Document, ...]:
-    """Validate one explicit scope before a KB start request."""
+    """Validate one explicit scope before a KB start request.
+
+    ``retry_pending_uploaded_before`` lets a document stuck in PENDING_INGESTION start again once
+    its operation record can have expired: reconciliation never turns NOT_FOUND into FAILED without
+    a job, so such a document had no way out (F-34). A younger pending document, or one in
+    ``open_document_ids`` (an unexpired, unfinished operation), is still refused.
+    """
 
     _validate_document_refs(document_refs)
     documents: list[Document] = []
@@ -104,7 +112,13 @@ def validate_ingestion_documents(
         )
         if document is None:
             raise ValueError("a selected document is not present in the requested scope")
-        if document.status not in {DocumentStatus.UPLOADED, DocumentStatus.FAILED}:
+        stuck = (
+            document.status is DocumentStatus.PENDING_INGESTION
+            and retry_pending_uploaded_before is not None
+            and document.uploaded_at.timestamp() < retry_pending_uploaded_before
+            and document.document_id not in open_document_ids
+        )
+        if document.status not in {DocumentStatus.UPLOADED, DocumentStatus.FAILED} and not stuck:
             raise ValueError("a selected document is not ready for a new ingestion attempt")
         if document.malware_scan_status is not MalwareScanStatus.CLEAN:
             raise ValueError("a selected document has no clean malware scan")
@@ -243,6 +257,27 @@ def run_knowledge_base_sync(
     return KnowledgeBaseSyncResult(job_id, terminal_status, 0, failed_count)
 
 
+_STATUS_ERROR_CODES = frozenset({
+    "AccessDeniedException", "ThrottlingException", "ValidationException",
+    "ResourceNotFoundException", "InternalServerException", "ServiceQuotaExceededException",
+})
+
+
+def _record_status_unresolved(operation_id: str, exc: Exception) -> None:
+    """A swallowed per-document read leaves the operation pending, so it must say why (F-32). Closed values only."""
+
+    try:
+        response = getattr(exc, "response", None)
+        error = response.get("Error") if isinstance(response, Mapping) else None
+        code = error.get("Code") if isinstance(error, Mapping) else None
+        print(json.dumps({
+            "event_type": "ingestion_status_unresolved", "operation_id": operation_id,
+            "aws_error_code": code if code in _STATUS_ERROR_CODES else "other",
+        }, separators=(",", ":"), sort_keys=True), flush=True)
+    except Exception:
+        pass  # Diagnostics must never change the fail-closed result.
+
+
 class AsyncKnowledgeBaseIngestionService:
     """Start and observe one bounded ingestion job without provider polling loops."""
 
@@ -332,6 +367,15 @@ class AsyncKnowledgeBaseIngestionService:
             object_verifier=self.object_verifier,
             metadata_repository=self.metadata_repository,
             document_refs=refs,
+            retry_pending_uploaded_before=self.clock() - self.operation_ttl_seconds,
+            open_document_ids=frozenset(
+                document_id
+                for open_operation in self.state_store.list_ingestion_operations_for_scope(
+                    subject=subject, tenant_id=tenant_id, matter_id=matter_id, limit=100,
+                )
+                if open_operation.status not in {"INDEXED", "FAILED"}
+                for document_id in open_operation.document_ids
+            ),
         )
         now = self.clock()
         operation = IngestionOperationRecord(
@@ -518,7 +562,8 @@ class AsyncKnowledgeBaseIngestionService:
                         found[document_id] = DocumentStatus.FAILED
                     else:
                         return None
-        except Exception:
+        except Exception as exc:
+            _record_status_unresolved(operation.operation_id, exc)
             return None
         return found if len(found) == len(uris) else None
 

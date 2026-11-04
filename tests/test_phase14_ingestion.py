@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import sys
 import re
 import unittest
@@ -15,7 +18,7 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 from legaldesk.authorization import AuthorizationDenied
 from legaldesk.documents import InMemoryDocumentMetadataRepository
 from legaldesk.domain.models import Document, DocumentStatus, MalwareScanStatus
-from legaldesk.ingestion import AsyncKnowledgeBaseIngestionService, IngestionConflictError
+from legaldesk.ingestion import AsyncKnowledgeBaseIngestionService, INGESTION_OPERATION_TTL_SECONDS, IngestionConflictError
 from legaldesk.http_app import ApplicationComposition, LoopbackLegalDeskApp
 from legaldesk.state import InMemoryEphemeralStateStore, IngestionOperationRecord
 from legaldesk.quota import InMemoryQuotaLedger, utc_month
@@ -360,6 +363,55 @@ class Phase14PerDocumentIngestionTests(unittest.TestCase):
         self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.INDEXED)
         self.assertEqual(client.doc_calls[0]["documentIdentifiers"], [{"dataSourceType": "S3", "s3": {"uri": _uri("doc-a")}}])
 
+    def _stuck(self, *, age_seconds: float, client: Any) -> tuple[Any, Any]:
+        document = replace(_document("doc-a"), status=DocumentStatus.PENDING_INGESTION)
+        now = document.uploaded_at.timestamp() + age_seconds
+        metadata = InMemoryDocumentMetadataRepository()
+        metadata.save(document)
+        service = AsyncKnowledgeBaseIngestionService(
+            client=client, object_verifier=_Objects(), metadata_repository=metadata,
+            state_store=InMemoryEphemeralStateStore(clock=lambda: now),
+            knowledge_base_id="kb-a", data_source_id="ds-a", clock=lambda: now, source_bucket=BUCKET,
+        )
+        return service, metadata
+
+    def test_a_document_stuck_after_its_operation_expired_can_reach_failed(self) -> None:
+        # F-34: live on 2026-11-04, a scanned PDF stayed PENDING_INGESTION with no operation and no way out.
+        client = _PerDocumentClient({_uri("doc-a"): "NOT_FOUND"}, failed=1)
+        service, metadata = self._stuck(age_seconds=INGESTION_OPERATION_TTL_SECONDS + 1, client=client)
+        operation = service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a",),
+                                  correlation_id="corr-a", idempotency_key="retry-a")
+        self.assertEqual(self._status(service, operation).status, "FAILED")
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.FAILED)
+
+    def test_a_pending_document_whose_operation_may_be_open_is_still_refused(self) -> None:
+        client = _PerDocumentClient({}, failed=0)
+        service, _ = self._stuck(age_seconds=INGESTION_OPERATION_TTL_SECONDS - 1, client=client)
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a",),
+                          correlation_id="corr-a", idempotency_key="retry-a")
+        self.assertEqual(client.start_calls, [])
+
+    def test_an_old_document_in_an_open_operation_on_another_set_is_refused(self) -> None:
+        # PullBeacon PB-001 on #112: upload age alone would let {a} start while {a,b} is still running.
+        old = replace(_document("doc-a"), status=DocumentStatus.UPLOADED)
+        now = old.uploaded_at.timestamp() + INGESTION_OPERATION_TTL_SECONDS + 1
+        metadata = InMemoryDocumentMetadataRepository()
+        metadata.save(old)
+        metadata.save(replace(_document("doc-b"), uploaded_at=old.uploaded_at))
+        client = _PerDocumentClient({}, failed=0)
+        service = AsyncKnowledgeBaseIngestionService(
+            client=client, object_verifier=_Objects(), metadata_repository=metadata,
+            state_store=InMemoryEphemeralStateStore(clock=lambda: now),
+            knowledge_base_id="kb-a", data_source_id="ds-a", clock=lambda: now, source_bucket=BUCKET,
+        )
+        service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a", "doc-b"),
+                      correlation_id="corr-a", idempotency_key="first")
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a",),
+                          correlation_id="corr-b", idempotency_key="second")
+        self.assertEqual(len(client.start_calls), 1)
+
     def test_failed_document_is_isolated_from_indexed_sibling(self) -> None:
         client = _PerDocumentClient({_uri("doc-a"): "INDEXED", _uri("doc-b"): "FAILED"})
         service, metadata, operation = self._run(client, ("doc-a", "doc-b"))
@@ -434,6 +486,23 @@ class Phase14PerDocumentIngestionTests(unittest.TestCase):
 
         service, metadata, operation = self._run(_Extra({}), ("doc-a",))
         self.assertEqual(self._status(service, operation).status, "PENDING")
+
+    def test_an_unresolved_status_says_why_with_a_closed_code(self) -> None:
+        # F-32: AccessDenied was swallowed, and the operation stayed pending with nothing in the logs.
+        from legaldesk.ingestion import _record_status_unresolved
+
+        class Denied(Exception):
+            response = {"Error": {"Code": "AccessDeniedException", "Message": "SECRET arn"}}
+
+        class Unknown(Exception):
+            response = {"Error": {"Code": "SECRET"}}
+
+        for error, code in ((Denied(), "AccessDeniedException"), (Unknown(), "other"), (ValueError("SECRET"), "other")):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                _record_status_unresolved("ing_1", error)
+            self.assertEqual(json.loads(output.getvalue())["aws_error_code"], code)
+            self.assertNotIn("SECRET", output.getvalue())
 
     def test_job_without_failures_does_not_call_per_document_api(self) -> None:
         client = _PerDocumentClient({_uri("doc-a"): "INDEXED"}, failed=0)

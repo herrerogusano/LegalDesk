@@ -18,6 +18,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 ROOT = Path(__file__).resolve().parents[1]
 EXISTING_PRIMARY_MATTER = "mat_phase14_b_20260928"
+SCAN_CLEAN = "NO_THREATS_FOUND"  # MalwareScanStatus.CLEAN: the stored and public value is not the word "CLEAN"
 
 
 def document_map(documents: list[dict[str, Any]], entries: list[dict[str, Any]], *,
@@ -193,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subject")
     parser.add_argument("--operator-subject")
     parser.add_argument("--reference-matter")
+    parser.add_argument("--retry-stuck-pending", action="store_true",
+                        help="ingest: also select PENDING_INGESTION; the server refuses any whose operation may still be open")
     args = parser.parse_args(argv)
     existing_primary = args.matter_id == EXISTING_PRIMARY_MATTER
     if not existing_primary and not re.fullmatch(r"mat_phase15_[a-z0-9_]{3,64}", args.matter_id):
@@ -264,7 +267,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             print(json.dumps([{k: row[k] for k in ("documentId", "status", "malwareScanStatus")} for row in rows], indent=2))
         else:
-            ready = sorted(r["documentId"] for r in rows if r["status"] == "UPLOADED" and r["malwareScanStatus"] == "CLEAN")
+            states = {"UPLOADED", "PENDING_INGESTION"} if args.retry_stuck_pending else {"UPLOADED"}
+            ready = sorted(r["documentId"] for r in rows if r["status"] in states and r["malwareScanStatus"] == SCAN_CLEAN)
             for start in range(0, len(ready), 20):
                 ids = ready[start:start + 20]
                 key = "phase15-corpus-" + hashlib.sha256(json.dumps(ids).encode()).hexdigest()[:32]
