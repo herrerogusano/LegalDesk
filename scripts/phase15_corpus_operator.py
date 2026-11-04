@@ -17,6 +17,28 @@ from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 ROOT = Path(__file__).resolve().parents[1]
+EXISTING_PRIMARY_MATTER = "mat_phase14_b_20260928"
+
+
+def document_map(documents: list[dict[str, Any]], entries: list[dict[str, Any]], *,
+                 matter: str, other: str | None) -> dict[str, str]:
+    """Require complete, hash-bound confirmed uploads in the selected scope."""
+    primary_only = matter == EXISTING_PRIMARY_MATTER
+    required = {d["goldenId"]: d for d in documents if not primary_only or d["matterId"] != "mat_glacier"}
+    mapping = {}
+    for golden_id, doc in required.items():
+        scope = other if doc["matterId"] == "mat_glacier" else matter
+        history = [e for e in entries if e["goldenId"] == golden_id]
+        if (not scope or not history or history[-1]["state"] != "confirmed"
+                or any(e["matterId"] != scope or e["sha256"] != doc["sha256"] for e in history)):
+            raise ValueError("complete confirmed journal with matching scope/hash required")
+        assigned = history[-1]["documentId"]
+        if not isinstance(assigned, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", assigned):
+            raise ValueError("invalid assigned document id")
+        mapping[golden_id] = assigned
+    if len(set(mapping.values())) != len(mapping):
+        raise ValueError("document map must be one-to-one")
+    return mapping
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -172,8 +194,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--operator-subject")
     parser.add_argument("--reference-matter")
     args = parser.parse_args(argv)
-    if not re.fullmatch(r"mat_phase15_[a-z0-9_]{3,64}", args.matter_id):
-        parser.error("dedicated synthetic matter id required")
+    existing_primary = args.matter_id == EXISTING_PRIMARY_MATTER
+    if not existing_primary and not re.fullmatch(r"mat_phase15_[a-z0-9_]{3,64}", args.matter_id):
+        parser.error("approved existing primary or dedicated synthetic matter id required")
+    if args.other_matter_id and (existing_primary or not re.fullmatch(r"mat_phase15_[a-z0-9_]{3,64}", args.other_matter_id)
+                                 or args.other_matter_id == args.matter_id):
+        parser.error("existing matter path is primary-only; otherwise a distinct dedicated other matter is required")
+    if existing_primary and args.command == "create-matters":
+        parser.error("existing primary requires no create-matters operation")
     if args.command == "cleanup":
         if not args.execute:
             print(json.dumps({"dryRun": True, "operation": "governance_delete_matter", "matterId": args.matter_id}))
@@ -204,11 +232,13 @@ def main(argv: list[str] | None = None) -> int:
     documents = file_plan(args.manifest)
     entries = read_journal(args.journal)
     if args.command == "map":
-        mapping = {e["goldenId"]: e["documentId"] for e in entries if e["state"] == "confirmed"}
-        if len(mapping) != 27 or len(set(mapping.values())) != 27:
-            raise ValueError("all 27 confirmed uploads are required; lifecycle verification is separate")
+        mapping = document_map(documents, entries, matter=args.matter_id, other=args.other_matter_id)
+        if existing_primary:
+            print("Primary-only map: 26 documents; Glacier excluded; lifecycle verification is separate.", file=sys.stderr)
         print(json.dumps(mapping, indent=2, sort_keys=True))
         return 0
+    if existing_primary:
+        documents = [d for d in documents if d["matterId"] != "mat_glacier"]
     if args.command == "upload":
         documents = [d for d in documents if d["goldenId"] == args.golden_id]
         if len(documents) != 1:
