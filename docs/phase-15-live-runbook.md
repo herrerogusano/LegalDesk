@@ -1039,6 +1039,12 @@ existing safe fallback. This is intentional bounded execution, not a promise of 
 300 s deadline and be discarded; two maximum-length attempts are not guaranteed to fit. The existing deadline/finalization checks remain
 authoritative. No Public Edge timeout/template change is required or included.
 
+The ~25 s fallback figure is a **nominal planning allowance**, not an enforced aggregate deadline: `build_aws_composition` fixes retries to one
+attempt but leaves KB/Bedrock read timeouts at the SDK default (60 s per request). Several fallback requests can exceed the remaining 150 s Lambda
+window. Lambda termination, lease expiry/redelivery and the absolute job deadline still bound the job; this existing latency limitation is not
+fixed by adding an iteration. S3's separate 15 s config is not a fallback model timeout. Measure this in a separately approved async smoke; the
+targeted routing runner deliberately does not execute direct fallback and cannot verify this timing live.
+
 **Cost review:** `E_mixed` now includes four Harness calls plus resolver/writer, two metadata calls and one search. Reproducible T9 estimate:
 USD **2.39 / 4.27** typical/upper for the original 46-invocation block; monthly 50-job usage **3.02 / 10.96**, with fixed 1.30 totals
 **4.32 / 12.26**. The routing loop stop stays at the already bounded **2.20** (upper estimated loop 1.88, about 17% margin). Golden estimate:
