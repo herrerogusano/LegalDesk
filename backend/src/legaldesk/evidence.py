@@ -257,7 +257,13 @@ REASON_OUTPUT_INVALID = "model_output_invalid"            # no text block, not J
 REASON_OUTPUT_TRUNCATED = "model_output_truncated"        # the model stopped at its token limit
 REASON_RESOLUTION_INVALID = "resolution_invalid"          # the resolver's JSON broke the coverage/citation contract
 REASON_ANSWER_INVALID = "writer_answer_invalid"           # empty, or longer than the public answer limit
-REASON_RELATIONSHIP_INVALID = "writer_relationship_invalid"        # the optional relationship's own shape (action ends in a preposition, duplicate...)
+REASON_RELATIONSHIP_INVALID = "writer_relationship_invalid"        # the validated writer result carried relationships that are not a sequence
+REASON_RELATIONSHIP_LIST_INVALID = "writer_relationship_list_invalid"            # not a list, or more than the allowed number
+REASON_RELATIONSHIP_SHAPE_INVALID = "writer_relationship_shape_invalid"          # an item is not an object with exactly actor, action, recipient
+REASON_RELATIONSHIP_VALUE_INVALID = "writer_relationship_value_invalid"          # a field is not text, is empty, too long or has control characters
+REASON_RELATIONSHIP_ACTION_LENGTH = "writer_relationship_action_length"          # action has no words, or more than the allowed number
+REASON_RELATIONSHIP_ACTION_PREPOSITION = "writer_relationship_action_preposition"  # action ends in a linking preposition
+REASON_RELATIONSHIP_DUPLICATE = "writer_relationship_duplicate"                  # the same relationship appears twice
 REASON_RELATIONSHIP_MISSING = "writer_relationship_missing"        # the evidence requires a directed relationship and the writer gave none
 REASON_RELATIONSHIP_UNSUPPORTED = "writer_relationship_unsupported"  # the relationship is not in the evidence, in that order
 
@@ -309,12 +315,12 @@ def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
     """
 
     if not isinstance(value, (list, tuple)) or len(value) > _MAX_WRITER_RELATIONSHIPS:
-        raise EvidenceContractError("writer relationships are invalid", reason=REASON_RELATIONSHIP_INVALID)
+        raise EvidenceContractError("writer relationships are invalid", reason=REASON_RELATIONSHIP_LIST_INVALID)
     normalized: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
     for item in value:
         if not isinstance(item, Mapping) or set(item) != _WRITER_RELATIONSHIP_FIELDS:
-            raise EvidenceContractError("writer relationship has an unsupported shape", reason=REASON_RELATIONSHIP_INVALID)
+            raise EvidenceContractError("writer relationship has an unsupported shape", reason=REASON_RELATIONSHIP_SHAPE_INVALID)
         fields: dict[str, str] = {}
         for field in ("actor", "action", "recipient"):
             field_value = item.get(field)
@@ -324,18 +330,16 @@ def _validate_writer_relationships(value: object) -> tuple[dict[str, str], ...]:
                 or len(field_value) > _MAX_WRITER_RELATIONSHIP_VALUE_LENGTH
                 or any(ord(character) < 32 and character not in "\t\n\r" for character in field_value)
             ):
-                raise EvidenceContractError("writer relationship value is invalid", reason=REASON_RELATIONSHIP_INVALID)
+                raise EvidenceContractError("writer relationship value is invalid", reason=REASON_RELATIONSHIP_VALUE_INVALID)
             fields[field] = field_value.strip()
         action_tokens = _relationship_tokens(fields["action"])
-        if (
-            not action_tokens
-            or len(action_tokens) > _MAX_WRITER_ACTION_TOKENS
-            or action_tokens[-1] in _RELATIONSHIP_TERMINAL_PREPOSITIONS
-        ):
-            raise EvidenceContractError("writer relationship action is invalid", reason=REASON_RELATIONSHIP_INVALID)
+        if not action_tokens or len(action_tokens) > _MAX_WRITER_ACTION_TOKENS:
+            raise EvidenceContractError("writer relationship action is invalid", reason=REASON_RELATIONSHIP_ACTION_LENGTH)
+        if action_tokens[-1] in _RELATIONSHIP_TERMINAL_PREPOSITIONS:
+            raise EvidenceContractError("writer relationship action is invalid", reason=REASON_RELATIONSHIP_ACTION_PREPOSITION)
         key = tuple(fields[field].casefold() for field in ("actor", "action", "recipient"))
         if key in seen:
-            raise EvidenceContractError("writer relationships must be unique", reason=REASON_RELATIONSHIP_INVALID)
+            raise EvidenceContractError("writer relationships must be unique", reason=REASON_RELATIONSHIP_DUPLICATE)
         seen.add(key)
         normalized.append(fields)
     return tuple(normalized)
@@ -847,6 +851,12 @@ __all__ = [
     "REASON_OUTPUT_INVALID",
     "REASON_OUTPUT_TRUNCATED",
     "REASON_RELATIONSHIP_INVALID",
+    "REASON_RELATIONSHIP_LIST_INVALID",
+    "REASON_RELATIONSHIP_SHAPE_INVALID",
+    "REASON_RELATIONSHIP_VALUE_INVALID",
+    "REASON_RELATIONSHIP_ACTION_LENGTH",
+    "REASON_RELATIONSHIP_ACTION_PREPOSITION",
+    "REASON_RELATIONSHIP_DUPLICATE",
     "REASON_RELATIONSHIP_MISSING",
     "REASON_RELATIONSHIP_UNSUPPORTED",
     "REASON_RESOLUTION_INVALID",
