@@ -64,7 +64,7 @@ the installed CLI omitted the platform field. This is an operator review note, n
 | Region / account | `eu-west-1` / `344774635844` |
 | Stacks touched | `legaldesk-phase-01` (Harness), `LegalDeskPhase08Gateway`, `LegalDeskPhase14PublicEdge`, `LegalDeskProductionCD`; created and deleted in this block: `LegalDeskPhase15EdgeBootstrap` (the temporary role of step 8) |
 | Not touched | `LegalDeskPhase14IDP`, `…DocumentSecurity`, `…Reconciliation`, `LegalDeskPhase07ReviewTask`, Cognito, KB, Guardrail, Memory, buckets, table |
-| Beta tenant / matters | `tnt_phase14_20260928` · `mat_phase14_a_20260928`, `mat_phase14_b_20260928` (synthetic documents only) |
+| Beta tenant / matters | `tnt_phase14_20260928` · `mat_phase14_a_20260928`, `mat_phase14_b_20260928` (B: owner-approved 26-document primary corpus; Glacier deferred; synthetic only) |
 | Code-artifact bucket | `legaldeskphase08artifacts-legaldeskphase08artifact-4lbcgkaewrsw` (versioned, immutable keys `phase-14/<40-hex commit>/legaldesk-lambda.zip`) |
 | Model | `eu.anthropic.claude-sonnet-4-6` everywhere |
 
@@ -1000,7 +1000,7 @@ Both flags go together: the agent without `search_documents` is broken.
 F-01's written question, nine-invocation command, closed search-stage reason lookup and subset safeguards are in
 [`phase-15-routing-eval.md#targeted-diagnosis-f-01-never-a-gate`](phase-15-routing-eval.md#targeted-diagnosis-f-01-never-a-gate).
 Every live command now needs `--question-ref` pointing to a question written before execution. A targeted report is never gate evidence.
-F-03's shared corpus procedure and all 30 routing-case dependencies are in [`phase-15-corpus-operator.md`](phase-15-corpus-operator.md).
+F-03 uses existing `mat_phase14_b_20260928` (26 primary documents, no Glacier; no create-matters). Upload is blocked by the deployed 20-upload tenant quota until an approved parameter-only adjustment and cleanup authority are arranged. The end-to-end procedure and all 30 routing-case dependencies are in [`phase-15-corpus-operator.md`](phase-15-corpus-operator.md).
 
 **F-02, owner approved 2026-11-04, ADR-021 D4:** raise the agentic chat's cap from three to **four** iterations so list → fields → search → plan
 can finish. The stream's exact `max_iterations_exceeded` now maps to the existing `iterations_exhausted` outcome/reason. A failed loop still

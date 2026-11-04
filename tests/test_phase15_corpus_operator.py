@@ -13,6 +13,48 @@ from legaldesk.authorization import Boto3DynamoAuthorizationStore
 
 
 class CorpusOperatorTests(unittest.TestCase):
+    def test_existing_primary_map_is_complete_hash_bound_and_accepted_by_golden_loader(self):
+        from evals.phase15_golden_eval import load_dataset, prepare_corpus, build_world, validate_document_map
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset = load_dataset()[0]
+            prepare_corpus(dataset, root, pdf_writer=lambda doc, path: path.write_bytes(b"synthetic PDF"))
+            docs = op.file_plan(root / "corpus-manifest.json")
+            entries = [{"goldenId": d["goldenId"], "matterId": op.EXISTING_PRIMARY_MATTER,
+                        "sha256": d["sha256"], "state": "confirmed", "documentId": f"real-{i}"}
+                       for i, d in enumerate(docs) if d["matterId"] != "mat_glacier"]
+            mapping = op.document_map(docs, entries, matter=op.EXISTING_PRIMARY_MATTER, other=None)
+            self.assertEqual(len(mapping), 26)
+            self.assertNotIn("doc-glacier-contract-01", mapping)
+            self.assertIn("doc-failed-upload", mapping)
+            self.assertEqual(len(validate_document_map(build_world(dataset), mapping)), 26)
+            for change in ("missing", "hash", "scope", "duplicate", "ambiguous"):
+                bad = [dict(e) for e in entries]
+                if change == "missing": bad.pop()
+                elif change == "hash": bad[0]["sha256"] = "0" * 64
+                elif change == "scope": bad[0]["matterId"] = "mat_phase14_a_20260928"
+                elif change == "duplicate": bad[0]["documentId"] = bad[1]["documentId"]
+                else: bad[-1]["state"] = "uploaded"
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    op.document_map(docs, bad, matter=op.EXISTING_PRIMARY_MATTER, other=None)
+
+    def test_existing_primary_upload_dry_run_and_glacier_refusal_before_transport(self):
+        from evals.phase15_golden_eval import load_dataset, prepare_corpus
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prepare_corpus(load_dataset()[0], root, pdf_writer=lambda doc, path: path.write_bytes(b"synthetic PDF"))
+            args = ["upload", "--matter-id", op.EXISTING_PRIMARY_MATTER, "--manifest", str(root / "corpus-manifest.json"),
+                    "--journal", str(root / "journal.jsonl"), "--golden-id", "doc-failed-upload"]
+            with patch.object(op, "transport", side_effect=AssertionError("HTTP")), patch("builtins.print"):
+                self.assertEqual(op.main(args), 0)
+                with self.assertRaises(SystemExit):
+                    op.main(args[:-1] + ["doc-glacier-contract-01", "--execute"])
+                with self.assertRaises(SystemExit):
+                    op.main(["create-matters", "--matter-id", op.EXISTING_PRIMARY_MATTER])
+                for matter in ("mat_phase14_a_20260928", "mat_arbitrary", op.EXISTING_PRIMARY_MATTER + "_copy"):
+                    with self.subTest(matter=matter), self.assertRaises(SystemExit):
+                        op.main(["cleanup", "--matter-id", matter])
+
     def test_full_manifest_is_validated_before_network_and_tampering_is_rejected(self):
         from evals.phase15_golden_eval import load_dataset, prepare_corpus
         with tempfile.TemporaryDirectory() as tmp:

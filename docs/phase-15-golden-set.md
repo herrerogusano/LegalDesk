@@ -259,7 +259,7 @@ That is why it is a subset and not all 80 cases; a larger one needs the quota ra
 **Ids.** The beta assigns its own document ids; the dataset oracles use dataset ids. `--document-map` (`{dataset id: real id}`, validated before any spend: complete,
 known, one-to-one) is applied to every id that leaves the deployment.
 
-**Documents.** The real run needs a dedicated synthetic matter holding exactly the corpus, plus the document of the other matter. `prepare-corpus` generates what
+**Documents.** The approved primary path uses existing `mat_phase14_b_20260928` with all 26 primary documents; Glacier is deferred. The primary-only map is accepted, with reduced foreign-content coverage for inj-03, inj-05 and inj-08 (see the corpus operator procedure). `prepare-corpus` generates what
 the fixtures lack; the upload, the failed-upload document and the cleanup (matter delete from the data-governance runbook, residual bindings, quota) are described
 in the cost document. Nothing has been uploaded.
 
