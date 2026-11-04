@@ -392,6 +392,10 @@ def _violations_for(profile: Mapping[str, Any], added: Mapping[str, str], modifi
     problems: list[str] = []
     expected_add = set(profile.get("add", []))
     expected_modify = {key: set(value) for key, value in (profile.get("modify") or {}).items()}
+    if profile.get("exactModify"):
+        for logical_id, properties in expected_modify.items():
+            if set(modified.get(logical_id, [])) != properties:
+                problems.append(f"exact modification required: {logical_id} [{', '.join(sorted(properties))}]")
     for logical_id in sorted(set(added) - expected_add):
         problems.append(f"unexpected addition: {logical_id} ({added[logical_id]})")
     for logical_id in sorted(expected_add - set(added)):
@@ -492,6 +496,14 @@ def analyze_change_set(described: Mapping[str, Any], profile: Mapping[str, Any],
     inherited: list[str] = []
     conditional_accepted: list[str] = []
     extra_problems: list[str] = []
+    if profile.get("stackName") and described.get("StackName") != profile["stackName"]:
+        extra_problems.append("stack outside the profile")
+    if profile.get("exactModify"):
+        expected_ids = set(profile.get("modify", {}))
+        if len(rows) != len(expected_ids) or {r["LogicalResourceId"] for r in rows} != expected_ids:
+            extra_problems.append("exact resource set required")
+        if any(row.get("Replacement") != "False" for row in rows):
+            extra_problems.append("explicit Replacement False required")
     allowed_nested = profile.get("conditionalNestedAllowed") or {}
     for change in rows:
         logical_id, action, resource_type = change["LogicalResourceId"], change["Action"], change["ResourceType"]

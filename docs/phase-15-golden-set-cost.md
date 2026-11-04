@@ -16,12 +16,12 @@ profile per kind of question, same upper-bound factors. A test pins that the pri
 
 | | USD |
 |---|---|
-| **Real run, typical case** (80 cases) | **≈ 6.6** |
-| **Real run, upper bound** (inputs ×1.6, outputs ×2 up to each call's cap, bigger microVM, the Guardrail lets every "blocked" question through) | **≈ 12.0** |
-| One-off preparation of the corpus in the matter (IDP for the 9 generated documents, Textract for their scanned pages, KB embeddings) | 0.2 typical · 0.8 upper |
-| **Real run plus corpus preparation** | **≈ 6.8 typical · ≈ 12.8 upper** |
-| Average per case | 0.082 typical · 0.150 upper |
-| **Of which the real async subset** (8 cases through the deployed queue and worker, plus 2 async scenarios) | **0.58 typical · 1.03 upper** |
+| **Real run, typical case** (80 cases) | **≈ 6.8** |
+| **Real run, upper bound** (inputs ×1.6, outputs ×2 up to each call's cap, bigger microVM, the Guardrail lets every "blocked" question through) | **≈ 12.4** |
+| One-off preparation of the corpus in the matter (IDP for all 26 valid documents, 12 scanned pages, embeddings/scan/requests) | 0.5 typical · 0.8 upper |
+| **Real run plus corpus preparation** | **≈ 7.3 typical · ≈ 13.2 upper** |
+| Average per case | 0.085 typical · 0.155 upper |
+| **Of which the real async subset** (8 cases through the deployed queue and worker, plus 2 async scenarios) | **0.60 typical · 1.07 upper** |
 
 The owner's range for D-060 was roughly 5–15 USD: both ends of this estimate fall inside it. Bedrock tokens are about 90 % of the
 total. Taxes and the EUR/USD rate are not included. **No prompt caching is assumed**: if Harness caches the agent prompt the real
@@ -40,8 +40,8 @@ runner share the numbers through `tests/test_phase15_golden_cost_model.py`.
 | Async jobs through the deployed queue (each consumes quota) | **10** (8 cases + 2 scenarios) |
 | Retries, anywhere | **0** (and `total_max_attempts=1` on every SDK client; a test pins it) |
 | Abort | after 3 consecutive errors; the cases not run count as failed, so an aborted or interrupted run cannot pass |
-| Loop-cost stop | stop if the sum of the report's `estimatedLoopCostUsd` passes **5.9** USD (upper bound of the Harness loops, 4.65, plus 25 %). It never trips in the typical case (2.6) |
-| Per invocation | `maxIterations` 3, `timeoutSeconds` 90, `maxTokens` 2048 per iteration (`AGENT_CHAT_*`) |
+| Loop-cost stop | stop if the sum of the report's `estimatedLoopCostUsd` passes **6.3** USD (upper bound of the Harness loops, 4.98, plus 25 %). It never trips in the typical case (2.83) |
+| Per invocation | `maxIterations` 4, `timeoutSeconds` 90, `maxTokens` 2048 per iteration (`AGENT_CHAT_*`) |
 
 ## Quota (this is the constraint on the async part)
 
@@ -59,7 +59,7 @@ is why it is a subset (decision for the owner below).
 | `B_text` | `search_documents` (legal text, unanswerable, ambiguous) | 36 | 0.099 | 0.175 |
 | `C_inventory` | `list_matter_documents` | 6 | 0.029 | 0.052 |
 | `D_data` | list + `get_extracted_fields` | 16 | 0.052 | 0.093 |
-| `E_mixed` | data + text (and "lookup then search") | 10 | 0.124 | 0.220 |
+| `E_mixed` | data + text (and "lookup then search") | 10 | 0.145 | 0.253 |
 
 Figures include the input Guardrail call, the Harness loop and its tools, and, when the case has a RAG expectation, the probe (one resolver call and,
 unless the resolver finds no support, one writer call, one Knowledge Base retrieve and the grounding Guardrail units). Cases the Guardrail is expected to
@@ -73,13 +73,13 @@ touching production code.
 | Component | Typical | Upper bound |
 |---|---|---|
 | Input Guardrail (80 calls) | 0.09 | 0.18 |
-| Harness loops and tools (direct runs) | 4.35 | 7.99 |
+| Harness loops and tools (direct runs) | 4.55 | 8.32 |
 | In-process pipeline probes | 1.54 | 2.80 |
-| Async subset: 8 case jobs | 0.55 | 0.97 |
+| Async subset: 8 case jobs | 0.57 | 1.01 |
 | Async scenarios (expired session: no model call; duplicate delivery: one job) | 0.03 | 0.06 |
 | CloudWatch logs and state | 0.01 | 0.04 |
-| **Total** | **6.56** | **12.04** |
-| Corpus preparation (separate, one-off) | 0.2 | 0.8 |
+| **Total** | **6.79** | **12.40** |
+| Corpus preparation (separate, one-off) | 0.5 | 0.8 |
 
 ## What would change the numbers
 
@@ -95,6 +95,9 @@ touching production code.
 
 ## Documents the real run needs (preparation, cleanup)
 
+Exact operator commands, authorization prerequisites, corrected cost, bounded upload helper and lifecycle/cleanup checks:
+[`phase-15-corpus-operator.md`](phase-15-corpus-operator.md). The old 0.20 estimate covered generated files only; both evals now share one whole corpus.
+
 The real run reads a **dedicated synthetic matter** that holds exactly the corpus (the inventory cases depend on the exact list). Nothing is uploaded by the
 runner and nothing in this branch has been uploaded.
 
@@ -105,7 +108,7 @@ runner and nothing in this branch has been uploaded.
    (`--document-map`): the beta assigns its own ids, and the runner translates every id at the edge. A map that misses a document, names an unknown one or is not
    one-to-one stops the run before any spend.
 3. The failed-upload document must really end in status `FAILED`; that is **not verified** (it is a hypothesis about how ingestion treats a truncated
-   PDF). Four inventory cases depend on it; if it cannot be produced they are excluded explicitly, not silently.
+   PDF). Four inventory cases depend on it; if it cannot be produced, stop before a full gate run. Do not silently exclude cases or change the frozen dataset.
 4. The "other matter" document (`mat_glacier`) goes to a different tenant/matter the test user cannot open.
 
 **Cleanup** (designed before the first write, as the guides ask): delete the synthetic matter with the matter-delete operation of
@@ -120,4 +123,4 @@ Use the Billing console the day after (month-to-date, filtered to Bedrock, Agent
 owner's single-use confirmation (`AWS_COST_POLICY.md`). If the real Bedrock cost is outside the typical–upper range by more than 25 %, re-read the assumptions
 before any new live run. Record the observed figure next to this estimate.
 
-> **Correction (2026-11-04).** The 5.9 USD loop-cost stop reads `estimatedLoopCostUsd`, which before this date counted only loops with a single model call (so it could not trip). It now sums the model calls of each loop and prices a call that reported no usage at an upper bound; an unknown cost can trip the stop. See `docs/phase-15-t9-cost-estimate.md` (usage accounting correction and the CloudWatch cross-check).
+> **Correction (2026-11-04).** The 6.3 USD loop-cost stop reads `estimatedLoopCostUsd`, which before this date counted only loops with a single model call (so it could not trip). It now sums the model calls of each loop and prices a call that reported no usage at an upper bound; an unknown cost can trip the stop. See `docs/phase-15-t9-cost-estimate.md` (usage accounting correction and the CloudWatch cross-check).

@@ -482,10 +482,13 @@ exacto, que sigue siendo válido); el nuevo formato tiene sus propios tests.
 - **Guardrail de entrada antes del agente**: la pregunta pasa por el Guardrail
   de entrada (como hoy en `chat.py`) antes de crear el job. Si se bloquea, no
   se invoca a Harness ni se consume cuota del agente.
-- Loop gestionado por Harness (Strands sobre Runtime), con `maxIterations` 3,
+- Loop gestionado por Harness (Strands sobre Runtime), con `maxIterations` 4
+  (**aprobado por el propietario el 2026-11-04**, F-02: list, fields, search y
+  plan pueden requerir cuatro llamadas al modelo),
   `timeoutSeconds` 90 para el loop y un presupuesto de 25 s por tool. Como el
   chat es asíncrono, el presupuesto se dimensiona para el peor caso razonable
-  (1–2 tools: unos 15–35 s) y no para el límite de 29 s de la API. El
+  (hasta tres tools secuenciales, sin multiplicar el timeout total de 90 s)
+  y no para el límite de 29 s de la API. El
   system prompt del agente se versiona y se fija por hash como los prompts
   existentes (`prompts/`), y el backend no acepta overrides de modelo, prompt,
   tools ni skills desde el cliente.

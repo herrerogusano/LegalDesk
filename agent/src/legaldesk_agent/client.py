@@ -1040,7 +1040,7 @@ class HarnessInvoker:
 
 # ---------------------------------------------------------------- agentic chat
 
-AGENT_CHAT_MAX_ITERATIONS = 3
+AGENT_CHAT_MAX_ITERATIONS = 4
 AGENT_CHAT_TIMEOUT_SECONDS = 90
 AGENT_CHAT_MAX_TOKENS = 2048
 MAX_HISTORY_MESSAGES = 12
@@ -1149,7 +1149,7 @@ def classify_loop(*, tool_calls: int, stop_reason: str | None, error: str | None
 
     if error is not None:
         return "timeout" if "timeout" in error or "timed out" in error else "failed"
-    if stop_reason == "tool_use":
+    if stop_reason in {"tool_use", "max_iterations_exceeded"}:
         return "iterations_exhausted"  # the model still wanted a tool when the budget ended
     if stop_reason not in (None, "end_turn", "stop_sequence"):
         return "failed"
@@ -1219,7 +1219,7 @@ def invoke_agent_chat(
       owner of conversation memory and passes the last pairs as ``messages``;
     * the tool list, ``allowedTools`` and headers come only from the sealed
       scope; model, tools and skills are never overridable by the caller;
-    * ``maxIterations`` 3 and ``timeoutSeconds`` 90 are fixed here.
+    * ``maxIterations`` 4 and ``timeoutSeconds`` 90 are fixed here.
 
     An error before the stream starts propagates (the worker decides if it is
     transient). A cut stream returns what completed so far so the worker can

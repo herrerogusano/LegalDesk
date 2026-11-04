@@ -348,7 +348,7 @@ class ReportAndCliTests(unittest.TestCase):
         self.assertEqual((plan["harnessInvocations"], plan["retries"], plan["directRagFallbackExecuted"]), (30, 0, False))
 
     def test_execute_requires_approval_release_matter_output_and_token(self) -> None:
-        complete = ["real", "--execute", "--approval-ref", "owner-approval:x", "--release-commit", "a" * 40,
+        complete = ["real", "--execute", "--approval-ref", "owner-approval:x", "--question-ref", "F-01-written-question", "--release-commit", "a" * 40,
                     "--artifact-sha256", "b" * 64, "--matter-id", "mat_sundial",
                     "--output", str(ev.RESULTS_ROOT / "phase15-routing-guard.json")]
         with self.sealed_environment() as builder:   # no token at all
@@ -357,7 +357,7 @@ class ReportAndCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ev.main(complete)
         builder.assert_not_called()
-        for missing in ("--approval-ref", "--release-commit", "--artifact-sha256", "--matter-id", "--output"):
+        for missing in ("--approval-ref", "--question-ref", "--release-commit", "--artifact-sha256", "--matter-id", "--output"):
             index = complete.index(missing)
             partial = complete[:index] + complete[index + 2:]   # drop the flag and its value
             with self.subTest(missing=missing), self.sealed_environment(LEGALDESK_EVAL_ACCESS_TOKEN="token") as builder,                     self.assertRaises(SystemExit):

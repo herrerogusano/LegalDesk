@@ -63,11 +63,17 @@ from legaldesk.memory import (  # noqa: E402
 from legaldesk.quota import InMemoryQuotaLedger, QuotaLimits  # noqa: E402
 from legaldesk.state import InMemoryEphemeralStateStore, SessionRecord  # noqa: E402
 from legaldesk_agent import AgentChatResult, AgentToolCall  # noqa: E402
+from legaldesk_agent.client import AGENT_CHAT_MAX_ITERATIONS  # noqa: E402
 
 RUNNER_VERSION = "1.0.0"
 DATASET_PATH = ROOT / "evals" / "phase15_routing_dataset.json"
 RESULTS_ROOT = ROOT / "evals" / "results"
 REPORT_PREFIX = "phase15-routing-"
+SUBSET_REPORT_PREFIX = "phase15-routing-subset-"
+MAX_SUBSET_INVOCATIONS = 12
+STAGE_REASONS = frozenset({"model_output_invalid", "model_output_truncated", "resolution_invalid",
+                          "writer_answer_invalid", "writer_relationship_invalid", "writer_relationship_missing",
+                          "writer_relationship_unsupported", "model_failed", "service_unavailable", "timeout"})
 DATASET_SCHEMA = "phase15-routing-dataset-1"
 REPORT_SCHEMA = "phase15-routing-report-1"
 # The dataset is frozen: changing a case after a real run would invalidate that run.
@@ -98,7 +104,7 @@ _TARGETS = {
     "review-task-lambda": GatewayTarget.REVIEW_LAMBDA,
 }
 MAX_CONSECUTIVE_REAL_ERRORS = 3
-# Stop the run when the summed estimate of the Harness loops passes this. Upper bound of the loop for the 30 cases (1.75 USD) plus 25 %:
+# Stop the run when the summed estimate of the Harness loops passes this. Preserved stop, above the four-iteration loop estimate for the 30 cases (1.88 USD):
 # scripts/phase15_t9_cost_model.py HARD_CAP["stop_eval_if_loop_usd_exceeds"] (a test keeps both equal). Until 2026-11-03 this rule lived only
 # in the runbook, and the estimate it would have read counted only loops with exactly one model call.
 LOOP_COST_STOP_USD = 2.20
@@ -221,6 +227,11 @@ class Observation:
     usage: dict[str, object] = field(default_factory=dict)
     latency_ms: int = 0
     error: str | None = None
+    correlation_id: str | None = None
+    started_at_ms: int | None = None
+    ended_at_ms: int | None = None
+    stage_error_codes: list[dict[str, str]] = field(default_factory=list)
+    stage_reason_status: str = "not_observed"
     # Closed diagnostics (T9 step 12: 29 of 30 cases fell back and the report could not say why). Labels and enums only.
     plan_error: str | None = None                                # AgentContractError code of an unparsable plan
     omitted_errors: list[str] = field(default_factory=list)      # BlockError value of each dropped block
@@ -463,16 +474,20 @@ class WorkerLoopClient:
     call costs money. A rag_fallback path is therefore recorded as decided, not executed.
     """
 
-    def __init__(self, worker: AgentChatWorker, *, access_token: str, matter_id: str) -> None:
+    def __init__(self, worker: AgentChatWorker, *, access_token: str, matter_id: str,
+                 reason_reader: Callable[[str, int, int], Mapping[str, Any]] | None = None) -> None:
         self.worker, self.access_token, self.matter_id = worker, access_token, matter_id
+        self.reason_reader = reason_reader
         # Every case writes a conversation binding (no TTL, no sweeper) and a 5-minute grant, exactly like a job.
         # They are listed in the report (ids and a hash of the key) and deleted in step 14 of the T9 runbook.
         self.residual = ResidualState()
 
     def run(self, case: Mapping[str, Any]) -> Observation:
         worker, obs, started = self.worker, Observation(), time.perf_counter()
+        obs.started_at_ms = int(time.time() * 1000)
         identity = worker.identity_verifier.verify_authorization_header(f"Bearer {self.access_token}")
         context = build_request_context(identity, self.matter_id, worker.authorization_store)
+        obs.correlation_id = context.correlation_id
         conversation_id, selector = f"eval-{uuid4()}", f"eval-{uuid4()}"
         worker.conversation_store.bind(context, conversation_id=conversation_id, session_selector=selector)
         # Noted before anything that can fail or be interrupted after the bind.
@@ -495,6 +510,7 @@ class WorkerLoopClient:
                 # (legaldesk_gateway_<target>___<tool>), so a rejection here is no longer the normal case.
                 obs.violations.append("stream_rejected_possible_disallowed_tool")
             obs.latency_ms = int((time.perf_counter() - started) * 1000)
+            self._read_reasons(obs)
             return obs
         for call in loop.tool_calls:
             if call.short_name in AGENT_TOOLS:
@@ -508,7 +524,19 @@ class WorkerLoopClient:
         obs.loop_outcome, obs.iterations = outcome.value, loop.iterations
         obs.usage = loop_usage_metadata(loop)
         obs.latency_ms = int((time.perf_counter() - started) * 1000)
+        self._read_reasons(obs)
         return obs
+
+    def _read_reasons(self, obs: Observation) -> None:
+        obs.ended_at_ms = int(time.time() * 1000)
+        if self.reason_reader is None:
+            return
+        try:
+            result = self.reason_reader(obs.correlation_id, obs.started_at_ms, obs.ended_at_ms)
+            obs.stage_error_codes = result["codes"]
+            obs.stage_reason_status = result["status"]
+        except Exception:  # log lag, denial or transport failure must not invent a model cause
+            obs.stage_reason_status = "log_read_failed"
 
 
 # ------------------------------------------------------------------ scoring
@@ -540,11 +568,13 @@ def score_case(case: Mapping[str, Any], obs: Observation, *, offline: bool) -> d
         "invalidBlocksAccepted": invalid_plan_blocks_accepted(case, obs), "loopOutcome": obs.loop_outcome,
         "iterations": obs.iterations, "latencyMs": obs.latency_ms, "error": obs.error,
         "diagnostics": {
+            "stageErrorCodes": list(obs.stage_error_codes), "stageReasonStatus": obs.stage_reason_status,
             "planError": obs.plan_error, "omittedErrors": list(obs.omitted_errors), "stopReason": obs.stop_reason,
             "toolStatuses": list(obs.tool_statuses), "toolErrorHints": list(obs.tool_error_hints),
             "unansweredTools": list(obs.unanswered_tools), "streamErrorHint": obs.stream_error_hint,
             "invalidToolResults": obs.invalid_tool_results, "sourceIdMatches": list(obs.source_id_matches),
         },
+        "correlationId": obs.correlation_id, "startedAtMs": obs.started_at_ms, "endedAtMs": obs.ended_at_ms,
         **({
             key: value for key, value in (
                 ("tokens", obs.usage.get("tokens")), ("estimatedLoopCostUsd", obs.usage.get("estimatedLoopCostUsd")),
@@ -603,7 +633,10 @@ def evaluate_gates(summary: Mapping[str, Any], *, mode: str) -> list[str]:
 
 def build_report(mode: str, rows: list[dict[str, Any]], dataset_sha256: str, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
     summary = summarize(rows, mode=mode)
-    failed = evaluate_gates(summary, mode=mode)
+    subset = bool((extra or {}).get("subset"))
+    failed = [] if subset else evaluate_gates(summary, mode=mode)
+    if mode == "real" and not subset and len(rows) != 30:
+        failed.append("incomplete_frozen_gate")
     return {
         "schemaVersion": REPORT_SCHEMA, "runnerVersion": RUNNER_VERSION, "mode": mode,
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -614,7 +647,9 @@ def build_report(mode: str, rows: list[dict[str, Any]], dataset_sha256: str, ext
             if mode == "offline" else
             "Real Harness loops over synthetic data, one invocation per case, no retries. The direct RAG fallback is not executed."
         ),
-        **(extra or {}), "summary": summary, "verdict": {"passed": not failed, "failedGates": failed}, "cases": rows,
+        **(extra or {}), "summary": summary,
+        "verdict": ({"passed": None, "failedGates": None, "gateRun": False, "reason": "not_a_gate_run"}
+                    if subset else {"passed": not failed, "failedGates": failed}), "cases": rows,
     }
 
 
@@ -625,16 +660,66 @@ def run_offline(dataset: Mapping[str, Any], dataset_sha256: str = "") -> dict[st
 
 def real_plan(cases: int) -> dict[str, object]:
     return {
-        "harnessInvocations": cases, "retries": 0, "maxIterationsPerInvocation": 3,
+        "harnessInvocations": cases, "retries": 0, "maxIterationsPerInvocation": AGENT_CHAT_MAX_ITERATIONS,
         "maxConsecutiveErrorsBeforeAbort": MAX_CONSECUTIVE_REAL_ERRORS, "loopCostStopUsd": LOOP_COST_STOP_USD, "directRagFallbackExecuted": False,
         "thresholds": THRESHOLDS, "thresholdsSha256": sha256_of(THRESHOLDS),
     }
+
+
+def select_real_cases(dataset: Mapping[str, Any], case_ids: list[str] | None, repeat: int) -> list[Mapping[str, Any]]:
+    if isinstance(repeat, bool) or not isinstance(repeat, int) or repeat < 1:
+        raise ValueError("repeat must be a positive integer")
+    if case_ids is None:
+        if repeat != 1:
+            raise ValueError("repeat requires --case-ids; the gate is exactly one invocation per frozen case")
+        return list(dataset["cases"])
+    known = {c["id"]: c for c in dataset["cases"]}
+    if not case_ids or len(set(case_ids)) != len(case_ids) or any(i not in known for i in case_ids):
+        raise ValueError("case ids must be nonempty, unique frozen case ids")
+    if len(case_ids) >= len(known) or len(case_ids) * repeat > MAX_SUBSET_INVOCATIONS:
+        raise ValueError("a subset is limited to 12 invocations, including repeats")
+    return [known[i] for i in case_ids for _ in range(repeat)]
+
+
+def search_filter(correlation_id: str) -> str:
+    # UUID validation prevents any caller-controlled query fragment or content from entering the command.
+    from uuid import UUID
+    safe_id = str(UUID(correlation_id))
+    return '{ $.correlation_id = "' + safe_id + '" && ($.operation = "write_answer" || $.operation = "resolve_evidence") }'
+
+
+def search_reason_command(group: str, row: Mapping[str, Any]) -> str:
+    if group != "<search-log-group>" and not re.fullmatch(r"[A-Za-z0-9_./#-]{1,512}", group):
+        raise ValueError("invalid search log group")
+    return (f"aws logs filter-log-events --region eu-west-1 --log-group-name '{group}' "
+            f"--start-time {row['startedAtMs'] - 5000} --end-time {row['endedAtMs'] + 5000} "
+            f"--filter-pattern '{search_filter(row['correlationId'])}' --limit 1000 --no-paginate "
+            "--query 'events[].message' --output json")
+
+
+def read_stage_reasons(logs: Any, group: str, correlation_id: str, start: int, end: int) -> dict[str, Any]:
+    response = logs.filter_log_events(logGroupName=group, startTime=start - 5000, endTime=end + 5000,
+                                      filterPattern=search_filter(correlation_id), limit=1000)
+    codes = []
+    for event in response.get("events", []):
+        try:
+            node = json.loads(event["message"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if not isinstance(node, Mapping):
+            continue
+        if (node.get("correlation_id") == correlation_id and node.get("operation") in {"write_answer", "resolve_evidence"}
+                and node.get("error_code") in STAGE_REASONS):
+            codes.append({"operation": node["operation"], "error_code": node["error_code"]})
+    return {"codes": codes, "status": "log_page_incomplete" if response.get("nextToken") else ("observed" if codes else "not_observed")}
 
 
 def run_real(
     dataset: Mapping[str, Any], dataset_sha256: str, client: RealAgentClient, *, approval_ref: str,
     release_commit: str, artifact_sha256: str, prompt_identity: tuple[str, str] | None,
     sink: Callable[[dict[str, Any]], None] | None = None,
+    case_ids: list[str] | None = None, repeat: int = 1, search_log_group: str | None = None,
+    question_ref: str | None = None,
 ) -> dict[str, Any]:
     """One Harness invocation per case, never more, no retries.
 
@@ -644,7 +729,8 @@ def run_real(
     exception is then raised again.
     """
 
-    cases = dataset["cases"]
+    cases = select_real_cases(dataset, case_ids, repeat)
+    subset = case_ids is not None
     used, consecutive_errors, rows = 0, 0, []
     loop_cost, aborted_by = 0.0, None
     interrupted: BaseException | None = None
@@ -655,6 +741,7 @@ def run_real(
             used += 1
             obs = client.run(case)
             row = score_case(case, obs, offline=False)
+            row["repetition"] = 1 + sum(r["id"] == case["id"] for r in rows)
             rows.append(row)
             # The estimate prices a model call that reported no usage at an upper bound, never at zero: an unknown cost can trip this rule.
             loop_cost += row.get("estimatedLoopCostUsd") or 0.0
@@ -669,10 +756,19 @@ def run_real(
         interrupted = exc
     completed = len(rows)
     for case in cases[completed:]:  # unrun cases count as failed so an aborted run can never pass
-        rows.append(score_case(case, Observation(error="not_run"), offline=False))
+        row = score_case(case, Observation(error="not_run"), offline=False)
+        row["repetition"] = 1 + sum(r["id"] == case["id"] for r in rows)
+        rows.append(row)
+    for row in rows:
+        if row["correlationId"] and row["startedAtMs"] and row["endedAtMs"]:
+            row["searchReasonCommand"] = search_reason_command(search_log_group or "<search-log-group>", row)
     residual = getattr(client, "residual", None)
     report = build_report("real", rows, dataset_sha256, {
         "approvalRef": approval_ref, "releaseCommit": release_commit, "artifactSha256": artifact_sha256,
+        "subset": subset, "caseIds": list(dict.fromkeys(c["id"] for c in cases)), "repeat": repeat,
+        "questionRef": question_ref,
+        "frozenDatasetCases": len(dataset["cases"]),
+        "reasonLookup": "search Lambda stage events: operation write_answer/resolve_evidence, closed error_code; absent logs are unobserved, never proof of success",
         "agentPromptVersion": prompt_identity[0] if prompt_identity else None,
         "agentPromptSha256": prompt_identity[1] if prompt_identity else None,
         "budget": {"harnessInvocationsPlanned": len(cases), "harnessInvocationsUsed": used, "retries": 0},
@@ -693,7 +789,7 @@ def run_real(
 
 # ----------------------------------------------------------------- reports
 
-def assert_report_path(path: Path, prefix: str = REPORT_PREFIX) -> Path:
+def assert_report_path(path: Path, prefix: str = REPORT_PREFIX, *, subset: bool = False) -> Path:
     resolved = path.resolve()
     try:
         resolved.relative_to(RESULTS_ROOT.resolve())
@@ -701,12 +797,16 @@ def assert_report_path(path: Path, prefix: str = REPORT_PREFIX) -> Path:
         raise ValueError("reports must stay under evals/results") from exc
     if not resolved.name.startswith(prefix) or resolved.suffix != ".json":
         raise ValueError(f"report name must start with {prefix!r} and end in .json")
+    if prefix == REPORT_PREFIX and resolved.name.startswith(SUBSET_REPORT_PREFIX) != subset:
+        raise ValueError("subset reports require phase15-routing-subset-; gate reports cannot use that prefix")
     if path.is_symlink() or resolved.exists():
         raise FileExistsError("reports are immutable and cannot be overwritten")
     return resolved
 
 
 def write_report_create_only(path: Path, report: Mapping[str, object]) -> None:
+    if report.get("schemaVersion") == REPORT_SCHEMA and report.get("subset") and not path.name.startswith(SUBSET_REPORT_PREFIX):
+        raise ValueError("a diagnostic subset cannot be saved as gate evidence")
     encoded = (json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
@@ -729,6 +829,10 @@ def main(argv: list[str] | None = None) -> int:
         real.add_argument(flag)
     real.add_argument("--output", type=Path)
     real.add_argument("--execute", action="store_true", help="required explicit execution acknowledgement")
+    real.add_argument("--case-ids", help="comma-separated frozen ids; diagnostic only, never a gate")
+    real.add_argument("--repeat", type=int, default=1, help="subset only; at most 12 invocations including repeats")
+    real.add_argument("--search-log-group", help="optional bounded read of the search Lambda stage error codes")
+    real.add_argument("--question-ref", help="reference to the investigation question written before this live run")
     args = parser.parse_args(argv)
     dataset, digest = load_dataset()
     if args.mode == "offline":
@@ -737,7 +841,17 @@ def main(argv: list[str] | None = None) -> int:
             write_report_create_only(assert_report_path(args.output), report)
         print(json.dumps(report["summary"] | {"verdict": report["verdict"]}, indent=2, sort_keys=True))
         return 0 if report["verdict"]["passed"] else 1
-    plan = real_plan(len(dataset["cases"]))
+    case_ids = args.case_ids.split(",") if args.case_ids is not None else None
+    try:
+        selected = select_real_cases(dataset, case_ids, args.repeat)
+        if args.output:
+            assert_report_path(args.output, subset=case_ids is not None)
+        if args.search_log_group:
+            search_reason_command(args.search_log_group, {"correlationId": str(uuid4()), "startedAtMs": 1, "endedAtMs": 1})
+    except (ValueError, FileExistsError) as exc:
+        raise SystemExit(str(exc)) from exc
+    plan = real_plan(len(selected)) | {"subset": case_ids is not None, "caseIds": case_ids, "repeat": args.repeat,
+                                     "gateRun": case_ids is None}
     if not args.execute:
         print(json.dumps({"mode": "real_preflight", "datasetSha256": digest, "plan": plan}, indent=2, sort_keys=True))
         return 0
@@ -745,18 +859,26 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("the dataset changed since it was frozen")
     token = os.environ.get("LEGALDESK_EVAL_ACCESS_TOKEN", "")
     if not (args.output and args.matter_id and token and _APPROVAL_REF.fullmatch(args.approval_ref or "")
+            and _APPROVAL_REF.fullmatch(args.question_ref or "")
             and _GIT_SHA.fullmatch(args.release_commit or "") and _HEX64.fullmatch(args.artifact_sha256 or "")):
-        raise SystemExit("--execute needs --approval-ref, --release-commit, --artifact-sha256, --matter-id, --output and LEGALDESK_EVAL_ACCESS_TOKEN")
-    path = assert_report_path(args.output)  # fail before spending anything
+        raise SystemExit("--execute needs --question-ref, --approval-ref, --release-commit, --artifact-sha256, --matter-id, --output and LEGALDESK_EVAL_ACCESS_TOKEN")
+    path = assert_report_path(args.output, subset=case_ids is not None)  # fail before spending anything
     from legaldesk.agent_chat_lambda import build_worker_from_environment  # noqa: PLC0415 - only on the approved path
 
     worker, _queue_arn, _visibility = build_worker_from_environment()
-    report = run_real(dataset, digest, WorkerLoopClient(worker, access_token=token, matter_id=args.matter_id),
+    reader = None
+    if args.search_log_group:
+        import boto3
+        from botocore.config import Config
+        logs = boto3.client("logs", region_name="eu-west-1", config=Config(retries={"total_max_attempts": 1}))
+        reader = lambda correlation, start, end: read_stage_reasons(logs, args.search_log_group, correlation, start, end)
+    report = run_real(dataset, digest, WorkerLoopClient(worker, access_token=token, matter_id=args.matter_id, reason_reader=reader),
                       approval_ref=args.approval_ref, release_commit=args.release_commit,
                       artifact_sha256=args.artifact_sha256, prompt_identity=worker.prompt_identity,
-                      sink=lambda finished: write_report_create_only(path, finished))  # written even if the run is interrupted
+                      sink=lambda finished: write_report_create_only(path, finished),
+                      case_ids=case_ids, repeat=args.repeat, search_log_group=args.search_log_group, question_ref=args.question_ref)
     print(json.dumps(report["summary"] | {"verdict": report["verdict"]}, indent=2, sort_keys=True))
-    return 0 if report["verdict"]["passed"] else 1
+    return 0 if report["subset"] or report["verdict"]["passed"] else 1
 
 
 if __name__ == "__main__":

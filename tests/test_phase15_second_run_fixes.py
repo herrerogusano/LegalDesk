@@ -52,7 +52,12 @@ class TheHarnessTokenCapIsOneParameterInBothPlacesTests(unittest.TestCase):
 
     def test_the_change_set_is_exactly_the_profile_and_in_place(self) -> None:
         deployed = {"EnablePhase08Gateway": "true", "EnablePhase09Memory": "false", "EnableManagedAdot": "false"}
-        result = preview.compare(dict(preview.load_template(BEFORE.read_text(encoding="utf-8"))), dict(preview.load_template(TEMPLATE.read_text(encoding="utf-8"))), deployed, deployed)
+        before = dict(preview.load_template(BEFORE.read_text(encoding="utf-8")))
+        token_only = dict(preview.load_template(TEMPLATE.read_text(encoding="utf-8")))
+        # Rehearse the historical token-only update independently of the later approved iteration change.
+        # The current iteration update has its own exact harness-max-iterations profile tests.
+        token_only["Resources"]["MinimalHarness"]["Properties"]["MaxIterations"] = before["Resources"]["MinimalHarness"]["Properties"]["MaxIterations"]
+        result = preview.compare(before, token_only, deployed, deployed)
         self.assertEqual({item["id"]: item["properties"] for item in result["modified"]}, {"MinimalHarness": ["MaxTokens", "Model"]})
         self.assertEqual((result["added"], result["removed"], result["iam"]), ([], [], []))
         self.assertEqual([item["replacement"] for item in result["modified"]], ["no"])
