@@ -264,6 +264,10 @@ REASON_RELATIONSHIP_VALUE_INVALID = "writer_relationship_value_invalid"         
 REASON_RELATIONSHIP_ACTION_LENGTH = "writer_relationship_action_length"          # action has no words, or more than the allowed number
 REASON_RELATIONSHIP_ACTION_PREPOSITION = "writer_relationship_action_preposition"  # action ends in a linking preposition
 REASON_RELATIONSHIP_DUPLICATE = "writer_relationship_duplicate"                  # the same relationship appears twice
+RELATIONSHIP_SHAPE_REASONS = frozenset({
+    REASON_RELATIONSHIP_LIST_INVALID, REASON_RELATIONSHIP_SHAPE_INVALID, REASON_RELATIONSHIP_VALUE_INVALID,
+    REASON_RELATIONSHIP_ACTION_LENGTH, REASON_RELATIONSHIP_ACTION_PREPOSITION, REASON_RELATIONSHIP_DUPLICATE,
+})
 REASON_RELATIONSHIP_MISSING = "writer_relationship_missing"        # the evidence requires a directed relationship and the writer gave none
 REASON_RELATIONSHIP_UNSUPPORTED = "writer_relationship_unsupported"  # the relationship is not in the evidence, in that order
 
@@ -850,6 +854,7 @@ __all__ = [
     "REASON_ANSWER_INVALID",
     "REASON_OUTPUT_INVALID",
     "REASON_OUTPUT_TRUNCATED",
+    "RELATIONSHIP_SHAPE_REASONS",
     "REASON_RELATIONSHIP_INVALID",
     "REASON_RELATIONSHIP_LIST_INVALID",
     "REASON_RELATIONSHIP_SHAPE_INVALID",
