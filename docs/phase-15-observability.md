@@ -92,3 +92,44 @@ filter event = "agent_chat_job" and action = "completed" and ispresent(fallbackR
 | stats count() as jobs by fallbackReason
 | sort jobs desc
 ```
+
+## Grounding diagnostics (F-05, offline candidate 2026-11-04)
+
+The terminal `grounding_validate` stage event includes optional numeric
+`grounding_score`, `relevance_score`, `grounding_threshold` and
+`relevance_threshold` fields. All four are finite numbers in [0, 1]. They come
+from the real `ApplyGuardrail` response's
+`assessments[].contextualGroundingPolicy.filters[]` entries (`GROUNDING` and
+`RELEVANCE`, `score` / `threshold`), including policy-blocked responses. Missing
+or malformed measurements are omitted, never represented by invented zeros.
+The threshold fields are the provider's configured thresholds; the unchanged
+adapter also enforces floors of 0.75 grounding (constructor default) and 0.5
+relevance. No question, answer, document, tool argument or token text is added.
+
+Diagnostics travel with the request-local result or blocked exception; the
+strict three-key grounding result mapping remains unchanged. Low scores with
+provider action `NONE` retain the existing `error` / `model_failed` stage
+outcome; provider intervention retains `blocked`. Accepted outcomes retain
+`succeeded`. Phase 11 metric filters and their input fields are unchanged; no
+new event or metric is emitted.
+
+Code trace for the relevance hypothesis: `search_documents_lambda` receives the
+agent's tool `question` argument, builds `ChatRequest` from it and passes that
+through `answer_question` to `GroundingRequest.question`; the adapter tags it
+`query`. Thus the search tool measures relevance against the model-written
+search question, not independently against the original user's question.
+The direct RAG path uses its own chat question. This is code-level evidence,
+not a diagnosis of text-02's intermittent live block.
+
+Validation: `$env:PYTHONPATH = 'tests;backend/src;agent/src'`, then
+`python -m unittest test_grounding_scores test_phase13_grounding test_guardrails test_chat test_evidence test_model_output_reasons test_phase_11_observability test_phase15_search_documents test_phase15_agent_chat_telemetry`:
+**Ran 134 tests, OK**. `python evals/phase15_routing_eval.py offline`:
+30/30, no failed gates. `python evals/phase15_golden_eval.py offline`:
+80 cases (77 graded, three expected known-limit failures) plus 29/29 async
+scenarios, no failed gates. `git diff --check`: PASS. These tests exercise the
+real Converse writer, grounding adapter and chat with provider clients faked;
+they do not verify real Bedrock values, CloudWatch delivery, IAM, deployment,
+or explain text-02. No AWS operations or model/Harness calls were made.
+After release, search Lambda code still needs a reviewed **Gateway change set**;
+Public Edge code-only CD does not update it. No templates, prompts, frozen
+sets, gates or thresholds changed.

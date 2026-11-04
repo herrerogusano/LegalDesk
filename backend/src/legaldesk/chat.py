@@ -31,6 +31,7 @@ from .observability import (
 from .guardrails import (
     BedrockGuardrailClient,
     GuardrailAuditSink,
+    GroundingAssessmentResult,
     GuardrailConfig,
     GroundingGuardrailBlocked,
     GroundingGuardrailError,
@@ -737,6 +738,7 @@ def answer_question(
                     writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                     writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
                 )
+                grounding_scores: dict[str, float] = {}
                 try:
                     grounding_result = grounding_validator.validate(
                         GroundingRequest(
@@ -748,11 +750,14 @@ def answer_question(
                             relationships=relationships,
                         )
                     )
+                    if isinstance(grounding_result, GroundingAssessmentResult):
+                        grounding_scores = grounding_result.scores
                     validate_grounding_result(
                         grounding_result,
                         supporting_citation_ids=resolution.supporting_citation_ids,
                     )
-                except GroundingGuardrailBlocked:
+                except GroundingGuardrailBlocked as blocked:
+                    grounding_scores = blocked.scores
                     emit_telemetry(
                         telemetry_sink,
                         TelemetryEventType.GUARDRAIL,
@@ -760,6 +765,7 @@ def answer_question(
                         TelemetryOutcome.BLOCKED,
                         started_at=grounding_started_at,
                         operation="grounding_validate",
+                        **grounding_scores,
                         writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                         writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
                     )
@@ -772,6 +778,7 @@ def answer_question(
                         TelemetryOutcome.ERROR,
                         started_at=grounding_started_at,
                         operation="grounding_validate",
+                        **grounding_scores,
                         error_code="guardrail_error",
                         writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                         writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
@@ -785,6 +792,7 @@ def answer_question(
                         TelemetryOutcome.ERROR,
                         started_at=grounding_started_at,
                         operation="grounding_validate",
+                        **grounding_scores,
                         error_code="model_failed",
                         writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                         writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
@@ -797,6 +805,7 @@ def answer_question(
                     TelemetryOutcome.SUCCEEDED,
                     started_at=grounding_started_at,
                     operation="grounding_validate",
+                    **grounding_scores,
                     count=len(resolution.supporting_citation_ids),
                     writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                     writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
