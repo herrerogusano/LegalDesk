@@ -209,7 +209,7 @@ Parameters:
     Type: String
     Default: ""
     AllowedPattern: "^$|^arn:[^:]+:sns:[^:]+:[0-9]{12}:[A-Za-z0-9_-]+$"
-    Description: Existing email SNS topic for all six agent chat alarms, including the DLQ
+    Description: Optional SNS topic notified when a job lands in the agent chat DLQ
 
 Conditions:
   AgentChatEnabled: !Equals [!Ref EnableAgentChat, "true"]
@@ -712,8 +712,6 @@ Resources:
       AlarmDescription: >-
         A chat job message failed twice and is in the agent chat DLQ. The job has
         already been marked failed by its deadline; inspect the worker logs by job id.
-        Follow docs/phase-14-operations-runbook.md#dlq-email-triage-and-redrive
-        before any replay; never print message bodies.
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
       Dimensions:
