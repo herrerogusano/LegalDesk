@@ -22,6 +22,7 @@ from .authorization import (
 from .memory import ConversationBindingStore
 from .documents import DocumentMetadataRepository
 from .observability import (
+    TelemetryErrorCode,
     TelemetryEventType,
     TelemetryOutcome,
     TelemetrySink,
@@ -55,6 +56,9 @@ from .evidence import (
     AnswerWriterRequest,
     EvidenceContractError,
     GroundingContractError,
+    REASON_ANSWER_INVALID,
+    REASON_RELATIONSHIP_INVALID,
+    REASON_RELATIONSHIP_MISSING,
     EvidenceResolutionRequest,
     EvidenceResolver,
     EvidenceStatus,
@@ -251,6 +255,16 @@ def insufficient_evidence_response(
         prompt_sha256=prompt_artifact.sha256 if prompt_artifact else None,
         correlation_id=correlation_id,
     )
+
+
+def _contract_reason(error: EvidenceContractError) -> str:
+    """The closed reason of a rejected model output, or ``model_failed`` for one that carries none."""
+
+    reason = getattr(error, "reason", None)
+    try:
+        return TelemetryErrorCode(reason).value
+    except ValueError:
+        return TelemetryErrorCode.MODEL_FAILED.value
 
 
 def guardrail_blocked_response(
@@ -641,7 +655,7 @@ def answer_question(
                     answer = normalized_written.get("answer")
                     raw_relationships = normalized_written.get("relationships", ())
                     if not isinstance(raw_relationships, (list, tuple)):
-                        raise EvidenceContractError("answer writer relationships are invalid")
+                        raise EvidenceContractError("answer writer relationships are invalid", reason=REASON_RELATIONSHIP_INVALID)
                     relationships = tuple(raw_relationships)  # type: ignore[arg-type]
                 else:
                     raise EvidenceContractError("answer writer returned an unsupported shape")
@@ -650,7 +664,7 @@ def answer_question(
                     or not answer.strip()
                     or len(answer) > MAX_ANSWER_LENGTH
                 ):
-                    raise EvidenceContractError("answer writer returned invalid answer text")
+                    raise EvidenceContractError("answer writer returned invalid answer text", reason=REASON_ANSWER_INVALID)
                 selected_evidence = tuple(
                     item
                     for item in generation_request.evidence
@@ -658,7 +672,8 @@ def answer_question(
                 )
                 if evidence_requires_relationship_projection(selected_evidence) and not relationships:
                     raise EvidenceContractError(
-                        "answer writer omitted a required directed relationship"
+                        "answer writer omitted a required directed relationship",
+                        reason=REASON_RELATIONSHIP_MISSING,
                     )
                 if relationships:
                     try:
@@ -806,10 +821,13 @@ def answer_question(
                 separated_pipeline=all(item is not None for item in (evidence_resolver, answer_writer, grounding_validator)),
             )
         )
-    except EvidenceContractError:
+    except EvidenceContractError as contract_error:
         # Resolver/writer contract violations are untrusted model output, not
         # documentary absence. Return an operational error without exposing
-        # malformed content as a canonical no-evidence answer.
+        # malformed content as a canonical no-evidence answer. The stage event
+        # names the class of the violation (a closed reason, never content);
+        # the aggregate event and the response stay model_failed.
+        stage_error_code = _contract_reason(contract_error)
         emit_telemetry(
             telemetry_sink,
             TelemetryEventType.MODEL,
@@ -827,7 +845,7 @@ def answer_question(
                 TelemetryOutcome.ERROR,
                 started_at=model_started_at,
                 operation=stage_in_progress,
-                error_code="model_failed",
+                error_code=stage_error_code,
                 resolver_prompt_version=(
                     EVIDENCE_RESOLVER_PROMPT_VERSION
                     if stage_in_progress == "resolve_evidence"

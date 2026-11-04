@@ -96,7 +96,7 @@ HARD_CAP = {
     "harness_invocations": 50,  # 30 eval + 10 smoke + 1 ADOT + 1 allowed-tools + 2 session + 2 cut-loop + 4 reserve
     "invocation_retries": 0,
     "approved_ceiling_usd": 5.00,
-    # The eval report sums `estimatedLoopCostUsd`, which covers the Harness iterations only
+    # The eval report sums `estimatedLoopCostUsd` (corrected 2026-11-04: it used to count only loops with one model call), which covers the Harness iterations only
     # (not the resolver/writer inside the tools). Stop the eval if that sum passes the upper
     # bound of the model with a 25 % margin; the total ceiling is checked in Billing afterwards.
     "stop_eval_if_loop_usd_exceeds": 2.20,

@@ -174,6 +174,82 @@ configurations were verified unchanged. The reviewed change-set JSON and
 before/after snapshots are outside the repo under
 `%USERPROFILE%\legaldesk-t9\20261103\budget\` (UTF-8 without BOM).
 
+## DLQ email cost check — 2026-11-03
+
+Read-only account-wide inspection, before implementation, scanned all **18
+enabled regions** returned by `ec2 describe-regions`. Only `eu-west-1` has
+alarms: **22 metric-alarm objects representing 23 standard-resolution alarm
+metrics**, with no high-resolution, composite or Metrics Insights alarms.
+LegalDesk uses 20 metrics (19 alarms), Honda MAPIT two and AWS Remote MCP one.
+The chat fallback-rate expression lists two metrics and therefore counts as
+two, even though only one result is evaluated. Disabled alarm actions do not
+stop alarm-metric billing. Other 17 enabled regions have zero alarms; disabled
+opt-in regions cannot host active account resources and were not queried.
+
+| Standard alarm metrics | Now | This change adds | After deployment |
+|---|---:|---:|---:|
+| Account total across projects/regions | 23 | 2 IDP DLQs | 25 |
+| Monthly free allowance | 10 | 0 | 10 |
+| Remaining free allowance | 0 | 0 | 0 |
+| Above allowance | 13 | 2 | 15 |
+| Full-month gross alarm cost, USD | 1.30 | **0.20** | **1.50** |
+
+The existing chat DLQ alarm only gains email actions; no extra alarm is created
+for chat. Setting its existing topic parameter enables all six chat alarms;
+those alarm metrics already exist. The increment **0.20 USD/month** is within
+the owner's 0.30 USD/month change ceiling; the **account total is not** below
+that ceiling. These are steady-state, pre-tax, before-credit estimates, not a
+November invoice: actual alarm charges are prorated by usage time.
+
+[CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/) confirms ten
+eligible standard-resolution alarm metrics free monthly and billing per listed
+metric, including metric math. It also lists ten custom/detailed-monitoring
+metrics free. AWS Price List `GetProducts` independently confirmed the Ireland
+standard alarm price **0.10 USD per metric-month**. The pricing page did not
+explicitly state account/region aggregation for these CloudWatch allowances;
+the account's Free Tier API verified the alarm allowance as **global** and
+`Always Free`, limit 10. Do not multiply it by projects or regions.
+
+`freetier get-account-plan-state --region us-east-1` returned **PAID / ACTIVE**,
+with credits remaining. `get-free-tier-usage` **succeeded**, rather than the
+anticipated billing-access denial. Its global `CW:AlarmMonitorUsage` entry was
+1.10416649 actual / 11.0416649 forecast, limit 10; these are time-weighted usage
+figures, not the current deployed count of 23. No Cost Explorer call was used.
+The paid plan therefore does not remove this account's reported always-free
+alarm allowance; remaining credits must not be described as zero gross cost.
+
+Custom-metric headroom is **unverified**, not ten free slots assumed available.
+`list-metrics` found 153 recently active non-`AWS/` metric identities in
+Ireland (151 `bedrock-agentcore`, two `LegalDesk/Phase11`), zero elsewhere.
+`DocumentIntegrityFindings` was not listed. Listing only recently active
+identities cannot establish monthly billable usage, and the Free Tier response
+had no custom/detailed-metric usage entry. Provider namespace billing treatment,
+hourly activity, expired identities and any detailed monitoring are additional
+limits on that estimate. The existing DocumentIntegrity metric may consume a
+custom slot when emitted; do not promise that it is free. First-tier custom
+metric list price is 0.30 USD/metric-month, prorated. **This DLQ change creates
+zero custom metrics**: queue-visible metrics are native `AWS/SQS`.
+
+[SNS pricing](https://aws.amazon.com/sns/pricing/) lists the first **1,000
+email/email-JSON notifications per month free**, aggregating free usage across
+regions. The [AWS SNS FAQ](https://aws.amazon.com/sns/faqs/) and Ireland Price
+List entry confirm **2 USD per 100,000 deliveries thereafter** (0.00002 each),
+and one million Standard API requests free monthly, then 0.50 USD/million.
+One existing, confirmed email subscription is reused, with no new subscription,
+topic, SMS, KMS key or custom-metric charge from this change. At low alarm
+volume email cost is expected to be zero **if the account's shared allowance
+remains available**; Free Tier returned no SNS usage entry, so remaining SNS
+headroom is unverified. For example, 100 additional deliveries cost at most
+0.002 USD at the stated delivery rate even if that allowance is exhausted,
+plus any metered requests/transfer. Notifications are transition-based; this
+is not an unlimited-volume cost guarantee. Keep bodies out of notifications.
+
+The implementation and exact per-stack deployment/role expectations are in the
+[DLQ email candidate](phase-14-operations-runbook.md#dlq-email-deployment-candidate--2026-11-03).
+No AWS write, change-set creation, deployment, message receive or redrive was
+performed for this candidate. Existing costs outside these alarm changes were
+not approved or modified by this worker.
+
 ## Deployment and rollback expectations
 
 1. Inventory the existing stacks/resources and ownership; do not recreate the

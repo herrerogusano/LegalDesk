@@ -3,9 +3,17 @@ Description: >-
   LegalDesk Phase 14 IDP infrastructure proposal. Reuses the existing source,
   metadata, artifact, Cognito and AgentCore Gateway resources; creates only
   bounded asynchronous IDP queues, Lambda execution roles/functions and the
-  Textract completion channel. Processing is disabled until explicitly enabled.
+  Textract completion channel and two DLQ alarms using an existing email topic.
+  Processing is disabled until explicitly enabled.
 
 Parameters:
+  ExistingAlarmTopicArn:
+    Type: String
+    AllowedPattern: "^arn:[^:]+:sns:[^:]+:[0-9]{12}:[A-Za-z0-9_-]+$"
+    Description: >-
+      Existing same-region SNS topic with a confirmed email subscription, owned
+      by the operations stack. Required even when processing is disabled because
+      retained DLQs may still contain failed messages. No topic is created here.
   EnableIDPProcessing:
     Type: String
     Default: "false"
@@ -151,6 +159,54 @@ Conditions:
     - !Equals [!Ref EnableIDPReviewDispatch, "true"]
 
 Resources:
+  IDPWorkDeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: >-
+        IDP extraction retries are exhausted and a message is in the work DLQ.
+        Check worker error codes and job state without logging message bodies;
+        fix the cause before an approved bounded replay. See
+        docs/phase-14-operations-runbook.md#dlq-email-triage-and-redrive.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt IDPWorkDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref ExistingAlarmTopicArn
+
+  IDPOCRDeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: >-
+        IDP OCR completion retries are exhausted and a message is in the OCR DLQ.
+        Check callback error codes, Textract completion and job state without
+        logging message bodies; fix the cause before an approved bounded replay.
+        See docs/phase-14-operations-runbook.md#dlq-email-triage-and-redrive.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt IDPOCRDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref ExistingAlarmTopicArn
+
   IDPWorkDeadLetterQueue:
     Type: AWS::SQS::Queue
     DeletionPolicy: Retain
