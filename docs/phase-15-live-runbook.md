@@ -724,7 +724,7 @@ python evals/phase15_routing_eval.py real --execute --question-ref <written-ques
 ```
 
 One invocation per case, `maxIterations` 4 (owner approved 2026-11-04), no retries, abort after 3 consecutive errors (the cases not run count as failed). **Cost watch:** the report sums
-`estimatedLoopCostUsd` (Harness iterations only, priced at the corrected `estimate-2026-11-eu-regional` table; a loop's usage is the sum of its model calls and a call that reported none counts at an upper bound): typical ≈ USD 1.0, upper bound 1.75; **the run stops by itself
+`estimatedLoopCostUsd` (Harness iterations only, priced at the corrected `estimate-2026-11-eu-regional` table; a loop's usage is the sum of its model calls and a call that reported none counts at an upper bound): typical ≈ USD 1.0, upper bound 1.88; **the run stops by itself
 (`abortedBy: cost_stop`, the cases not run count as failed) if the sum passes 2.20**, and the figure is cross-checked against CloudWatch afterwards (`docs/phase-15-t9-cost-estimate.md`).
 
 **After.** The report is create-only and immutable; read `summary` (tool accuracy, path accuracy, violations, `estimatedLoopCostUsd`, latency p50/p95, tokens).
