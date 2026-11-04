@@ -94,12 +94,14 @@ def _validate_document_refs(document_refs: Sequence[DocumentScopeRef]) -> None:
 def validate_ingestion_documents(
     *, object_verifier: S3ObjectVerifier, metadata_repository: DocumentMetadataRepository,
     document_refs: Sequence[DocumentScopeRef], retry_pending_uploaded_before: float | None = None,
+    open_document_ids: frozenset[str] = frozenset(),
 ) -> tuple[Document, ...]:
     """Validate one explicit scope before a KB start request.
 
     ``retry_pending_uploaded_before`` lets a document stuck in PENDING_INGESTION start again once
     its operation record can have expired: reconciliation never turns NOT_FOUND into FAILED without
-    a job, so such a document had no way out (F-34). A younger pending document is still refused.
+    a job, so such a document had no way out (F-34). A younger pending document, or one in
+    ``open_document_ids`` (an unexpired, unfinished operation), is still refused.
     """
 
     _validate_document_refs(document_refs)
@@ -114,6 +116,7 @@ def validate_ingestion_documents(
             document.status is DocumentStatus.PENDING_INGESTION
             and retry_pending_uploaded_before is not None
             and document.uploaded_at.timestamp() < retry_pending_uploaded_before
+            and document.document_id not in open_document_ids
         )
         if document.status not in {DocumentStatus.UPLOADED, DocumentStatus.FAILED} and not stuck:
             raise ValueError("a selected document is not ready for a new ingestion attempt")
@@ -365,6 +368,14 @@ class AsyncKnowledgeBaseIngestionService:
             metadata_repository=self.metadata_repository,
             document_refs=refs,
             retry_pending_uploaded_before=self.clock() - self.operation_ttl_seconds,
+            open_document_ids=frozenset(
+                document_id
+                for open_operation in self.state_store.list_ingestion_operations_for_scope(
+                    subject=subject, tenant_id=tenant_id, matter_id=matter_id, limit=100,
+                )
+                if open_operation.status not in {"INDEXED", "FAILED"}
+                for document_id in open_operation.document_ids
+            ),
         )
         now = self.clock()
         operation = IngestionOperationRecord(

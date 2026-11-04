@@ -392,6 +392,26 @@ class Phase14PerDocumentIngestionTests(unittest.TestCase):
                           correlation_id="corr-a", idempotency_key="retry-a")
         self.assertEqual(client.start_calls, [])
 
+    def test_an_old_document_in_an_open_operation_on_another_set_is_refused(self) -> None:
+        # PullBeacon PB-001 on #112: upload age alone would let {a} start while {a,b} is still running.
+        old = replace(_document("doc-a"), status=DocumentStatus.UPLOADED)
+        now = old.uploaded_at.timestamp() + INGESTION_OPERATION_TTL_SECONDS + 1
+        metadata = InMemoryDocumentMetadataRepository()
+        metadata.save(old)
+        metadata.save(replace(_document("doc-b"), uploaded_at=old.uploaded_at))
+        client = _PerDocumentClient({}, failed=0)
+        service = AsyncKnowledgeBaseIngestionService(
+            client=client, object_verifier=_Objects(), metadata_repository=metadata,
+            state_store=InMemoryEphemeralStateStore(clock=lambda: now),
+            knowledge_base_id="kb-a", data_source_id="ds-a", clock=lambda: now, source_bucket=BUCKET,
+        )
+        service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a", "doc-b"),
+                      correlation_id="corr-a", idempotency_key="first")
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a",),
+                          correlation_id="corr-b", idempotency_key="second")
+        self.assertEqual(len(client.start_calls), 1)
+
     def test_failed_document_is_isolated_from_indexed_sibling(self) -> None:
         client = _PerDocumentClient({_uri("doc-a"): "INDEXED", _uri("doc-b"): "FAILED"})
         service, metadata, operation = self._run(client, ("doc-a", "doc-b"))
