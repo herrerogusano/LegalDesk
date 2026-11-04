@@ -128,7 +128,12 @@ const INVENTORY_RESULT = {
       await page.locator("#ask-button").click();
     }
     async function tick(ms) { await page.clock.fastForward(ms); }
-    async function settled() { await page.waitForFunction(() => document.querySelector("#answer").getAttribute("aria-busy") === "false"); }
+    // The answer stops being busy when it is painted; the ask button only when the whole question ends, after the history reload (F-18).
+    const answerPainted = () => page.waitForFunction(() => document.querySelector("#answer").getAttribute("aria-busy") === "false");
+    async function settled() {
+      await answerPainted();
+      await page.waitForFunction(() => document.querySelector("#ask-button").getAttribute("aria-busy") !== "true");
+    }
 
     // ---- 1. progress states and a mixed result ----------------------------------------
     script.submit = accepted;
@@ -223,6 +228,22 @@ const INVENTORY_RESULT = {
       assert.match(await page.locator("#app-error").innerText(), expected, code);
       assert.equal(await page.locator("#ask-button").isDisabled(), false, `${code}: the user can ask again`);
     }
+    // F-18: a slow history reload keeps the button disabled after the answer is painted. This is the state that failed CD run 41837765895.
+    let releaseHistory;
+    const historyGate = new Promise((resolve) => { releaseHistory = resolve; });
+    const slowHistory = async (route) => { await historyGate; await route.continue(); };
+    await page.route("**/api/conversations/**", slowHistory);
+    script.jobs = [{ status: "failed", error: "internal_error" }];
+    await ask("Pregunta con el historial lento");
+    await tick(2000);
+    await answerPainted();
+    assert.match(await answerText(), /error interno/);
+    assert.equal(await page.locator("#ask-button").isDisabled(), true, "the question has not ended while the history reloads");
+    releaseHistory();
+    await settled();
+    assert.equal(await page.locator("#ask-button").isDisabled(), false, "the user can ask again once the history is back");
+    await page.unroute("**/api/conversations/**", slowHistory);
+
     script.jobs = [{ status: "failed", error: "something_new" }];
     await ask("Pregunta con un código desconocido");
     await tick(2000);
