@@ -260,7 +260,13 @@ class ThroughTheRealWriterAdapter(unittest.TestCase):
         self.assertEqual(sink.codes()["write_answer"], "writer_relationship_action_preposition")
 
     def test_other_contract_errors_are_still_rejected(self) -> None:
-        for written in ({"answer": "  ", "relationships": self.PREPOSITION}, {"answer": "ok", "extra": 1}):
+        for written in (
+            {"answer": "  ", "relationships": self.PREPOSITION},
+            {"answer": "ok", "extra": 1},
+            # PullBeacon PB-001: a malformed relationship never hides another violation. Keys and answer are checked before it.
+            {"answer": "ok", "extra": 1, "relationships": self.PREPOSITION},
+            {"answer": 5, "relationships": self.PREPOSITION},
+        ):
             with self.subTest(written=written):
                 response, sink = run(OPTIONAL_PASSAGE, writer=self.adapter(written))
                 self.assertEqual(response.error_code, "model_failed")
