@@ -1000,7 +1000,7 @@ Both flags go together: the agent without `search_documents` is broken.
 F-01's written question, nine-invocation command, closed search-stage reason lookup and subset safeguards are in
 [`phase-15-routing-eval.md#targeted-diagnosis-f-01-never-a-gate`](phase-15-routing-eval.md#targeted-diagnosis-f-01-never-a-gate).
 Every live command now needs `--question-ref` pointing to a question written before execution. A targeted report is never gate evidence.
-F-03 uses existing `mat_phase14_b_20260928` (26 primary documents, no Glacier; no create-matters). Upload is blocked by the deployed 20-upload tenant quota until an approved parameter-only adjustment and cleanup authority are arranged. The end-to-end procedure and all 30 routing-case dependencies are in [`phase-15-corpus-operator.md`](phase-15-corpus-operator.md).
+F-03 uses existing `mat_phase14_b_20260928` (26 primary documents, no Glacier; no create-matters). Upload is blocked by the deployed 20-upload tenant quota until an approved parameter-only adjustment is applied (owner approved 2026-11-04: 30 for the upload, back to 20 afterwards). The temporary cleanup role is granted only for the final cleanup. The end-to-end procedure and all 30 routing-case dependencies are in [`phase-15-corpus-operator.md`](phase-15-corpus-operator.md).
 
 **F-02, owner approved 2026-11-04, ADR-021 D4:** raise the agentic chat's cap from three to **four** iterations so list → fields → search → plan
 can finish. The stream's exact `max_iterations_exceeded` now maps to the existing `iterations_exhausted` outcome/reason. A failed loop still
