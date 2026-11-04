@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "backend" / "src"))
 from legaldesk.authorization import AuthorizationDenied
 from legaldesk.documents import InMemoryDocumentMetadataRepository
 from legaldesk.domain.models import Document, DocumentStatus, MalwareScanStatus
-from legaldesk.ingestion import AsyncKnowledgeBaseIngestionService, IngestionConflictError
+from legaldesk.ingestion import AsyncKnowledgeBaseIngestionService, INGESTION_OPERATION_TTL_SECONDS, IngestionConflictError
 from legaldesk.http_app import ApplicationComposition, LoopbackLegalDeskApp
 from legaldesk.state import InMemoryEphemeralStateStore, IngestionOperationRecord
 from legaldesk.quota import InMemoryQuotaLedger, utc_month
@@ -362,6 +362,35 @@ class Phase14PerDocumentIngestionTests(unittest.TestCase):
         self.assertEqual(result.status, "INDEXED")
         self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.INDEXED)
         self.assertEqual(client.doc_calls[0]["documentIdentifiers"], [{"dataSourceType": "S3", "s3": {"uri": _uri("doc-a")}}])
+
+    def _stuck(self, *, age_seconds: float, client: Any) -> tuple[Any, Any]:
+        document = replace(_document("doc-a"), status=DocumentStatus.PENDING_INGESTION)
+        now = document.uploaded_at.timestamp() + age_seconds
+        metadata = InMemoryDocumentMetadataRepository()
+        metadata.save(document)
+        service = AsyncKnowledgeBaseIngestionService(
+            client=client, object_verifier=_Objects(), metadata_repository=metadata,
+            state_store=InMemoryEphemeralStateStore(clock=lambda: now),
+            knowledge_base_id="kb-a", data_source_id="ds-a", clock=lambda: now, source_bucket=BUCKET,
+        )
+        return service, metadata
+
+    def test_a_document_stuck_after_its_operation_expired_can_reach_failed(self) -> None:
+        # F-34: live on 2026-11-04, a scanned PDF stayed PENDING_INGESTION with no operation and no way out.
+        client = _PerDocumentClient({_uri("doc-a"): "NOT_FOUND"}, failed=1)
+        service, metadata = self._stuck(age_seconds=INGESTION_OPERATION_TTL_SECONDS + 1, client=client)
+        operation = service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a",),
+                                  correlation_id="corr-a", idempotency_key="retry-a")
+        self.assertEqual(self._status(service, operation).status, "FAILED")
+        self.assertEqual(self._doc_status(metadata, "doc-a"), DocumentStatus.FAILED)
+
+    def test_a_pending_document_whose_operation_may_be_open_is_still_refused(self) -> None:
+        client = _PerDocumentClient({}, failed=0)
+        service, _ = self._stuck(age_seconds=INGESTION_OPERATION_TTL_SECONDS - 1, client=client)
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            service.start(subject="alice", tenant_id=TENANT, matter_id=MATTER, document_ids=("doc-a",),
+                          correlation_id="corr-a", idempotency_key="retry-a")
+        self.assertEqual(client.start_calls, [])
 
     def test_failed_document_is_isolated_from_indexed_sibling(self) -> None:
         client = _PerDocumentClient({_uri("doc-a"): "INDEXED", _uri("doc-b"): "FAILED"})

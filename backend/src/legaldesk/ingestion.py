@@ -93,9 +93,14 @@ def _validate_document_refs(document_refs: Sequence[DocumentScopeRef]) -> None:
 
 def validate_ingestion_documents(
     *, object_verifier: S3ObjectVerifier, metadata_repository: DocumentMetadataRepository,
-    document_refs: Sequence[DocumentScopeRef],
+    document_refs: Sequence[DocumentScopeRef], retry_pending_uploaded_before: float | None = None,
 ) -> tuple[Document, ...]:
-    """Validate one explicit scope before a KB start request."""
+    """Validate one explicit scope before a KB start request.
+
+    ``retry_pending_uploaded_before`` lets a document stuck in PENDING_INGESTION start again once
+    its operation record can have expired: reconciliation never turns NOT_FOUND into FAILED without
+    a job, so such a document had no way out (F-34). A younger pending document is still refused.
+    """
 
     _validate_document_refs(document_refs)
     documents: list[Document] = []
@@ -105,7 +110,12 @@ def validate_ingestion_documents(
         )
         if document is None:
             raise ValueError("a selected document is not present in the requested scope")
-        if document.status not in {DocumentStatus.UPLOADED, DocumentStatus.FAILED}:
+        stuck = (
+            document.status is DocumentStatus.PENDING_INGESTION
+            and retry_pending_uploaded_before is not None
+            and document.uploaded_at.timestamp() < retry_pending_uploaded_before
+        )
+        if document.status not in {DocumentStatus.UPLOADED, DocumentStatus.FAILED} and not stuck:
             raise ValueError("a selected document is not ready for a new ingestion attempt")
         if document.malware_scan_status is not MalwareScanStatus.CLEAN:
             raise ValueError("a selected document has no clean malware scan")
@@ -354,6 +364,7 @@ class AsyncKnowledgeBaseIngestionService:
             object_verifier=self.object_verifier,
             metadata_repository=self.metadata_repository,
             document_refs=refs,
+            retry_pending_uploaded_before=self.clock() - self.operation_ttl_seconds,
         )
         now = self.clock()
         operation = IngestionOperationRecord(
