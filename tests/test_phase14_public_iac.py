@@ -112,6 +112,8 @@ class Phase14PublicInfrastructureTests(unittest.TestCase):
         self.assertIn("/quarantine/tenants/${BetaTenantId}/matters/*/documents/*/original.pdf", text)
         self.assertIn("bedrock:StartIngestionJob", text)
         self.assertIn("bedrock:GetIngestionJob", text)
+        # F-32: without it a single failed document in the data source keeps every operation pending.
+        self.assertIn("bedrock:GetKnowledgeBaseDocuments", text)
         self.assertIn('ResolverFoundationModelArn', text)
         self.assertIn('WriterFoundationModelArn', text)
         self.assertIn('region may be * for a cross-region inference profile', text)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import sys
 import re
 import unittest
@@ -434,6 +437,23 @@ class Phase14PerDocumentIngestionTests(unittest.TestCase):
 
         service, metadata, operation = self._run(_Extra({}), ("doc-a",))
         self.assertEqual(self._status(service, operation).status, "PENDING")
+
+    def test_an_unresolved_status_says_why_with_a_closed_code(self) -> None:
+        # F-32: AccessDenied was swallowed, and the operation stayed pending with nothing in the logs.
+        from legaldesk.ingestion import _record_status_unresolved
+
+        class Denied(Exception):
+            response = {"Error": {"Code": "AccessDeniedException", "Message": "SECRET arn"}}
+
+        class Unknown(Exception):
+            response = {"Error": {"Code": "SECRET"}}
+
+        for error, code in ((Denied(), "AccessDeniedException"), (Unknown(), "other"), (ValueError("SECRET"), "other")):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                _record_status_unresolved("ing_1", error)
+            self.assertEqual(json.loads(output.getvalue())["aws_error_code"], code)
+            self.assertNotIn("SECRET", output.getvalue())
 
     def test_job_without_failures_does_not_call_per_document_api(self) -> None:
         client = _PerDocumentClient({_uri("doc-a"): "INDEXED"}, failed=0)

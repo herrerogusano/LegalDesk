@@ -110,7 +110,7 @@ def session_policy(subjects, *, knowledge_base_id=KNOWLEDGE_BASE_ID, guardrail_i
                   *[f"AUTH#USER#{sub}" for sub in subjects], *[f"AUTH#MATTER#{m}" for m in MATTERS],
                   f"TENANT#{TENANT}#MATTER#*", f"CONVERSATION#{TENANT}#*", "GATEWAY#INVOCATION#*", "GATEWAY#GRANT#*",
               ]}}),
-        allow(["bedrock:Retrieve", "bedrock:StartIngestionJob", "bedrock:GetIngestionJob"], bedrock + "knowledge-base/" + knowledge_base_id),
+        allow(["bedrock:Retrieve", "bedrock:StartIngestionJob", "bedrock:GetIngestionJob", "bedrock:GetKnowledgeBaseDocuments"], bedrock + "knowledge-base/" + knowledge_base_id),
         allow("bedrock:ApplyGuardrail", bedrock + "guardrail/" + guardrail_identifier),
         allow("bedrock:InvokeModel", [bedrock + "inference-profile/" + MODEL,
               "arn:aws:bedrock:eu-*::foundation-model/anthropic.claude-sonnet-4-6"]),
