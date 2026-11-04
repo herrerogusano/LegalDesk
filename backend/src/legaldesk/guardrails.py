@@ -49,6 +49,18 @@ class GroundingGuardrailError(RuntimeError):
 class GroundingGuardrailBlocked(PermissionError):
     """Provider policy blocked the generated answer."""
 
+    def __init__(self, message: str, *, scores: Mapping[str, float] | None = None) -> None:
+        super().__init__(message)
+        self.scores = dict(scores or {})
+
+
+class GroundingAssessmentResult(dict[str, object]):
+    """Keep the strict grounding contract and request-local numeric diagnostics separate."""
+
+    def __init__(self, result: Mapping[str, object], scores: Mapping[str, float]) -> None:
+        super().__init__(result)
+        self.scores = dict(scores)
+
 
 @dataclass(frozen=True, slots=True)
 class GuardrailConfig:
@@ -396,12 +408,13 @@ class GuardrailGroundingValidator:
         except Exception as exc:
             self._record(correlation_id, GuardrailOutcome.ERROR)
             raise GroundingGuardrailError("grounding assessment is malformed") from exc
+        scores = self._assessment_scores(response)
         if top_action == "GUARDRAIL_INTERVENED" or (
             grounding_action in _BLOCKING_ASSESSMENT_ACTIONS
             or relevance_action in _BLOCKING_ASSESSMENT_ACTIONS
         ):
             self._record(correlation_id, GuardrailOutcome.BLOCKED, action=top_action)
-            raise GroundingGuardrailBlocked("grounding policy blocked output")
+            raise GroundingGuardrailBlocked("grounding policy blocked output", scores=scores)
         outputs = _returned_texts(response.get("outputs", ())) if isinstance(response, Mapping) else None
         if outputs is None or outputs:
             self._record(correlation_id, GuardrailOutcome.ERROR)
@@ -425,20 +438,47 @@ class GuardrailGroundingValidator:
             grounding_score < effective_grounding_threshold
             or relevance_score < effective_relevance_threshold
         ):
-            return {
+            return GroundingAssessmentResult({
                 "grounded": False,
                 "score": score,
                 "matchedCitationIds": [],
-            }
+            }, scores)
         # Bedrock reports one aggregate score for the tagged source set; it
         # does not attest entailment independently for each passage. These
         # IDs therefore preserve the server-selected support set for the
         # existing contract, rather than claiming per-citation findings.
-        return {
+        return GroundingAssessmentResult({
             "grounded": True,
             "score": score,
             "matchedCitationIds": list(supporting),
-        }
+        }, scores)
+
+    @staticmethod
+    def _assessment_scores(response: Mapping[str, object]) -> dict[str, float]:
+        # Read the actual provider numbers even when _contextual_assessment
+        # uses fail-closed sentinel scores for a policy intervention. Missing
+        # or malformed scores are absent, never fabricated as zero.
+        filters = [
+            item
+            for assessment in response["assessments"]
+            if isinstance(assessment, Mapping)
+            for policy in [assessment.get("contextualGroundingPolicy")]
+            if isinstance(policy, Mapping)
+            for values in [policy.get("filters")]
+            if isinstance(values, (list, tuple))
+            for item in values
+            if isinstance(item, Mapping)
+        ]
+        if len(filters) != 2 or {item.get("type") for item in filters} != {"GROUNDING", "RELEVANCE"}:
+            return {}
+        scores: dict[str, float] = {}
+        for item in filters:
+            for field in ("score", "threshold"):
+                value = item.get(field)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                    return {}
+                scores[f"{str(item['type']).lower()}_{field}"] = float(value)
+        return scores
 
     @staticmethod
     def _contextual_assessment(
