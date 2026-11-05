@@ -63,30 +63,6 @@ Resources:
             OutputAction: BLOCK
       SensitiveInformationPolicyConfig:
         PiiEntitiesConfig:
-          - Type: NAME
-            Action: ANONYMIZE
-            InputEnabled: true
-            InputAction: ANONYMIZE
-            OutputEnabled: true
-            OutputAction: ANONYMIZE
-          - Type: EMAIL
-            Action: ANONYMIZE
-            InputEnabled: true
-            InputAction: ANONYMIZE
-            OutputEnabled: true
-            OutputAction: ANONYMIZE
-          - Type: PHONE
-            Action: ANONYMIZE
-            InputEnabled: true
-            InputAction: ANONYMIZE
-            OutputEnabled: true
-            OutputAction: ANONYMIZE
-          - Type: ADDRESS
-            Action: ANONYMIZE
-            InputEnabled: true
-            InputAction: ANONYMIZE
-            OutputEnabled: true
-            OutputAction: ANONYMIZE
           - Type: US_SOCIAL_SECURITY_NUMBER
             Action: BLOCK
             InputEnabled: true
@@ -150,6 +126,9 @@ Resources:
 
   LegalDeskGuardrailVersion:
     Type: AWS::Bedrock::GuardrailVersion
+    # Versions are immutable. Keep the previous one so consumers can move, and roll back, with a parameter.
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
     Properties:
       GuardrailIdentifier: !GetAtt LegalDeskGuardrail.GuardrailId
       Description: !Ref GuardrailVersionDescription
