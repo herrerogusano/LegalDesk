@@ -57,7 +57,13 @@ The #105/#107 shape handling remains inside the real Converse adapter path.
   conditions. A list dependent on an unfinished/colon header is unsafe to
   extract, including later sentences in its item. An unfinished fragment before
   a hard boundary also prevents the immediately following sentence from being
-  published without its prefix. A modal-only Spanish list header still triggers
+  published without its prefix. A closed set of bare topic labels (for example
+  Payment/Pago, Rent/Renta, Notice/Notificaciones, Definitions/Definiciones,
+  Governing Law/Ley aplicable) is recognized as neutral heading context, with
+  optional numbering, uppercase and a trailing colon. Such a heading is not
+  itself publishable, but no longer poisons the following complete sentence.
+  Unknown/qualified labels stay conservative. Uppercase alone never establishes
+  neutrality; a heading cannot erase an already unfinished preceding condition. A modal-only Spanish list header still triggers
   projection, so this case fails closed rather than silently losing the gate.
 - A source sentence must have a terminal boundary. Missing terminal punctuation,
   a triple crossing hard boundaries, split OCR words, ambiguous support or
@@ -184,49 +190,145 @@ also retains its previously documented broad-clause behavior; this update
 reuses it identically on evidence and prose, rather than claiming a new English
 linguistic classifier.
 
-## Current verification (2026-11-05)
+## PullBeacon follow-up: headings and conditional injection path
+
+PB-001/PB-002 concern an owner-accepted residual risk pending live measurement.
+Their review threads are the supervisor's responsibility and were not answered
+or resolved here. The evasion regression retains its original name prefix and
+now ends `documents_accepted_offline_measured_risk`; its comment explicitly says
+acceptance under fake scores is a risk demonstration, not desired product
+behavior. No trigger logic, vocabulary, prompt or threshold changed.
+
+### Heading result, separating observed extraction from controlled layouts
+
+The summary's blanket claim is too broad: `Payment. The tenant shall...` and
+`5. Pago` followed by one ordinary newline already published at cf24258. The
+real generic bug was an unfinished neutral heading before a blank-line or a
+new numbered/list boundary. `unfinished_prefix` treated that label as a missing
+condition and made the next complete obligation sentence unsafe.
+
+A controlled comparison used the exact `_source_sentences` function loaded
+from `git show cf24258:backend/src/legaldesk/evidence.py` and the current function,
+through the real resolver/writer/grounding/chat adapters with Bedrock clients
+faked. Six layouts in each language (single newline, blank line, all-caps plus
+blank line, following numbered clause, period title, colon plus bullet) gave:
+**old 4/12 accepted and 8/12 fail closed; current 12/12 accepted, zero fail closed**.
+The permanent regression is
+`test_neutral_heading_layouts_publish_whole_obligation_sentences_in_both_languages`.
+
+The narrow fix recognizes only closed, unqualified topic labels. It does not
+infer headings from typography or discard arbitrary uppercase text. Conditions
+such as `PAYMENT ONLY IF OVERDUE`, `ONLY IF OVERDUE` before `PAYMENT`, and a
+qualified Spanish payment heading remain fail closed. A heading and body
+cannot jointly supply the triple. Whole source text, conditions, original
+citation, bounds and grounding remain checked. Unknown labels may still cause
+safe extra abstentions; this is not a general heading classifier.
+
+Real extraction was also checked, without substituting `source_pages` for PDF
+text. `phase15_relationship_layout_audit.py` hash-checks the 18 fixture PDFs and
+nine existing prepared corpus PDFs, then calls production `acquire_pdf`/pypdf.
+Raw and normalized text are counted separately; no document text is logged.
+
+- **18 fixture PDFs:** all valid, **22 pages**, **14 with embedded text**, eight
+  require OCR. Raw and normalized: zero pages with blank lines, zero recognized
+  obligation pages, zero unsafe obligation segments.
+- **Full 27-document corpus:** **26 valid PDFs**, one expected deliberately
+  truncated PDF; **45 pages**, **33 with embedded text**, **12 require OCR**.
+  Raw and normalized: zero pages with blank lines, one recognized obligation
+  page (the prepared Spanish notice), **zero unsafe obligation segments**.
+  This unsafe-obligation count was zero both before and after the heading fix.
+- Zero unexpected extraction/hash errors. No OCR or model call was made. The
+  other source-level Spanish obligation documents include scanned content;
+  these local embedded-text observations do not validate their OCR layout or
+  the live KB parser. The corpus source-page census remains a separate measure.
+
+Thus the generic heading defect is real, but no current embedded-text corpus
+page demonstrates it. The controlled regressions establish the fix; the actual
+extraction audit does not claim a live failure was reproduced or repaired.
+
+### Can document injection influence wording so the trigger stays off?
+
+The application does not rule out that path. A concrete attack can instruct the
+writer, inside authorized retrieved evidence, to avoid recognized modal/action
+words, omit relationships and answer with the reversed phrase
+`The buyer has a duty to remit written notice to the supplier.`
+
+The concrete code path is:
+
+1. Authorized selected document text, including any malicious sentence, is
+   JSON-encoded into `build_answer_writer_payload.selectedEvidence`. The
+   unchanged system prompt calls it untrusted as instructions; it is never
+   inserted into the system message. This instruction is not a deterministic
+   guarantee that the model will ignore an attack.
+2. **If the writer follows that sentence**, a valid Converse JSON answer can
+   contain the attacker-chosen paraphrase and no relationship. Type/shape
+   validation accepts the text. Evidence detection is true, prose detection is
+   false (`duty` is unknown), so `projection_required` is false. No backend
+   source replacement occurs; optional malformed relationships could also be
+   dropped with their closed reason.
+3. The paraphrase still reaches the real grounding adapter against the selected
+   source content. Low grounding/relevance or a blocking policy rejects it;
+   valid allowing provider scores permit publication with the existing issued
+   citations. Authorization/citation scope checks remain, but do not prove
+   direction. Grounding is the remaining semantic support check.
+
+`test_document_injection_path_is_reachable_if_writer_obedience_is_simulated`
+verifies these boundaries through the real adapters. It **simulates the writer's
+obedience at the Bedrock boundary**; fake high scores publish the reversed
+paraphrase, and a fake grounding score of 0.2 rejects it. It does not prove that
+an actual model obeyed this attack, measure attack success frequency, or show
+that real Guardrails catches it. Those are unverified owner-level questions.
+No new mitigation or trigger change is made for this accepted risk.
+
+## Current verification (2026-11-05, heading follow-up)
 
 PowerShell: `$env:PYTHONPATH = 'tests;backend/src;agent/src'`.
 
-`python -m unittest test_relationship_source_rendering test_relationship_census test_model_output_reasons test_chat`:
-**Ran 83 tests, OK**. This includes the bilingual answer-aware tests and four
-concrete evasion demonstrations through real adapters with Bedrock clients faked.
+`python -m unittest test_relationship_source_rendering test_relationship_layout_audit test_relationship_census`:
+**Ran 29 tests, OK**. Includes 12 bilingual heading layouts, condition-preservation
+and cross-boundary negatives, real fixture PDF extraction, accepted evasion risk
+and the simulated injection path.
 
-`python -m unittest test_relationship_source_rendering test_relationship_census test_evidence test_chat test_model_output_reasons test_grounding_scores test_phase13_grounding test_guardrails test_phase_11_observability test_phase14_holdout_runner test_phase13_holdout test_prompts test_retrieval test_phase13_journey_security test_phase15_search_documents test_phase15_agent_output test_phase15_routing_eval test_phase15_golden_eval`:
-**Ran 384 tests, OK**. The old golden CLI/all-jobs/all-cases assertions now pass.
+`python -m unittest test_relationship_source_rendering test_relationship_layout_audit test_relationship_census test_evidence test_chat test_model_output_reasons test_grounding_scores test_phase13_grounding test_guardrails test_phase_11_observability test_phase14_holdout_runner test_phase13_holdout test_prompts test_retrieval test_phase13_journey_security test_phase15_search_documents test_phase15_agent_output test_phase15_routing_eval test_phase15_golden_eval`:
+**Ran 389 tests, OK**.
 
 `python evals/phase15_routing_eval.py offline`: **30/30, PASS**.
 
 `python evals/phase15_golden_eval.py offline`: **PASS**, no failed gates; 80 cases,
-77 graded cases pass, three original expected known-limit failures unchanged,
-async scenarios **29/29**. `lt-12`, `lt-20` and `am-05` all pass. For each case,
-selected evidence triggers projection detection but the unchanged `GoldenWriter`
-prose does not (zero recognized modal terms); its fact-only answer is preserved
-and satisfies the frozen fact checks. In particular **lt-20 also passes**, rather
-than being worked around or reclassified. Neither fake writer, frozen dataset,
-expectations, gates nor thresholds changed.
+77 graded cases pass, three original expected known limits unchanged, async
+scenarios **29/29**. `lt-12`, `lt-20` and `am-05` still pass unchanged: their
+fact-only fake-writer prose has no recognized modal construction, so eligibility
+stays off. No fake writer, frozen expectation, gate or threshold was changed.
 
-`python scripts/phase15_relationship_census.py`: **44 controlled requests**, counts
-above, same corpus SHA-256, zero unexpected errors and zero live model answers.
+`python scripts/phase15_relationship_census.py`: **unchanged** corpus detection
+3/3, FP0/8, FN0/3; **44 controlled requests**, zero unexpected errors. The
+non-obligation cohort still fails closed 0/11 for omitted/malformed projections;
+the obligation cohort still fails closed 3/11 for each. Accepted malformed drop
+reasons remain 11/11 and 8/11 respectively. No live model answers were measured.
+
+`python scripts/phase15_relationship_layout_audit.py`: fixture extraction counts
+above, zero unexpected errors.
+
+`python scripts/phase15_relationship_layout_audit.py --prepared-corpus C:/Users/herre/legaldesk-t9/corpus-b-20261104/corpus`:
+full real-PDF corpus extraction counts above, zero unexpected errors. The local
+prepared directory already existed and was read only; no PDFs were regenerated.
 
 `git diff --check`: PASS. No linter/type-check configuration or infrastructure
-change applies to these Python-only changes. Relevant authorization/retrieval
-and cross-matter security suites are in the 384-test command above.
+change applies. Relevant cross-matter suites are in the 389-test command above.
 
-Historical verification of the evidence-only candidate (2026-11-04): 19 focused
-tests passed; the broad run executed 379 tests with three golden assertions
-failing because `lt-12`, `lt-20` and `am-05` failed at writer. Those results were
-reported before the owner approved answer-aware eligibility. No old result
-report was rewritten; the current runs are separate offline executions.
+Previous checkpoints remain factual historical results: the evidence-only
+candidate ran 379 tests with three golden assertions failing; after the owner's
+answer-aware decision the prior head ran 384 tests, OK, and both offline gates
+passed. No historical result report was rewritten.
 
-Changed old pins in this PR: `test_evidence` passes evidence to the renderer and
-expects the exact sentence including articles; `test_chat` expects the same
-whole source instead of the English template. `phase14_holdout_runner` passes
-selected evidence to the new renderer argument, retaining reversal protection;
-its tests pass. Frozen datasets, thresholds and gates, Public Edge template and
-historical result reports remain unchanged.
+Changed old source pins in this PR: `test_evidence` passes evidence to the
+renderer and expects whole source including articles; `test_chat` expects the
+same whole sentence; Phase 14 runner passes selected evidence. All pass. Frozen
+datasets/thresholds/gates, Public Edge template and prompt identities remain
+unchanged. Shared vault notes and review threads were not edited.
 
-No live AWS, model, Harness, IAM, Bedrock score, CloudWatch delivery, OCR/parser
-or deployed-path verification was performed. No resources/costs were created.
-After an approved release the search Lambda still needs a reviewed **Gateway
-change set**; Public Edge code-only CD does not update it. No later phase began.
+No live AWS, model, Harness, Bedrock score/attack, CloudWatch, IAM, OCR or KB
+parser verification was performed. Local production PDF acquisition was
+verified as described above. No resources/costs were created. Search Lambda
+still needs a reviewed **Gateway change set** after an approved release;
+Public Edge code-only CD does not update it. No later phase began.

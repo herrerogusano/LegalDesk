@@ -353,6 +353,26 @@ _ABBREVIATION = re.compile(
     re.IGNORECASE,
 )
 _MULTIDOT_ABBREVIATION = re.compile(r"\b(?:p\.[ \t]*ej\.|e\.g\.|i\.e\.|EE\.[ \t]*UU\.|S\.[ \t]*[AL]\.|n\.[\u00ba\u00b0])", re.IGNORECASE)
+_NEUTRAL_SOURCE_HEADINGS = frozenset({
+    "payment", "payments", "pago", "pagos", "rent", "renta",
+    "notice", "notices", "notificaci\u00f3n", "notificaciones",
+    "definitions", "definiciones", "obligations", "obligaciones",
+    "termination", "resoluci\u00f3n", "confidentiality", "confidencialidad",
+    "governing law", "ley aplicable", "effective date", "fecha de efecto",
+})
+
+
+def _neutral_source_heading(fragment: str) -> bool:
+    """Recognize only closed, unqualified topic labels, never inferred headings.
+
+    All-caps alone is insufficient: ONLY IF OVERDUE is still a condition.
+    Unknown or qualified titles remain conservative unfinished context.
+    """
+
+    marker = _LIST_LINE.match(fragment)
+    body = fragment[marker.end():] if marker else fragment
+    label = " ".join(unicodedata.normalize("NFC", body.casefold()).split()).removesuffix(":")
+    return label in _NEUTRAL_SOURCE_HEADINGS
 
 
 def _source_sentences(text: str) -> tuple[tuple[str, bool], ...]:
@@ -400,12 +420,16 @@ def _source_sentences(text: str) -> tuple[tuple[str, bool], ...]:
         fragment = text[start:end].strip()
         if fragment:
             is_list = _LIST_LINE.match(fragment) is not None
-            if is_list and result and not result[-1][1]:
+            if is_list and result and unfinished_prefix:
                 list_dependent = True
             elif start in hard and start not in list_starts:
                 list_dependent = False
             result.append((fragment, boundaries[end] and not list_dependent and not unfinished_prefix))
-            unfinished_prefix = not boundaries[end]
+            # A bare topic heading is a safe boundary, not a missing condition.
+            # It cannot erase already unfinished context before that heading.
+            unfinished_prefix = not (
+                boundaries[end] or (_neutral_source_heading(fragment) and not unfinished_prefix)
+            )
         start = end
     return tuple(result)
 
