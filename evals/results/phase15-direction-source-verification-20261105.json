@@ -1,0 +1,327 @@
+{
+  "scope": "actual_pdf_files",
+  "actualDocumentsChecked": 26,
+  "documentErrors": {},
+  "cases": [
+    {
+      "id": "dir-01-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-01-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-02-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-02-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-03-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-03-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-04-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-04-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-05-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-05-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-06-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-06-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-07-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-07-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-08-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-08-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-09-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-09-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-10-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-10-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-11-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-11-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-12-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-12-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-13-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-13-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-14-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-14-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-15-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-15-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-16-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-16-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-17-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-17-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-18-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-18-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-19-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-19-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-20-en",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    },
+    {
+      "id": "dir-20-es",
+      "valid": true,
+      "canRunNow": true,
+      "directionVerification": "human_review_no_complete_triple",
+      "needsHumanReview": true,
+      "error": null
+    }
+  ]
+}

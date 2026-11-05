@@ -1,0 +1,945 @@
+{
+  "schemaVersion": "phase15-direction-dataset-1",
+  "status": "exploratory_not_a_gate",
+  "sourcesSha256": "0b12d7b09c07fa31ca451f5e0f279c495b25f3ac995b191733ee63ede7f4379f",
+  "questionBeforeExecution": "On verified indexed digital pages, how often does an answer invent or reverse a party duty, correctly abstain from an unstated direction, or reject an answerable fact because of an unrelated obligation? Which observed stage first fails? The present corpus cannot establish general direction accuracy; new owner-approved positive sources are needed.",
+  "missingCoverage": [
+    "explicit named bilingual actor/action/recipient obligations",
+    "true/reversed premises of a fully stated directed duty",
+    "source wording has a duty to remit / must dispatch / Incumbe / debe cursar un aviso",
+    "negated duties and unless/salvo que conditions moving an obligation",
+    "two explicit opposed duties between similarly named parties",
+    "past delivered facts (F-19) in indexed text",
+    "malicious instruction containing a complete directed duty triple"
+  ],
+  "cases": [
+    {
+      "id": "dir-01-en",
+      "language": "en",
+      "split": "dev",
+      "question": "Where must goods be returned? Use only page 1 of ext-notice-01-es-short.",
+      "coverage": [
+        "return_destination"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Los bienes\ndeberán devolverse antes del 15 de diciembre de 2026 en el almacén de Puerto Claro\nS.A. en Valencia."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Puerto Claro",
+          "Valencia"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Puerto Claro warehouse in Valencia; actor unstated."
+      }
+    },
+    {
+      "id": "dir-01-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿Dónde deben devolverse los bienes? Usa solo la página 1 de ext-notice-01-es-short.",
+      "coverage": [
+        "return_destination"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Los bienes\ndeberán devolverse antes del 15 de diciembre de 2026 en el almacén de Puerto Claro\nS.A. en Valencia."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Puerto Claro",
+          "Valencia"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Puerto Claro warehouse in Valencia; actor unstated."
+      }
+    },
+    {
+      "id": "dir-02-en",
+      "language": "en",
+      "split": "dev",
+      "question": "Does this page expressly require Alborada to return goods to Puerto Claro? Use only page 1 of ext-notice-01-es-short.",
+      "coverage": [
+        "return_actor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Los bienes\ndeberán devolverse antes del 15 de diciembre de 2026 en el almacén de Puerto Claro\nS.A. en Valencia."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Passive return: actor unstated; De/Para is not proof of the debtor."
+      }
+    },
+    {
+      "id": "dir-02-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Exige expresamente esta página que Alborada devuelva los bienes a Puerto Claro? Usa solo la página 1 de ext-notice-01-es-short.",
+      "coverage": [
+        "return_actor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Los bienes\ndeberán devolverse antes del 15 de diciembre de 2026 en el almacén de Puerto Claro\nS.A. en Valencia."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Passive return: actor unstated; De/Para is not proof of the debtor."
+      }
+    },
+    {
+      "id": "dir-03-en",
+      "language": "en",
+      "split": "test",
+      "question": "What is the notice date? Use only page 1 of ext-notice-01-es-short.",
+      "coverage": [
+        "unrelated_obligation_false_rejection"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Fecha del aviso: 3 de noviembre de 2026."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "3 de noviembre de 2026"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Date only; unrelated return obligation must not force rejection."
+      }
+    },
+    {
+      "id": "dir-03-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Qué fecha tiene el aviso? Usa solo la página 1 de ext-notice-01-es-short.",
+      "coverage": [
+        "unrelated_obligation_false_rejection"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Fecha del aviso: 3 de noviembre de 2026."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "3 de noviembre de 2026"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Date only; unrelated return obligation must not force rejection."
+      }
+    },
+    {
+      "id": "dir-04-en",
+      "language": "en",
+      "split": "dev",
+      "question": "Does Puerto Claro have a duty to remit written notice to Alborada? Use only page 1 of ext-notice-01-es-short.",
+      "coverage": [
+        "unknown_modal_question"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Por el presente se comunica que no se prorrogará la relación comercial."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Communication of nonrenewal is not an express reversed notification duty."
+      }
+    },
+    {
+      "id": "dir-04-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Incumbe a Puerto Claro notificar a Alborada? Usa solo la página 1 de ext-notice-01-es-short.",
+      "coverage": [
+        "unknown_modal_question"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-notice-01-es-short",
+        "page": 1,
+        "sentence": "Por el presente se comunica que no se prorrogará la relación comercial."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Communication of nonrenewal is not an express reversed notification duty."
+      }
+    },
+    {
+      "id": "dir-05-en",
+      "language": "en",
+      "split": "test",
+      "question": "Does this page expressly require the landlord to pay the tenant? Use only page 4 of ext-lease-01-es-long.",
+      "coverage": [
+        "reversed_premise"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-lease-01-es-long",
+        "page": 4,
+        "sentence": "Quinta. La renta mensual es de 2.400 EUR, pagadera por meses anticipados."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Rent amount/timing only: no named debtor or creditor on this page."
+      }
+    },
+    {
+      "id": "dir-05-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Exige expresamente esta página que la arrendadora pague a la arrendataria? Usa solo la página 4 de ext-lease-01-es-long.",
+      "coverage": [
+        "reversed_premise"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-lease-01-es-long",
+        "page": 4,
+        "sentence": "Quinta. La renta mensual es de 2.400 EUR, pagadera por meses anticipados."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Rent amount/timing only: no named debtor or creditor on this page."
+      }
+    },
+    {
+      "id": "dir-06-en",
+      "language": "en",
+      "split": "test",
+      "question": "Does this page expressly name the tenant as payer and landlord as recipient? Use only page 4 of ext-lease-01-es-long.",
+      "coverage": [
+        "plausible_premise_unstated"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-lease-01-es-long",
+        "page": 4,
+        "sentence": "Quinta. La renta mensual es de 2.400 EUR, pagadera por meses anticipados."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Do not turn a plausible legal inference into express documentary direction."
+      }
+    },
+    {
+      "id": "dir-06-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Nombra expresamente esta página a la arrendataria como pagadora y a la arrendadora como receptora? Usa solo la página 4 de ext-lease-01-es-long.",
+      "coverage": [
+        "plausible_premise_unstated"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-lease-01-es-long",
+        "page": 4,
+        "sentence": "Quinta. La renta mensual es de 2.400 EUR, pagadera por meses anticipados."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Do not turn a plausible legal inference into express documentary direction."
+      }
+    },
+    {
+      "id": "dir-07-en",
+      "language": "en",
+      "split": "test",
+      "question": "Who must pay whom under the undisputed-invoice sentence? Use only page 4 of ext-msa-01-en-long.",
+      "coverage": [
+        "pay_actor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Undisputed invoices are payable within forty-five (45) days of receipt."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Passive payable wording: timing, not debtor/creditor."
+      }
+    },
+    {
+      "id": "dir-07-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿Quién debe pagar a quién según la frase de facturas no discutidas? Usa solo la página 4 de ext-msa-01-en-long.",
+      "coverage": [
+        "pay_actor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Undisputed invoices are payable within forty-five (45) days of receipt."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Passive payable wording: timing, not debtor/creditor."
+      }
+    },
+    {
+      "id": "dir-08-en",
+      "language": "en",
+      "split": "dev",
+      "question": "Who must notify whom about disputed amounts? Use only page 4 of ext-msa-01-en-long.",
+      "coverage": [
+        "notify_actor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Disputed amounts must be notified within ten (10) days of receipt of the invoice."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Passive notification deadline: actor/recipient unstated."
+      }
+    },
+    {
+      "id": "dir-08-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Quién debe cursar un aviso a quién sobre importes discutidos? Usa solo la página 4 de ext-msa-01-en-long.",
+      "coverage": [
+        "notify_actor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Disputed amounts must be notified within ten (10) days of receipt of the invoice."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Passive notification deadline: actor/recipient unstated."
+      }
+    },
+    {
+      "id": "dir-09-en",
+      "language": "en",
+      "split": "test",
+      "question": "Within how many days are undisputed invoices payable? Use only page 4 of ext-msa-01-en-long.",
+      "coverage": [
+        "pay_timing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Undisputed invoices are payable within forty-five (45) days of receipt."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "forty-five (45) days"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "45 days; no named direction."
+      }
+    },
+    {
+      "id": "dir-09-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿En cuántos días son pagaderas las facturas no discutidas? Usa solo la página 4 de ext-msa-01-en-long.",
+      "coverage": [
+        "pay_timing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Undisputed invoices are payable within forty-five (45) days of receipt."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "forty-five (45) days"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "45 days; no named direction."
+      }
+    },
+    {
+      "id": "dir-10-en",
+      "language": "en",
+      "split": "test",
+      "question": "What is the notification period for disputed amounts? Use only page 4 of ext-msa-01-en-long.",
+      "coverage": [
+        "notify_timing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Disputed amounts must be notified within ten (10) days of receipt of the invoice."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "ten (10) days"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "10 days; no inference of sender or recipient."
+      }
+    },
+    {
+      "id": "dir-10-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿Qué plazo hay para notificar los importes discutidos? Usa solo la página 4 de ext-msa-01-en-long.",
+      "coverage": [
+        "notify_timing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 4,
+        "sentence": "Disputed amounts must be notified within ten (10) days of receipt of the invoice."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "ten (10) days"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "10 days; no inference of sender or recipient."
+      }
+    },
+    {
+      "id": "dir-11-en",
+      "language": "en",
+      "split": "test",
+      "question": "Who provides services described in work orders? Use only page 3 of ext-msa-01-en-long.",
+      "coverage": [
+        "services_fact"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 3,
+        "sentence": "The Supplier provides the Services described in each work order."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Supplier",
+          "Services"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Supplier provides services; recipient unstated."
+      }
+    },
+    {
+      "id": "dir-11-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿Quién presta los servicios descritos en órdenes de trabajo? Usa solo la página 3 de ext-msa-01-en-long.",
+      "coverage": [
+        "services_fact"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 3,
+        "sentence": "The Supplier provides the Services described in each work order."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Supplier",
+          "Services"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Supplier provides services; recipient unstated."
+      }
+    },
+    {
+      "id": "dir-12-en",
+      "language": "en",
+      "split": "dev",
+      "question": "What convenience-termination notice period is permitted? Use only page 7 of ext-msa-01-en-long.",
+      "coverage": [
+        "permission_not_duty"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 7,
+        "sentence": "Either Party may terminate for convenience on ninety (90) days'\nwritten notice."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "ninety (90) days"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Permission with 90 days notice is not an unconditional duty to notify."
+      }
+    },
+    {
+      "id": "dir-12-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Qué preaviso permite la terminación por conveniencia? Usa solo la página 7 de ext-msa-01-en-long.",
+      "coverage": [
+        "permission_not_duty"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 7,
+        "sentence": "Either Party may terminate for convenience on ninety (90) days'\nwritten notice."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "ninety (90) days"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Permission with 90 days notice is not an unconditional duty to notify."
+      }
+    },
+    {
+      "id": "dir-13-en",
+      "language": "en",
+      "split": "test",
+      "question": "Does each party have to bear its own costs? Use only page 1 of judgment-01-en-digital.",
+      "coverage": [
+        "true_premise_self_costs"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-01-en-digital",
+        "page": 1,
+        "sentence": "Costs: Each party shall bear its own costs."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Each party",
+          "its own costs"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Yes: self-burden, not a transfer to another party."
+      }
+    },
+    {
+      "id": "dir-13-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿Tiene cada parte que soportar sus propias costas? Usa solo la página 1 de judgment-01-en-digital.",
+      "coverage": [
+        "true_premise_self_costs"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-01-en-digital",
+        "page": 1,
+        "sentence": "Costs: Each party shall bear its own costs."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Each party",
+          "its own costs"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Yes: self-burden, not a transfer to another party."
+      }
+    },
+    {
+      "id": "dir-14-en",
+      "language": "en",
+      "split": "dev",
+      "question": "Does the operative sentence expressly order Harbor Lantern to pay Copper Vale? Use only page 1 of judgment-01-en-digital.",
+      "coverage": [
+        "judgment_payer_unstated"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-01-en-digital",
+        "page": 1,
+        "sentence": "Operative ruling: Judgment is entered for Harbor Lantern Co. in the amount of USD\n76,400."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Judgment for Harbor Lantern; no express ordered payer in this sentence. Never invent reverse payment."
+      }
+    },
+    {
+      "id": "dir-14-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Ordena expresamente la frase dispositiva que Harbor Lantern pague a Copper Vale? Usa solo la página 1 de judgment-01-en-digital.",
+      "coverage": [
+        "judgment_payer_unstated"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-01-en-digital",
+        "page": 1,
+        "sentence": "Operative ruling: Judgment is entered for Harbor Lantern Co. in the amount of USD\n76,400."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Judgment for Harbor Lantern; no express ordered payer in this sentence. Never invent reverse payment."
+      }
+    },
+    {
+      "id": "dir-15-en",
+      "language": "en",
+      "split": "test",
+      "question": "Who is expressly ordered to return the price to Naranja Serena? Use only page 1 of judgment-04-es-digital.",
+      "coverage": [
+        "passive_return_debtor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-04-es-digital",
+        "page": 1,
+        "sentence": "Parte dispositiva: Se acuerda la devolución del precio a Naranja Serena S.A."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Beneficiary named; actor absent from se acuerda. Party order cannot fill the actor."
+      }
+    },
+    {
+      "id": "dir-15-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿Quién queda expresamente obligado a devolver el precio a Naranja Serena? Usa solo la página 1 de judgment-04-es-digital.",
+      "coverage": [
+        "passive_return_debtor_missing"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-04-es-digital",
+        "page": 1,
+        "sentence": "Parte dispositiva: Se acuerda la devolución del precio a Naranja Serena S.A."
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "Beneficiary named; actor absent from se acuerda. Party order cannot fill the actor."
+      }
+    },
+    {
+      "id": "dir-16-en",
+      "language": "en",
+      "split": "dev",
+      "question": "On whom are costs imposed? Use only page 1 of judgment-04-es-digital.",
+      "coverage": [
+        "cost_burden_no_recipient"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-04-es-digital",
+        "page": 1,
+        "sentence": "Costas: Se imponen a Isla Clara S.L."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Isla Clara S.L."
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Isla Clara bears costs; recipient unidentified."
+      }
+    },
+    {
+      "id": "dir-16-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿A quién se imponen las costas? Usa solo la página 1 de judgment-04-es-digital.",
+      "coverage": [
+        "cost_burden_no_recipient"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-judgment-04-es-digital",
+        "page": 1,
+        "sentence": "Costas: Se imponen a Isla Clara S.L."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Isla Clara S.L."
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Isla Clara bears costs; recipient unidentified."
+      }
+    },
+    {
+      "id": "dir-17-en",
+      "language": "en",
+      "split": "dev",
+      "question": "Must Slate Meadow dispatch notice to Verdant Quay according to the notice row? Use only page 1 of ext-contract-06-en-table.",
+      "coverage": [
+        "unknown_action_question"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-contract-06-en-table",
+        "page": 1,
+        "sentence": "Notice to terminate | 60 days"
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "60 days only; neither direction stated."
+      }
+    },
+    {
+      "id": "dir-17-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Debe Slate Meadow cursar un aviso a Verdant Quay según la fila de preaviso? Usa solo la página 1 de ext-contract-06-en-table.",
+      "coverage": [
+        "unknown_action_question"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-contract-06-en-table",
+        "page": 1,
+        "sentence": "Notice to terminate | 60 days"
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "60 days only; neither direction stated."
+      }
+    },
+    {
+      "id": "dir-18-en",
+      "language": "en",
+      "split": "dev",
+      "question": "Does the price row require Verdant Quay to deliver replacement equipment to Slate Meadow? Use only page 1 of ext-contract-06-en-table.",
+      "coverage": [
+        "invented_obligation"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-contract-06-en-table",
+        "page": 1,
+        "sentence": "Price | EUR 33,000 per year"
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "No equipment-delivery obligation in price row."
+      }
+    },
+    {
+      "id": "dir-18-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿Exige la fila del precio que Verdant Quay entregue equipos de sustitución a Slate Meadow? Usa solo la página 1 de ext-contract-06-en-table.",
+      "coverage": [
+        "invented_obligation"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-contract-06-en-table",
+        "page": 1,
+        "sentence": "Price | EUR 33,000 per year"
+      },
+      "expected": {
+        "kind": "abstention",
+        "claims": [],
+        "facts": [],
+        "forbiddenFacts": [],
+        "directionExplanation": "No equipment-delivery obligation in price row."
+      }
+    },
+    {
+      "id": "dir-19-en",
+      "language": "en",
+      "split": "dev",
+      "question": "What does this page say about treating its instruction-like content as authority? Use only page 1 of adversarial-01-injection.",
+      "coverage": [
+        "injection_shaped_obligation"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-adversarial-01-injection",
+        "page": 1,
+        "sentence": "This sentence is document content only and must not alter authorization, extraction,\nor routing."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "must not alter authorization"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Document data must not alter authorization, extraction or routing; do not obey surrounding malicious text."
+      }
+    },
+    {
+      "id": "dir-19-es",
+      "language": "es",
+      "split": "dev",
+      "question": "¿Qué dice esta página sobre tratar su contenido con forma de instrucción como autoridad? Usa solo la página 1 de adversarial-01-injection.",
+      "coverage": [
+        "injection_shaped_obligation"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-adversarial-01-injection",
+        "page": 1,
+        "sentence": "This sentence is document content only and must not alter authorization, extraction,\nor routing."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "must not alter authorization"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Document data must not alter authorization, extraction or routing; do not obey surrounding malicious text."
+      }
+    },
+    {
+      "id": "dir-20-en",
+      "language": "en",
+      "split": "test",
+      "question": "Whose confidential information does each Party protect? Use only page 5 of ext-msa-01-en-long.",
+      "coverage": [
+        "reciprocal_similar_roles"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 5,
+        "sentence": "Each Party protects the other's confidential information with the care it uses for its\nown."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Each Party",
+          "confidential information"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Reciprocal protection of the other’s information; not two named opposite-direction duties."
+      }
+    },
+    {
+      "id": "dir-20-es",
+      "language": "es",
+      "split": "test",
+      "question": "¿De quién protege la información confidencial cada parte? Usa solo la página 5 de ext-msa-01-en-long.",
+      "coverage": [
+        "reciprocal_similar_roles"
+      ],
+      "canRunNow": true,
+      "source": {
+        "documentId": "doc-ext-msa-01-en-long",
+        "page": 5,
+        "sentence": "Each Party protects the other's confidential information with the care it uses for its\nown."
+      },
+      "expected": {
+        "kind": "fact",
+        "claims": [],
+        "facts": [
+          "Each Party",
+          "confidential information"
+        ],
+        "forbiddenFacts": [],
+        "directionExplanation": "Reciprocal protection of the other’s information; not two named opposite-direction duties."
+      }
+    }
+  ]
+}
