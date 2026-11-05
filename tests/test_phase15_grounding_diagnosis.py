@@ -134,14 +134,32 @@ class PlanDiagnostics(unittest.TestCase):
                 self.assertNotIn(text, json.dumps(meta))
                 self.assertEqual(meta["planError"], caught.exception.code)
 
+    def test_prose_around_a_fenced_plan_reaches_the_user_as_the_plan_and_never_as_text(self):
+        prose = "PROSE-THAT-MUST-NOT-BE-SHOWN I have all the data I need."
+        text = f"{prose}\n\n```json\n{json.dumps(worker.TEXT_PLAN, indent=2)}\n```"
+        world = worker.World(self)
+        world.agent_script = [worker.agent_result(text, worker.call("tu-1", worker.SEARCH_TOOL, worker.search_payload()))]
+        job = world.submit()
+        result = world.worker.process(job.key)
+        meta = sanitize_job_metadata(result.metadata)
+        self.assertEqual(meta["planParseStage"], "accepted")
+        self.assertIsNone(meta.get("fallbackReason"))
+        body = world.jobs.get(job.key).result
+        self.assertEqual(body["path"], "grounded")
+        self.assertNotIn("PROSE-THAT-MUST-NOT-BE-SHOWN", json.dumps(body, default=str))
+        self.assertNotIn("PROSE-THAT-MUST-NOT-BE-SHOWN", json.dumps(meta, default=str))
+
     def test_diagnostic_input_is_closed_and_does_not_relax_the_parser(self):
         self.assertEqual(plan_diagnostics("", None, attempted=False)["planParseStage"], "not_attempted")
         self.assertEqual(sanitize_job_metadata({"planParseStage": "DO_NOT_EMIT", "planChars": True,
             "planHasJsonStart": "DO_NOT_EMIT", "stopReason": "DO_NOT_EMIT"}), {"stopReason": "other"})
         valid = "```json\n" + json.dumps(worker.TEXT_PLAN) + "\n```"
-        parse_answer_plan(valid)  # existing single-fence tolerance remains intact
+        parse_answer_plan(valid)  # one fence, with or without prose around it (F-37)
+        parse_answer_plan("prose\n" + valid)
         with self.assertRaises(AgentContractError):
-            parse_answer_plan("prose\n" + valid)
+            parse_answer_plan("prose\n" + json.dumps(worker.TEXT_PLAN))
+        with self.assertRaises(AgentContractError):
+            parse_answer_plan(valid + "\n" + valid)
 
     def test_report_carries_the_actual_parser_diagnostics(self):
         from evals import phase15_routing_eval as ev

@@ -215,12 +215,33 @@ class AnswerPlanContractTests(unittest.TestCase):
         self.assertEqual(text.transition_before, "continue_with_text")
         self.assertEqual(parse_answer_plan(valid_plan()), plan)
 
-    def test_plan_with_a_single_markdown_fence_is_tolerated_but_prose_is_not(self) -> None:
+    def test_plan_in_a_single_fence_is_accepted_with_prose_around_it(self) -> None:
+        body = json.dumps(valid_plan(), indent=2)
+        expected = parse_answer_plan(body)
+        for wrapped in (f"```json\n{body}\n```",
+                        f"```\n{body}\n```",
+                        f"I have all the data I need.\n\n```json\n{body}\n```",
+                        f"Plan:\n```json\n{body}\n```\nDone."):
+            with self.subTest(wrapped=wrapped[:20]):
+                self.assertEqual(parse_answer_plan(wrapped), expected)
+
+    def test_plan_outside_one_single_fence_is_rejected(self) -> None:
         body = json.dumps(valid_plan())
-        self.assertEqual(parse_answer_plan(f"```json\n{body}\n```"), parse_answer_plan(body))
-        for wrapped in (f"Here is the plan: {body}", f"{body}\nDone.", "", "[]", "null"):
+        other = json.dumps({"version": 1, "blocks": [{"type": "text", "source": {"toolUseId": "other"}}]})
+        for wrapped in (f"Here is the plan: {body}", f"{body}\nDone.", "", "[]", "null",
+                        f"```json\n{body}\n```\n```json\n{other}\n```",
+                        f"```json\n{body}",
+                        f"{body}\n```",
+                        f"```json\nnot a plan\n{body}\n```"):
             with self.subTest(wrapped=wrapped[:20]), self.assertRaises(AgentContractError):
                 parse_answer_plan(wrapped)
+
+    def test_fenced_plan_still_passes_the_whole_contract(self) -> None:
+        for broken in ({"version": 1, "blocks": [{"type": "text", "source": {"toolUseId": "tu"}, "answer": "free text"}]},
+                       {"version": 2, "blocks": []},
+                       {"version": 1, "blocks": []}):
+            with self.subTest(broken=str(broken)[:30]), self.assertRaises(AgentContractError):
+                parse_answer_plan(f"All good.\n```json\n{json.dumps(broken)}\n```")
 
     def mutated(self, mutate):
         plan = valid_plan()
