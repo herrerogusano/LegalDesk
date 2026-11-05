@@ -235,6 +235,8 @@ class Observation:
     stage_error_codes: list[dict[str, str]] = field(default_factory=list)
     stage_reason_status: str = "not_observed"
     # Closed diagnostics (T9 step 12: 29 of 30 cases fell back and the report could not say why). Labels and enums only.
+    search_query_comparisons: list[str] = field(default_factory=list)
+    plan_diagnostic: dict[str, object] = field(default_factory=dict)
     plan_error: str | None = None                                # AgentContractError code of an unparsable plan
     omitted_errors: list[str] = field(default_factory=list)      # BlockError value of each dropped block
     stop_reason: str | None = None                               # Harness stop reason, if it has a safe shape
@@ -294,9 +296,14 @@ def _id_match(candidate: str, actual: list[str]) -> str:
 
 
 def _diagnose(obs: "Observation", loop: Any, output: Any, invalid: int = 0) -> None:
+    obs.search_query_comparisons = [v if isinstance(v, str) and v in {"same", "different", "unavailable"} else "unavailable" for v in getattr(loop, "search_query_comparisons", ())[:16]]
     obs.plan_error = _label(getattr(output, "plan_error", None))
+    from legaldesk.agent_contracts import plan_diagnostics
+    obs.plan_diagnostic = plan_diagnostics(getattr(loop, "text", None), obs.plan_error,
+        attempted=getattr(loop, "loop_outcome", None) == "completed" and bool(getattr(loop, "text", "").strip()))
     obs.omitted_errors = [str(_label(getattr(getattr(item, "error", None), "value", None)) or "other") for item in getattr(output, "omitted", ())]
-    obs.stop_reason = _label(getattr(loop, "stop_reason", None))
+    from legaldesk.agent_contracts import closed_stop_reason
+    obs.stop_reason = closed_stop_reason(getattr(loop, "stop_reason", None))
     calls = tuple(getattr(loop, "tool_calls", ()))
     obs.tool_statuses = [status if status in {"SUCCESS", "ERROR"} else "other" for status in (getattr(c, "status", None) for c in calls)]
     obs.tool_error_hints = [str(_label(getattr(c, "error_hint", None)) or "other") for c in calls if getattr(c, "status", None) != "SUCCESS"]
@@ -454,6 +461,9 @@ def run_offline_case(dataset: Mapping[str, Any], case: Mapping[str, Any]) -> Obs
     obs.omitted_blocks = len(meta.get("omittedBlocks") or [])
     obs.omitted_errors = [str(_label(item.get("error")) or "other") for item in (meta.get("omittedBlocks") or []) if isinstance(item, dict)]
     obs.plan_error, obs.stop_reason = _label(meta.get("planError")), _label(meta.get("stopReason"))
+    from legaldesk.agent_contracts import PLAN_DIAGNOSTIC_KEYS
+    obs.plan_diagnostic = {k: meta[k] for k in PLAN_DIAGNOSTIC_KEYS if k in meta}
+    obs.search_query_comparisons = list(meta.get("searchQueryComparisons", ()))
     obs.loop_outcome, obs.iterations = meta.get("loopOutcome"), meta.get("iterations")
     plan = case["simulation"].get("plan")
     obs.plan_blocks = _plan_block_count(json.dumps(plan)) if plan is not None else None
@@ -571,6 +581,8 @@ def score_case(case: Mapping[str, Any], obs: Observation, *, offline: bool) -> d
         "iterations": obs.iterations, "latencyMs": obs.latency_ms, "error": obs.error,
         "diagnostics": {
             "stageErrorCodes": list(obs.stage_error_codes), "stageReasonStatus": obs.stage_reason_status,
+            **obs.plan_diagnostic,
+            "searchQueryComparisons": list(obs.search_query_comparisons),
             "planError": obs.plan_error, "omittedErrors": list(obs.omitted_errors), "stopReason": obs.stop_reason,
             "toolStatuses": list(obs.tool_statuses), "toolErrorHints": list(obs.tool_error_hints),
             "unansweredTools": list(obs.unanswered_tools), "streamErrorHint": obs.stream_error_hint,

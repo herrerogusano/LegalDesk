@@ -81,7 +81,7 @@ WORKER_USES_A_FRESH_SESSION_PER_INVOCATION = True
 # Closed reasons of a failed tool result; identical to legaldesk_agent.client.ERROR_HINTS (a test compares them).
 ERROR_HINTS = (
     "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text",
-    "tool_reported_error", "unclassified",
+    "tool_reported_error", "unclassified", "stream_limit_exceeded",
 )
 # Verdicts after which the cut-loop check is not run (it would fail the same way and spend two paid calls).
 REJECTED_VERDICTS = frozenset({"request_rejected", "tool_use_rejected", "client_parser_rejected"})
@@ -353,6 +353,9 @@ def check_tool_results(backends: Backends, state: _State, question: str) -> dict
                 (hint if hint in ERROR_HINTS else "other") for hint in (getattr(item, "error_hint", None) for item in calls if getattr(item, "status", None) != "SUCCESS")
             ],
             "completedNewToolResults": retained_new, "outputPath": None, "outcome": outcome,
+            "streamErrorHint": (
+                hint if hint in ERROR_HINTS else "other"
+            ) if (hint := getattr(loop, "stream_error_hint", None)) is not None else None,
         })
         if outcome == "retained":
             try:
@@ -387,6 +390,10 @@ def classify_cut_loop(loop: Any) -> tuple[str, int]:
     calls = tuple(getattr(loop, "tool_calls", ()))
     complete = [item for item in calls if getattr(item, "status", None) == "SUCCESS" and getattr(item, "payload", None)]
     new_tools = sum(1 for item in complete if getattr(item, "short_name", None) in NEW_TOOLS)
+    if getattr(loop, "stream_error_hint", None) == "stream_limit_exceeded":
+        # A local resource cap is not the intended Harness iteration cut. Keep
+        # completed-tool evidence, but do not claim the cut-loop check passed.
+        return "inconclusive", new_tools
     if complete:
         return "retained", new_tools
     if any(getattr(item, "status", None) == "SUCCESS" for item in calls):

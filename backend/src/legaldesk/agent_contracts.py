@@ -740,4 +740,24 @@ def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
     return AnswerPlan(intro, tuple(blocks))
 
 
+PLAN_STOP_REASONS = frozenset({"end_turn", "stop_sequence", "tool_use", "tool_result", "max_tokens", "max_iterations_exceeded", "guardrail_intervened", "content_filtered", "malformed_model_output", "malformed_tool_use", "model_context_window_exceeded"})
+
+
+def closed_stop_reason(value: object) -> str | None:
+    return None if value is None else value if isinstance(value, str) and value in PLAN_STOP_REASONS else "other"
+
+
+PLAN_PARSE_STAGES = frozenset({"not_attempted", "json_decode", "size", "schema", "accepted"})
+PLAN_DIAGNOSTIC_KEYS = frozenset({"planChars", "planHasJsonStart", "planHasJsonEnd", "planParseStage"})
+
+
+def plan_diagnostics(text: object, error: str | None, *, attempted: bool) -> dict[str, object]:
+    """Describe the actual strict parser outcome; never extract/repair a JSON envelope."""
+    value = text if isinstance(text, str) else ""
+    stage = ("not_attempted" if not attempted else "json_decode" if error == "invalid_json"
+             else "size" if error == "too_large" else "schema" if error else "accepted")
+    return {"planChars": len(value), "planHasJsonStart": "{" in value or "[" in value,
+            "planHasJsonEnd": "}" in value or "]" in value, "planParseStage": stage}
+
+
 __all__ = [name for name in globals() if not name.startswith("_")]
