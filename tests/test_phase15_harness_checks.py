@@ -149,6 +149,22 @@ class VerdictTests(ChecksTestCase):
 
         self.assertEqual(checks.ERROR_HINTS, ERROR_HINTS)
 
+    def test_local_stream_limit_is_reported_and_does_not_prove_the_intended_cut(self) -> None:
+        limited = loop(tool_call(), outcome="failed", stop="tool_result")
+        limited.stream_error_hint = "stream_limit_exceeded"
+        unknown = loop(outcome="failed", stop="tool_result")
+        unknown.stream_error_hint = "SECRET"
+        recorder = Recorder(agent=[loop(), limited, unknown])
+        report = self.run_with(recorder)
+        result = report["checks"]["tool_results"]
+        self.assertEqual([call["streamErrorHint"] for call in result["calls"]], ["stream_limit_exceeded", "other"])
+        self.assertEqual([call["outcome"] for call in result["calls"]], ["inconclusive", "inconclusive"])
+        self.assertEqual(result["calls"][0]["completedNewToolResults"], 1)
+        self.assertEqual((result["verdict"], report["verdict"]), ("inconclusive", "inconclusive"))
+        self.assertEqual(recorder.resolved, [])
+        self.assertEqual(recorder.paid_calls, 5)  # the fixed check budget; no retry
+        self.assertNotIn("SECRET", self.output.read_text())
+
     def test_unacknowledged_first_turn_is_inconclusive_not_a_pass(self) -> None:
         report = self.run_with(Recorder(plain=["hmm", "UNKNOWN"]))
         self.assertEqual(report["checks"]["session"]["verdict"], "inconclusive")

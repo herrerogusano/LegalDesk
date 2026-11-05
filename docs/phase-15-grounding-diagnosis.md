@@ -298,7 +298,7 @@ byte/iteration/token limits?**
 
 ## Validation and handoff
 
-Final validation on Windows, Python 3.13.13, all exit codes zero; no skipped
+Initial selected-suite validation on Windows, Python 3.13.13, all exit codes zero; no skipped
 tests in the selected suite:
 
 ```powershell
@@ -317,8 +317,8 @@ evals verify machinery, not model quality. Final logs:
 `%TEMP%\legaldesk-diagnosis-routing-final.log`,
 `%TEMP%\legaldesk-diagnosis-golden-final.log`.
 Whitespace check passed. No configured Python lint/type-check command was found;
-the selected tests import and execute changed paths. Full repository Windows
-suite and Linux/Python 3.12 CI were not claimed as locally verified. An initial
+the selected tests import and execute changed paths. These 499 tests were a
+subset, not the full CI discovery command. See the CI follow-up below. An initial
 selected-suite run found the old test expecting 257 frames to fail; its isolated
 counter test was updated, then all 499 passed. No known failure was suppressed.
 
@@ -328,6 +328,60 @@ was made. Existing CD may run offline CI on publication; this PR does not deploy
 Delivery uses a draft PR: the repository automatically reviews ordinary PRs,
 and the pinned PullBeacon revision explicitly skips drafts before model use.
 No review request/comment or ready-for-review transition is authorized here.
+
+### CI follow-up: complete discovery, 2026-11-05
+
+CI run `42001552669` on `5e542c9` ran 1981 tests and found two failures that
+the initial 499-test subset missed. Both contracts are corrected here:
+
+- The exact diagnostics-key assertion remains strict. Each added field is
+  checked as a nonnegative integer, exact boolean, fixed parse-stage enum or
+  bounded list of fixed comparison labels. Unknown input labels become
+  unavailable. Eight mutation checks prove the assertion fails for an added
+  text field or free text/wrong types in any new diagnostic field.
+- The Harness check script's ERROR_HINTS now includes stream_limit_exceeded.
+  It records the closed stream hint separately from tool errors. A local limit
+  makes the intended iteration-cut check inconclusive even if a completed tool
+  result survives; it does not prove Harness iteration-cut retention. Existing
+  results/counts remain visible; the fixed five-invocation check budget and
+  no-retry behavior are unchanged. Unknown hints become other.
+
+Exact full command, identical to the CI test step:
+
+```text
+python -B -m unittest discover -s tests -q
+```
+
+Ubuntu (WSL), Python 3.12.3, clean temporary source export with this patch and
+canonical Git fixture bytes; packages installed with the same CI extras,
+AWS metadata disabled and credential/config paths set to `/dev/null`:
+
+```text
+Ran 1983 tests in 62.382s
+OK (skipped=16)
+```
+
+Exit code 0. The 16 skips are reported, not counted as exercised coverage.
+Temporary Linux log: `/tmp/legaldesk-117-ci-g5k4lax4/full-tests.log`.
+The Windows run of that same full command also completed:
+
+```text
+Ran 1983 tests in 199.484s
+FAILED (errors=2, skipped=1)
+```
+
+Neither Windows error is either CI contract failure: a loopback HTTP connection
+aborted with WinError 10053 in the journey-security test (isolated retry: one
+test, OK), and the smoke TXT preflight rejected a CRLF checkout hash. A read-only
+comparison confirms that TXT equals the Git object after LF normalization;
+the working fixture, frozen datasets and their hashes were not changed. The
+Ubuntu run uses the canonical bytes and passed both tests. Windows log:
+`%TEMP%\legaldesk-117-full-tests.log`. The corrected diagnostic/script modules
+also passed separately (14 and 32 tests). `git diff --check` passed.
+
+No new model/Harness/ApplyGuardrail invocation, AWS change, merge or review
+request was made for this follow-up. A new GitHub CI result must be associated
+with the pushed head separately; the passing Ubuntu result above is local.
 
 Checklist before calling anything proven:
 
