@@ -205,7 +205,7 @@ class EvidenceResolverContractTests(unittest.TestCase):
         self.assertIn("explicitly state which requested material detail", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("both the number", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("what is being counted", ANSWER_WRITER_SYSTEM_PROMPT)
-        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.5.0")
+        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.6.0")
         # Grounding scores the whole answer against the passages, so a sentence
         # that is in no passage blocks a correct answer (F-05, 0.97 -> 0.33).
         self.assertNotIn("qualified legal review may be", ANSWER_WRITER_SYSTEM_PROMPT)

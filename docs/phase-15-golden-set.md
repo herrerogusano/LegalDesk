@@ -319,3 +319,17 @@ cloud edge), **golden offline** (this set, CI), **golden real** (this set, needs
 4. **Probe policy**: run it for every RAG case (default: per-stage metrics for all, USD 1.5 typical) or only for cases whose end-to-end answer failed (about USD 1.2 cheaper,
    no recall metric for passing cases).
 5. **Repetitions** per case (consistency): not implemented; each repetition multiplies the cost.
+
+## 11. Real-mode overlay (F-50)
+
+The first complete real run (`phase15-golden-20261105-b.json`) scored 0.25 answer accuracy and 0.0 recall, and neither number measured the product. Eight real answers read by hand were acceptable; the evaluator failed seven of them. Its oracles had been written against the simulated world and never run on real output.
+
+`evals/phase15_golden_real_overlay.json` holds what the real corpus and pipeline do differently. It is applied in real mode only, on a copy; the frozen dataset, the questions, the routes and the thresholds do not change, and the offline mode does not use it. **It was written after seeing results**, so each change carries its reason and each relaxed rule has a test that must still fail (`tests/test_phase15_golden_real_overlay.py`).
+
+- Citations and recall compare documents, not pages: the Knowledge Base page is where a chunk starts.
+- A cited abstention is accepted when the case accepts `insufficient_evidence`; forbidden strings still fail it.
+- Six scanned documents are `FAILED`, as in the corpus; cases whose gold is on them are known limits (F-31) and still count against recall, so that gate cannot pass.
+- Fields with the right value that the pipeline leaves pending are graded as pending. This moves only from fact to pending, and makes `idp_acceptance` non-independent for those fields.
+- A mixed answer may add correct lines about the same document.
+
+The report now keeps the ids behind each verdict (`observed`), never text, so a later oracle defect can be re-judged without paying again, and it reports answers in the wrong language (`languageMismatch`, not a gate).
