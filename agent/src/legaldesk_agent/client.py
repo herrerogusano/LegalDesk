@@ -263,6 +263,29 @@ def _record_stream_error(exc: Exception, correlation_id: str, events_received: i
         pass  # Diagnostics must never change stream recovery or retry behavior.
 
 
+def _record_invoke_error(exc: Exception, correlation_id: str) -> None:
+    """Closed diagnostics for a call refused before any stream exists; the message is never logged (F-47)."""
+    classes = {"ClientError", "AccessDeniedException", "ValidationException", "ThrottlingException", "ResourceNotFoundException",
+               "ParamValidationError", "EndpointConnectionError", "ConnectTimeoutError", "ReadTimeoutError", "ConnectionClosedError"}
+    codes = {"AccessDeniedException", "UnauthorizedException", "ValidationException", "ThrottlingException", "ResourceNotFoundException",
+             "ServiceQuotaExceededException", "InternalServerException", "ServiceUnavailableException", "ConflictException"}
+    try:
+        response = getattr(exc, "response", None)
+        response = response if isinstance(response, Mapping) else {}
+        error, metadata = response.get("Error"), response.get("ResponseMetadata")
+        code = error.get("Code") if isinstance(error, Mapping) else None
+        status = metadata.get("HTTPStatusCode") if isinstance(metadata, Mapping) else None
+        kind = type(exc).__name__
+        print(json.dumps({
+            "event_type": "harness_invoke_diagnostic", "correlation_id": correlation_id,
+            "exception_class": kind if kind in classes else "other",
+            "aws_error_code": code if isinstance(code, str) and code in codes else "other",
+            "sdk_status": status if type(status) is int and 100 <= status <= 599 else None,
+        }, separators=(",", ":"), sort_keys=True), flush=True)
+    except Exception:
+        pass  # Diagnostics must never change the failure the caller handles.
+
+
 # HarnessToolUseStatus is an SDK enum: ``success`` or ``error``.
 _TOOL_STATUSES = {"SUCCESS", "ERROR"}
 _TOOL_RESULT_KEYS = {
@@ -1315,9 +1338,10 @@ def invoke_agent_chat(
     _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "started", operation="invoke_harness")
     try:
         response = invoker.client.invoke_harness(**request)
-    except Exception:
+    except Exception as exc:
         _record_agent_event(invoker.telemetry_sink, "agent", correlation_id, "error", operation="invoke_harness",
                             started_at=started_at, error_code="harness_invoke_failed")
+        _record_invoke_error(exc, correlation_id)
         raise
     stream = response.get("stream") if isinstance(response, Mapping) else None
     if isinstance(stream, (str, bytes, Mapping)) or not isinstance(stream, Iterable):

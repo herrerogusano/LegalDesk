@@ -1054,6 +1054,8 @@ class PipelineRun:
     conversations: Any = None
     runs: int = 0
     id_map: Mapping[str, str] | None = None
+    subject: str = SUBJECT
+    matter_id: str = MATTER
 
     def _begin(self) -> None:
         self.record.__init__()   # type: ignore[misc]  # the record reflects the LAST run (tool call or fallback)
@@ -1072,7 +1074,7 @@ class PipelineRun:
         self._begin()
         correlation = str(uuid5(NAMESPACE_URL, f"golden:{self.case['id']}:{self.runs}"))
         with contextlib.redirect_stdout(io.StringIO()):
-            result = run_search_documents(self.service, subject=SUBJECT, matter_id=MATTER, correlation_id=correlation, question=self.case["question"])
+            result = run_search_documents(self.service, subject=self.subject, matter_id=self.matter_id, correlation_id=correlation, question=self.case["question"])
         if "error" in result:
             self.record.final = {"operationStatus": "error", "evidenceStatus": None, "citations": []}
             return dict(result)
@@ -1350,7 +1352,7 @@ def fallback_output(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def make_real_pipeline(case: Mapping[str, Any], service: SearchDocumentsService, conversations: Any = None,
-                       id_map: Mapping[str, str] | None = None) -> PipelineRun:
+                       id_map: Mapping[str, str] | None = None, *, subject: str, matter_id: str) -> PipelineRun:
     """The deployed pipeline (KB, resolver, writer, grounding Guardrail) wrapped by the same recorders as offline."""
 
     import dataclasses  # noqa: PLC0415
@@ -1361,7 +1363,7 @@ def make_real_pipeline(case: Mapping[str, Any], service: SearchDocumentsService,
         service, retrieval_client=kb, evidence_resolver=RecordingResolver(service.evidence_resolver, record, kb),
         answer_writer=RecordingWriter(service.answer_writer, record, case["expected"].get("facts")),
         grounding_validator=RecordingGrounding(service.grounding_validator, record), telemetry_sink=telemetry)
-    return PipelineRun(case, wrapped, record, telemetry, conversations, id_map=id_map)
+    return PipelineRun(case, wrapped, record, telemetry, conversations, id_map=id_map, subject=subject, matter_id=matter_id)
 
 
 class GoldenClient(Protocol):
@@ -1392,7 +1394,9 @@ class DeployedGoldenClient:
                  pipeline_factory: Callable[[Mapping[str, Any], Any], PipelineRun] | None = None,
                  id_map: Mapping[str, str] | None = None) -> None:
         self.id_map = dict(id_map or {})
-        self.pipeline_factory = pipeline_factory or (lambda case, conversations: make_real_pipeline(case, self.service, conversations, self.id_map))
+        self.subject = ""   # the verified subject of the real token; the world's simulated one is refused by the real authorization (F-48)
+        self.pipeline_factory = pipeline_factory or (lambda case, conversations: make_real_pipeline(
+            case, self.service, conversations, self.id_map, subject=self.subject, matter_id=self.matter_id))
         self.world, self.worker, self.service, self.input_check = world, worker, service, input_check
         self.access_token, self.matter_id, self.plan, self.transport = access_token, matter_id, dict(plan), transport
         self.residual = ResidualState()
@@ -1422,6 +1426,7 @@ class DeployedGoldenClient:
             from legaldesk.memory import conversation_binding_partition_key  # noqa: PLC0415
 
             identity = worker.identity_verifier.verify_authorization_header(f"Bearer {self.access_token}")
+            self.subject = identity.subject
             context = build_request_context(identity, self.matter_id, worker.authorization_store)
             conversation_id, selector = f"eval-{uuid4()}", f"eval-{uuid4()}"
             worker.conversation_store.bind(context, conversation_id=conversation_id, session_selector=selector)

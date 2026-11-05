@@ -964,6 +964,32 @@ class DeployedClientTests(unittest.TestCase):
         self.assertEqual(len(client.residual.bindings), 1)                    # the conversation binding it wrote is listed for cleanup
         self.assertIsNotNone(client.residual.bindings[0]["invocationId"])
 
+    def test_the_real_probe_asks_with_the_real_subject_and_matter_not_the_simulated_ones(self) -> None:
+        # The live run of 2026-11-05 died here: the probe asked as the simulated world's subject (F-48).
+        service = ev.make_pipeline(CASES["lt-01"], WORLD, frozenset()).service
+        seen = {}
+
+        def fake_search(service, *, subject, matter_id, correlation_id, question):
+            seen.update(subject=subject, matter_id=matter_id)
+            return {"error": "stop"}
+
+        with patch.object(ev, "run_search_documents", fake_search):
+            ev.make_real_pipeline(CASES["lt-01"], service, None, {}, subject="s-real", matter_id="m-real").search_payload()
+        self.assertEqual(seen, {"subject": "s-real", "matter_id": "m-real"})
+        with self.assertRaises(TypeError):   # no default to fall back on the simulated identity
+            ev.make_real_pipeline(CASES["lt-01"], service)
+
+    def test_the_default_probe_factory_uses_the_verified_subject_and_the_run_matter(self) -> None:
+        client = ev.DeployedGoldenClient(world=WORLD, worker=None, service="service", input_check=None, access_token="t",
+                                         matter_id="m-real", plan={}, id_map={})
+        client.subject = "s-real"
+        with patch.object(ev, "make_real_pipeline") as factory:
+            client.pipeline_factory(CASES["lt-01"], None)
+        self.assertEqual(factory.call_args.kwargs, {"subject": "s-real", "matter_id": "m-real"})
+        deployed, h, *_ = deployed_client(CASES["lt-01"])
+        deployed.run(CASES["lt-01"])
+        self.assertEqual(deployed.subject, h.identity.subject)   # taken from the verified token on each run
+
     def test_a_blocked_input_spends_only_the_guardrail_call_and_never_invokes_the_agent(self) -> None:
         client, h, pipeline, holder, _ = deployed_client(CASES["oos-03"], input_kind="blocked")
         obs = client.run(CASES["oos-03"])
