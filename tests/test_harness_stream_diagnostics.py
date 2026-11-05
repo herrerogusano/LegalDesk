@@ -12,10 +12,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).parents[1]
 sys.path[:0] = [str(ROOT / "agent/src"), str(ROOT / "backend/src"), str(ROOT / "tests")]
 
-from botocore.exceptions import EventStreamError
+from botocore.exceptions import ClientError, EventStreamError
 from legaldesk_agent.client import (
     ClientStreamParserError, HarnessInvocationError, HarnessInvoker,
-    _record_stream_error, invoke_agent_chat,
+    _record_invoke_error, _record_stream_error, invoke_agent_chat,
 )
 from test_phase15_agent_chat_client import HARNESS_ARN, PROMPT, StreamClient, make_scope
 
@@ -84,6 +84,46 @@ class StreamDiagnosticsTests(unittest.TestCase):
 
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ClientStreamParserError):
             HarnessInvoker(BadClient(), HARNESS_ARN).invoke("synthetic")
+
+
+
+class HarnessInvokeDiagnosticTests(unittest.TestCase):
+    """A call refused before any stream exists must say why, with closed values only (F-47)."""
+
+    def capture(self, exc):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _record_invoke_error(exc, "safe")
+        return json.loads(out.getvalue()), out.getvalue()
+
+    def test_a_denied_call_reports_its_class_code_and_status_and_never_the_message(self) -> None:
+        denied = ClientError({"Error": {"Code": "AccessDeniedException", "Message": "SECRET-ARN not authorized"},
+                              "ResponseMetadata": {"HTTPStatusCode": 403}}, "InvokeHarness")
+        event, output = self.capture(denied)
+        self.assertEqual(event, {"event_type": "harness_invoke_diagnostic", "correlation_id": "safe", "exception_class": "ClientError",
+                                 "aws_error_code": "AccessDeniedException", "sdk_status": 403})
+        self.assertNotIn("SECRET-ARN", output)
+
+    def test_the_real_chat_path_records_it_and_still_raises_the_original_error(self) -> None:
+        denied = ClientError({"Error": {"Code": "AccessDeniedException", "Message": "SECRET"}, "ResponseMetadata": {"HTTPStatusCode": 403}}, "InvokeHarness")
+
+        class Denying:
+            def invoke_harness(self, **kwargs):
+                raise denied
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(ClientError) as caught:
+            invoke_agent_chat(HarnessInvoker(Denying(), HARNESS_ARN), "synthetic", invocation_scope=make_scope(), system_prompt=PROMPT)
+        self.assertIs(caught.exception, denied)
+        self.assertIn('"aws_error_code":"AccessDeniedException"', out.getvalue())
+        self.assertNotIn("SECRET", out.getvalue())
+
+    def test_unknown_values_become_other(self) -> None:
+        class Odd(Exception):
+            response = {"Error": {"Code": "free text from the service"}, "ResponseMetadata": {"HTTPStatusCode": "x"}}
+
+        event, _ = self.capture(Odd("SECRET"))
+        self.assertEqual((event["exception_class"], event["aws_error_code"], event["sdk_status"]), ("other", "other", None))
 
 
 if __name__ == "__main__":

@@ -619,9 +619,10 @@ Resources:
                   - !Ref WriterModelArn
                   - !Ref ResolverFoundationModelArn
                   - !Ref WriterFoundationModelArn
+              # AWS requires both actions on the Harness ARN to call InvokeHarness (F-47).
               - Sid: InvokeTheAgentHarnessOnly
                 Effect: Allow
-                Action: bedrock-agentcore:InvokeHarness
+                Action: [bedrock-agentcore:InvokeHarness, bedrock-agentcore:InvokeAgentRuntime]
                 Resource: !Ref HarnessArn
               - Sid: ConversationMemory
                 Effect: Allow
