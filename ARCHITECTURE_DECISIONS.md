@@ -733,3 +733,44 @@ contenido.
   D9.
 - **Prompt injection en resultados de tools**: el agente solo tiene tools de
   lectura en el mismo matter y no escribe datos (D3), lo que limita el impacto.
+
+## D-024 rendering amendment — owner approved 2026-11-04 (F-19/F-35)
+
+This amends the relationship-rendering decision recorded as D-024 in the
+personal decision log; its reversal boundary remains in force. When selected
+evidence requires a structured relationship, the backend publishes the bounded
+whole source sentence containing the ordered actor/action/recipient, including
+its conditions. It never publishes writer prose or constructs `must ... to`.
+Missing/reversed relationships, ambiguous or incomplete sentence support,
+dependent lists and overlength fail closed. Original citations and downstream
+grounding remain mandatory. When projection is optional, validated prose stays;
+malformed/unsupported relationships are dropped with the existing closed reason.
+
+The owner chose exact source rendering over retaining the English template and
+rejecting Spanish obligations. Keeping free writer prose for required
+relationships remains rejected because it reopens role reversal. No prompt,
+model, frozen dataset, gate or threshold changes accompany this amendment.
+Spanish detection and deterministic sentence boundaries are specified and tested
+in [the implementation record](docs/phase-15-relationship-safety.md).
+
+**Historical acceptance blocker (2026-11-04):** the evidence-only eligibility
+made three frozen offline golden cases fail closed. This was reported without
+changing the dataset or gate, and is superseded by the owner decision below.
+The supervisor owns the vault log.
+
+### D-024 eligibility amendment - owner approved 2026-11-05
+
+Require projection only when **both** selected evidence and validated writer
+prose trigger the same directed-obligation detector, in English or Spanish.
+An unrelated obligation elsewhere on a date/law page must not force projection.
+Required rendering and its fail-closed rules remain as above. Otherwise prose
+stays and a relationship is direction-validated or dropped with its closed
+reason. The unchanged golden writer now passes lt-12, lt-20 and am-05; no fake,
+frozen expectation, gate, threshold or prompt change was used to achieve that.
+
+Trade-off accepted by the owner: obligation paraphrases outside the detector's
+closed vocabulary can evade projection, including reversed obligations. Tests
+show concrete English/Spanish examples reach grounding unchanged; a fake
+allowing response accepts them. Real grounding rejection is unverified. This
+amendment is a bounded lexical policy, not a semantic direction guarantee. See
+[the implementation record](docs/phase-15-relationship-safety.md).

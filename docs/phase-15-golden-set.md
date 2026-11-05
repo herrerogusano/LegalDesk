@@ -107,10 +107,22 @@ reported and gated is the **test** split's.
 | `lt-19` | `retrieval` | hypothesis | the answer is on a scanned page of a 7-page lease full of similar clauses |
 | `lt-21` | `writer` | hypothesis | the OCR garbles the number (`6O`) and the writer may repeat or drop it |
 
-A hypothesis is a prediction to confirm, not a measured fact. One more risk is **not** a case because the offline doubles cannot reproduce it: when a selected
-passage contains a modal plus a directed action ("may assign this Agreement…"), the production code requires the writer to project a structured relationship
-and then *replaces* the answer with the canonical sentence, which can drop the fact that was asked. The long documents avoid that boilerplate on purpose; the
-first real run should watch for `model_failed` in `writer` on real contract text.
+A hypothesis is a prediction to confirm, not a measured fact. F-35 detects
+Spanish directed obligations which the previous English trigger missed. The
+owner's 2026-11-04 D-024 amendment replaces the old `must ... to` template with
+whole source sentences. Its evidence-only eligibility initially made the
+unchanged offline writer fail at `write_answer` for `lt-12`, `lt-20` and `am-05`.
+Those were reported as new failures, without changing this known-limit table.
+
+On 2026-11-05 the owner narrowed eligibility: both selected evidence and writer
+prose must trigger the same obligation detector. All three cases now pass:
+`GoldenWriter` emits fact-only prose with no recognized modal construction,
+so its answer stays intact. The dataset, fake writer, frozen expectations,
+gates and thresholds remain unchanged. This restores the offline gate but
+introduces an acknowledged lexical-evasion risk: obligation paraphrases outside
+the closed vocabulary can pass this control. Grounding remains mandatory;
+real rejection of such evasions is unverified. See [the exact examples, census
+and commands](phase-15-relationship-safety.md).
 
 ## 3. The asynchronous layer
 

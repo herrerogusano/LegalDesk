@@ -249,7 +249,7 @@ class EvidenceResolverContractTests(unittest.TestCase):
         evidence = ({"text": "The supplier must send written notice to the buyer."},)
         valid = ({"actor": "supplier", "action": "send written notice", "recipient": "buyer"},)
         self.assertEqual(validate_writer_relationships_against_evidence(valid, evidence), valid)
-        self.assertEqual(render_writer_relationships(valid), "supplier must send written notice to buyer.")
+        self.assertEqual(render_writer_relationships(valid, evidence), "The supplier must send written notice to the buyer.")
         self.assertTrue(evidence_requires_relationship_projection(evidence))
         self.assertTrue(evidence_requires_relationship_projection(({"text": "The supplier must notify the buyer."},)))
         self.assertTrue(evidence_requires_relationship_projection(({"text": "The supplier must approve the design for the buyer."},)))

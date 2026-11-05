@@ -767,7 +767,7 @@ def run_holdout(
                 else:
                     # Use the same canonical rendering as production so a
                     # reversed prose answer cannot appear in an accepted result.
-                    answer = render_writer_relationships(relationships)
+                    answer = render_writer_relationships(relationships, selected_relationship_evidence)
             if str(case["expected"]) == "partial":
                 grounded, reason = _score_partial(str(case["id"]), answer)
                 grounding_reason = reason

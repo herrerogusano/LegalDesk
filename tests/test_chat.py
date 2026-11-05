@@ -258,7 +258,7 @@ class GroundedChatTests(unittest.TestCase):
             ),
         )
         self.assertEqual(response.operation_status, "ok")
-        self.assertEqual(response.answer, "supplier must send written notice to buyer.")
+        self.assertEqual(response.answer, "The supplier must send written notice to the buyer.")
         self.assertNotIn("buyer must send", response.answer)
 
     def test_directed_evidence_requires_structured_relationship_projection(self) -> None:
