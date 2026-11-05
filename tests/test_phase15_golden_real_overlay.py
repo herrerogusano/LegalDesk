@@ -99,6 +99,9 @@ class RealAnswersReadByHand(unittest.TestCase):
         self.assert_passes("mx-01", mx_01(data_line(NORTHSTAR, "termination_notice_value", pending=True)))
         self.assert_passes("inv-02", inventory("inv-02", ev.expected_inventory(CASES["inv-02"], WORLD)))
 
+    def test_an_abstention_naming_the_missing_detail_in_spanish_passes(self) -> None:
+        self.assert_passes("un-04", un_04(answer="La evidencia establece que la sentencia fue dictada por el tribunal, pero el nombre del juez que la dictó no está especificado."))
+
     def test_a_citation_to_the_wrong_document_still_fails(self) -> None:
         self.assert_wrong("lt-01", lt_01(cited="doc-ext-msa-01-en-long"))
 
@@ -106,7 +109,8 @@ class RealAnswersReadByHand(unittest.TestCase):
         self.assert_wrong("lt-01", lt_01(answer="El contrato exige un preaviso."))
 
     def test_an_abstention_with_an_invented_detail_still_fails(self) -> None:
-        self.assert_wrong("un-04", un_04(answer="La sentencia la dictó el magistrado Pérez."))
+        self.assert_wrong("un-02", observation("un-02", {"blocks": [text_block("Vence el 29 de febrero de 2024.", "insufficient_evidence")], "citations": [citation(NORTHSTAR)]},
+                                               tools=["search_documents"], path="grounded", retrieved=[NORTHSTAR], status="insufficient_evidence", probe_citations=[NORTHSTAR]))
 
     def test_a_citation_to_a_passage_that_was_not_retrieved_still_fails(self) -> None:
         row = ev.evaluate_case(CASES["un-04"], un_04(cited="doc-ext-msa-01-en-long"), WORLD)

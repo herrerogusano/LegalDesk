@@ -371,6 +371,31 @@
     "doc-judgment-05-en-scanned-optional-absent"
    ],
    "reason": "the six scanned documents are FAILED in the real corpus, besides the failed upload"
+  },
+  "un-01": {
+   "dropForbidden": [
+    "penalización de"
+   ],
+   "reason": "An abstention must name the missing detail (writer contract), and now does so in Spanish, so this noun appears in a right answer. Seen on un-04 in the 3-case check before run c. The status check remains; an invented value in an abstention is no longer caught lexically here."
+  },
+  "un-03": {
+   "dropForbidden": [
+    "indemnización de"
+   ],
+   "reason": "An abstention must name the missing detail (writer contract), and now does so in Spanish, so this noun appears in a right answer. Seen on un-04 in the 3-case check before run c. The status check remains; an invented value in an abstention is no longer caught lexically here."
+  },
+  "un-04": {
+   "dropForbidden": [
+    "juez ",
+    "magistrado "
+   ],
+   "reason": "An abstention must name the missing detail (writer contract), and now does so in Spanish, so this noun appears in a right answer. Seen on un-04 in the 3-case check before run c. The status check remains; an invented value in an abstention is no longer caught lexically here."
+  },
+  "un-08": {
+   "dropForbidden": [
+    "duración de"
+   ],
+   "reason": "An abstention must name the missing detail (writer contract), and now does so in Spanish, so this noun appears in a right answer. Seen on un-04 in the 3-case check before run c. The status check remains; an invented value in an abstention is no longer caught lexically here."
   }
  }
 }

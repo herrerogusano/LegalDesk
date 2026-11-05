@@ -74,7 +74,7 @@ EXPECTED_DATASET_SHA256 = "c88682195c3806db0210c5b3b47253f1e577d5d1425201aaa05bc
 # Real mode only: the frozen dataset was written against a simulated world. This overlay records, one reason at a time, what the
 # real corpus and pipeline do differently (F-50). The offline mode and the frozen dataset do not use it.
 OVERLAY_PATH = ROOT / "evals" / "phase15_golden_real_overlay.json"
-EXPECTED_OVERLAY_SHA256 = "26874ecaf075256986842677e6aba9c844d7a66eb8d06428daa8671dba4bf7cd"
+EXPECTED_OVERLAY_SHA256 = "37187ea57a661fa3628526bc7359d2d781f366f49fca8955d289cb3670766c13"
 OVERLAY_SCHEMA = "phase15-golden-real-overlay-1"
 # The page the Knowledge Base reports is where a chunk starts, not where the fact is. Real citations are compared by document.
 REAL_PAGE = 0
@@ -287,6 +287,9 @@ def apply_real_overlay(dataset: Mapping[str, Any], dataset_sha256: str, overlay:
             rag["abstentionMayCite"] = "insufficient_evidence" in rag["status"]
         if "knownLimit" in change:
             case["knownLimit"] = change["knownLimit"]
+        if "dropForbidden" in change:
+            facts = case["expected"]["facts"]
+            facts["mustNotContain"] = [item for item in facts["mustNotContain"] if item not in change["dropForbidden"]]
         data = case["expected"].get("data")
         if data:
             if change.get("noAggregates"):
