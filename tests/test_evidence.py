@@ -205,7 +205,13 @@ class EvidenceResolverContractTests(unittest.TestCase):
         self.assertIn("explicitly state which requested material detail", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("both the number", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("what is being counted", ANSWER_WRITER_SYSTEM_PROMPT)
-        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.4.0")
+        self.assertEqual(ANSWER_WRITER_PROMPT_VERSION, "1.5.0")
+        # Grounding scores the whole answer against the passages, so a sentence
+        # that is in no passage blocks a correct answer (F-05, 0.97 -> 0.33).
+        self.assertNotIn("qualified legal review may be", ANSWER_WRITER_SYSTEM_PROMPT)
+        self.assertIn("do not\nrecommend legal review", ANSWER_WRITER_SYSTEM_PROMPT)
+        self.assertIn("never say whether other documents exist", ANSWER_WRITER_SYSTEM_PROMPT)
+        self.assertIn("name only what the question explicitly asks for", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertRegex(ANSWER_WRITER_PROMPT_SHA256, r"^[0-9a-f]{64}$")
         self.assertIn("every material conflicting value", ANSWER_WRITER_SYSTEM_PROMPT)
         self.assertIn("Never swap the parties", ANSWER_WRITER_SYSTEM_PROMPT)

@@ -683,6 +683,28 @@ def _json_loads_strict(text: str) -> object:
     return json.loads(text, object_pairs_hook=reject_duplicates, parse_constant=reject_constant)
 
 
+_PLAN_FENCE = re.compile(r"^[ \t]*```[^\s`]*[ \t]*\r?$", re.MULTILINE)
+
+
+def _plan_json_text(text: str) -> str:
+    """The inside of the only fenced block, or the text as it came.
+
+    The model sometimes writes a sentence and then the plan in a fence, against
+    the prompt. That sentence is discarded and is never shown. Two blocks are
+    ambiguous: what comes back from them is not valid JSON, so the strict parser
+    rejects it. A fence line cannot occur inside valid JSON, because a JSON
+    string cannot hold a raw newline.
+    """
+
+    fences = list(_PLAN_FENCE.finditer(text))
+    if len(fences) == 2:
+        return text[fences[0].end():fences[1].start()]
+    # The closing fence can sit on the last JSON line when the whole text is fenced.
+    if text.startswith("```") and text.endswith("```") and "\n" in text:
+        return text[text.index("\n") + 1:-3]
+    return text
+
+
 def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
     """Parse the agent's final output into an :class:`AnswerPlan`.
 
@@ -697,11 +719,7 @@ def parse_answer_plan(raw: str | bytes | Mapping[str, object]) -> AnswerPlan:
             raise AgentContractError("too_large")
         try:
             text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-            text = text.strip()
-            if text.startswith("```") and text.endswith("```") and "\n" in text:
-                # Tolerate exactly one markdown fence around the JSON object.
-                text = text[text.index("\n") + 1:-3]
-            plan_node = _json_loads_strict(text.strip())
+            plan_node = _json_loads_strict(_plan_json_text(text.strip()).strip())
         except (UnicodeError, ValueError, RecursionError) as exc:
             raise AgentContractError("invalid_json") from exc
     else:
@@ -752,7 +770,7 @@ PLAN_DIAGNOSTIC_KEYS = frozenset({"planChars", "planHasJsonStart", "planHasJsonE
 
 
 def plan_diagnostics(text: object, error: str | None, *, attempted: bool) -> dict[str, object]:
-    """Describe the actual strict parser outcome; never extract/repair a JSON envelope."""
+    """Describe the actual parser outcome; this function never extracts or repairs a plan."""
     value = text if isinstance(text, str) else ""
     stage = ("not_attempted" if not attempted else "json_decode" if error == "invalid_json"
              else "size" if error == "too_large" else "schema" if error else "accepted")

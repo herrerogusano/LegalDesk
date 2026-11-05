@@ -59,24 +59,18 @@ class Phase06GuardrailInfrastructureTests(unittest.TestCase):
                 self.assertIn("OutputAction: BLOCK", block.group("body"))
                 self.assertIn("OutputEnabled: true", block.group("body"))
 
-    def test_pii_policy_masks_contact_identity_and_blocks_high_risk_secrets(self) -> None:
+    def test_pii_policy_keeps_party_identifiers_and_blocks_high_risk_secrets(self) -> None:
         pii_section = re.search(
             r"(?ms)^      SensitiveInformationPolicyConfig:\n(?P<body>.*?)(?=^      TopicPolicyConfig:)",
             self.template,
         )
         self.assertIsNotNone(pii_section)
         body = pii_section.group("body")
+        # F-42: anonymizing these rewrote "NDA con Meridia" to "NDA con {NAME}" before retrieval and the writer, and any
+        # masked output counted as a block. In legal documents they are the facts being asked about.
         for entity_type in ("NAME", "EMAIL", "PHONE", "ADDRESS"):
-            entity = re.search(
-                rf"(?ms)^          - Type: {entity_type}\n(?P<body>.*?)(?=^          - Type:|\Z)",
-                body,
-            )
-            self.assertIsNotNone(entity, entity_type)
-            self.assertIn("Action: ANONYMIZE", entity.group("body"))
-            self.assertIn("InputEnabled: true", entity.group("body"))
-            self.assertIn("InputAction: ANONYMIZE", entity.group("body"))
-            self.assertIn("OutputEnabled: true", entity.group("body"))
-            self.assertIn("OutputAction: ANONYMIZE", entity.group("body"))
+            self.assertNotIn(f"- Type: {entity_type}\n", body)
+        self.assertNotIn("ANONYMIZE", body)
         for entity_type in (
             "US_SOCIAL_SECURITY_NUMBER",
             "CREDIT_DEBIT_CARD_NUMBER",
@@ -134,6 +128,11 @@ class Phase06GuardrailInfrastructureTests(unittest.TestCase):
         self.assertIn("Description: !Ref GuardrailVersionDescription", self.template)
         self.assertIn("GuardrailIdentifier: !GetAtt LegalDeskGuardrail.GuardrailId", self.template)
         self.assertIn("Value: !GetAtt LegalDeskGuardrailVersion.Version", self.template)
+
+    def test_a_new_version_keeps_the_previous_one_for_a_parameter_rollback(self) -> None:
+        version = re.search(r"(?ms)^  LegalDeskGuardrailVersion:\n(?P<body>.*?)(?=^Outputs:)", self.template)
+        self.assertIsNotNone(version)
+        self.assertIn("UpdateReplacePolicy: Retain", version.group("body"))
 
 
 if __name__ == "__main__":

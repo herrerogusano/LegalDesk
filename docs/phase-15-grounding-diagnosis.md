@@ -243,6 +243,12 @@ stop reasons become `other` in diagnostics, without changing loop classification
 The existing parser still accepts exactly one enclosing Markdown fence and
 rejects prose, duplicate keys, unknown shapes and oversized plans.
 
+**Update, 2026-11-05 (F-37 settled):** a live capture showed valid plans preceded
+by a sentence and wrapped in a fence, against the prompt. With owner approval the
+parser now takes the inside of exactly one fenced block. The surrounding sentence
+is discarded and never shown, and the plan passes the same contract. Prose around
+unfenced JSON, an unclosed fence and two blocks stay rejected as `invalid_json`.
+
 Ranked plan hypotheses:
 
 1. Malformed JSON or surrounding prose: consistent with three invalid_json
@@ -268,6 +274,44 @@ Truncation justifies reviewing the writer budget after #116, not raising it
 blindly here. More tokens cost money/latency and may merely generate more
 unnecessary relationship data. Measure post-#116 truncation before deciding
 whether 768/1024 is warranted; no value change in this PR.
+
+## F-05: low grounding on a correct summary (settled 2026-11-05)
+
+Question: "Resume las obligaciones de confidencialidad de todos los contratos."
+Real retrieval, resolver, writer and Guardrail version 2, without Harness, reproduced
+the logged run exactly: 2 sources of 404 and 3729 characters, an 814-character
+answer, grounding 0.33, relevance 0.89. Every fact in it is in the sources. Scoring
+that same answer with sentences removed (two identical calls for each variant):
+
+| Answer | Grounding | Action |
+|---|---:|---|
+| Complete, English | 0.33 | block |
+| Facts only, English | 0.97 | pass |
+| Facts + "categories are not specified" | 0.80 | pass |
+| Facts + "qualified legal review may be appropriate" | 0.42 | block |
+| Facts only, Spanish, sources in English | 0.98 | pass |
+| Facts + "not all the contracts were provided" | 0.05 | block |
+| Facts + "no passage specifies the standard" | 0.98 | pass |
+
+The check scores the answer as a whole, so one sentence that is in no source
+blocks correct facts. Language was not the cause. The legal-review sentence came
+from our own writer prompt, even though the backend always sets
+`disclaimerRequired` and the UI always shows the disclaimer and the evidence status.
+
+Writer prompt 1.5.0 forbids that sentence and any comment on documents outside the
+passages, asks for the language of the question, and allows naming as absent only
+what the question asks for. The threshold is unchanged. Results with 1.5.0, not
+deployed, no Harness:
+
+| Case | 1.4.0 | 1.5.0 |
+|---|---|---|
+| text-05, 3 phrasings, 2 passes each | 0.05-0.77, 5 of 6 blocked | 0.81-0.92, 0 of 6 blocked |
+| text-04, asks for a detail the corpus lacks | not measured here | 0.80, still states what is absent |
+
+Limits: 7 passes are not a rate, and the Harness path is verified only by the next
+routing run. One pass wrote `citation-1` inside the answer text, and two say "not
+specified in either contract" from excerpts alone. A prompt rule lowers the
+likelihood of these sentences without guaranteeing it; the check stays in place.
 
 ## Proposed targeted run — supervisor only, not executed
 
