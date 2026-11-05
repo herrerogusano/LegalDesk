@@ -44,7 +44,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: herrerogusano/pullbeacon@697502ee14835e029ba9093a8798b523c1c5cd6c # pullbeacon v0.2.0
+      - uses: herrerogusano/pullbeacon@2e7a19478220ca19f28157b64be5775b5cf8a3d2 # pullbeacon v0.3.0
         with:
           mode: review
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
