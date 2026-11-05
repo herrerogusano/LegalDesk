@@ -649,8 +649,7 @@ class ScorerMutationTests(unittest.TestCase):
 
     def test_a_normaliser_that_does_not_fold_accents_or_separators_is_caught(self) -> None:
         with patch.object(ev, "norm", lambda text: str(text).lower().strip()):
-            with contextlib.suppress(Exception):
-                self.assertNotEqual(grade("lt-02")["outcome"], "pass")   # "125.000" vs "125,000" no longer matches
+            self.assertNotEqual(grade("lt-02")["outcome"], "pass")   # "125.000" vs "125,000" no longer matches
 
     def test_a_gate_that_ignores_failures_is_caught(self) -> None:
         faults = {"lt-01": frozenset({"writer_wrong_value"})}
@@ -976,7 +975,6 @@ class DeployedClientTests(unittest.TestCase):
         client, *_ = deployed_client(CASES["id-05"])
         obs = client.run(CASES["id-05"])
         self.assertEqual(client.spent.probes, 0)
-        self.assertEqual(obs.called_tools, ["get_extracted_fields", "list_matter_documents"][::-1] if False else obs.called_tools)
         self.assertEqual(set(obs.called_tools), {"list_matter_documents", "get_extracted_fields"})
         self.assertEqual(ev.evaluate_case(CASES["id-05"], obs, WORLD)["outcome"], "pass")
 
@@ -1050,6 +1048,13 @@ class DeployedAsyncTransportTests(unittest.TestCase):
         self.assertEqual(h.counters(), (1, 1))                           # one chat and one harness unit consumed
         self.assertEqual(set(h.state.sessions), {"sim-session"})          # the session record the transport wrote is deleted
         self.assertEqual(len(t.residual.bindings), 1)
+
+    def test_a_rejected_submit_does_not_leave_the_real_token_in_the_state_store(self) -> None:
+        # Reported from PullBeacon's replay of #77: the caller's finally only runs once _submit has returned the key.
+        t, h, holder = self.transport(CASES["lt-01"])
+        with patch("legaldesk.agent_chat.submit_agent_chat", side_effect=RuntimeError("quota exhausted")), self.assertRaises(RuntimeError):
+            t.run_case_job(CASES["lt-01"], WORLD)
+        self.assertEqual(set(h.state.sessions), {"sim-session"})
 
     def test_the_real_scenarios_pass_against_the_same_rules_as_offline(self) -> None:
         t, h, holder = self.transport(CASES["inv-01"])
