@@ -1,0 +1,376 @@
+{
+ "schemaVersion": "phase15-golden-real-overlay-1",
+ "baseDatasetSha256": "c88682195c3806db0210c5b3b47253f1e577d5d1425201aaa05bce42f80ada07",
+ "notice": "Real-mode grading of the frozen golden dataset (F-50). Written after golden b and after reading eight real answers by hand, so these are changes made having seen results: each carries its reason. Thresholds and questions are unchanged.",
+ "globalRules": {
+  "documentLevelCitations": "The Knowledge Base page is where a chunk starts, so a fact on page 6 comes back as page 1. Gold and observed citations are compared by document in real mode.",
+  "abstentionMayCite": "The writer contract states what the passage does say and which detail is absent, and that statement cites the passage. A cited abstention is accepted when the case accepts insufficient_evidence; forbidden strings still fail it."
+ },
+ "documents": {
+  "doc-contract-02-es-scanned-leapday": {
+   "status": "FAILED",
+   "reason": "scanned; not indexed by the Knowledge Base (F-31)"
+  },
+  "doc-demand-02-es-scanned": {
+   "status": "FAILED",
+   "reason": "scanned; not indexed by the Knowledge Base (F-31)"
+  },
+  "doc-demand-05-en-scanned": {
+   "status": "FAILED",
+   "reason": "scanned; not indexed by the Knowledge Base (F-31)"
+  },
+  "doc-ext-notice-02-en-scanned-noisy": {
+   "status": "FAILED",
+   "reason": "scanned; not indexed by the Knowledge Base (F-31)"
+  },
+  "doc-judgment-02-es-scanned": {
+   "status": "FAILED",
+   "reason": "scanned; not indexed by the Knowledge Base (F-31)"
+  },
+  "doc-judgment-05-en-scanned-optional-absent": {
+   "status": "FAILED",
+   "reason": "scanned; not indexed by the Knowledge Base (F-31)"
+  }
+ },
+ "fieldsPendingReviewReason": "Value correct, but the pipeline requires human review and nobody reviewed this corpus. Applied only in the prudent direction (fact to pending); the opposite stays a failure. idp_acceptance is therefore not independent evidence for these fields.",
+ "fieldsPendingReview": [
+  [
+   "doc-contract-01-en-digital-monthend",
+   "automatic_renewal"
+  ],
+  [
+   "doc-contract-01-en-digital-monthend",
+   "governing_law"
+  ],
+  [
+   "doc-contract-01-en-digital-monthend",
+   "jurisdiction"
+  ],
+  [
+   "doc-contract-01-en-digital-monthend",
+   "renewal_period_unit"
+  ],
+  [
+   "doc-contract-01-en-digital-monthend",
+   "renewal_period_value"
+  ],
+  [
+   "doc-contract-01-en-digital-monthend",
+   "termination_notice_unit"
+  ],
+  [
+   "doc-contract-01-en-digital-monthend",
+   "termination_notice_value"
+  ],
+  [
+   "doc-contract-02-es-scanned-leapday",
+   "amount"
+  ],
+  [
+   "doc-contract-02-es-scanned-leapday",
+   "automatic_renewal"
+  ],
+  [
+   "doc-contract-02-es-scanned-leapday",
+   "governing_law"
+  ],
+  [
+   "doc-contract-03-en-mixed-nda",
+   "automatic_renewal"
+  ],
+  [
+   "doc-contract-03-en-mixed-nda",
+   "governing_law"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "amount"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "automatic_renewal"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "governing_law"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "jurisdiction"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "renewal_period_unit"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "renewal_period_value"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "termination_notice_unit"
+  ],
+  [
+   "doc-contract-04-es-digital-amount",
+   "termination_notice_value"
+  ],
+  [
+   "doc-contract-05-en-mixed-explicit-conflict",
+   "governing_law"
+  ],
+  [
+   "doc-demand-01-en-digital",
+   "claims"
+  ],
+  [
+   "doc-demand-02-es-scanned",
+   "claimed_amount"
+  ],
+  [
+   "doc-demand-02-es-scanned",
+   "claims"
+  ],
+  [
+   "doc-demand-04-es-digital",
+   "claimed_amount"
+  ],
+  [
+   "doc-demand-04-es-digital",
+   "claims"
+  ],
+  [
+   "doc-demand-05-en-scanned",
+   "claims"
+  ],
+  [
+   "doc-ext-contract-06-en-table",
+   "automatic_renewal"
+  ],
+  [
+   "doc-ext-contract-06-en-table",
+   "governing_law"
+  ],
+  [
+   "doc-ext-contract-06-en-table",
+   "termination_notice_unit"
+  ],
+  [
+   "doc-ext-contract-06-en-table",
+   "termination_notice_value"
+  ],
+  [
+   "doc-ext-contract-07-es-annex",
+   "amount"
+  ],
+  [
+   "doc-ext-contract-07-es-annex",
+   "automatic_renewal"
+  ],
+  [
+   "doc-ext-contract-07-es-annex",
+   "governing_law"
+  ],
+  [
+   "doc-ext-contract-07-es-annex",
+   "renewal_period_unit"
+  ],
+  [
+   "doc-ext-contract-07-es-annex",
+   "renewal_period_value"
+  ],
+  [
+   "doc-ext-demand-06-es-prose",
+   "claimed_amount"
+  ],
+  [
+   "doc-ext-lease-01-es-long",
+   "governing_law"
+  ],
+  [
+   "doc-ext-lease-01-es-long",
+   "jurisdiction"
+  ],
+  [
+   "doc-ext-lease-01-es-long",
+   "termination_notice_unit"
+  ],
+  [
+   "doc-ext-lease-01-es-long",
+   "termination_notice_value"
+  ],
+  [
+   "doc-ext-msa-01-en-long",
+   "governing_law"
+  ],
+  [
+   "doc-ext-msa-01-en-long",
+   "termination_notice_unit"
+  ],
+  [
+   "doc-ext-msa-01-en-long",
+   "termination_notice_value"
+  ],
+  [
+   "doc-judgment-01-en-digital",
+   "appeal_information"
+  ],
+  [
+   "doc-judgment-01-en-digital",
+   "costs_statement"
+  ],
+  [
+   "doc-judgment-01-en-digital",
+   "operative_ruling"
+  ],
+  [
+   "doc-judgment-04-es-digital",
+   "operative_ruling"
+  ],
+  [
+   "doc-judgment-05-en-scanned-optional-absent",
+   "operative_ruling"
+  ]
+ ],
+ "cases": {
+  "lt-03": {
+   "knownLimit": {
+    "phase": "retrieval",
+    "basis": "F-31",
+    "fault": "retrieval_miss",
+    "reason": "the gold passage is on a scanned document the Knowledge Base did not index; a known limit, excluded from accuracy and still counted against recall"
+   }
+  },
+  "lt-04": {
+   "knownLimit": {
+    "phase": "retrieval",
+    "basis": "F-31",
+    "fault": "retrieval_miss",
+    "reason": "the gold passage is on a scanned document the Knowledge Base did not index; a known limit, excluded from accuracy and still counted against recall"
+   }
+  },
+  "lt-10": {
+   "knownLimit": {
+    "phase": "retrieval",
+    "basis": "F-31",
+    "fault": "retrieval_miss",
+    "reason": "the gold passage is on a scanned document the Knowledge Base did not index; a known limit, excluded from accuracy and still counted against recall"
+   }
+  },
+  "lt-12": {
+   "knownLimit": {
+    "phase": "retrieval",
+    "basis": "F-31",
+    "fault": "retrieval_miss",
+    "reason": "the gold passage is on a scanned document the Knowledge Base did not index; a known limit, excluded from accuracy and still counted against recall"
+   }
+  },
+  "lt-21": {
+   "knownLimit": {
+    "phase": "retrieval",
+    "basis": "F-31",
+    "fault": "retrieval_miss",
+    "reason": "the gold passage is on a scanned document the Knowledge Base did not index; a known limit, excluded from accuracy and still counted against recall"
+   }
+  },
+  "mx-02": {
+   "knownLimit": {
+    "phase": "retrieval",
+    "basis": "F-31",
+    "fault": "retrieval_miss",
+    "reason": "the gold passage is on a scanned document the Knowledge Base did not index; a known limit, excluded from accuracy and still counted against recall"
+   },
+   "extraLinesOnSameDocuments": true
+  },
+  "am-05": {
+   "dropGoldDocuments": [
+    "doc-judgment-02-es-scanned"
+   ],
+   "reason": "one of its three gold documents is scanned and not indexed (F-31)"
+  },
+  "id-03": {
+   "noAggregates": true,
+   "reason": "the question asks for a list ordered by date, not for a count"
+  },
+  "mx-01": {
+   "extraLinesOnSameDocuments": true
+  },
+  "mx-03": {
+   "extraLinesOnSameDocuments": true
+  },
+  "mx-04": {
+   "extraLinesOnSameDocuments": true
+  },
+  "mx-05": {
+   "extraLinesOnSameDocuments": true
+  },
+  "mx-06": {
+   "extraLinesOnSameDocuments": true
+  },
+  "mx-07": {
+   "extraLinesOnSameDocuments": true
+  },
+  "mx-08": {
+   "extraLinesOnSameDocuments": true
+  },
+  "inv-02": {
+   "inventoryDocumentIds": [
+    "doc-contract-01-en-digital-monthend",
+    "doc-contract-03-en-mixed-nda",
+    "doc-contract-04-es-digital-amount",
+    "doc-contract-05-en-mixed-explicit-conflict",
+    "doc-demand-01-en-digital",
+    "doc-demand-03-en-mixed",
+    "doc-demand-04-es-digital",
+    "doc-judgment-01-en-digital",
+    "doc-judgment-03-en-mixed-interpretive",
+    "doc-judgment-04-es-digital",
+    "doc-unknown-01-invoice",
+    "doc-adversarial-01-injection",
+    "doc-negative-01-ambiguous-notice",
+    "doc-ext-notice-01-es-short",
+    "doc-ext-msa-01-en-long",
+    "doc-ext-lease-01-es-long",
+    "doc-ext-contract-06-en-table",
+    "doc-ext-contract-07-es-annex",
+    "doc-ext-demand-06-es-prose"
+   ],
+   "reason": "the six scanned documents are FAILED in the real corpus, not INDEXED"
+  },
+  "inv-05": {
+   "inventoryDocumentIds": [
+    "doc-contract-01-en-digital-monthend",
+    "doc-contract-03-en-mixed-nda",
+    "doc-contract-04-es-digital-amount",
+    "doc-contract-05-en-mixed-explicit-conflict",
+    "doc-demand-01-en-digital",
+    "doc-demand-03-en-mixed",
+    "doc-demand-04-es-digital",
+    "doc-judgment-01-en-digital",
+    "doc-judgment-03-en-mixed-interpretive",
+    "doc-judgment-04-es-digital",
+    "doc-unknown-01-invoice",
+    "doc-adversarial-01-injection",
+    "doc-negative-01-ambiguous-notice",
+    "doc-ext-notice-01-es-short",
+    "doc-ext-msa-01-en-long",
+    "doc-ext-lease-01-es-long",
+    "doc-ext-contract-06-en-table",
+    "doc-ext-contract-07-es-annex",
+    "doc-ext-demand-06-es-prose"
+   ],
+   "reason": "the six scanned documents are FAILED in the real corpus, not INDEXED"
+  },
+  "inv-03": {
+   "inventoryDocumentIds": [
+    "doc-contract-02-es-scanned-leapday",
+    "doc-demand-02-es-scanned",
+    "doc-demand-05-en-scanned",
+    "doc-ext-notice-02-en-scanned-noisy",
+    "doc-failed-upload",
+    "doc-judgment-02-es-scanned",
+    "doc-judgment-05-en-scanned-optional-absent"
+   ],
+   "reason": "the six scanned documents are FAILED in the real corpus, besides the failed upload"
+  }
+ }
+}

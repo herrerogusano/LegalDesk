@@ -216,7 +216,7 @@ def preflight_holdout(
         raise RuntimeError("general system prompt artifact is not the approved release artifact")
     if EVIDENCE_RESOLVER_PROMPT_VERSION != "1.2.0" or EVIDENCE_RESOLVER_PROMPT_SHA256 != "da65f6b0efa70e728d9c6c5b85c036a7fb3b71b1b24c1cde33e9caedabe8127c":
         raise RuntimeError("resolver prompt contract changed")
-    if ANSWER_WRITER_PROMPT_VERSION != "1.5.0" or ANSWER_WRITER_PROMPT_SHA256 != "38acb803b6e9a14222745f5c2a9b929637a9a4d5e291bdb070d13dc3a3e38964":
+    if ANSWER_WRITER_PROMPT_VERSION != "1.6.0" or ANSWER_WRITER_PROMPT_SHA256 != "892a2254c81069eadb31c21ea471e278a8165b2a2bd92d7802412adf97756e55":
         raise RuntimeError("writer prompt contract changed")
     if output_path is not None:
         _assert_result_path(output_path, prefix=REPORT_PREFIX)
