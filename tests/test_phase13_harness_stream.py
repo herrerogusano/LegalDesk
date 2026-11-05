@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
@@ -112,7 +113,7 @@ class Phase13HarnessStreamTests(unittest.TestCase):
             _structured_tool_results(unbound)
 
     def test_stream_bounds_are_enforced(self):
-        with self.assertRaises(HarnessInvocationError):
+        with patch("legaldesk_agent.client._MAX_STREAM_EVENTS", 256), self.assertRaises(HarnessInvocationError):
             HarnessInvoker(StreamClient([{"contentBlockDelta": {"delta": {"text": "x"}}}] * 257), "arn:test").invoke("hello")
         huge = [{"contentBlockDelta": {"delta": {"text": "x" * 1_100_000}}}]
         with self.assertRaises(HarnessInvocationError):

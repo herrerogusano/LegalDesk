@@ -376,8 +376,12 @@ class AgentChatWorker:
         with timer.segment("resolve"):
             output, outcome, invalid = self.resolve_loop(loop)
         sent = getattr(loop, "history_messages", len(history or ()))
+        plan_diagnostic = contracts.plan_diagnostics(loop.text, output.plan_error,
+            attempted=outcome is LoopOutcome.COMPLETED and bool(loop.text and loop.text.strip()))
         meta: dict[str, object] = {
-            "loopOutcome": outcome.value, "stopReason": getattr(loop, "stop_reason", None), "iterations": loop.iterations,
+            **plan_diagnostic,
+            "searchQueryComparisons": list(getattr(loop, "search_query_comparisons", ())),
+            "loopOutcome": outcome.value, "stopReason": contracts.closed_stop_reason(getattr(loop, "stop_reason", None)), "iterations": loop.iterations,
             "tools": [call.short_name for call in loop.tool_calls], "toolCalls": len(loop.tool_calls),
             "toolFailures": sum(1 for call in loop.tool_calls if call.status != "SUCCESS"),
             "invalidToolResults": invalid, "historyMessages": sent,

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Mapping, Protocol, Sequence
 
+from .grounding_diagnostics import grounding_diagnostics
+
 from .observability import (
     TelemetryEventType,
     TelemetryOutcome,
@@ -49,17 +51,19 @@ class GroundingGuardrailError(RuntimeError):
 class GroundingGuardrailBlocked(PermissionError):
     """Provider policy blocked the generated answer."""
 
-    def __init__(self, message: str, *, scores: Mapping[str, float] | None = None) -> None:
+    def __init__(self, message: str, *, scores: Mapping[str, float] | None = None, diagnostics: Mapping[str, object] | None = None) -> None:
         super().__init__(message)
         self.scores = dict(scores or {})
+        self.diagnostics = dict(diagnostics or {})
 
 
 class GroundingAssessmentResult(dict[str, object]):
-    """Keep the strict grounding contract and request-local numeric diagnostics separate."""
+    """Keep the strict grounding contract and request-local closed diagnostics separate."""
 
-    def __init__(self, result: Mapping[str, object], scores: Mapping[str, float]) -> None:
+    def __init__(self, result: Mapping[str, object], scores: Mapping[str, float], diagnostics: Mapping[str, object] | None = None) -> None:
         super().__init__(result)
         self.scores = dict(scores)
+        self.diagnostics = dict(diagnostics or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,12 +413,13 @@ class GuardrailGroundingValidator:
             self._record(correlation_id, GuardrailOutcome.ERROR)
             raise GroundingGuardrailError("grounding assessment is malformed") from exc
         scores = self._assessment_scores(response)
+        diagnostics = grounding_diagnostics(response, question, answer, evidence_texts)
         if top_action == "GUARDRAIL_INTERVENED" or (
             grounding_action in _BLOCKING_ASSESSMENT_ACTIONS
             or relevance_action in _BLOCKING_ASSESSMENT_ACTIONS
         ):
             self._record(correlation_id, GuardrailOutcome.BLOCKED, action=top_action)
-            raise GroundingGuardrailBlocked("grounding policy blocked output", scores=scores)
+            raise GroundingGuardrailBlocked("grounding policy blocked output", scores=scores, diagnostics=diagnostics)
         outputs = _returned_texts(response.get("outputs", ())) if isinstance(response, Mapping) else None
         if outputs is None or outputs:
             self._record(correlation_id, GuardrailOutcome.ERROR)
@@ -442,7 +447,7 @@ class GuardrailGroundingValidator:
                 "grounded": False,
                 "score": score,
                 "matchedCitationIds": [],
-            }, scores)
+            }, scores, diagnostics)
         # Bedrock reports one aggregate score for the tagged source set; it
         # does not attest entailment independently for each passage. These
         # IDs therefore preserve the server-selected support set for the
@@ -451,7 +456,7 @@ class GuardrailGroundingValidator:
             "grounded": True,
             "score": score,
             "matchedCitationIds": list(supporting),
-        }, scores)
+        }, scores, diagnostics)
 
     @staticmethod
     def _assessment_scores(response: Mapping[str, object]) -> dict[str, float]:

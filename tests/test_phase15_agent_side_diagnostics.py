@@ -201,6 +201,22 @@ class ALoopThatDiesAfterItsFirstToolSaysWhyTests(unittest.TestCase):
 
 
 class TheReportCarriesTheClosedDiagnosticsTests(unittest.TestCase):
+    def assert_closed_diagnostics(self, diagnostics):
+        # Exact keys still catch a future accidental plan/answer/argument field.
+        self.assertEqual(set(diagnostics), {"planError", "omittedErrors", "stopReason", "toolStatuses", "toolErrorHints", "unansweredTools",
+                                            "streamErrorHint", "invalidToolResults", "sourceIdMatches", "stageErrorCodes", "stageReasonStatus",
+                                            "planChars", "planHasJsonStart", "planHasJsonEnd", "planParseStage", "searchQueryComparisons"})
+        self.assertIs(type(diagnostics["planChars"]), int)
+        self.assertGreaterEqual(diagnostics["planChars"], 0)
+        for key in ("planHasJsonStart", "planHasJsonEnd"):
+            self.assertIs(type(diagnostics[key]), bool)
+        self.assertIn(diagnostics["planParseStage"], {"not_attempted", "json_decode", "size", "schema", "accepted"})
+        comparisons = diagnostics["searchQueryComparisons"]
+        self.assertIs(type(comparisons), list)
+        self.assertLessEqual(len(comparisons), 16)
+        for comparison in comparisons:
+            self.assertIn(comparison, {"same", "different", "unavailable"})
+
     def observe(self, plan_text, calls, outcome="completed", **extra):
         obs = ev.Observation()
         result = AgentChatResult(session_id="s", correlation_id="c", text=plan_text, loop_outcome=outcome, iterations=2, stop_reason=extra.pop("stop", "tool_use"),
@@ -228,13 +244,33 @@ class TheReportCarriesTheClosedDiagnosticsTests(unittest.TestCase):
         self.assertEqual(self.observe(invented, [good]).source_id_matches, ["none"])
 
     def test_the_row_of_the_report_has_only_closed_values(self) -> None:
-        obs = self.observe("Aquí está mi respuesta con SECRET text", [], stop="weird stop reason with spaces")
+        text = "Aquí está mi respuesta con SECRET text"
+        obs = self.observe(text, [], stop="weird stop reason with spaces",
+                           search_query_comparisons=("same", "different", "unavailable", "SECRET", "SECRET text"))
         row = ev.score_case({"id": "x", "category": "c", "expected": {"toolSets": [[]], "paths": ["rag_fallback"]}}, obs, offline=False)
         diagnostics = row["diagnostics"]
-        self.assertEqual(set(diagnostics), {"planError", "omittedErrors", "stopReason", "toolStatuses", "toolErrorHints", "unansweredTools",
-                                            "streamErrorHint", "invalidToolResults", "sourceIdMatches", "stageErrorCodes", "stageReasonStatus"})
+        self.assert_closed_diagnostics(diagnostics)
         self.assertEqual((diagnostics["planError"], diagnostics["stopReason"]), ("invalid_json", "other"))
+        self.assertEqual(diagnostics["planChars"], len(text))
+        self.assertEqual((diagnostics["planHasJsonStart"], diagnostics["planHasJsonEnd"], diagnostics["planParseStage"]),
+                         (False, False, "json_decode"))
+        self.assertEqual(diagnostics["searchQueryComparisons"], ["same", "different", "unavailable", "unavailable", "unavailable"])
         self.assertNotIn("SECRET", json.dumps(row))
+
+    def test_closed_diagnostics_assertion_detects_added_text_and_corrupted_new_values(self) -> None:
+        obs = self.observe("{}", [])
+        case = {"id": "x", "category": "c", "expected": {"toolSets": [[]], "paths": ["rag_fallback"]}}
+        diagnostics = ev.score_case(case, obs, offline=False)["diagnostics"]
+        self.assert_closed_diagnostics(diagnostics)
+        # Mutation checks prove the privacy assertion fails, rather than merely
+        # accepting whatever field set the production implementation provides.
+        mutations = ({"planText": "SECRET"}, {"planChars": "SECRET"}, {"planChars": True},
+                     {"planHasJsonStart": "SECRET"}, {"planHasJsonEnd": "SECRET"},
+                     {"planParseStage": "SECRET"}, {"searchQueryComparisons": ["SECRET"]},
+                     {"searchQueryComparisons": "SECRET"})
+        for mutation in mutations:
+            with self.subTest(keys=list(mutation)), self.assertRaises(AssertionError):
+                self.assert_closed_diagnostics(diagnostics | mutation)
 
 
 if __name__ == "__main__":
