@@ -75,11 +75,11 @@ class AgentChatInfrastructureTests(unittest.TestCase):
             "logs:CreateLogStream", "logs:PutLogEvents", "sqs:ReceiveMessage", "sqs:DeleteMessage",
             "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility", "dynamodb:GetItem", "dynamodb:Query",
             "dynamodb:PutItem", "dynamodb:UpdateItem", "s3:GetObject", "bedrock:Retrieve", "bedrock:ApplyGuardrail",
-            "bedrock:InvokeModel", "bedrock-agentcore:InvokeHarness", "bedrock-agentcore:CreateEvent",
-            "bedrock-agentcore:ListEvents",
+            "bedrock:InvokeModel", "bedrock-agentcore:InvokeHarness", "bedrock-agentcore:InvokeAgentRuntime",
+            "bedrock-agentcore:CreateEvent", "bedrock-agentcore:ListEvents",
         })
         for forbidden in ("DeleteItem", "Scan", "PutObject", "DeleteObject", "lambda:", "sqs:SendMessage",
-                          "InvokeAgentRuntime", "iam:", "StartIngestionJob", "dynamodb:*"):
+                          "AgentRuntimeArn", "iam:", "StartIngestionJob", "dynamodb:*"):
             self.assertNotIn(forbidden, role)
         self.assertNotRegex(role, r"(?m)^\s+Resource: ['\"]?\*['\"]?$")
         self.assertIn("Resource: !Ref HarnessArn", role)
