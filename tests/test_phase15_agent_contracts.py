@@ -221,7 +221,10 @@ class AnswerPlanContractTests(unittest.TestCase):
         for wrapped in (f"```json\n{body}\n```",
                         f"```\n{body}\n```",
                         f"I have all the data I need.\n\n```json\n{body}\n```",
-                        f"Plan:\n```json\n{body}\n```\nDone."):
+                        f"Plan:\n```json\n{body}\n```\nDone.",
+                        f"Plan:\r\n```json\r\n{body}\r\n```\r\n",
+                        f"```json\n{body}```",
+                        f"```json5\n{body}\n```"):
             with self.subTest(wrapped=wrapped[:20]):
                 self.assertEqual(parse_answer_plan(wrapped), expected)
 
@@ -230,6 +233,8 @@ class AnswerPlanContractTests(unittest.TestCase):
         other = json.dumps({"version": 1, "blocks": [{"type": "text", "source": {"toolUseId": "other"}}]})
         for wrapped in (f"Here is the plan: {body}", f"{body}\nDone.", "", "[]", "null",
                         f"```json\n{body}\n```\n```json\n{other}\n```",
+                        f"```json\r\n{body}\r\n```\r\n```json\r\n{other}\r\n```",
+                        f"Plan:\n```json\n{body}```",
                         f"```json\n{body}",
                         f"{body}\n```",
                         f"```json\nnot a plan\n{body}\n```"):
