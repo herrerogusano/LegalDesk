@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -29,7 +30,7 @@ import re
 import sys
 import time
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -70,6 +71,13 @@ DATASET_SCHEMA = "phase15-golden-dataset-1"
 REPORT_SCHEMA = "phase15-golden-report-1"
 # The dataset is frozen once a real run is approved: changing a case afterwards would invalidate that run.
 EXPECTED_DATASET_SHA256 = "c88682195c3806db0210c5b3b47253f1e577d5d1425201aaa05bce42f80ada07"
+# Real mode only: the frozen dataset was written against a simulated world. This overlay records, one reason at a time, what the
+# real corpus and pipeline do differently (F-50). The offline mode and the frozen dataset do not use it.
+OVERLAY_PATH = ROOT / "evals" / "phase15_golden_real_overlay.json"
+EXPECTED_OVERLAY_SHA256 = "26874ecaf075256986842677e6aba9c844d7a66eb8d06428daa8671dba4bf7cd"
+OVERLAY_SCHEMA = "phase15-golden-real-overlay-1"
+# The page the Knowledge Base reports is where a chunk starts, not where the fact is. Real citations are compared by document.
+REAL_PAGE = 0
 
 PHASES = (
     "input", "routing", "idp_classification", "idp_extraction", "idp_acceptance", "retrieval", "resolver", "writer",
@@ -207,6 +215,8 @@ def build_world(payload: Mapping[str, Any], manifest: Mapping[str, Any] | None =
             world[item["documentId"]] = DocTruth(
                 item["documentId"], item["name"], item["matterId"], item["status"], item["uploadedAt"], item["documentType"],
                 tuple(item["contentMode"]), item["language"], item["length"], list(item["pages"]), fields)
+    for document_id, name, status in payload.get("realFieldStatus", []):
+        world[document_id].fields[name] = replace(world[document_id].fields[name], status=status)
     return world
 
 
@@ -245,6 +255,54 @@ def load_dataset(path: Path = DATASET_PATH) -> tuple[dict[str, Any], str]:
     payload = json.loads(raw.decode("utf-8"))
     validate_dataset(payload)
     return payload, hashlib.sha256(raw).hexdigest()
+
+
+def load_real_overlay(path: Path = OVERLAY_PATH) -> tuple[dict[str, Any], str]:
+    raw = path.read_bytes().replace(b"\r\n", b"\n")
+    return json.loads(raw.decode("utf-8")), hashlib.sha256(raw).hexdigest()
+
+
+def apply_real_overlay(dataset: Mapping[str, Any], dataset_sha256: str, overlay: Mapping[str, Any]) -> dict[str, Any]:
+    """A copy of the frozen dataset as the real corpus and pipeline should be graded. Never written back."""
+
+    if overlay.get("schemaVersion") != OVERLAY_SCHEMA or overlay.get("baseDatasetSha256") != dataset_sha256:
+        raise ValueError("the overlay was not written for this dataset")
+    result = copy.deepcopy(dict(dataset))
+    documents = {item["documentId"]: item for item in result["world"]["documents"]}
+    for document_id, change in overlay["documents"].items():
+        documents[document_id]["status"] = change["status"]
+    cases = {case["id"]: case for case in result["cases"]}
+    if set(overlay["cases"]) - set(cases):
+        raise ValueError("the overlay names a case the dataset does not have")
+    for case in result["cases"]:
+        rag = case["expected"].get("rag")
+        change = overlay["cases"].get(case["id"], {})
+        if rag:
+            dropped = set(change.get("dropGoldDocuments", []))
+            rag["gold"] = sorted({(d, REAL_PAGE) for d, _ in rag["gold"] if d not in dropped})
+            rag["gold"] = [list(pair) for pair in rag["gold"]]
+            if "allowedExtra" in rag:
+                rag["allowedExtra"] = [list(pair) for pair in sorted({(d, REAL_PAGE) for d, _ in rag["allowedExtra"]})]
+            rag["documentLevel"] = True
+            rag["abstentionMayCite"] = "insufficient_evidence" in rag["status"]
+        if "knownLimit" in change:
+            case["knownLimit"] = change["knownLimit"]
+        data = case["expected"].get("data")
+        if data:
+            if change.get("noAggregates"):
+                data["aggregates"] = []
+            if change.get("extraLinesOnSameDocuments"):
+                data["extraLinesOnSameDocuments"] = True
+        if "inventoryDocumentIds" in change:
+            case["expected"]["inventory"]["documentIds"] = list(change["inventoryDocumentIds"])
+    result["realFieldStatus"] = [[d, f, "pending_review"] for d, f in overlay["fieldsPendingReview"]]
+    return result
+
+
+def _comparable(rag: Mapping[str, Any], pairs: Any) -> set[tuple[str, Any]]:
+    """Observed citations as the oracle compares them: by document when the overlay says the page is not comparable."""
+
+    return {(pair[0], REAL_PAGE) if rag.get("documentLevel") else tuple(pair) for pair in pairs}
 
 
 def validate_dataset(payload: Mapping[str, Any], manifest: Mapping[str, Any] | None = None) -> None:
@@ -544,7 +602,7 @@ def evaluate_phases(case: Mapping[str, Any], obs: GoldenObservation, world: Mapp
             for phase in ("retrieval", "resolver", "writer", "grounding", "citations"):
                 verdicts[phase] = "unobserved"
         else:
-            found = gold & set(record.retrieved)
+            found = gold & _comparable(rag, record.retrieved)
             notes["goldFound"] = len(found)
             verdicts["retrieval"] = "fail" if record.retrieval_error or found != gold else "pass"
             if record.resolver_error:
@@ -552,9 +610,11 @@ def evaluate_phases(case: Mapping[str, Any], obs: GoldenObservation, world: Mapp
             elif not record.resolver_ran:
                 verdicts["resolver"] = "pass" if (not record.retrieved and not gold and "insufficient_evidence" in accepted) else "unobserved"
             else:
-                supporting = set(record.supporting)
+                supporting = _comparable(rag, record.supporting)
                 good_status = record.resolver_status in accepted
-                good_support = (supporting == set() if record.resolver_status == "insufficient_evidence" else gold <= supporting)
+                # A partial answer states what the passage does say and cites it (writer contract): real, and only in real mode.
+                abstention_ok = supporting == set() or (bool(rag.get("abstentionMayCite")) and (not gold or supporting <= gold))
+                good_support = (abstention_ok if record.resolver_status == "insufficient_evidence" else gold <= supporting)
                 verdicts["resolver"] = "pass" if good_status and good_support else "fail"
             if record.supporting == [] and not record.writer_ran and not record.writer_error:
                 verdicts["writer"] = verdicts["grounding"] = "na"
@@ -573,9 +633,11 @@ def evaluate_phases(case: Mapping[str, Any], obs: GoldenObservation, world: Mapp
             elif fin["operationStatus"] != "ok":
                 verdicts["citations"] = "unobserved" if any(verdicts[p] == "fail" for p in ("retrieval", "resolver", "writer", "grounding")) else "fail"
             else:
-                pairs = {tuple(p) for p in fin["citations"]}
+                pairs = _comparable(rag, fin["citations"])
                 allowed = gold | {tuple(p) for p in rag.get("allowedExtra", [])}
-                if fin["evidenceStatus"] == "insufficient_evidence" and not gold:
+                if fin["evidenceStatus"] == "insufficient_evidence" and rag.get("abstentionMayCite"):
+                    exact = pairs <= (allowed | _comparable(rag, record.retrieved))
+                elif fin["evidenceStatus"] == "insufficient_evidence" and not gold:
                     exact = not pairs
                 elif fin["evidenceStatus"] in ("answerable", "ambiguous"):
                     exact = gold <= pairs and pairs <= allowed
@@ -616,8 +678,8 @@ def answer_is_correct(case: Mapping[str, Any], obs: GoldenObservation, world: Ma
         if final["evidenceStatus"] not in rag["status"]:
             return False
         gold = {tuple(pair) for pair in rag["gold"]}
-        pairs = {tuple(pair) for pair in final["textCitations"]}
-        if final["evidenceStatus"] == "insufficient_evidence" and pairs:
+        pairs = _comparable(rag, final["textCitations"])
+        if final["evidenceStatus"] == "insufficient_evidence" and pairs and not rag.get("abstentionMayCite"):
             return False
         if gold and final["evidenceStatus"] != "insufficient_evidence" and not gold <= pairs:
             return False
@@ -625,7 +687,13 @@ def answer_is_correct(case: Mapping[str, Any], obs: GoldenObservation, world: Ma
     if data.get("refs"):
         wanted = {(d, f): world[d].fields[f].status == "pending_review" for d, f in map(tuple, data["refs"])}
         lines = {(l["documentId"], l["field"]): l for l in final["lines"]}
-        if set(lines) != set(wanted) or any(lines[k]["pending"] != wanted[k] or not lines[k]["valueOk"] for k in wanted):
+        extra = set(lines) - set(wanted)
+        if data.get("extraLinesOnSameDocuments"):   # a mixed question may fetch more fields of the same document; they must still be right
+            wanted_docs = {d for d, _ in wanted}
+            if any(k[0] not in wanted_docs or not lines[k]["valueOk"] for k in extra):
+                return False
+            extra = set()
+        if extra or set(wanted) - set(lines) or any(lines[k]["pending"] != wanted[k] or not lines[k]["valueOk"] for k in wanted):
             return False
         if not final["aggregatesOk"]:
             return False
@@ -659,6 +727,40 @@ def result_type(case: Mapping[str, Any], obs: GoldenObservation, correct: bool) 
     if abstains and wants_answer and "blocked" not in accepted - {"allowed"}:
         return "over_abstention"
     return "wrong_answer"
+
+
+_LANGUAGE_WORDS = {
+    "es": frozenset("el la los las de del que y en por para con una un se no es son su al como pero".split()),
+    "en": frozenset("the of and to in is that for with by but not this are was it an on as be".split()),
+}
+
+
+def text_language(text: str) -> str | None:
+    """A rough language guess from common words; None when the text does not say. Reported, never a gate."""
+
+    words = norm(text).split()
+    counts = {language: sum(1 for w in words if w in vocabulary) for language, vocabulary in _LANGUAGE_WORDS.items()}
+    best = max(counts, key=lambda language: counts[language])
+    return best if counts[best] >= 3 and counts[best] >= 2 * min(counts.values()) else None
+
+
+def language_mismatch(case: Mapping[str, Any], output: Mapping[str, Any] | None) -> bool:
+    answer = " ".join(str(b.get("text", "")) for b in (output or {}).get("blocks", []) if b.get("type") == "text")
+    asked, answered = text_language(case["question"]) or ("es" if re.search(r"[¿¡áéíóúñ]", case["question"].lower()) else None), text_language(answer)
+    return bool(asked and answered and asked != answered)
+
+
+def observed_ids(obs: GoldenObservation) -> dict[str, Any]:
+    """Ids, flags and statuses behind the verdicts, never text: a later oracle defect can be re-judged from these (F-50)."""
+
+    final, record = obs.final or {}, obs.pipeline
+    return {
+        "retrieved": sorted({d for d, _ in record.retrieved}) if record else [], "probeCitations": (record.final or {}).get("citations", []) if record else [],
+        "probeStatus": record.resolver_status if record else None, "probeFactsOk": record.writer_facts_ok if record else None,
+        "textCitations": final.get("textCitations", []), "evidenceStatus": final.get("evidenceStatus"), "factsOk": final.get("factsOk"),
+        "forbiddenHit": final.get("forbiddenHit"), "aggregatesOk": final.get("aggregatesOk"), "lines": final.get("lines", []), "inventory": final.get("inventory", []),
+        "idp": {d: {"type": item["type"], "fields": {n: f["status"] for n, f in item["fields"].items()}} for d, item in obs.idp.items()},
+    }
 
 
 def evaluate_case(case: Mapping[str, Any], obs: GoldenObservation, world: Mapping[str, DocTruth]) -> dict[str, Any]:
@@ -703,6 +805,7 @@ def evaluate_case(case: Mapping[str, Any], obs: GoldenObservation, world: Mappin
         "stages": record.operations if record else [], "inputDecision": obs.input, "transport": obs.transport,
         "job": ({k: obs.job.get(k) for k in ("status", "failure", "attempts", "timeline", "latencyS", "asyncFinalCorrect", "asyncPath")} if obs.job else None),
         "answerSha256": final.get("sha"), "latencyMs": obs.latency_ms, "simulatedSeconds": obs.simulated_seconds,
+        "languageMismatch": language_mismatch(case, obs.output), "observed": observed_ids(obs),
         "error": obs.error if obs.error != "not_run" else "not_run",
         **({
             key: value for key, value in (
@@ -723,6 +826,7 @@ def _empty_row(case: Mapping[str, Any], world: Mapping[str, DocTruth], outcome: 
         "retrieval": {"gold": 0, "found": 0}, "citationsExact": None, "groundingFalseBlock": False, "hallucination": False,
         "overAbstention": False, "leak": False, "injectionObeyed": False, "allowlistViolations": [], "deniedAttempts": [], "stages": [],
         "inputDecision": None, "transport": None, "job": None, "answerSha256": None, "latencyMs": 0, "simulatedSeconds": 0.0, "error": error,
+        "languageMismatch": False, "observed": {},
     }
 
 
@@ -764,6 +868,7 @@ def metrics_for(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "allowlistViolations": sum(len(r["allowlistViolations"]) for r in rows),
         "deniedAttempts": sum(len(r["deniedAttempts"]) for r in rows),
         "crossMatterLeaks": sum(1 for r in rows if r["leak"]), "injectionObeyed": sum(1 for r in rows if r["injectionObeyed"]),
+        "languageMismatches": sum(1 for r in rows if r["languageMismatch"]),
         "errors": sum(1 for r in rows if r["outcome"] in ("error", "not_run")),
         "knownLimits": {k: sum(1 for r in rows if r["outcome"] == k) for k in ("expected_failure", "unexpected_pass", "wrong_phase")},
         "firstFailureByPhase": {p: sum(1 for r in evaluated if r["firstFailure"] == p) for p in PHASES},
@@ -898,8 +1003,10 @@ class GoldenKB:
 class RecordingKB:
     """Wraps any Knowledge Base client (the double or the real one): records ``(document, page)`` of what it returned."""
 
-    def __init__(self, inner: Any, record: PipelineRecord, id_map: Mapping[str, str] | None = None) -> None:
+    def __init__(self, inner: Any, record: PipelineRecord, id_map: Mapping[str, str] | None = None, *,
+                 matter_id: str = MATTER, tenant_id: str | None = TENANT) -> None:
         self.inner, self.record, self.texts, self.id_map = inner, record, {}, id_map or {}
+        self.matter_id, self.tenant_id = matter_id, tenant_id   # the real run grades its own matter, never the simulated one (F-50)
 
     def retrieve(self, **kwargs: Any) -> Mapping[str, Any]:
         try:
@@ -910,7 +1017,7 @@ class RecordingKB:
         self.record.retrieved = []
         for result in response.get("retrievalResults", []):
             meta = result.get("metadata", {})
-            if meta.get("matterId") == MATTER and meta.get("tenantId") == TENANT:
+            if meta.get("matterId") == self.matter_id and (self.tenant_id is None or meta.get("tenantId") == self.tenant_id):
                 real = meta.get("documentId")
                 pair = (self.id_map.get(real, real), int(meta.get("x-amz-bedrock-kb-document-page-number") or 0))
                 self.record.retrieved.append(pair)
@@ -1358,7 +1465,7 @@ def make_real_pipeline(case: Mapping[str, Any], service: SearchDocumentsService,
     import dataclasses  # noqa: PLC0415
 
     record, telemetry = PipelineRecord(), InMemoryTelemetrySink(max_events=10_000)
-    kb = RecordingKB(service.retrieval_client, record, id_map)
+    kb = RecordingKB(service.retrieval_client, record, id_map, matter_id=matter_id, tenant_id=None)
     wrapped = dataclasses.replace(
         service, retrieval_client=kb, evidence_resolver=RecordingResolver(service.evidence_resolver, record, kb),
         answer_writer=RecordingWriter(service.answer_writer, record, case["expected"].get("facts")),
@@ -1617,7 +1724,7 @@ def run_real(dataset: Mapping[str, Any], dataset_sha256: str, client: GoldenClie
         rows.append(evaluate_case(case, GoldenObservation(error="not_run"), world))
     residual = getattr(client, "residual", None)
     report = build_report("real", rows, async_rows, dataset_sha256, {
-        "approvalRef": approval_ref, "releaseCommit": release_commit, "artifactSha256": artifact_sha256,
+        "approvalRef": approval_ref, "releaseCommit": release_commit, "artifactSha256": artifact_sha256, "overlaySha256": dataset.get("overlaySha256"),
         "agentPromptVersion": prompt_identity[0] if prompt_identity else None, "agentPromptSha256": prompt_identity[1] if prompt_identity else None,
         "budget": {"plannedInputChecks": len(cases), "plannedHarnessInvocations": len(cases), "spent": spent_counts(getattr(client, "spent", None)), "retries": 0},
         "aborted": any(r["outcome"] == "not_run" for r in rows), "abortedBy": aborted_by,
@@ -1745,12 +1852,18 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"datasetSha256": digest_, "verdict": report["verdict"], "all": report["summary"]["all"],
                           "asyncScenarios": report["async"]["summary"]}, indent=2, sort_keys=True))
         return 0 if report["verdict"]["passed"] else 1
+    overlay, overlay_digest = load_real_overlay()
+    frozen_digest_ok = digest_ == EXPECTED_DATASET_SHA256
+    if frozen_digest_ok:
+        dataset = dict(apply_real_overlay(dataset, digest_, overlay), overlaySha256=overlay_digest)
     plan = real_plan(dataset)
     if not args.execute:
         print(json.dumps({"mode": "real_preflight", "datasetSha256": digest_, "plan": plan}, indent=2, sort_keys=True))
         return 0
     if digest_ != EXPECTED_DATASET_SHA256:
         raise SystemExit("the dataset changed since it was frozen")
+    if overlay_digest != EXPECTED_OVERLAY_SHA256:
+        raise SystemExit("the real overlay changed since it was reviewed")
     token = os.environ.get("LEGALDESK_EVAL_ACCESS_TOKEN", "")
     if not (args.output and args.matter_id and args.document_map and token and _APPROVAL_REF.fullmatch(args.approval_ref or "")
             and _GIT_SHA.fullmatch(args.release_commit or "") and _HEX64.fullmatch(args.artifact_sha256 or "") and _HEX64.fullmatch(args.thresholds_sha256 or "")):
