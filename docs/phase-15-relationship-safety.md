@@ -1,7 +1,8 @@
 # F-19 / F-35: exact source relationship rendering
 
-Offline candidate, 2026-11-04. Owner chose option A (exact source rendering).
-**Not accepted for release: the unchanged golden gate has three new failures.**
+Offline candidate, updated 2026-11-05. Owner chose exact source rendering on
+2026-11-04 and answer-aware eligibility on 2026-11-05. **Both unchanged offline
+gates now pass. Live behavior and semantic evasion resistance remain unverified.**
 No AWS operation, model/Harness invocation, deployment or merge was performed.
 The supervisor owns the failure register and vault decision log; neither was
 edited by this worker.
@@ -23,6 +24,13 @@ same source occurrence emit it once. Multiple matching occurrences, even
 identical ones, are ambiguous and fail closed. Sentences from separate passages
 cannot be combined to support a triple. Original supporting citations remain;
 the complete output still crosses the production grounding adapter.
+
+Projection is required only if **both** selected evidence and the writer's prose
+trigger the same English/Spanish detector. An unrelated obligation elsewhere on
+a page cannot force a non-obligation date/law answer to project. This eligibility
+check runs after validating answer text and before deciding whether a malformed
+relationship must fail closed or may be dropped. Detection vocabulary, sentence
+rules and window logic are unchanged by the 2026-11-05 eligibility amendment.
 
 When projection is optional, a valid relationship checks direction and leaves
 prose unchanged. Optional malformed/unsupported relationships are dropped with
@@ -103,11 +111,23 @@ Dataset SHA-256: `c88682195c3806db0210c5b3b47253f1e577d5d1425201aaa05bce42f80ada
   against the independent document-level construction annotation. This is a
   fixture census, not measured general Spanish semantic accuracy.
 - Controlled tests send all eleven texts through the real Converse resolver,
-  writer, grounding adapter and chat, faking only Bedrock clients. With omitted
-  relationships, **3/11 now fail closed**; with malformed relationships, the
-  same **3/11 fail closed**, while eight optional cases retain prose/drop reasons.
-  Before detection these three would follow the optional path. Actual live
-  writer outputs and live answer-abstention rates were **not measured**.
+  writer, grounding adapter and chat, faking only Bedrock clients. The current
+  answer-aware census makes **44 requests**: eleven texts times two prose cohorts
+  (non-obligation date vs recognized Spanish obligation) times two relationship
+  variants (omitted vs malformed).
+- For the **non-obligation cohort**, omitted and malformed projections each cause
+  **0/11 fail-closed answers**; all eleven malformed relationships are dropped
+  with `writer_relationship_shape_invalid` on accepted `write_answer` events.
+  The evidence-only 2026-11-04 candidate failed closed 3/11 in this cohort.
+- For the **asserted-obligation cohort**, omitted and malformed projections each
+  cause **3/11 fail-closed answers**, with the exact missing/shape stage reasons.
+  The other eight evidence-negative cases stay optional; all eight malformed
+  relationships retain their accepted drop reason. There are **zero unexpected
+  errors** across all 44 requests. This is a control measurement, not proof that
+  an arbitrary synthetic obligation is supported by the evidence.
+- Actual live writer outputs and live answer-abstention rates were **not
+  measured**. The corpus detection FP/FN counts above are unchanged and do not
+  describe answer-level semantic detection accuracy.
 
 ## Grounding and untrusted content
 
@@ -128,47 +148,83 @@ provider policy block hides it, while a provider allow can publish it. This
 control does not semantically classify injection; live rejection is unverified.
 No prompt wording/version/hash was changed and no new content logging is added.
 
-## Verification and acceptance blocker
+## Answer-aware eligibility: evasion and residual risk
+
+Bilingual real-adapter tests use the same page with an obligation and unrelated
+date/law facts. Date/law answers without a relationship pass, while recognized
+obligation answers without a relationship fail closed. Reversed relationships
+still fail closed for recognized obligation prose; malformed/reversed optional
+relationships are dropped with closed reasons. Required source extraction and
+its boundary/bounds tests continue to use an explicit recognized obligation as
+the test prose; the previous neutral helper default would no longer exercise
+required rendering after the approved eligibility change.
+
+The detector is lexical, not a semantic assertion classifier. These concrete
+**reversed** obligations evade it and pass the projection control without a
+relationship when the provider-shaped fake grounding response allows them:
+
+- English evidence: supplier must send notice to buyer. Evasive prose:
+  `The buyer has a duty to remit written notice to the supplier.` (`duty` is not
+  a modal term), or `The buyer must dispatch written notice to the supplier.`
+  (`dispatch` is not an action term).
+- Spanish evidence: supplier must notify buyer. Evasive prose:
+  `Incumbe al comprador notificar al proveedor.` (`incumbe` is not a modal
+  construction), or `El comprador debe cursar un aviso al proveedor.` (`cursar`
+  is not an action term).
+
+These are deliberately red-team demonstrations, not examples of supported
+answers. No detector vocabulary was expanded to hide this residual risk. In
+this path, citation/authorization checks still constrain sources and the real
+Guardrails adapter still evaluates the unchanged prose against selected source
+content. Grounding is the remaining semantic support check; the lexical
+projection control contributes no direction proof for these evasions. The fake
+high-score response can accept all four. **Real Bedrock rejection has not been
+verified and must not be assumed.** The unchanged English passage-wide trigger
+also retains its previously documented broad-clause behavior; this update
+reuses it identically on evidence and prose, rather than claiming a new English
+linguistic classifier.
+
+## Current verification (2026-11-05)
 
 PowerShell: `$env:PYTHONPATH = 'tests;backend/src;agent/src'`.
 
-`python -m unittest test_relationship_source_rendering`:
-**Ran 18 tests, OK** (including 64 modal/action combinations, eight conjugated
-forms, six standalone futures, real-adapter required/optional behavior,
-abbreviations, linewraps, lists, bounds, reversal, grounding and injection).
-
-Final focused check after adding stage-reason assertions to the census:
-`python -m unittest test_relationship_source_rendering test_relationship_census`:
-**Ran 19 tests, OK**; zero unexpected errors in the controlled census.
+`python -m unittest test_relationship_source_rendering test_relationship_census test_model_output_reasons test_chat`:
+**Ran 83 tests, OK**. This includes the bilingual answer-aware tests and four
+concrete evasion demonstrations through real adapters with Bedrock clients faked.
 
 `python -m unittest test_relationship_source_rendering test_relationship_census test_evidence test_chat test_model_output_reasons test_grounding_scores test_phase13_grounding test_guardrails test_phase_11_observability test_phase14_holdout_runner test_phase13_holdout test_prompts test_retrieval test_phase13_journey_security test_phase15_search_documents test_phase15_agent_output test_phase15_routing_eval test_phase15_golden_eval`:
-**Ran 379 tests; 376 passed, three failed**. The three failures are the golden
-CLI-exit-zero, all-jobs-succeed and all-cases-pass assertions; the unchanged
-simulated GoldenWriter emits no required relationships for the newly detected
-Spanish evidence. These assertions remain unchanged and red.
+**Ran 384 tests, OK**. The old golden CLI/all-jobs/all-cases assertions now pass.
 
 `python evals/phase15_routing_eval.py offline`: **30/30, PASS**.
 
-`python evals/phase15_golden_eval.py offline`: **FAIL** at frozen cases `lt-12`,
-`lt-20`, `am-05` (`writer`); 80 cases, 77 graded, 74 graded cases pass, three
-pre-existing expected known-limit failures remain, async scenarios **29/29**.
-The new failures are not reclassified as known limits. On source inspection,
-the judgment's payment sentence does not contain the requested fact groups for
-`lt-12`/`am-05`; the notice's modal/action sentence does satisfy `lt-20` facts.
-No actual model projection was tested. Do not change the simulated writer just
-to make these gates green. Narrowing projection to question-specific claims or
-accepting a different golden contract needs a separate owner decision.
+`python evals/phase15_golden_eval.py offline`: **PASS**, no failed gates; 80 cases,
+77 graded cases pass, three original expected known-limit failures unchanged,
+async scenarios **29/29**. `lt-12`, `lt-20` and `am-05` all pass. For each case,
+selected evidence triggers projection detection but the unchanged `GoldenWriter`
+prose does not (zero recognized modal terms); its fact-only answer is preserved
+and satisfies the frozen fact checks. In particular **lt-20 also passes**, rather
+than being worked around or reclassified. Neither fake writer, frozen dataset,
+expectations, gates nor thresholds changed.
+
+`python scripts/phase15_relationship_census.py`: **44 controlled requests**, counts
+above, same corpus SHA-256, zero unexpected errors and zero live model answers.
 
 `git diff --check`: PASS. No linter/type-check configuration or infrastructure
 change applies to these Python-only changes. Relevant authorization/retrieval
-and cross-matter security suites are in the 379-test command above.
+and cross-matter security suites are in the 384-test command above.
 
-Changed old pins: `test_evidence` now passes evidence into the renderer and
+Historical verification of the evidence-only candidate (2026-11-04): 19 focused
+tests passed; the broad run executed 379 tests with three golden assertions
+failing because `lt-12`, `lt-20` and `am-05` failed at writer. Those results were
+reported before the owner approved answer-aware eligibility. No old result
+report was rewritten; the current runs are separate offline executions.
+
+Changed old pins in this PR: `test_evidence` passes evidence to the renderer and
 expects the exact sentence including articles; `test_chat` expects the same
 whole source instead of the English template. `phase14_holdout_runner` passes
-its selected evidence to the new required renderer argument, keeping its role
-reversal protection; its tests passed. Frozen datasets, thresholds and gates,
-Public Edge template and historical result reports are unchanged.
+selected evidence to the new renderer argument, retaining reversal protection;
+its tests pass. Frozen datasets, thresholds and gates, Public Edge template and
+historical result reports remain unchanged.
 
 No live AWS, model, Harness, IAM, Bedrock score, CloudWatch delivery, OCR/parser
 or deployed-path verification was performed. No resources/costs were created.

@@ -682,7 +682,13 @@ def answer_question(
                     for item in generation_request.evidence
                     if item.citation_id in resolution.supporting_citation_ids
                 )
-                projection_required = evidence_requires_relationship_projection(selected_evidence)
+                # Owner decision 2026-11-05: an unrelated obligation elsewhere
+                # in the evidence must not force a date/law answer to project.
+                # Both sides use the same lexical trigger, in either language.
+                projection_required = (
+                    evidence_requires_relationship_projection(selected_evidence)
+                    and evidence_requires_relationship_projection(({"text": answer},))
+                )
                 if relationship_shape_error is not None:
                     # A malformed relationship cannot select a trusted source sentence. When projection is required the answer
                     # still fails closed; otherwise it is advisory: drop it and keep the prose, which still passes citation

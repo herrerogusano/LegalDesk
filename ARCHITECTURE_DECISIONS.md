@@ -753,7 +753,24 @@ model, frozen dataset, gate or threshold changes accompany this amendment.
 Spanish detection and deterministic sentence boundaries are specified and tested
 in [the implementation record](docs/phase-15-relationship-safety.md).
 
-**Acceptance remains blocked:** stronger Spanish detection makes three frozen
-offline golden cases fail closed. Narrowing projection to question-specific
-claims or changing the golden acceptance contract requires a separate owner
-decision; neither is implemented here. The supervisor owns the vault log.
+**Historical acceptance blocker (2026-11-04):** the evidence-only eligibility
+made three frozen offline golden cases fail closed. This was reported without
+changing the dataset or gate, and is superseded by the owner decision below.
+The supervisor owns the vault log.
+
+### D-024 eligibility amendment - owner approved 2026-11-05
+
+Require projection only when **both** selected evidence and validated writer
+prose trigger the same directed-obligation detector, in English or Spanish.
+An unrelated obligation elsewhere on a date/law page must not force projection.
+Required rendering and its fail-closed rules remain as above. Otherwise prose
+stays and a relationship is direction-validated or dropped with its closed
+reason. The unchanged golden writer now passes lt-12, lt-20 and am-05; no fake,
+frozen expectation, gate, threshold or prompt change was used to achieve that.
+
+Trade-off accepted by the owner: obligation paraphrases outside the detector's
+closed vocabulary can evade projection, including reversed obligations. Tests
+show concrete English/Spanish examples reach grounding unchanged; a fake
+allowing response accepts them. Real grounding rejection is unverified. This
+amendment is a bounded lexical policy, not a semantic direction guarantee. See
+[the implementation record](docs/phase-15-relationship-safety.md).

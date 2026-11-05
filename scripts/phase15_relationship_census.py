@@ -35,7 +35,11 @@ def census():
     spanish = [d for d in world.values() if d.language == "es" and d.pages]
     positives = set()
     baseline = set()
-    missing_closed = malformed_closed = unexpected_errors = 0
+    cohorts = {
+        "nonObligation": {"prose": "Synthetic offline census date: 3 March.", "missing": 0, "malformed": 0, "dropReasons": 0},
+        "assertedObligation": {"prose": "El proveedor debe notificar al comprador.", "missing": 0, "malformed": 0, "dropReasons": 0},
+    }
+    unexpected_errors = 0
     for doc in spanish:
         text = "\n\n".join(doc.pages)
         if evidence_requires_relationship_projection([{"text": page} for page in doc.pages]):
@@ -44,19 +48,20 @@ def census():
             baseline.add(doc.document_id)
         # Real Converse resolver/writer + grounding/chat; only Bedrock clients
         # faked. These are controlled missing/malformed outputs, not model runs.
-        missing, missing_events, _, _ = run(text, [], prose="Synthetic offline census answer.")
-        malformed, malformed_events, _, _ = run(text, [{"actor": "synthetic"}], prose="Synthetic offline census answer.")
-        for response, events, expected in (
-            (missing, missing_events, "writer_relationship_missing"),
-            (malformed, malformed_events, "writer_relationship_shape_invalid"),
-        ):
-            rejected = [e for e in events.events if e.operation and e.operation.value == "write_answer" and e.outcome.value == "error"]
-            matched = response.error_code == "model_failed" and len(rejected) == 1 and rejected[0].error_code.value == expected
-            if expected == "writer_relationship_missing":
-                missing_closed += matched
-            else:
-                malformed_closed += matched
-            unexpected_errors += response.operation_status != "ok" and not matched
+        for cohort in cohorts.values():
+            for variant, relationships, expected in (
+                ("missing", [], "writer_relationship_missing"),
+                ("malformed", [{"actor": "synthetic"}], "writer_relationship_shape_invalid"),
+            ):
+                response, events, _, _ = run(text, relationships, prose=cohort["prose"])
+                terminal = [e for e in events.events if e.operation and e.operation.value == "write_answer" and e.outcome.value != "started"]
+                rejected = [e for e in terminal if e.outcome.value == "error"]
+                matched = response.error_code == "model_failed" and len(rejected) == 1 and rejected[0].error_code.value == expected
+                cohort[variant] += matched
+                dropped = response.operation_status == "ok" and len(terminal) == 1 and terminal[0].error_code and terminal[0].error_code.value == expected
+                if variant == "malformed":
+                    cohort["dropReasons"] += bool(dropped)
+                unexpected_errors += response.operation_status != "ok" and not matched
     fixtures = [f for f in load_manifest().values() if f["language"] == "es"]
     fixture_positive = sum(evidence_requires_relationship_projection([{"text": p["text"]} for p in f["source_pages"]]) for f in fixtures)
     return {
@@ -72,8 +77,13 @@ def census():
         "detected": len(positives),
         "falsePositives": len(positives - DIRECTED_SPANISH_DOCUMENTS),
         "falseNegatives": len(DIRECTED_SPANISH_DOCUMENTS - positives),
-        "missingProjectionAnswersFailClosed": missing_closed,
-        "malformedProjectionAnswersFailClosed": malformed_closed,
+        "missingProjectionAnswersFailClosed": cohorts["nonObligation"]["missing"],
+        "malformedProjectionAnswersFailClosed": cohorts["nonObligation"]["malformed"],
+        "nonObligationMalformedAcceptedWithDropReason": cohorts["nonObligation"]["dropReasons"],
+        "assertedObligationMissingProjectionAnswersFailClosed": cohorts["assertedObligation"]["missing"],
+        "assertedObligationMalformedProjectionAnswersFailClosed": cohorts["assertedObligation"]["malformed"],
+        "assertedObligationMalformedAcceptedWithDropReason": cohorts["assertedObligation"]["dropReasons"],
+        "controlledRequests": len(spanish) * len(cohorts) * 2,
         "unexpectedErrors": unexpected_errors,
         "detectedDocumentIds": sorted(positives),
         "liveModelAnswersMeasured": 0,

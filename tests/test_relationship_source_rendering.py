@@ -51,7 +51,7 @@ class RetrievalClient:
         return {"retrievalResults": [result("tnt_aurora", "mat_sundial", "doc-one", self.passage)]}
 
 
-def run(passage, relationships=(), *, prose="Writer prose is discarded when projection is required.", blocked=False, score=0.92):
+def run(passage, relationships=(), *, prose="The supplier must send written notice to the buyer.", blocked=False, score=0.92):
     auth = load_authorization_store()
     bindings = InMemoryConversationBindingStore()
     chat_request = request()
@@ -207,6 +207,71 @@ class SourceRendering(unittest.TestCase):
         blocked, _, _, _ = run(source, [relation()], blocked=True)
         self.assertEqual(blocked.operation_status, "blocked")
         self.assertNotEqual(blocked.answer, source)
+
+
+class AnswerAwareProjection(unittest.TestCase):
+    CASES = (
+        ("The supplier must send written notice to the buyer. The effective date is 3 March. California law governs.",
+         "The effective date is 3 March.", "California law governs.",
+         "The buyer must send written notice to the supplier.", relation("buyer", recipient="supplier")),
+        ("El proveedor debe notificar al comprador. La fecha de efecto es el 3 de marzo. Rige la ley española.",
+         "La fecha de efecto es el 3 de marzo.", "Rige la ley española.",
+         "El comprador debe notificar al proveedor.", relation("comprador", "notificar", "proveedor")),
+    )
+
+    def test_unrelated_evidence_obligation_does_not_require_date_or_law_answers_to_project(self):
+        for index, (page, date, law, _, _) in enumerate(self.CASES):
+            for answer in (date, law):
+                with self.subTest(language=index, answer_kind=answer == law):
+                    response, _, guardrail, _ = run(page, [], prose=answer)
+                    self.assertEqual(response.operation_status, "ok")
+                    self.assertEqual(response.answer, answer)
+                    self.assertEqual([c.citation_id for c in response.citations], ["citation-1"])
+                    self.assertEqual(guardrail.calls[-1]["content"][-1]["text"]["text"], answer)
+
+    def test_obligation_prose_on_the_same_page_without_a_projection_fails_closed(self):
+        for index, (page, _, _, assertion, _) in enumerate(self.CASES):
+            with self.subTest(language=index):
+                response, sink, guardrail, _ = run(page, [], prose=assertion)
+                self.assertEqual(response.error_code, "model_failed")
+                rejected = [e for e in sink.events if e.operation and e.operation.value == "write_answer" and e.outcome.value == "error"]
+                self.assertEqual(rejected[0].error_code.value, "writer_relationship_missing")
+                self.assertEqual(len(guardrail.calls), 1)
+
+    def test_reversed_projection_on_the_same_page_fails_closed_in_both_languages(self):
+        for index, (page, _, _, assertion, reversed_relation) in enumerate(self.CASES):
+            with self.subTest(language=index):
+                response, sink, _, _ = run(page, [reversed_relation], prose=assertion)
+                self.assertEqual(response.error_code, "model_failed")
+                rejected = [e for e in sink.events if e.operation and e.operation.value == "write_answer" and e.outcome.value == "error"]
+                self.assertEqual(rejected[0].error_code.value, "writer_relationship_unsupported")
+
+    def test_non_obligation_prose_drops_malformed_or_reversed_projection_with_closed_reason(self):
+        for page, _, law, _, reversed_relation in self.CASES:
+            for rel, reason in (({"actor": "synthetic"}, "writer_relationship_shape_invalid"),
+                                (reversed_relation, "writer_relationship_unsupported")):
+                response, sink, _, _ = run(page, [rel], prose=law)
+                self.assertEqual(response.answer, law)
+                accepted = [e for e in sink.events if e.operation and e.operation.value == "write_answer" and e.outcome.value == "succeeded"]
+                self.assertEqual(accepted[0].error_code.value, reason)
+
+    def test_unknown_obligation_words_can_evade_projection_even_when_direction_is_reversed(self):
+        examples = (
+            (self.CASES[0][0], "The buyer has a duty to remit written notice to the supplier."),
+            (self.CASES[0][0], "The buyer must dispatch written notice to the supplier."),
+            (self.CASES[1][0], "Incumbe al comprador notificar al proveedor."),
+            (self.CASES[1][0], "El comprador debe cursar un aviso al proveedor."),
+        )
+        for index, (page, assertion) in enumerate(examples):
+            with self.subTest(example=index):
+                self.assertTrue(evidence.evidence_requires_relationship_projection([{"text": page}]))
+                self.assertFalse(evidence.evidence_requires_relationship_projection([{"text": assertion}]))
+                response, sink, guardrail, _ = run(page, [], prose=assertion)
+                self.assertEqual(response.operation_status, "ok")
+                self.assertEqual(response.answer, assertion)  # high fake scores demonstrate this control's limit
+                self.assertEqual(guardrail.calls[-1]["content"][-1]["text"]["text"], assertion)
+                accepted = [e for e in sink.events if e.operation and e.operation.value == "write_answer" and e.outcome.value == "succeeded"]
+                self.assertIsNone(accepted[0].error_code)
 
 
 class SpanishDetection(unittest.TestCase):

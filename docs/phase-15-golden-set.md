@@ -107,21 +107,22 @@ reported and gated is the **test** split's.
 | `lt-19` | `retrieval` | hypothesis | the answer is on a scanned page of a 7-page lease full of similar clauses |
 | `lt-21` | `writer` | hypothesis | the OCR garbles the number (`6O`) and the writer may repeat or drop it |
 
-A hypothesis is a prediction to confirm, not a measured fact. The relationship
-risk now has an offline reproduction: F-35 detects obligations in Spanish pages
-which the previous English trigger missed. The writer must project a supported
-relationship, and the backend publishes its whole source sentence (owner's
-2026-11-04 D-024 amendment), retaining conditions rather than using the old
-`must ... to` template. The offline `GoldenWriter` emits no relationships, so
-`lt-12`, `lt-20` and `am-05` fail at `write_answer` after this change. These are
-**new failures of the frozen gate**, not additional expected known limits.
-The dataset, thresholds, gate and simulated writer are unchanged.
+A hypothesis is a prediction to confirm, not a measured fact. F-35 detects
+Spanish directed obligations which the previous English trigger missed. The
+owner's 2026-11-04 D-024 amendment replaces the old `must ... to` template with
+whole source sentences. Its evidence-only eligibility initially made the
+unchanged offline writer fail at `write_answer` for `lt-12`, `lt-20` and `am-05`.
+Those were reported as new failures, without changing this known-limit table.
 
-A selected page can also contain a directed obligation unrelated to the requested
-facts. A valid relationship may recover `lt-20`; the judgment's payment sentence
-alone does not satisfy `lt-12`/`am-05` fact groups. A question-specific projection
-policy or a changed acceptance contract needs a separate owner decision. See
-[the exact census, verification and limitations](phase-15-relationship-safety.md).
+On 2026-11-05 the owner narrowed eligibility: both selected evidence and writer
+prose must trigger the same obligation detector. All three cases now pass:
+`GoldenWriter` emits fact-only prose with no recognized modal construction,
+so its answer stays intact. The dataset, fake writer, frozen expectations,
+gates and thresholds remain unchanged. This restores the offline gate but
+introduces an acknowledged lexical-evasion risk: obligation paraphrases outside
+the closed vocabulary can pass this control. Grounding remains mandatory;
+real rejection of such evasions is unverified. See [the exact examples, census
+and commands](phase-15-relationship-safety.md).
 
 ## 3. The asynchronous layer
 
