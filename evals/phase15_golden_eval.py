@@ -1506,10 +1506,15 @@ class DeployedAsyncTransport:
         worker.conversation_store.bind(context, conversation_id=conversation_id, session_selector=selector)
         self.residual.conversation_bound(conversation_id, selector, conversation_binding_partition_key(context, conversation_id))
         worker.state_store.put_session(session_key, SessionRecord(identity, self.access_token, "csrf", self.clock() + session_seconds))
-        job = submit_agent_chat(
-            self.runtime, worker.quota, subject=identity.subject, tenant_id=context.tenant_id, matter_id=self.matter_id,
-            conversation_id=conversation_id, session_selector=selector, correlation_id=context.correlation_id, question=question,
-            session_ref=worker.state_store.session_reference(session_key), now=self.clock())
+        try:
+            job = submit_agent_chat(
+                self.runtime, worker.quota, subject=identity.subject, tenant_id=context.tenant_id, matter_id=self.matter_id,
+                conversation_id=conversation_id, session_selector=selector, correlation_id=context.correlation_id, question=question,
+                session_ref=worker.state_store.session_reference(session_key), now=self.clock())
+        except BaseException:
+            # The caller only learns the key on success, and this record holds a real access token.
+            worker.state_store.delete_session(session_key)
+            raise
         return job, session_key
 
     def _wait(self, job: Any) -> dict[str, Any]:
