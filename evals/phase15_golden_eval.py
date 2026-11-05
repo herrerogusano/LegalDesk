@@ -613,7 +613,7 @@ def evaluate_phases(case: Mapping[str, Any], obs: GoldenObservation, world: Mapp
                 supporting = _comparable(rag, record.supporting)
                 good_status = record.resolver_status in accepted
                 # A partial answer states what the passage does say and cites it (writer contract): real, and only in real mode.
-                abstention_ok = supporting == set() or (bool(rag.get("abstentionMayCite")) and (not gold or supporting <= gold))
+                abstention_ok = supporting == set() or (bool(rag.get("abstentionMayCite")) and supporting <= (gold or _comparable(rag, record.retrieved)))
                 good_support = (abstention_ok if record.resolver_status == "insufficient_evidence" else gold <= supporting)
                 verdicts["resolver"] = "pass" if good_status and good_support else "fail"
             if record.supporting == [] and not record.writer_ran and not record.writer_error:
@@ -679,8 +679,12 @@ def answer_is_correct(case: Mapping[str, Any], obs: GoldenObservation, world: Ma
             return False
         gold = {tuple(pair) for pair in rag["gold"]}
         pairs = _comparable(rag, final["textCitations"])
-        if final["evidenceStatus"] == "insufficient_evidence" and pairs and not rag.get("abstentionMayCite"):
-            return False
+        if final["evidenceStatus"] == "insufficient_evidence" and pairs:
+            if not rag.get("abstentionMayCite"):
+                return False
+            seen = _comparable(rag, obs.pipeline.retrieved) if obs.pipeline else set()
+            if pairs - (gold | _comparable(rag, rag.get("allowedExtra", [])) | seen):
+                return False   # an abstention may cite what was found for this question, nothing else
         if gold and final["evidenceStatus"] != "insufficient_evidence" and not gold <= pairs:
             return False
     data = expected.get("data", {})

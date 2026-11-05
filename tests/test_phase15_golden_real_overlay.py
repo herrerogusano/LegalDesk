@@ -111,6 +111,15 @@ class RealAnswersReadByHand(unittest.TestCase):
     def test_a_citation_to_a_passage_that_was_not_retrieved_still_fails(self) -> None:
         row = ev.evaluate_case(CASES["un-04"], un_04(cited="doc-ext-msa-01-en-long"), WORLD)
         self.assertEqual(row["phases"]["citations"], "fail")
+        self.assertFalse(row["finalCorrect"])
+
+    def test_the_resolver_may_only_support_an_abstention_with_what_was_retrieved(self) -> None:
+        obs = un_04()
+        obs.pipeline.supporting = [("doc-judgment-01-en-digital", 1)]
+        self.assertEqual(ev.evaluate_case(CASES["un-04"], obs, WORLD)["phases"]["resolver"], "pass")
+        obs = un_04()
+        obs.pipeline.supporting = [("doc-ext-msa-01-en-long", 1)]
+        self.assertEqual(ev.evaluate_case(CASES["un-04"], obs, WORLD)["phases"]["resolver"], "fail")
 
     def test_a_missing_or_extra_contract_still_fails(self) -> None:
         self.assert_wrong("id-03", id_03(ids=("doc-contract-04-es-digital-amount", "doc-ext-msa-01-en-long", "doc-ext-lease-01-es-long")))
