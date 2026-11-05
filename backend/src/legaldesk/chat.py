@@ -739,6 +739,7 @@ def answer_question(
                     writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
                 )
                 grounding_scores: dict[str, float] = {}
+                grounding_diagnostic: dict[str, object] = {}
                 try:
                     grounding_result = grounding_validator.validate(
                         GroundingRequest(
@@ -752,12 +753,14 @@ def answer_question(
                     )
                     if isinstance(grounding_result, GroundingAssessmentResult):
                         grounding_scores = grounding_result.scores
+                        grounding_diagnostic = grounding_result.diagnostics
                     validate_grounding_result(
                         grounding_result,
                         supporting_citation_ids=resolution.supporting_citation_ids,
                     )
                 except GroundingGuardrailBlocked as blocked:
                     grounding_scores = blocked.scores
+                    grounding_diagnostic = blocked.diagnostics
                     emit_telemetry(
                         telemetry_sink,
                         TelemetryEventType.GUARDRAIL,
@@ -766,6 +769,7 @@ def answer_question(
                         started_at=grounding_started_at,
                         operation="grounding_validate",
                         **grounding_scores,
+                        grounding_diagnostics=grounding_diagnostic or None,
                         writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                         writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
                     )
@@ -779,6 +783,7 @@ def answer_question(
                         started_at=grounding_started_at,
                         operation="grounding_validate",
                         **grounding_scores,
+                        grounding_diagnostics=grounding_diagnostic or None,
                         error_code="guardrail_error",
                         writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                         writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
@@ -793,6 +798,7 @@ def answer_question(
                         started_at=grounding_started_at,
                         operation="grounding_validate",
                         **grounding_scores,
+                        grounding_diagnostics=grounding_diagnostic or None,
                         error_code="model_failed",
                         writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                         writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,
@@ -806,6 +812,7 @@ def answer_question(
                     started_at=grounding_started_at,
                     operation="grounding_validate",
                     **grounding_scores,
+                    grounding_diagnostics=grounding_diagnostic or None,
                     count=len(resolution.supporting_citation_ids),
                     writer_prompt_version=ANSWER_WRITER_PROMPT_VERSION,
                     writer_prompt_sha256=ANSWER_WRITER_PROMPT_SHA256,

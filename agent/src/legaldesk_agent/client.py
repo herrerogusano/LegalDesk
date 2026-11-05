@@ -86,6 +86,10 @@ class HarnessInvocationError(RuntimeError):
     """Raised when AgentCore returns a runtime client error."""
 
 
+class StreamLimitExceeded(ValueError):
+    """Local event or byte budget exhausted; never a tool argument error."""
+
+
 class ClientStreamParserError(HarnessInvocationError):
     """OUR stream parser refused what Harness sent (an unknown tool name, a result without its use...).
 
@@ -189,7 +193,7 @@ class HarnessToolResult:
 # search_documents call whose reason could not be told apart).
 ERROR_HINTS = (
     "missing_required_argument", "invalid_arguments", "access_denied", "tool_not_allowed", "timeout", "throttled", "no_text",
-    "tool_reported_error", "unclassified",
+    "tool_reported_error", "unclassified", "stream_limit_exceeded",
 )
 
 
@@ -237,7 +241,7 @@ def _record_stream_error(exc: Exception, correlation_id: str, events_received: i
     sdk_status is not necessarily the HTTP status of the accepted invocation.
     """
     classes = {"EventStreamError", "HarnessInvocationError", "ValueError", "ReadTimeoutError",
-               "TimeoutError", "ConnectionError", "ConnectionClosedError"}
+               "TimeoutError", "ConnectionError", "ConnectionClosedError", "StreamLimitExceeded"}
     codes = {"runtimeClientError", "validationException", "internalServerException",
              "RuntimeClientError", "ValidationException", "InternalServerException",
              "ThrottlingException", "ServiceUnavailableException", "ModelTimeoutException"}
@@ -270,8 +274,11 @@ _MAX_TOOL_FRAGMENT = 64 * 1024
 # Agentic chat keeps whole tool results (a grounded answer plus its passages).
 _MAX_AGENT_TOOL_RESULT = 256 * 1024
 _MAX_TOOL_RESULTS = 16
-_MAX_STREAM_EVENTS = 256
 _MAX_STREAM_BYTES = 1_048_576
+# Every mapping serializes to at least two bytes ({}). At this bound even an
+# empty-event flood exhausts the byte budget; ordinary text/tool deltas hit
+# the byte cap first. This is not a limit on model calls or output tokens.
+_MAX_STREAM_EVENTS = _MAX_STREAM_BYTES // 2
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -948,14 +955,14 @@ class HarnessInvoker:
                 if not isinstance(event, Mapping):
                     raise ValueError("event must be an object")
                 if len(events) >= _MAX_STREAM_EVENTS:
-                    raise ValueError("Harness stream is too long")
+                    raise StreamLimitExceeded("Harness stream event limit exceeded")
                 try:
                     event_bytes = len(json.dumps(event, ensure_ascii=False, default=str).encode("utf-8"))
                 except (TypeError, ValueError, UnicodeError) as exc:
                     raise ValueError("event cannot be bounded") from exc
                 stream_bytes += event_bytes
                 if stream_bytes > _MAX_STREAM_BYTES:
-                    raise ValueError("Harness stream is too large")
+                    raise StreamLimitExceeded("Harness stream byte limit exceeded")
                 events.append(event)
             text = _text_from_events(events)
             structured_metadata = _safe_structured_metadata(events)
@@ -1090,6 +1097,58 @@ class AgentChatResult:
     # report could not say why). Short tool names and a label only, never text.
     unanswered_tools: tuple[str, ...] = ()   # tools the model asked for whose result never arrived
     stream_error_hint: str | None = None      # one of ERROR_HINTS, from the stream error if there was one
+    search_query_comparisons: tuple[str, ...] = ()  # same / different / unavailable; never tool arguments
+
+
+def _search_query_comparisons(events: list[Mapping[str, Any]], question: str) -> tuple[str, ...]:
+    """Compare model-written search questions in memory; retain only closed labels.
+
+    Converse-style toolUse input is JSON split across delta.toolUse.input frames.
+    Missing, incomplete, duplicate or malformed arguments stay unknown.
+    This projection cannot change routing, parsing, authorization or salvage.
+    """
+    comparisons: list[str] = []
+    active: dict[int, tuple[int, list[str]]] = {}
+    for event in events:
+        if "messageStart" in event:
+            active.clear()
+        start = event.get("contentBlockStart")
+        if isinstance(start, Mapping):
+            detail = start.get("start")
+            use = detail.get("toolUse") if isinstance(detail, Mapping) else None
+            index = start.get("contentBlockIndex")
+            if isinstance(use, Mapping) and type(index) is int:
+                name = _canonical_tool_name(use.get("name"), None)
+                if name and name.endswith("___search_documents"):
+                    comparisons.append("unavailable")
+                    active[index] = (len(comparisons) - 1, [])
+        delta = event.get("contentBlockDelta")
+        if isinstance(delta, Mapping) and type(delta.get("contentBlockIndex")) is int:
+            record = active.get(delta["contentBlockIndex"])
+            body = delta.get("delta")
+            use = body.get("toolUse") if isinstance(body, Mapping) else None
+            value = use.get("input") if isinstance(use, Mapping) else None
+            if record and isinstance(value, str):
+                record[1].append(value)
+        stop = event.get("contentBlockStop")
+        if isinstance(stop, Mapping) and type(stop.get("contentBlockIndex")) is int:
+            record = active.pop(stop["contentBlockIndex"], None)
+            if record:
+                try:
+                    def unique(pairs):
+                        result = {}
+                        for key, value in pairs:
+                            if key in result:
+                                raise ValueError("duplicate argument")
+                            result[key] = value
+                        return result
+                    arguments = json.loads("".join(record[1]), object_pairs_hook=unique)
+                    value = arguments.get("question") if isinstance(arguments, Mapping) else None
+                    if isinstance(value, str) and value.strip():
+                        comparisons[record[0]] = "same" if value.strip() == question.strip() else "different"
+                except (ValueError, TypeError, RecursionError):
+                    pass
+    return tuple(comparisons[:_MAX_TOOL_RESULTS])
 
 
 def _unanswered_tool_names(events: list[Mapping[str, Any]], allowed_tools: tuple[str, ...] | None) -> tuple[str, ...]:
@@ -1267,13 +1326,16 @@ def invoke_agent_chat(
         raise HarnessInvocationError("AgentCore returned an invalid event stream")
     events: list[Mapping[str, Any]] = []
     stream_bytes, error = 0, None
+    stream_error_hint = None
     try:
         for event in stream:
-            if not isinstance(event, Mapping) or len(events) >= _MAX_STREAM_EVENTS:
-                raise ValueError("invalid or oversized Harness stream")
+            if not isinstance(event, Mapping):
+                raise ValueError("invalid Harness event")
+            if len(events) >= _MAX_STREAM_EVENTS:
+                raise StreamLimitExceeded("Harness stream event limit exceeded")
             stream_bytes += len(json.dumps(event, ensure_ascii=False, default=str).encode("utf-8"))
             if stream_bytes > _MAX_STREAM_BYTES:
-                raise ValueError("Harness stream is too large")
+                raise StreamLimitExceeded("Harness stream byte limit exceeded")
             if "runtimeClientError" in event:
                 message_text = event["runtimeClientError"].get("message", "") if isinstance(event["runtimeClientError"], Mapping) else ""
                 raise HarnessInvocationError(str(message_text))
@@ -1286,6 +1348,7 @@ def invoke_agent_chat(
                                 started_at=started_at, error_code="harness_stream_error")
             raise  # nothing was produced: a retry loses nothing
         error = str(exc).lower()
+        stream_error_hint = "stream_limit_exceeded" if isinstance(exc, StreamLimitExceeded) else _tool_error_hint(error)
     try:
         calls = _structured_tool_results(
             events, allowed_tools=invocation_scope.allowed_tools, raw=True, allow_incomplete=True,
@@ -1310,7 +1373,8 @@ def invoke_agent_chat(
         usage_records_count=len(usage_records),
         history_messages=len(history_messages),
         unanswered_tools=_unanswered_tool_names(events, invocation_scope.allowed_tools),
-        stream_error_hint=_tool_error_hint(error) if error is not None else None,
+        stream_error_hint=stream_error_hint,
+        search_query_comparisons=_search_query_comparisons(events, message),
     )
 
 

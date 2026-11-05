@@ -132,6 +132,7 @@ class TelemetryEvent:
     grounding_threshold: float | None = None
     relevance_score: float | None = None
     relevance_threshold: float | None = None
+    grounding_diagnostics: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if type(self.event_type) is not TelemetryEventType:
@@ -158,6 +159,9 @@ class TelemetryEvent:
             raise ValueError("operation is not allowlisted")
         if self.error_code is not None and type(self.error_code) is not TelemetryErrorCode:
             raise ValueError("error_code is not allowlisted")
+        from .grounding_diagnostics import valid_grounding_diagnostics
+        if self.grounding_diagnostics is not None and not valid_grounding_diagnostics(self.grounding_diagnostics):
+            raise ValueError("grounding diagnostics are not allowlisted")
         for name in ("grounding_score", "grounding_threshold", "relevance_score", "relevance_threshold"):
             value = getattr(self, name)
             if value is not None and (
@@ -194,7 +198,7 @@ class TelemetryEvent:
             "latency_ms", "operation", "count", "error_code", "prompt_version",
             "prompt_sha256", "resolver_prompt_version", "resolver_prompt_sha256",
             "writer_prompt_version", "writer_prompt_sha256",
-            "grounding_score", "grounding_threshold", "relevance_score", "relevance_threshold",
+            "grounding_score", "grounding_threshold", "relevance_score", "relevance_threshold", "grounding_diagnostics",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -273,6 +277,7 @@ def emit_telemetry(
     grounding_threshold: float | None = None,
     relevance_score: float | None = None,
     relevance_threshold: float | None = None,
+    grounding_diagnostics: dict[str, object] | None = None,
 ) -> None:
     """Record safe metadata, defaulting to the structured application logger."""
 
@@ -312,6 +317,7 @@ def emit_telemetry(
         grounding_threshold=grounding_threshold,
         relevance_score=relevance_score,
         relevance_threshold=relevance_threshold,
+        grounding_diagnostics=grounding_diagnostics,
 
     )
     (sink or DEFAULT_TELEMETRY_SINK).record(event)

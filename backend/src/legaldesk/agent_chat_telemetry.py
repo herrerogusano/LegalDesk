@@ -51,6 +51,7 @@ SAFE_META_KEYS = frozenset({
     # job state machine
     "claim", "failure", "quotaReleased", "attempt", "reason", "queueWaitMs",
     # agent loop
+    "searchQueryComparisons", "planChars", "planHasJsonStart", "planHasJsonEnd", "planParseStage",
     "loopOutcome", "stopReason", "iterations", "tools", "toolCalls", "toolFailures", "invalidToolResults",
     # output tree
     "outputPath", "fallbackReason", "planError", "omittedBlocks", "blockCount", "citationCount", "memoryWritten",
@@ -84,6 +85,16 @@ def _safe_number(value: object) -> int | float | None:
 def _safe_value(key: str, value: object) -> object | None:
     if value is None:
         return None
+    if key == "searchQueryComparisons":
+        return [v if isinstance(v, str) and v in {"same", "different", "unavailable"} else "unavailable" for v in value[:_MAX_LIST]] if isinstance(value, (list, tuple)) else None
+    if key == "stopReason":
+        return contracts.closed_stop_reason(value)
+    if key == "planChars":
+        return value if type(value) is int and 0 <= value <= _MAX_INT else None
+    if key in {"planHasJsonStart", "planHasJsonEnd"}:
+        return value if type(value) is bool else None
+    if key == "planParseStage":
+        return value if isinstance(value, str) and value in contracts.PLAN_PARSE_STAGES else None
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
